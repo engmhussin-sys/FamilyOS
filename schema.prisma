@@ -1,0 +1,536 @@
+// ============================================================================
+// AI FAMILY DIGITAL COACH — DATABASE SCHEMA (Prisma)
+// ============================================================================
+// Scope: Phase 1 (MVP) as defined in docs/database/README.md
+// Conventions:
+//   - Every table uses a UUID primary key (id).
+//   - Every table (except AuditLog, which is append-only/immutable) has
+//     createdAt / updatedAt / deletedAt for soft-delete support.
+//   - Table names are snake_case in Postgres, camelCase in Prisma Client.
+//   - Foreign keys are always indexed explicitly (@@index) even though
+//     Postgres/Prisma create some indexes implicitly, to keep intent explicit
+//     for future maintainers.
+//   - Sensitive fields (see docs/database/README.md §5 Security) are encrypted
+//     at the application layer before being persisted (Prisma stores the
+//     ciphertext as a String/Bytes column) — this schema documents that with
+//     comments; encryption itself lives in the backend's Crypto module.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum FamilyRole {
+  OWNER // billing owner, can delete the family, manage co-parents
+  PARENT // full parenting permissions, no billing/deletion rights
+}
+
+enum SubscriptionPlan {
+  FREE
+  PREMIUM
+  FAMILY
+  ENTERPRISE
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+}
+
+enum DeviceOwnerType {
+  PARENT
+  CHILD
+}
+
+enum DeviceStatus {
+  PENDING_PAIRING
+  ACTIVE
+  REVOKED
+  LOST
+}
+
+// Granular, auditable consent — one row per (child, consentType).
+// This is the technical backbone of the project's "privacy first" principle:
+// no AI module may process a category of data without an active consent row.
+enum ConsentType {
+  DATA_COLLECTION
+  LOCATION_TRACKING
+  APP_USAGE_MONITORING
+  AI_BEHAVIOR_ANALYSIS
+  KEYBOARD_BEHAVIOR_ANALYSIS
+  HEALTH_DATA
+}
+
+enum AppRuleType {
+  BLOCK
+  ALLOW
+  TIME_LIMIT
+}
+
+enum ZoneType {
+  HOME
+  SCHOOL
+  CUSTOM
+}
+
+enum LocationEventType {
+  ENTER_ZONE
+  EXIT_ZONE
+  PERIODIC_PING
+  SOS
+}
+
+enum AlertCategory {
+  DIGITAL_SAFETY
+  BEHAVIOR
+  HEALTH
+  EDUCATION
+  LOCATION
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  NEW
+  REVIEWED
+  DISMISSED
+  ESCALATED
+}
+
+enum ActorType {
+  USER
+  DEVICE
+  SYSTEM
+}
+
+// ============================================================================
+// DOMAIN: IDENTITY & FAMILY
+// ============================================================================
+
+/// A parent/guardian account. Children do NOT have a User row in the MVP —
+/// they authenticate via Device pairing + PIN (see Device, ChildSession).
+/// This deliberately minimizes PII collected about the child at the account
+/// level (COPPA/GDPR-friendly: no child email, no child password).
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  email           String     @unique
+  passwordHash    String     @map("password_hash")
+  fullName        String     @map("full_name")
+  phone           String?
+  locale          String     @default("en")
+  timezone        String     @default("UTC")
+  status          UserStatus @default(PENDING_VERIFICATION)
+  mfaEnabled      Boolean    @default(false) @map("mfa_enabled")
+  emailVerifiedAt DateTime?  @map("email_verified_at")
+  lastLoginAt     DateTime?  @map("last_login_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+  deletedAt       DateTime?  @map("deleted_at")
+
+  familyMemberships FamilyMember[]
+  refreshTokens     RefreshToken[]
+  ownedDevices      Device[]          @relation("UserOwnedDevices")
+  consentsGranted   ParentalConsent[] @relation("ConsentGrantedBy")
+  reviewedAlerts    AiAlert[]         @relation("AlertReviewedBy")
+  notifications     Notification[]
+  auditLogEntries   AuditLog[]        @relation("AuditActorUser")
+
+  @@index([status])
+  @@map("users")
+}
+
+/// A household. All children, devices, and policies are scoped to a Family.
+/// Every authorization check in the backend is "does this user belong to
+/// the family that owns this resource?" — see docs/database/README.md §5.
+model Family {
+  id               String            @id @default(uuid()) @db.Uuid
+  name             String
+  timezone         String            @default("UTC")
+  subscriptionPlan SubscriptionPlan  @default(FREE) @map("subscription_plan")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  deletedAt        DateTime?         @map("deleted_at")
+
+  members  FamilyMember[]
+  children Child[]
+
+  @@map("families")
+}
+
+/// Join table: which Users belong to which Family, and with what role.
+/// Supports co-parenting (two parents, one family) from day one.
+model FamilyMember {
+  id        String     @id @default(uuid()) @db.Uuid
+  familyId  String     @map("family_id") @db.Uuid
+  userId    String     @map("user_id") @db.Uuid
+  role      FamilyRole @default(PARENT)
+  joinedAt  DateTime   @default(now()) @map("joined_at")
+  deletedAt DateTime?  @map("deleted_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, userId])
+  @@index([userId])
+  @@map("family_members")
+}
+
+/// A child profile. dateOfBirth is required — it drives age-appropriate
+/// AI behavior and COPPA/GDPR-age-of-consent logic at the application layer.
+model Child {
+  id          String    @id @default(uuid()) @db.Uuid
+  familyId    String    @map("family_id") @db.Uuid
+  firstName   String    @map("first_name")
+  lastName    String?   @map("last_name")
+  dateOfBirth DateTime  @map("date_of_birth") @db.Date
+  gender      String?
+  avatarUrl   String?   @map("avatar_url")
+  pinCodeHash String?   @map("pin_code_hash") // child-app login PIN, hashed
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  family              Family              @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  devices             Device[]
+  consents            ParentalConsent[]
+  screenTimePolicies  ScreenTimePolicy[]
+  appBlockRules       AppBlockRule[]
+  appUsageLogs        AppUsageLog[]
+  safeZones           LocationSafeZone[]
+  locationEvents      LocationEvent[]
+  aiRiskScores        AiRiskScore[]
+  aiAlerts            AiAlert[]
+  notifications       Notification[]
+
+  @@index([familyId])
+  @@map("children")
+}
+
+/// Explicit, auditable, revocable consent per data-collection category.
+/// No AI/monitoring module is permitted to run for a child unless a matching
+/// row exists here with granted = true and revokedAt = null.
+model ParentalConsent {
+  id              String      @id @default(uuid()) @db.Uuid
+  childId         String      @map("child_id") @db.Uuid
+  consentType     ConsentType @map("consent_type")
+  granted         Boolean     @default(true)
+  grantedByUserId String      @map("granted_by_user_id") @db.Uuid
+  grantedAt       DateTime    @default(now()) @map("granted_at")
+  revokedAt       DateTime?   @map("revoked_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  child         Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+  grantedByUser User  @relation("ConsentGrantedBy", fields: [grantedByUserId], references: [id])
+
+  @@unique([childId, consentType])
+  @@index([childId])
+  @@map("parental_consents")
+}
+
+// ============================================================================
+// DOMAIN: DEVICES & AUTH
+// ============================================================================
+
+/// A physical device running either the Parent App or the Child App.
+/// Exactly one of (userId, childId) is set, matching ownerType.
+model Device {
+  id                 String          @id @default(uuid()) @db.Uuid
+  familyId           String          @map("family_id") @db.Uuid
+  ownerType          DeviceOwnerType @map("owner_type")
+  userId             String?         @map("user_id") @db.Uuid
+  childId            String?         @map("child_id") @db.Uuid
+  platform           DevicePlatform
+  deviceModel        String?         @map("device_model")
+  osVersion          String?         @map("os_version")
+  appVersion         String?         @map("app_version")
+  pushToken          String?         @map("push_token")
+  pairingCodeHash    String?         @map("pairing_code_hash") // one-time pairing secret, hashed
+  status             DeviceStatus    @default(PENDING_PAIRING)
+  lastSeenAt         DateTime?       @map("last_seen_at")
+  pairedAt           DateTime?       @map("paired_at")
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+  deletedAt          DateTime?       @map("deleted_at")
+
+  family         Family          @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user           User?           @relation("UserOwnedDevices", fields: [userId], references: [id], onDelete: Cascade)
+  child          Child?          @relation(fields: [childId], references: [id], onDelete: Cascade)
+  refreshTokens  RefreshToken[]
+  appCatalog     AppCatalogEntry[]
+  appUsageLogs   AppUsageLog[]
+  locationEvents LocationEvent[]
+
+  @@index([familyId])
+  @@index([userId])
+  @@index([childId])
+  @@map("devices")
+}
+
+/// Refresh tokens are bound to a device, never issued "floating" —
+/// this lets us revoke a single device's session without logging out
+/// every device the user owns. Token value itself is never stored raw.
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String?   @map("user_id") @db.Uuid
+  deviceId  String?   @map("device_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  userAgent String?   @map("user_agent")
+  ipAddress String?   @map("ip_address")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([deviceId])
+  @@map("refresh_tokens")
+}
+
+// ============================================================================
+// DOMAIN: SCREEN TIME & APP CONTROL
+// ============================================================================
+
+model ScreenTimePolicy {
+  id                 String    @id @default(uuid()) @db.Uuid
+  childId            String    @map("child_id") @db.Uuid
+  dailyLimitMinutes  Int?      @map("daily_limit_minutes")
+  bedtimeStart       String?   @map("bedtime_start") // "HH:mm", local to child's device
+  bedtimeEnd         String?   @map("bedtime_end")
+  weekdaySchedule    Json?     @map("weekday_schedule") // per-weekday overrides
+  focusModeEnabled   Boolean   @default(false) @map("focus_mode_enabled")
+  createdByUserId    String    @map("created_by_user_id") @db.Uuid
+  effectiveFrom      DateTime  @default(now()) @map("effective_from")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  deletedAt          DateTime? @map("deleted_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId])
+  @@map("screen_time_policies")
+}
+
+/// Apps observed installed on a child's device. Reported by the Child App,
+/// not by scraping message content — inventory only, no content capture.
+model AppCatalogEntry {
+  id          String    @id @default(uuid()) @db.Uuid
+  deviceId    String    @map("device_id") @db.Uuid
+  packageName String    @map("package_name")
+  appName     String    @map("app_name")
+  category    String?
+  iconUrl     String?   @map("icon_url")
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, packageName])
+  @@index([deviceId])
+  @@map("app_catalog_entries")
+}
+
+/// Aggregated daily usage per app. Intentionally NOT event-level/raw
+/// (no per-tap or per-second logging) to minimize data collected about
+/// the child, per the project's privacy-first principle.
+model AppUsageLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  childId      String   @map("child_id") @db.Uuid
+  deviceId     String   @map("device_id") @db.Uuid
+  packageName  String   @map("package_name")
+  usageDate    DateTime @map("usage_date") @db.Date
+  usageMinutes Int      @map("usage_minutes")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, deviceId, packageName, usageDate])
+  @@index([childId, usageDate])
+  @@map("app_usage_logs")
+}
+
+model AppBlockRule {
+  id             String      @id @default(uuid()) @db.Uuid
+  childId        String      @map("child_id") @db.Uuid
+  packageName    String?     @map("package_name") // null when ruling by category
+  category       String?
+  ruleType       AppRuleType @map("rule_type")
+  limitMinutes   Int?        @map("limit_minutes") // used when ruleType = TIME_LIMIT
+  schedule       Json?       // optional time-window restriction
+  isActive       Boolean     @default(true) @map("is_active")
+  createdByUserId String     @map("created_by_user_id") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  deletedAt      DateTime?   @map("deleted_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId])
+  @@map("app_block_rules")
+}
+
+// ============================================================================
+// DOMAIN: LOCATION & SAFETY
+// ============================================================================
+
+model LocationSafeZone {
+  id            String    @id @default(uuid()) @db.Uuid
+  childId       String    @map("child_id") @db.Uuid
+  name          String
+  zoneType      ZoneType  @map("zone_type")
+  latitude      Float
+  longitude     Float
+  radiusMeters  Int       @map("radius_meters")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  child          Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
+  locationEvents LocationEvent[]
+
+  @@index([childId])
+  @@map("location_safe_zones")
+}
+
+/// Location pings. latitude/longitude are stored ENCRYPTED at the
+/// application layer (see docs/database/README.md §5) — the columns here
+/// hold ciphertext, typed String rather than Float, on purpose.
+/// expiresAt drives a scheduled purge job (default retention: 30 days)
+/// so raw location history does not accumulate indefinitely.
+model LocationEvent {
+  id             String            @id @default(uuid()) @db.Uuid
+  childId        String            @map("child_id") @db.Uuid
+  deviceId       String            @map("device_id") @db.Uuid
+  safeZoneId     String?           @map("safe_zone_id") @db.Uuid
+  eventType      LocationEventType @map("event_type")
+  latitudeEnc    String            @map("latitude_enc")
+  longitudeEnc   String            @map("longitude_enc")
+  accuracyMeters Float?            @map("accuracy_meters")
+  recordedAt     DateTime          @map("recorded_at")
+  expiresAt      DateTime          @map("expires_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+
+  child    Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
+  device   Device            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  safeZone LocationSafeZone? @relation(fields: [safeZoneId], references: [id])
+
+  @@index([childId, recordedAt])
+  @@index([expiresAt])
+  @@map("location_events")
+}
+
+// ============================================================================
+// DOMAIN: AI SAFETY & ALERTS
+// ============================================================================
+
+/// Daily aggregated safety/behavior score per child, produced by the AI
+/// engine from signals (not raw conversation content). categoryBreakdown
+/// holds a JSON map like {"cyberbullying": 12, "predatorRisk": 3, ...}.
+model AiRiskScore {
+  id                String   @id @default(uuid()) @db.Uuid
+  childId           String   @map("child_id") @db.Uuid
+  scoreDate         DateTime @map("score_date") @db.Date
+  overallScore      Int      @map("overall_score") // 0-100, higher = safer
+  categoryBreakdown Json     @map("category_breakdown")
+  generatedAt       DateTime @default(now()) @map("generated_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, scoreDate])
+  @@index([childId])
+  @@map("ai_risk_scores")
+}
+
+/// A single actionable alert surfaced to parents. This is the AI layer's
+/// output contract — parents see alerts, never raw monitored content.
+model AiAlert {
+  id               String        @id @default(uuid()) @db.Uuid
+  childId          String        @map("child_id") @db.Uuid
+  category         AlertCategory
+  severity         AlertSeverity
+  title            String
+  description      String
+  sourceModule     String        @map("source_module") // e.g. "keyboard-behavior-ai"
+  status           AlertStatus   @default(NEW)
+  reviewedByUserId String?       @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt       DateTime?     @map("reviewed_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  child          Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+  reviewedByUser User? @relation("AlertReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([childId, status])
+  @@index([severity])
+  @@map("ai_alerts")
+}
+
+// ============================================================================
+// CROSS-CUTTING: AUDIT & NOTIFICATIONS
+// ============================================================================
+
+/// Append-only. Never updated or soft-deleted — this is the compliance
+/// trail (GDPR "right to access", security incident investigation).
+model AuditLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  actorType  ActorType @map("actor_type")
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action     String // e.g. "child.consent.revoked", "device.paired"
+  entityType String    @map("entity_type")
+  entityId   String    @map("entity_id") @db.Uuid
+  metadata   Json?
+  ipAddress  String?   @map("ip_address")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  actorUser User? @relation("AuditActorUser", fields: [actorUserId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  childId   String?   @map("child_id") @db.Uuid
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  child Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
