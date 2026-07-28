@@ -14,13 +14,15 @@ alerts, not raw surveillance data).
 |---|---|
 | Database schema (Auth, Family/Child, Devices, Screen Time, App Control, Location, AI Safety, Consent, Audit) | ✅ Done — `apps/backend/prisma/schema.prisma` |
 | Auth module (Register, Login, Refresh rotation, Logout, Device Pairing) | ✅ Done — `apps/backend/src/modules/auth/` |
-| Children/Family management module | ⏳ Next |
-| Screen Time & App Blocking module | ⏳ Planned |
+| Admin Dashboard MVP (Register/Login flows, protected shell, Device Pairing UI) | ✅ Done — `apps/admin-dashboard/` |
+| Children/Family management module (backend) | ⏳ Next |
+| Landing Page | ⏳ Planned |
 | Parent App / Child App (Flutter) | ⏳ Planned |
 | AI Engine (Behavior/Safety/Health/Learning) | ⏳ Planned (Phase 1 minimal → Phase 2 full) |
 
-See `docs/database/README.md` and `docs/architecture/auth-module.md` for
-the detailed design rationale behind what's built so far.
+See `docs/database/README.md`, `docs/architecture/auth-module.md`, and
+`docs/architecture/admin-dashboard.md` for the detailed design rationale
+behind what's built so far.
 
 ## Repository Structure
 
@@ -36,6 +38,15 @@ apps/
       app.module.ts
       main.ts
     test/              Unit + integration tests, mirrors src/ structure
+  admin-dashboard/    React + Vite web app for parents ("Quiet Guardian" identity)
+    src/
+      shared/           Design-system primitives, httpClient, tokenStorage
+      features/
+        auth/            Login/Register pages, auth store, auth API
+        pairing/          Device pairing card (real backend integration)
+        dashboard/        Shell layout, home page
+      app/               Router + providers
+    test/              Vitest unit tests
   parent-app/         (planned) Flutter app for parents
   child-app/          (planned) Flutter app for children
 docs/
@@ -43,6 +54,18 @@ docs/
   architecture/        Per-module architecture decision notes
 docker-compose.yml    Local Postgres + Redis for development
 ```
+
+## Running the admin dashboard locally
+
+```bash
+cd apps/admin-dashboard
+cp .env.example .env     # points at the local backend by default
+npm install
+npm run dev               # http://localhost:5173
+```
+
+Run its tests: `npm test` (10 unit tests, no backend required — httpClient
+and authStore are tested against a mocked fetch/API).
 
 ## Running the backend locally
 
