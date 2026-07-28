@@ -3,8 +3,8 @@ import type { PairingActorType, PairingEventTypeValue, PairingStateValue } from 
 export const PAIRING_EVENT_REPOSITORY = Symbol('PAIRING_EVENT_REPOSITORY');
 
 export interface IRecordPairingEventInput {
+  childId: string;
   deviceId?: string;
-  childId?: string;
   eventType: PairingEventTypeValue;
   fromState: PairingStateValue | null;
   toState: PairingStateValue;
@@ -15,8 +15,8 @@ export interface IRecordPairingEventInput {
 
 export interface IPairingEventRecord {
   id: string;
+  childId: string;
   deviceId: string | null;
-  childId: string | null;
   eventType: string;
   fromState: string | null;
   toState: string;
@@ -30,11 +30,11 @@ export interface IPairingEventRepository {
   record(input: IRecordPairingEventInput): Promise<IPairingEventRecord>;
 
   /**
-   * The device's/child's most recent event — this IS the derived
-   * "PairingSession" read specified in
-   * pairing-backend-domain-architecture.md §1.5. Looks up by deviceId
-   * once one exists, falling back to childId for pre-registration
-   * lookups (before a Device row is assigned).
+   * The child's most recent pairing event — this IS the derived
+   * "PairingSession" read (pairing-backend-domain-architecture.md §1.5).
+   * Always keyed on childId (Decision-066's Audit Query Design rule),
+   * never deviceId — this is what keeps a child's pairing timeline
+   * coherent across a future device replacement, per that decision.
    */
-  findLatest(correlation: { deviceId?: string; childId?: string }): Promise<IPairingEventRecord | null>;
+  findLatest(childId: string): Promise<IPairingEventRecord | null>;
 }

@@ -14,10 +14,24 @@ export class InvalidPairingTransitionException extends ConflictException {
   }
 }
 
-/** Thrown when neither deviceId nor childId is provided — the transition
- * has no entity to record the event against. */
-export class MissingPairingCorrelationKeyException extends BadRequestException {
+/** Thrown when childId is missing — the Primary Owner reference
+ * (Decision-066) every pairing event requires, regardless of whether a
+ * device has been registered yet. TypeScript's type system already
+ * requires this at compile time; this is the runtime backstop for
+ * callers that bypass typing (e.g. a future controller's raw request body). */
+export class MissingChildIdException extends BadRequestException {
   constructor() {
-    super('A pairing transition requires at least one of deviceId or childId.');
+    super('A pairing transition requires childId — the Primary Owner reference.');
+  }
+}
+
+/** Thrown when an event that requires a device reference (e.g.
+ * DEVICE_REGISTERED, DEVICE_ACTIVATED, DEVICE_REVOKED — see
+ * DEVICE_REQUIRED_EVENTS) is fired without deviceId. Pre-device-registration
+ * events (PAIRING_INVITED, PAIRING_ACCEPTED, PARENT_CONFIRMED, ...) do NOT
+ * require this and must not trigger it. */
+export class MissingDeviceIdException extends BadRequestException {
+  constructor(event: string) {
+    super(`Event "${event}" requires deviceId, but none was provided.`);
   }
 }

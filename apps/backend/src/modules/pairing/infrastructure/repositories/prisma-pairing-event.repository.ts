@@ -14,8 +14,8 @@ export class PrismaPairingEventRepository implements IPairingEventRepository {
   async record(input: IRecordPairingEventInput): Promise<IPairingEventRecord> {
     const row = await this.prisma.devicePairingEvent.create({
       data: {
-        deviceId: input.deviceId,
         childId: input.childId,
+        deviceId: input.deviceId,
         eventType: input.eventType,
         fromState: input.fromState,
         toState: input.toState,
@@ -27,15 +27,13 @@ export class PrismaPairingEventRepository implements IPairingEventRepository {
     return row;
   }
 
-  async findLatest(correlation: { deviceId?: string; childId?: string }): Promise<IPairingEventRecord | null> {
-    // Prefer deviceId once one exists (it's the more specific, permanent
-    // key); fall back to childId for the pre-registration window.
-    const where = correlation.deviceId
-      ? { deviceId: correlation.deviceId }
-      : { childId: correlation.childId };
-
+  async findLatest(childId: string): Promise<IPairingEventRecord | null> {
+    // Decision-066: always keyed on childId, never deviceId — this is
+    // what keeps a child's pairing timeline coherent across a future
+    // device replacement (a new device for the same child continues the
+    // same childId-scoped timeline rather than starting a disconnected one).
     return this.prisma.devicePairingEvent.findFirst({
-      where,
+      where: { childId },
       orderBy: { occurredAt: 'desc' },
     });
   }

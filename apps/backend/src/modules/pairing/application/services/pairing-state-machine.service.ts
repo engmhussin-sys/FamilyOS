@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { PAIRING_TRANSITIONS } from '../../domain/pairing-transitions.table';
+import { PAIRING_TRANSITIONS, DEVICE_REQUIRED_EVENTS } from '../../domain/pairing-transitions.table';
 import type {
   IPairingTransitionInput,
   IPairingTransitionRule,
@@ -8,7 +8,8 @@ import type {
 } from '../../domain/pairing.types';
 import {
   InvalidPairingTransitionException,
-  MissingPairingCorrelationKeyException,
+  MissingChildIdException,
+  MissingDeviceIdException,
 } from '../../domain/pairing.errors';
 import {
   PAIRING_EVENT_REPOSITORY,
@@ -25,11 +26,16 @@ import {
  *      IPairingEventRepository, unconditionally (Decision-059: "no
  *      transition without audit").
  *
+ * Per Decision-065/066: childId is the required Primary Owner reference
+ * for every operation here — deviceId is an optional secondary reference,
+ * only present from DEVICE_REGISTERED onward. State lookups are always
+ * childId-scoped (never deviceId-scoped), keeping a child's pairing
+ * timeline coherent across a future device replacement.
+ *
  * Deliberately does NOT know about Redis invitations, registration
  * tokens, trust/risk scoring, or policy assignment — those are Services
  * 2-5 (Invitation, Registration Token, Trust Evaluation, Risk
- * Evaluation), not built in this step. This service's only job is
- * enforcing the state machine's shape and writing its audit trail.
+ * Evaluation), not built in this step.
  */
 @Injectable()
 export class PairingStateMachineService {
@@ -41,16 +47,13 @@ export class PairingStateMachineService {
   ) {}
 
   /**
-   * Returns the current state for a device/child, or null if no pairing
-   * history exists yet at all. Always a fresh read — see class docstring
-   * point 2: state is never cached or trusted from the caller.
+   * Returns the current state for a child's pairing timeline, or null if
+   * no pairing history exists yet at all. Always a fresh read — never
+   * cached or trusted from the caller.
    */
-  async getCurrentState(correlation: {
-    deviceId?: string;
-    childId?: string;
-  }): Promise<PairingStateValue | null> {
-    this.assertHasCorrelationKey(correlation);
-    const latest = await this.pairingEventRepository.findLatest(correlation);
+  async getCurrentState(childId: string): Promise<PairingStateValue | null> {
+    this.assertHasChildId(childId);
+    const latest = await this.pairingEventRepository.findLatest(childId);
     return (latest?.toState as PairingStateValue) ?? null;
   }
 
@@ -61,21 +64,22 @@ export class PairingStateMachineService {
    * written for a transition that actually happened.
    */
   async transition(input: IPairingTransitionInput): Promise<IPairingEventRecord> {
-    this.assertHasCorrelationKey(input);
+    this.assertHasChildId(input.childId);
 
-    const currentState = await this.getCurrentState({
-      deviceId: input.deviceId,
-      childId: input.childId,
-    });
+    const currentState = await this.getCurrentState(input.childId);
 
     const rule = this.findRule(input.event, currentState);
     if (!rule) {
       throw new InvalidPairingTransitionException(input.event, currentState);
     }
 
+    if (DEVICE_REQUIRED_EVENTS.has(input.event) && !input.deviceId) {
+      throw new MissingDeviceIdException(input.event);
+    }
+
     const record = await this.pairingEventRepository.record({
-      deviceId: input.deviceId,
       childId: input.childId,
+      deviceId: input.deviceId,
       eventType: input.event,
       fromState: currentState,
       toState: rule.toState,
@@ -86,7 +90,7 @@ export class PairingStateMachineService {
 
     this.logger.log(
       `Pairing transition: ${input.event} (${currentState ?? '(none)'} -> ${rule.toState}) ` +
-        `[${input.deviceId ? `device=${input.deviceId}` : `child=${input.childId}`}]`,
+        `[child=${input.childId}${input.deviceId ? `, device=${input.deviceId}` : ''}]`,
     );
 
     return record;
@@ -96,10 +100,10 @@ export class PairingStateMachineService {
    * effects - useful for a caller (e.g. a future controller) that wants
    * to decide whether to even attempt an action before doing other work. */
   async canTransition(
-    correlation: { deviceId?: string; childId?: string },
+    childId: string,
     event: IPairingTransitionInput['event'],
   ): Promise<boolean> {
-    const currentState = await this.getCurrentState(correlation);
+    const currentState = await this.getCurrentState(childId);
     return this.findRule(event, currentState) !== undefined;
   }
 
@@ -112,9 +116,9 @@ export class PairingStateMachineService {
     );
   }
 
-  private assertHasCorrelationKey(correlation: { deviceId?: string; childId?: string }): void {
-    if (!correlation.deviceId && !correlation.childId) {
-      throw new MissingPairingCorrelationKeyException();
+  private assertHasChildId(childId: string): void {
+    if (!childId) {
+      throw new MissingChildIdException();
     }
   }
 }

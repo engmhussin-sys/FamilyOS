@@ -405,20 +405,19 @@ model Device {
 /// read both depend on.
 model DevicePairingEvent {
   id         String           @id @default(uuid()) @db.Uuid
-  /// Nullable — discovered during Step 2.2.2 implementation: the earliest
-  /// events (PAIRING_INVITED, PAIRING_ACCEPTED, and any terminal failure
-  /// before DEVICE_REGISTERED) happen BEFORE a Device row exists at all.
-  /// A pairing attempt starts against a childId (via Redis
-  /// PairingInvitation), not a deviceId — deviceId is only assigned once
-  /// DEVICE_REGISTERED fires. Both correlation keys are kept on every row
-  /// (childId always set; deviceId set from DEVICE_REGISTERED onward) so
-  /// a full timeline is queryable by either, across the transition.
+  /// Nullable — secondary reference, populated from DEVICE_REGISTERED
+  /// onward. Per Decision-065/066: the pairing lifecycle is a
+  /// Parent→Family→Child→Device relationship chain, not a device
+  /// lifecycle — the device only enters partway through, so it cannot be
+  /// the primary key of this table.
   deviceId   String?          @map("device_id") @db.Uuid
-  /// Deliberately NOT a formal Prisma relation (no back-relation added to
-  /// Child) — this is a loose correlation key for an audit table, not a
-  /// referential-integrity-enforced link; audit rows should survive even
-  /// if the Child relation model changes shape later.
-  childId    String?          @map("child_id") @db.Uuid
+  /// Required — the Primary Owner of every pairing event (Decision-066).
+  /// Set from the very first event (PAIRING_INVITED) and never null,
+  /// including after a device is registered. Child Timeline queries
+  /// (docs/architecture/pairing-step-2-2-2-state-machine-service.md)
+  /// always key on this, not deviceId — this is what keeps a child's
+  /// pairing history coherent across a future device replacement.
+  childId    String           @map("child_id") @db.Uuid
   eventType  PairingEventType @map("event_type")
   fromState  PairingState?    @map("from_state") // null for the very first event (no prior state)
   toState    PairingState     @map("to_state")

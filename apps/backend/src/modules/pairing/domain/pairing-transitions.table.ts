@@ -1,4 +1,28 @@
-import type { IPairingTransitionRule } from './pairing.types';
+import type { IPairingTransitionRule, PairingEventTypeValue } from './pairing.types';
+
+/**
+ * Decision-065/066's Event Matrix, made explicit and enforceable: these
+ * events cannot fire without a deviceId, because they describe something
+ * that happens TO a specific device. Every other event (PAIRING_INVITED,
+ * PAIRING_ACCEPTED, PARENT_CONFIRMED, PAIRING_REJECTED, PAIRING_EXPIRED,
+ * AUTHENTICATION_FAILED) is childId-only by design — a device may or may
+ * not exist yet when they fire, so none of them are enforced here.
+ */
+export const DEVICE_REQUIRED_EVENTS: ReadonlySet<PairingEventTypeValue> = new Set([
+  'DEVICE_REGISTERED',
+  'DEVICE_VERIFIED',
+  'DEVICE_VERIFICATION_FAILED',
+  'CAPABILITIES_UPLOADED',
+  'POLICY_ASSIGNED',
+  'DEVICE_ACTIVATED',
+  'ACTIVATION_BLOCKED_HIGH_RISK',
+  'HEARTBEAT_RECEIVED',
+  'HEARTBEAT_MISSED',
+  'DEVICE_SUSPENDED',
+  'DEVICE_REACTIVATED',
+  'DEVICE_REVOKED',
+  'DEVICE_REMOVED',
+]);
 
 /**
  * The single source of truth for legal pairing transitions. Every row

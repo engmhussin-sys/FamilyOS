@@ -68,13 +68,13 @@ export interface IPairingTransitionRule {
   actorType: PairingActorType;
 }
 
-/** Input to `PairingStateMachineService.transition` — deliberately
- * requires EITHER deviceId or childId (or both), never neither, matching
- * the nullable-deviceId schema fix from this step (a pre-registration
- * event has no deviceId yet, but always has a childId). */
+/** Input to `PairingStateMachineService.transition` — childId is the
+ * required Primary Owner reference (Decision-066); deviceId is an
+ * optional secondary reference, only present from DEVICE_REGISTERED
+ * onward. */
 export interface IPairingTransitionInput {
+  childId: string;
   deviceId?: string;
-  childId?: string;
   event: PairingEventTypeValue;
   actorType: PairingActorType;
   actorId?: string;
