@@ -95,8 +95,18 @@ nothing harmful or manipulative.
 **Phase 2 — AI Intelligence + Health/Education** *(started)*
 | # | Deliverable | Status |
 |---|---|---|
-| 1 | AI Parenting Assistant (backend) | ✅ Done — `apps/backend/src/modules/ai-assistant/` |
+| 1 | AI Parenting Assistant (backend) | ✅ Done — migrated onto shared `ai-core` module (Decision-068), see below |
 | 2 | AI Parenting Assistant UI (Admin Dashboard) | ⏳ Next |
+
+## AI Core Engine (Decision-068/069, Sprint AI-1: Foundation)
+| Item | Status |
+|---|---|
+| AI Module Boundary + Provider abstraction (`IAIProvider`) | ✅ Done — `apps/backend/src/modules/ai-core/` |
+| Context Manager (shared, extracted from AI Parenting Assistant) | ✅ Done |
+| AI Event Schema (`IAIEvent`) — structural, Sprint AI-2 | ✅ Declared, not yet consumed |
+| AI Parenting Assistant migrated onto the shared foundation | ✅ Done — zero API-level change, `docs/architecture/ai-core-engine-boundary.md` |
+| Sprint AI-2 (Behavioral Engine) | ⏳ Next |
+
 | 3 | AI Digital Safety | ⏳ Planned |
 | 4 | Health & Wellness | ⏳ Planned |
 | 5 | Education | ⏳ Planned |

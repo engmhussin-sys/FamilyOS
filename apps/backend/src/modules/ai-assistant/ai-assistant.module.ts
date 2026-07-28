@@ -1,18 +1,19 @@
 import { Module } from '@nestjs/common';
 
-import { ChildrenModule } from '../children/children.module';
-import { ScreenTimeModule } from '../screen-time/screen-time.module';
+import { AiCoreModule } from '../ai-core/ai-core.module';
 import { AiAssistantController } from './presentation/controllers/ai-assistant.controller';
 import { AiAssistantService } from './application/services/ai-assistant.service';
-import { AnthropicLlmClient } from './infrastructure/anthropic-llm.client';
-import { LLM_CLIENT } from './application/ports/llm-client.port';
 
+/**
+ * Per Decision-068: imports AiCoreModule instead of ChildrenModule/
+ * ScreenTimeModule directly, and no longer wires an LLM_CLIENT provider
+ * itself — that binding lives entirely in AiCoreModule now. This module
+ * is left with exactly one responsibility: the HTTP surface
+ * (POST /ai-assistant/ask) for one specific AI capability.
+ */
 @Module({
-  imports: [ChildrenModule, ScreenTimeModule],
+  imports: [AiCoreModule],
   controllers: [AiAssistantController],
-  providers: [
-    AiAssistantService,
-    { provide: LLM_CLIENT, useClass: AnthropicLlmClient },
-  ],
+  providers: [AiAssistantService],
 })
 export class AiAssistantModule {}
