@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { ChildrenModule } from './modules/children/children.module';
 import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
 import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
+import { ComplianceModule } from './modules/compliance/compliance.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
     ChildrenModule,
     ScreenTimeModule,
     AiAssistantModule,
+    ComplianceModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

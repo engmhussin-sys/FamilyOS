@@ -33,9 +33,15 @@ alerts, not raw surveillance data).
 | 6 | Habit Builder + Gamification | ⏳ Planned |
 | 7 | Keyboard Behavior Analysis | ⏳ Planned |
 
-**Phase 3 — Scale, Compliance & Ecosystem**
-Islamic Mode · Enterprise/School multi-tenant version · Router/Smart Home ·
-Wearables · Formal GDPR/COPPA compliance tooling
+**Phase 3 — Scale, Compliance & Ecosystem** *(started)*
+| # | Deliverable | Status |
+|---|---|---|
+| 1 | Consent Management + Child Data Export (backend) | ✅ Done — `apps/backend/src/modules/compliance/` |
+| 2 | Full account/family deletion ("right to erasure") | ⏳ Planned |
+| 3 | Islamic Mode (optional) | ⏳ Planned |
+| 4 | Enterprise/School multi-tenant version | ⏳ Planned |
+| 5 | Router/Smart Home integration | ⏳ Planned |
+| 6 | Wearables integration | ⏳ Planned |
 
 ### Already built
 | Deliverable | Status |
@@ -46,11 +52,12 @@ Wearables · Formal GDPR/COPPA compliance tooling
 | Admin Dashboard MVP (Auth flows, Children, Device Pairing) | ✅ Done — `apps/admin-dashboard/` |
 | Screen Time module (backend) | ✅ Done — `apps/backend/src/modules/screen-time/` |
 | AI Parenting Assistant (backend) | ✅ Done — `apps/backend/src/modules/ai-assistant/` |
+| Compliance module — Consent + Data Export (backend) | ✅ Done — `apps/backend/src/modules/compliance/` |
 
 See `docs/database/README.md`, `docs/architecture/auth-module.md`,
 `docs/architecture/children-module.md`, `docs/architecture/admin-dashboard.md`,
-`docs/architecture/screen-time-module.md`, and
-`docs/architecture/ai-assistant-module.md` for the detailed design
+`docs/architecture/screen-time-module.md`, `docs/architecture/ai-assistant-module.md`,
+and `docs/architecture/compliance-module.md` for the detailed design
 rationale behind what's built so far.
 
 ## Repository Structure
