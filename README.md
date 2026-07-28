@@ -32,7 +32,7 @@ Architecture, and Lifecycle Architecture are delivered.** Status below.
 | — | Plugin Architecture (Decision-018) | ✅ Done — `lib/plugins/*` folder structure + `AgentPlugin` base |
 | — | Lifecycle Architecture (10-question ADR) | ✅ Done — `docs/architecture/child-agent-lifecycle.md` |
 | 1 | Core Architecture | ✅ Done — `apps/child-app/` (⚠️ not compiled/tested — see step doc) |
-| 2 | Secure Pairing | ⏳ Blocked pending review of `docs/architecture/pairing-state-machine.md` |
+| 2 | Secure Pairing | ⏳ Blocked pending review of `docs/architecture/schema-change-proposal-pairing.md` (Pairing State Machine already approved) |
 | 3 | Device Registration | ⏳ Planned |
 | 4 | Capability Engine | ⏳ Planned |
 | 5 | Permission Manager | ⏳ Planned |
