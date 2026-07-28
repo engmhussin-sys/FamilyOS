@@ -203,6 +203,9 @@ enum PairingEventType {
   DEVICE_REACTIVATED
   DEVICE_REVOKED
   DEVICE_REMOVED
+  /// Sprint 2 — trust-level changes are annotated events, not
+  /// pairing-state transitions (Trust is static per Decision-043).
+  DEVICE_TRUST_CHANGED
 }
 
 // ============================================================================

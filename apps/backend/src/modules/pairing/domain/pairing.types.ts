@@ -49,6 +49,10 @@ export const PAIRING_EVENT_TYPES = [
   'DEVICE_REACTIVATED',
   'DEVICE_REVOKED',
   'DEVICE_REMOVED',
+  /** Decision-061/Sprint 2 — trust-level changes are annotated events,
+   * not pairing-state transitions (Trust is static per Decision-043;
+   * this event records when it DOES change). */
+  'DEVICE_TRUST_CHANGED',
 ] as const;
 export type PairingEventTypeValue = (typeof PAIRING_EVENT_TYPES)[number];
 

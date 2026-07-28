@@ -79,4 +79,32 @@ export const PAIRING_TRANSITIONS: readonly IPairingTransitionRule[] = [
   // transition without audit" — this is an audited NON-transition,
   // recorded with fromState === toState).
   { event: 'ACTIVATION_BLOCKED_HIGH_RISK', allowedFromStates: ['CAPABILITIES_UPLOADED'], toState: 'CAPABILITIES_UPLOADED', actorType: 'SYSTEM' },
+
+  // --- Trust-level changes (Sprint 2, Service 4) ---
+  // Same "audited non-transition" shape as ACTIVATION_BLOCKED_HIGH_RISK
+  // above, generalized across every state where TrustEvaluationService
+  // might run: registration, verification, and every post-activation
+  // operational state (an attestation re-check or Device Owner
+  // provisioning can happen well after initial pairing). Generated from
+  // an array instead of hand-typed per-state to avoid literal repetition
+  // while keeping the underlying rule list flat, explicit data — same
+  // philosophy as every other rule in this table, not a new mechanism.
+  ...([
+    'DEVICE_REGISTERED',
+    'DEVICE_VERIFIED',
+    'CAPABILITIES_UPLOADED',
+    'PARENT_CONFIRMED',
+    'POLICY_ASSIGNED',
+    'ACTIVATED',
+    'HEALTHY',
+    'DEGRADED',
+    'SUSPENDED',
+  ] as const).map(
+    (state): IPairingTransitionRule => ({
+      event: 'DEVICE_TRUST_CHANGED',
+      allowedFromStates: [state],
+      toState: state,
+      actorType: 'SYSTEM',
+    }),
+  ),
 ] as const;

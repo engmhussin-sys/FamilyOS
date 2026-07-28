@@ -37,4 +37,14 @@ export class PrismaPairingEventRepository implements IPairingEventRepository {
       orderBy: { occurredAt: 'desc' },
     });
   }
+
+  async findByEventType(
+    childId: string,
+    eventType: string,
+  ): Promise<IPairingEventRecord[]> {
+    return this.prisma.devicePairingEvent.findMany({
+      where: { childId, eventType },
+      orderBy: { occurredAt: 'asc' },
+    });
+  }
 }

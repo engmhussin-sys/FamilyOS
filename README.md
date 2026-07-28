@@ -37,7 +37,9 @@ Architecture, and Lifecycle Architecture are delivered.** Status below.
 | 2.2.2.1 | Secure Pairing — Domain Service 1: Pairing State Machine | ✅ Done — corrected per Decision-065/066 (`childId` required, `deviceId` optional secondary reference); Cases 1–4 covered |
 | 2.2.2.2 | Secure Pairing — Domain Service 2: Invitation Service | ✅ Done — Redis-backed, family-ownership-checked, drives `PAIRING_INVITED`/`PAIRING_ACCEPTED` |
 | 2.2.2.3 | Secure Pairing — Domain Service 3: Registration Token Service | ✅ Done — Decision-054's single-use-forever token, hashed at rest |
-| 2.2.2.4 | Secure Pairing — Domain Services 4 & 5: Trust/Risk Evaluation | ⏳ Next |
+| 2.2.2.4 | Secure Pairing — Domain Services 4 & 5: Trust/Risk Evaluation | ✅ Done — `TRUST_SIGNAL_PROVIDER`/`RISK_SIGNAL_PROVIDER` tokens ready for future AI Core consumption; see `docs/architecture/pairing-sprint2-trust-risk-intelligence.md` |
+| 2.2.3 | Secure Pairing — Controllers | ⏳ Next |
+| — | Full backend test suite | **106/106 passing**, DI graph clean |
 | — | Full backend test suite | **80/80 passing**, DI graph clean |
 
 **✅ Integrity disclosure — RESOLVED (see Repository Integrity Check

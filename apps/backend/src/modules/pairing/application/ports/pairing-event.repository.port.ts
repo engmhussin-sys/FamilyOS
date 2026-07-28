@@ -37,4 +37,16 @@ export interface IPairingEventRepository {
    * coherent across a future device replacement, per that decision.
    */
   findLatest(childId: string): Promise<IPairingEventRecord | null>;
+
+  /**
+   * The child's full history of one specific event type, in
+   * chronological order — generic, reusable query (e.g. Trust
+   * Evaluation's getTrustHistory uses this for DEVICE_TRUST_CHANGED;
+   * any future consumer needing "every X that happened" reuses this
+   * rather than each writing its own Prisma query).
+   */
+  findByEventType(
+    childId: string,
+    eventType: PairingEventTypeValue,
+  ): Promise<IPairingEventRecord[]>;
 }
