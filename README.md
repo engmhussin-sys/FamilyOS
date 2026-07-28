@@ -8,6 +8,14 @@ alerts, not raw surveillance data).
 
 ## Project Status
 
+**⚠️ Decision-004 (active):** No new Dashboard/AI/Compliance features until
+the Child Agent has working end-to-end enforcement on a real device. See
+`docs/architecture/child-agent-android-enforcement.md` for the full
+architecture decision and rationale. Everything below reflects work done
+**before** this decision — it is not paused retroactively, but nothing new
+in those areas should start until the Agent's core loop (steps 1–6 in that
+ADR) is proven.
+
 **Phase 1 (MVP) — in progress.**
 
 ## Roadmap — Remaining Work in 3 Phases
