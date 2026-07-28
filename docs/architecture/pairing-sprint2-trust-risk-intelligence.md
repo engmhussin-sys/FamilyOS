@@ -94,3 +94,42 @@ circular.
   `RiskEvaluationService.assessAndRecord` into the pairing flow itself
   (e.g. calling them from a future `/pairing/verify` controller) — that
   integration is Step 2.2.3's job, not this one's.
+
+## 7. Patch: Decision-070 compliance check (consolidated instruction)
+
+A follow-up message consolidated Sprint 2's requirements with
+Decision-070 (Intelligence Module Integration Rule) and asked for
+verification against it. Checked line-by-line; **two real gaps found and
+closed as patches, not redesigns:**
+
+1. **`confidence` field** — the consolidated instruction's example output
+   included a numeric `confidence` alongside `trustLevel`/`riskLevel`,
+   which the original Sprint 2 delivery didn't have. Added via
+   `getSignals()` (below), not by changing `ITrustSignalProvider`/
+   `IRiskSignalProvider`'s existing methods — those keep their original,
+   already-tested shapes.
+2. **`IIntelligenceSignalProvider`** — the unifying cross-domain contract
+   requested explicitly ("لا يتم بناء Logic مؤقت فقط... يجب تجهيز
+   IIntelligenceSignalProvider"). Added at
+   `ai-core/domain/intelligence-signal.types.ts` — a **type-only**
+   export, so implementing it (both services now do, alongside their
+   existing domain-specific interfaces) adds zero runtime dependency on
+   `AiCoreModule`, preserving §4's "independence from external AI
+   providers" claim intact.
+
+**Design choices worth stating explicitly:**
+- Trust's `subjectId` in `getSignals()` is **childId** (Decision-066's
+  timeline key); Risk's is **deviceId** (assessments are inherently
+  per-device). Both documented directly on `IIntelligenceSignal.subjectId`.
+- Trust's `confidence` is a graded scale (0 → 1, by level) reflecting
+  genuine identity-verification uncertainty. Risk's `confidence` is fixed
+  at `1` — deliberately, since a risk score is an exact calculation from
+  concrete boolean inputs, not an inference; what's incomplete today is
+  category *coverage* (5 of 6 categories unpopulated), which is already
+  visible in `categoryScores` and is a different concern from confidence
+  in the number itself. This distinction is documented on both methods,
+  not left implicit.
+
+**Updated verification** (supersedes §5's counts): `test/pairing/*` →
+**57/57 tests** (was 53, +4 new `getSignals()` tests). Full backend suite
+→ **110/110 passed** (was 106, +4), DI graph still clean.

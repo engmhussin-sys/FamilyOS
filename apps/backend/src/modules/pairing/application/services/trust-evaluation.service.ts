@@ -15,6 +15,25 @@ import type {
   ITrustSignalProvider,
   TrustLevelValue,
 } from '../../domain/trust.types';
+import type {
+  IIntelligenceSignal,
+  IIntelligenceSignalProvider,
+} from '../../../ai-core/domain/intelligence-signal.types';
+
+/** Confidence this specific trust LEVEL warrants, independent of the
+ * evaluation that produced it — L1 is registered-but-unverified (low
+ * confidence it reflects a genuinely trustworthy device), L3 has
+ * cryptographic hardware proof (near-certain). Distinct from Risk's
+ * confidence (§ RiskEvaluationService), which reflects calculation
+ * exactness rather than identity-verification strength. */
+const TRUST_LEVEL_CONFIDENCE: Record<TrustLevelValue, number> = {
+  L0_UNKNOWN: 0,
+  L1_REGISTERED: 0.4,
+  L2_VERIFIED: 0.7,
+  L3_ATTESTED: 0.95,
+  L4_ENTERPRISE: 1,
+  L5_HIGH_TRUST: 1,
+};
 
 /**
  * Service 4 (Sprint 2). Per the reviewer's explicit framing: Trust is not
@@ -34,7 +53,7 @@ import type {
  * enterprise provisioning) — never on a routine schedule/heartbeat.
  */
 @Injectable()
-export class TrustEvaluationService implements ITrustSignalProvider {
+export class TrustEvaluationService implements ITrustSignalProvider, IIntelligenceSignalProvider {
   private readonly logger = new Logger(TrustEvaluationService.name);
 
   constructor(
@@ -101,6 +120,33 @@ export class TrustEvaluationService implements ITrustSignalProvider {
         occurredAt: event.occurredAt,
       };
     });
+  }
+
+  // --- IIntelligenceSignalProvider (Decision-070) ---
+
+  /**
+   * `subjectId` here is childId, not deviceId — consistent with
+   * Decision-066's rule that a child's intelligence timeline is the
+   * coherent, queryable unit (a device replacement continues the same
+   * childId-scoped signal stream, not a disconnected new one).
+   */
+  async getSignals(childId: string): Promise<IIntelligenceSignal[]> {
+    const history = await this.getTrustHistory(childId);
+    if (history.length === 0) {
+      return [];
+    }
+
+    const latest = history[history.length - 1];
+    return [
+      {
+        domain: 'TRUST',
+        subjectId: childId,
+        value: { deviceId: latest.deviceId, trustLevel: latest.toLevel },
+        confidence: TRUST_LEVEL_CONFIDENCE[latest.toLevel],
+        reasons: [latest.reason],
+        assessedAt: latest.occurredAt,
+      },
+    ];
   }
 
   // --- Pure derivation logic (trust-levels-framework.md §2/§3) ---

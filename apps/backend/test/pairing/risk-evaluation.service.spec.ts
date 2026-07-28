@@ -138,4 +138,32 @@ describe('RiskEvaluationService', () => {
       await expect(service.getRiskHistory('device-1')).resolves.toHaveLength(2);
     });
   });
+
+  describe('IIntelligenceSignalProvider (Decision-070)', () => {
+    it('getSignals returns [] when the device has no risk assessment yet', async () => {
+      deviceRiskRepositoryMock.findLatestByDevice.mockResolvedValue(null);
+      await expect(service.getSignals('device-1')).resolves.toEqual([]);
+    });
+
+    it('getSignals normalizes the latest assessment into the shared signal shape with confidence 1', async () => {
+      deviceRiskRepositoryMock.findLatestByDevice.mockResolvedValue({
+        overallRisk: 55,
+        overallLevel: 'HIGH',
+        categoryScores: { security: 55, privacy: 0, compliance: 0, stability: 0, connectivity: 0, behavioral: 0 },
+        reasons: ['Emulator detected', 'Tamper indicators present'],
+        assessedAt: new Date('2026-07-28T10:00:00Z'),
+      });
+
+      const signals = await service.getSignals('device-1');
+
+      expect(signals).toHaveLength(1);
+      expect(signals[0]).toMatchObject({
+        domain: 'RISK',
+        subjectId: 'device-1',
+        value: { overallRisk: 55, overallLevel: 'HIGH' },
+        confidence: 1,
+        reasons: ['Emulator detected', 'Tamper indicators present'],
+      });
+    });
+  });
 });

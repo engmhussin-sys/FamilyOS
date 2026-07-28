@@ -12,6 +12,10 @@ import type {
   IRiskSignalProvider,
   RiskLevelValue,
 } from '../../domain/risk.types';
+import type {
+  IIntelligenceSignal,
+  IIntelligenceSignalProvider,
+} from '../../../ai-core/domain/intelligence-signal.types';
 
 /**
  * Service 5 (Sprint 2). Implements `IRiskSignalProvider` — the
@@ -26,7 +30,7 @@ import type {
  * assumes infrequent invocation the way Trust's derivation does.
  */
 @Injectable()
-export class RiskEvaluationService implements IRiskSignalProvider {
+export class RiskEvaluationService implements IRiskSignalProvider, IIntelligenceSignalProvider {
   constructor(
     @Inject(DEVICE_RISK_REPOSITORY) private readonly deviceRiskRepository: IDeviceRiskRepository,
   ) {}
@@ -56,6 +60,45 @@ export class RiskEvaluationService implements IRiskSignalProvider {
 
   getRiskHistory(deviceId: string): Promise<IRiskAssessmentRecord[]> {
     return this.deviceRiskRepository.findHistoryByDevice(deviceId);
+  }
+
+  // --- IIntelligenceSignalProvider (Decision-070) ---
+
+  /**
+   * `subjectId` is deviceId — risk assessments are inherently per-device
+   * (unlike Trust's childId-scoped timeline), since two devices for the
+   * same child can independently be in different risk states.
+   *
+   * Confidence is fixed at 1 — deliberately, not an oversight: unlike
+   * Trust's confidence (which reflects genuine identity-verification
+   * uncertainty), a risk score is an exact, deterministic calculation
+   * from the concrete boolean signals it was given. There's no inference
+   * step to be uncertain about. What's incomplete today is category
+   * *coverage* (5 of 6 categories have no real signals yet — §3a of
+   * risk-score-framework.md), which is a different concern from
+   * confidence in the number itself, and is already visible in
+   * `categoryScores` without needing a separate confidence discount.
+   */
+  async getSignals(deviceId: string): Promise<IIntelligenceSignal[]> {
+    const latest = await this.getLatestRiskAssessment(deviceId);
+    if (!latest) {
+      return [];
+    }
+
+    return [
+      {
+        domain: 'RISK',
+        subjectId: deviceId,
+        value: {
+          overallRisk: latest.overallRisk,
+          overallLevel: latest.overallLevel,
+          categoryScores: latest.categoryScores,
+        },
+        confidence: 1,
+        reasons: latest.reasons,
+        assessedAt: latest.assessedAt,
+      },
+    ];
   }
 
   // --- Pure calculation (risk-score-framework.md §2/§4/§5) ---

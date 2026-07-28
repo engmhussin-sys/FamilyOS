@@ -145,4 +145,34 @@ describe('TrustEvaluationService', () => {
       });
     });
   });
+
+  describe('IIntelligenceSignalProvider (Decision-070)', () => {
+    it('getSignals returns [] when the child has no trust history yet', async () => {
+      pairingEventRepositoryMock.findByEventType.mockResolvedValue([]);
+      await expect(service.getSignals('child-1')).resolves.toEqual([]);
+    });
+
+    it('getSignals normalizes the latest trust change into the shared signal shape', async () => {
+      pairingEventRepositoryMock.findByEventType.mockResolvedValue([
+        {
+          deviceId: 'device-1',
+          childId: 'child-1',
+          toState: 'DEVICE_VERIFIED',
+          occurredAt: new Date('2026-07-28T10:00:00Z'),
+          metadata: { fromLevel: 'L1_REGISTERED', toLevel: 'L3_ATTESTED', reason: 'Attestation verified.' },
+        },
+      ]);
+
+      const signals = await service.getSignals('child-1');
+
+      expect(signals).toHaveLength(1);
+      expect(signals[0]).toMatchObject({
+        domain: 'TRUST',
+        subjectId: 'child-1',
+        value: { deviceId: 'device-1', trustLevel: 'L3_ATTESTED' },
+        confidence: 0.95,
+        reasons: ['Attestation verified.'],
+      });
+    });
+  });
 });
