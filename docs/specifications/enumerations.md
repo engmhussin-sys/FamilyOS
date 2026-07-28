@@ -45,15 +45,18 @@ Full transition rules: `pairing-state-machine.md` §4.
 
 Full derivation rules: `trust-levels-framework.md` (this step).
 
-### Risk Level (proposed — derived from `DeviceRiskAssessment.riskScore`, per Decision-032)
+### Risk Level (proposed — derived from `DeviceRiskAssessment.riskScore`, per Decision-032, amended by Decision-043's `UNKNOWN` addition)
 | Value | Score range (0–100, higher = riskier) |
 |---|---|
+| `UNKNOWN` | No score yet — default before the first assessment completes; never silently defaulted to `LOW` for lack of data |
 | `LOW` | 0–24 |
-| `MODERATE` | 25–49 |
-| `ELEVATED` | 50–74 |
-| `HIGH` | 75–100 |
+| `MEDIUM` | 25–49 |
+| `HIGH` | 50–74 |
+| `CRITICAL` | 75–100 |
 
-Full scoring rules: `risk-score-framework.md` (this step).
+Six risk categories (Security, Privacy, Compliance, Stability,
+Connectivity, Behavioral) plus an Overall score — see
+`risk-score-framework.md` §3.
 
 ### Device Owner Type (existing)
 `PARENT`, `CHILD`

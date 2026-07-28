@@ -111,6 +111,47 @@ CI is red is a draft, not a review candidate.
   project's habit — see `docs/database/README.md` §4's indexing
   rationale).
 
+## 10. Observability (Decision-049: "No Feature Without Observability")
+
+Designed **with** the feature, not after it ships. Every feature's
+architecture doc must answer, explicitly, before implementation is
+considered complete:
+- **How do we monitor it?** What signal (metric, log, event) proves it's
+  running at all.
+- **How do we measure success?** A stated metric, not a vague "it works."
+- **How do we know it broke?** What specifically indicates failure —
+  distinct from simply "no errors were thrown."
+- **How do we explain a problem when one occurs?** Per Decision-047's
+  explainability principle (`risk-score-framework.md` §6) applied
+  generally: a black-box "something is wrong" is not sufficient for any
+  feature a parent or support engineer will need to reason about.
+
+A feature whose architecture doc doesn't answer these four is missing
+this criterion — same enforcement as every other item in this checklist,
+not a softer aspiration.
+
+---
+
+## 10. Observability (Decision-049 — "No Feature Without Observability")
+
+Designed alongside the feature itself, not added after the fact. Every
+feature must have an answer to each of these before it's considered
+done:
+- **How do we monitor it?** What signal shows it's working right now —
+  not "we'd notice if it broke," an actual signal.
+- **How do we measure success?** A real metric, not "it doesn't throw an
+  error."
+- **How do we know it broke?** A concrete alert/threshold condition, not
+  "a parent complains and someone investigates."
+- **How do we explain a failure when it happens?** Per Decision-047's
+  Explainability principle, generalized beyond Risk Score specifically —
+  any feature that can reach a "something's wrong" state must be able to
+  state *why*, not just flag *that* something's wrong.
+
+A feature whose answers to these four questions are deferred to "we'll
+add monitoring later" does not satisfy this item. Per Decision-049, this
+is a Definition-of-Done gate, not a nice-to-have follow-up.
+
 ---
 
 ## What this means in practice

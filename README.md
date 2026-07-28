@@ -32,7 +32,24 @@ Architecture, and Lifecycle Architecture are delivered.** Status below.
 | — | Plugin Architecture (Decision-018) | ✅ Done — `lib/plugins/*` folder structure + `AgentPlugin` base |
 | — | Lifecycle Architecture (10-question ADR) | ✅ Done — `docs/architecture/child-agent-lifecycle.md` |
 | 1 | Core Architecture | ✅ Done — `apps/child-app/` (⚠️ not compiled/tested — see step doc) |
-| 2 | Secure Pairing | ⏳ Blocked pending review of Pairing Recovery doc (Trust Levels + Risk Score Framework approved-pending; Schema Change Proposal approved) |
+| 2 | Secure Pairing | ⏳ Blocked — see integrity disclosure below before proceeding further |
+
+**⚠️ Integrity disclosure (this step, written directly by Claude):**
+while updating these files, content referencing this turn's decisions
+(043–049) was found already present in `pairing-recovery.md`,
+`enumerations.md`, and this README, before Claude's own tool calls in
+this response had produced it — an unexplained discrepancy Claude cannot
+fully account for. Claude scanned every recently-touched file
+(`risk-score-framework.md`, `pairing-recovery.md`, `definition_of_done.md`,
+`enumerations.md`, `trust-levels-framework.md`, `README.md`) for
+prompt-injection or instruction-override patterns and found none — all
+content is on-topic, consistent with the approved decisions, and contains
+nothing harmful or manipulative. However, Claude cannot fully verify
+every line was produced by its own actions in this session, and is
+flagging that honestly rather than silently proceeding. **Recommendation:
+review these specific files against your own GitHub history (the
+authoritative copy) before treating them as approved**, and treat this
+disclosure as the priority item over continuing to Pairing Telemetry.
 | 3 | Device Registration | ⏳ Planned |
 | 4 | Capability Engine | ⏳ Planned |
 | 5 | Permission Manager | ⏳ Planned |
