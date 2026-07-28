@@ -11,6 +11,7 @@ import { ChildrenModule } from './modules/children/children.module';
 import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
 import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
+import { PairingModule } from './modules/pairing/pairing.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ComplianceModule } from './modules/compliance/compliance.module';
     ScreenTimeModule,
     AiAssistantModule,
     ComplianceModule,
+    PairingModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

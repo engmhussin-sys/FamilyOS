@@ -34,7 +34,8 @@ Architecture, and Lifecycle Architecture are delivered.** Status below.
 | 1 | Core Architecture | ✅ Done — `apps/child-app/` (⚠️ not compiled/tested — see step doc) |
 | 2 | Secure Pairing — Step 2.1 (Backend Domain Architecture + Module Boundary) | ✅ Done — `docs/architecture/pairing-backend-domain-architecture.md`, `docs/architecture/pairing-module-boundary.md` (Decisions 052–057 incorporated; still architecture only, no code) |
 | 2.2.1 | Secure Pairing — Database Entities | ✅ Done — `apps/backend/prisma/schema.prisma` extended (2 new tables, 4 new enums, 5 new `Device` fields, all additive); see `docs/architecture/pairing-step-2-2-1-database-entities.md` |
-| 2.2.2 | Secure Pairing — Domain Services | ⏳ Next |
+| 2.2.2.1 | Secure Pairing — Domain Service 1: Pairing State Machine | ✅ Done — `apps/backend/src/modules/pairing/`; 17/17 tests, 65/65 full suite; see `docs/architecture/pairing-step-2-2-2-state-machine-service.md` (resolved a real pre-registration schema gap — `DevicePairingEvent` now keys on `childId` OR `deviceId`) |
+| 2.2.2.2 | Secure Pairing — Domain Service 2: Invitation Service | ⏳ Next |
 
 **✅ Integrity disclosure — RESOLVED (see Repository Integrity Check
 Report, approved as Decision-050/051):** the concern below was

@@ -168,6 +168,14 @@ enum PairingState {
   SUSPENDED
   REVOKED
   REMOVED
+  /// Terminal, non-retryable — added during Step 2.2.2: the original
+  /// state list had no distinct value for a pairing attempt that ends
+  /// via explicit parent rejection or authentication failure
+  /// (pairing-state-machine.md §6's "terminal failures"). Reusing
+  /// REVOKED would have falsely implied the device was once trusted.
+  REJECTED
+  /// Terminal — an invitation's TTL lapsed with no action taken.
+  EXPIRED
 }
 
 /// Per pairing-backend-domain-architecture.md §5, reconciled with
@@ -397,7 +405,20 @@ model Device {
 /// read both depend on.
 model DevicePairingEvent {
   id         String           @id @default(uuid()) @db.Uuid
-  deviceId   String           @map("device_id") @db.Uuid
+  /// Nullable — discovered during Step 2.2.2 implementation: the earliest
+  /// events (PAIRING_INVITED, PAIRING_ACCEPTED, and any terminal failure
+  /// before DEVICE_REGISTERED) happen BEFORE a Device row exists at all.
+  /// A pairing attempt starts against a childId (via Redis
+  /// PairingInvitation), not a deviceId — deviceId is only assigned once
+  /// DEVICE_REGISTERED fires. Both correlation keys are kept on every row
+  /// (childId always set; deviceId set from DEVICE_REGISTERED onward) so
+  /// a full timeline is queryable by either, across the transition.
+  deviceId   String?          @map("device_id") @db.Uuid
+  /// Deliberately NOT a formal Prisma relation (no back-relation added to
+  /// Child) — this is a loose correlation key for an audit table, not a
+  /// referential-integrity-enforced link; audit rows should survive even
+  /// if the Child relation model changes shape later.
+  childId    String?          @map("child_id") @db.Uuid
   eventType  PairingEventType @map("event_type")
   fromState  PairingState?    @map("from_state") // null for the very first event (no prior state)
   toState    PairingState     @map("to_state")
@@ -406,9 +427,10 @@ model DevicePairingEvent {
   metadata   Json?
   occurredAt DateTime         @default(now()) @map("occurred_at")
 
-  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([deviceId, occurredAt])
+  @@index([childId, occurredAt])
   @@map("device_pairing_events")
 }
 
