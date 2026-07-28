@@ -1,0 +1,283 @@
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { PairingOrchestratorService } from '../../src/modules/pairing/application/services/pairing-orchestrator.service';
+import { InvitationService } from '../../src/modules/pairing/application/services/invitation.service';
+import { RegistrationTokenService } from '../../src/modules/pairing/application/services/registration-token.service';
+import { PairingStateMachineService } from '../../src/modules/pairing/application/services/pairing-state-machine.service';
+import { TrustEvaluationService } from '../../src/modules/pairing/application/services/trust-evaluation.service';
+import { RiskEvaluationService } from '../../src/modules/pairing/application/services/risk-evaluation.service';
+import { PAIRING_DEVICE_REPOSITORY } from '../../src/modules/pairing/application/ports/pairing-device.repository.port';
+import { TokenService } from '../../src/modules/auth/application/services/token.service';
+
+const NO_RISK_SIGNALS = {
+  isEmulator: false,
+  isRooted: false,
+  hasTamperIndicators: false,
+  isUnsupportedDevice: false,
+  missingAttestation: false,
+  mockLocationEnabled: false,
+  developerModeEnabled: false,
+  usbDebuggingEnabled: false,
+  isOldAndroidVersion: false,
+};
+
+describe('PairingOrchestratorService', () => {
+  const invitationServiceMock = { createInvitation: jest.fn(), redeemInvitation: jest.fn() };
+  const registrationTokenServiceMock = { issue: jest.fn() };
+  const pairingStateMachineMock = { transition: jest.fn(), getCurrentState: jest.fn() };
+  const trustEvaluationServiceMock = { evaluateAndApply: jest.fn(), getCurrentTrustLevel: jest.fn() };
+  const riskEvaluationServiceMock = { assessAndRecord: jest.fn(), getLatestRiskAssessment: jest.fn() };
+  const pairingDeviceRepositoryMock = {
+    createDevice: jest.fn(),
+    findById: jest.fn(),
+    activateDevice: jest.fn(),
+    revokeDevice: jest.fn(),
+    touchLastSeen: jest.fn(),
+  };
+  const tokenServiceMock = { issueTokenPair: jest.fn(), revokeAllTokensForDevice: jest.fn() };
+
+  let service: PairingOrchestratorService;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PairingOrchestratorService,
+        { provide: InvitationService, useValue: invitationServiceMock },
+        { provide: RegistrationTokenService, useValue: registrationTokenServiceMock },
+        { provide: PairingStateMachineService, useValue: pairingStateMachineMock },
+        { provide: TrustEvaluationService, useValue: trustEvaluationServiceMock },
+        { provide: RiskEvaluationService, useValue: riskEvaluationServiceMock },
+        { provide: PAIRING_DEVICE_REPOSITORY, useValue: pairingDeviceRepositoryMock },
+        { provide: TokenService, useValue: tokenServiceMock },
+      ],
+    }).compile();
+    service = moduleRef.get(PairingOrchestratorService);
+  });
+
+  describe('invite / accept', () => {
+    it('invite delegates to InvitationService.createInvitation', async () => {
+      invitationServiceMock.createInvitation.mockResolvedValue({ code: 'ABCD-1234', expiresInSeconds: 600 });
+      const result = await service.invite('child-1', 'family-1', 'user-1');
+      expect(invitationServiceMock.createInvitation).toHaveBeenCalledWith({
+        childId: 'child-1',
+        familyId: 'family-1',
+        initiatedByUserId: 'user-1',
+      });
+      expect(result.code).toBe('ABCD-1234');
+    });
+
+    it('accept redeems the invitation then issues a registration token for the resulting child/family', async () => {
+      invitationServiceMock.redeemInvitation.mockResolvedValue({
+        childId: 'child-1',
+        familyId: 'family-1',
+        initiatedByUserId: 'user-1',
+      });
+      registrationTokenServiceMock.issue.mockResolvedValue({ token: 'reg-token', expiresInSeconds: 300 });
+
+      const result = await service.accept('ABCD-1234');
+
+      expect(registrationTokenServiceMock.issue).toHaveBeenCalledWith({
+        childId: 'child-1',
+        familyId: 'family-1',
+      });
+      expect(result.token).toBe('reg-token');
+    });
+  });
+
+  describe('registerDevice', () => {
+    it('creates the device, transitions DEVICE_REGISTERED, evaluates trust, and issues DEVICE tokens', async () => {
+      pairingDeviceRepositoryMock.createDevice.mockResolvedValue({
+        id: 'device-1',
+        childId: 'child-1',
+        familyId: 'family-1',
+        status: 'PENDING_PAIRING',
+        lastSeenAt: null,
+      });
+      tokenServiceMock.issueTokenPair.mockResolvedValue({ accessToken: 'a', refreshToken: 'r' });
+
+      const result = await service.registerDevice('child-1', 'family-1', {
+        publicKey: 'pub-key',
+        platform: 'ANDROID',
+      });
+
+      expect(pairingStateMachineMock.transition).toHaveBeenCalledWith(
+        expect.objectContaining({ childId: 'child-1', deviceId: 'device-1', event: 'DEVICE_REGISTERED' }),
+      );
+      expect(trustEvaluationServiceMock.evaluateAndApply).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', stage: 'REGISTERED' }),
+      );
+      expect(tokenServiceMock.issueTokenPair).toHaveBeenCalledWith({
+        subjectId: 'device-1',
+        actorType: 'DEVICE',
+        familyId: 'family-1',
+      });
+      expect(result.deviceId).toBe('device-1');
+    });
+  });
+
+  describe('verify', () => {
+    it('throws NotFoundException for an unknown device before touching anything else', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue(null);
+
+      await expect(
+        service.verify('device-1', { riskSignals: NO_RISK_SIGNALS }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(pairingStateMachineMock.transition).not.toHaveBeenCalled();
+    });
+
+    it('runs DEVICE_VERIFIED -> trust eval -> risk eval -> CAPABILITIES_UPLOADED in order, treating attestation presence as validity', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'PENDING_PAIRING', lastSeenAt: null,
+      });
+      trustEvaluationServiceMock.evaluateAndApply.mockResolvedValue('L3_ATTESTED');
+      riskEvaluationServiceMock.assessAndRecord.mockResolvedValue({
+        overallRisk: 0, overallLevel: 'LOW', categoryScores: {}, reasons: [],
+      });
+
+      const result = await service.verify('device-1', {
+        attestationChain: 'chain-data',
+        riskSignals: NO_RISK_SIGNALS,
+      });
+
+      expect(trustEvaluationServiceMock.evaluateAndApply).toHaveBeenCalledWith(
+        expect.objectContaining({ hasValidAttestation: true }),
+      );
+      expect(result.trustLevel).toBe('L3_ATTESTED');
+      expect(result.riskAssessment.overallLevel).toBe('LOW');
+
+      const events = pairingStateMachineMock.transition.mock.calls.map((c) => c[0].event);
+      expect(events).toEqual(['DEVICE_VERIFIED', 'CAPABILITIES_UPLOADED']);
+    });
+  });
+
+  describe('activate', () => {
+    it('throws NotFoundException when the device belongs to a different family (404, not 403)', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'someone-elses-family', status: 'PENDING_PAIRING', lastSeenAt: null,
+      });
+
+      await expect(
+        service.activate('device-1', 'family-1', 'user-1', false),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('blocks activation on HIGH risk without override, and records ACTIVATION_BLOCKED_HIGH_RISK', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'PENDING_PAIRING', lastSeenAt: null,
+      });
+      riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue({ overallLevel: 'HIGH' });
+
+      await expect(service.activate('device-1', 'family-1', 'user-1', false)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+
+      expect(pairingStateMachineMock.transition).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'ACTIVATION_BLOCKED_HIGH_RISK' }),
+      );
+      expect(pairingDeviceRepositoryMock.activateDevice).not.toHaveBeenCalled();
+    });
+
+    it('proceeds through PARENT_CONFIRMED -> POLICY_ASSIGNED -> DEVICE_ACTIVATED when risk is overridden', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'PENDING_PAIRING', lastSeenAt: null,
+      });
+      riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue({ overallLevel: 'HIGH' });
+
+      const result = await service.activate('device-1', 'family-1', 'user-1', true);
+
+      const events = pairingStateMachineMock.transition.mock.calls.map((c) => c[0].event);
+      expect(events).toEqual(['PARENT_CONFIRMED', 'POLICY_ASSIGNED', 'DEVICE_ACTIVATED']);
+      expect(pairingDeviceRepositoryMock.activateDevice).toHaveBeenCalledWith('device-1');
+      expect(result.status).toBe('ACTIVATED');
+    });
+
+    it('proceeds directly (no block) when risk is LOW, no override needed', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'PENDING_PAIRING', lastSeenAt: null,
+      });
+      riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue({ overallLevel: 'LOW' });
+
+      await service.activate('device-1', 'family-1', 'user-1', false);
+
+      const events = pairingStateMachineMock.transition.mock.calls.map((c) => c[0].event);
+      expect(events).not.toContain('ACTIVATION_BLOCKED_HIGH_RISK');
+    });
+  });
+
+  describe('revoke', () => {
+    it('transitions DEVICE_REVOKED, marks the device revoked, and revokes its tokens — in that order', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      await service.revoke('device-1', 'family-1', 'user-1', 'Lost device');
+
+      expect(pairingStateMachineMock.transition).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'DEVICE_REVOKED', metadata: { reason: 'Lost device' } }),
+      );
+      expect(pairingDeviceRepositoryMock.revokeDevice).toHaveBeenCalledWith('device-1');
+      expect(tokenServiceMock.revokeAllTokensForDevice).toHaveBeenCalledWith('device-1');
+    });
+  });
+
+  describe('getStatus', () => {
+    it('returns exactly the 5 fields, aggregated from three services', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE',
+        lastSeenAt: new Date('2026-07-28T00:00:00Z'),
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('HEALTHY');
+      trustEvaluationServiceMock.getCurrentTrustLevel.mockResolvedValue('L3_ATTESTED');
+      riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue({ overallLevel: 'LOW' });
+
+      const status = await service.getStatus('device-1');
+
+      expect(status).toEqual({
+        pairingState: 'HEALTHY',
+        trustLevel: 'L3_ATTESTED',
+        riskLevel: 'LOW',
+        lastSeenAt: new Date('2026-07-28T00:00:00Z'),
+        activationStatus: 'ACTIVATED',
+      });
+    });
+  });
+
+  describe('recordHeartbeat', () => {
+    it('always touches lastSeenAt', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('HEALTHY');
+
+      await service.recordHeartbeat('device-1');
+
+      expect(pairingDeviceRepositoryMock.touchLastSeen).toHaveBeenCalledWith('device-1');
+    });
+
+    it('does NOT write a HEARTBEAT_RECEIVED event when already HEALTHY (sampling principle)', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('HEALTHY');
+
+      await service.recordHeartbeat('device-1');
+
+      expect(pairingStateMachineMock.transition).not.toHaveBeenCalled();
+    });
+
+    it('DOES write HEARTBEAT_RECEIVED when recovering from DEGRADED', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('DEGRADED');
+
+      await service.recordHeartbeat('device-1');
+
+      expect(pairingStateMachineMock.transition).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'HEARTBEAT_RECEIVED' }),
+      );
+    });
+  });
+});

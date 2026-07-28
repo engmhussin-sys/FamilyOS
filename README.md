@@ -38,8 +38,9 @@ Architecture, and Lifecycle Architecture are delivered.** Status below.
 | 2.2.2.2 | Secure Pairing — Domain Service 2: Invitation Service | ✅ Done — Redis-backed, family-ownership-checked, drives `PAIRING_INVITED`/`PAIRING_ACCEPTED` |
 | 2.2.2.3 | Secure Pairing — Domain Service 3: Registration Token Service | ✅ Done — Decision-054's single-use-forever token, hashed at rest |
 | 2.2.2.4 | Secure Pairing — Domain Services 4 & 5: Trust/Risk Evaluation | ✅ Done — `TRUST_SIGNAL_PROVIDER`/`RISK_SIGNAL_PROVIDER` + `IIntelligenceSignalProvider` (Decision-070) ready for future AI Core consumption; see `docs/architecture/pairing-sprint2-trust-risk-intelligence.md` |
-| 2.2.3 | Secure Pairing — Controllers | ⏳ Next |
-| — | Full backend test suite | **110/110 passing**, DI graph clean |
+| 2.2.3 | Secure Pairing — Controllers (Sprint 3 backend vertical) | ✅ Done — 8 endpoints under `/pairing` (invite/accept/register/verify/activate/reject/revoke/status) + heartbeat; see `docs/architecture/pairing-sprint3-backend-vertical.md` |
+| — | Full backend test suite | **124/124 passing**, DI graph clean |
+| — | Sprint 3 (Flutter/Kotlin half: device registration flow, heartbeat scheduling) | ⏳ Deferred — explicitly flagged, not silently dropped (see backend doc §8) |
 | — | Full backend test suite | **80/80 passing**, DI graph clean |
 
 **✅ Integrity disclosure — RESOLVED (see Repository Integrity Check

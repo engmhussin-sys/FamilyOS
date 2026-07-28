@@ -1,0 +1,288 @@
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+
+import { InvitationService } from './invitation.service';
+import { RegistrationTokenService } from './registration-token.service';
+import { PairingStateMachineService } from './pairing-state-machine.service';
+import { TrustEvaluationService } from './trust-evaluation.service';
+import { RiskEvaluationService } from './risk-evaluation.service';
+import {
+  PAIRING_DEVICE_REPOSITORY,
+  type ICreatePairingDeviceInput,
+  type IPairingDeviceRepository,
+} from '../ports/pairing-device.repository.port';
+import type { IInvitationTicket, IRedeemedInvitation } from '../../domain/invitation.types';
+import type { IRegistrationTokenTicket } from '../../domain/registration-token.types';
+import type { IRiskAssessmentResult, IRiskSignalInput } from '../../domain/risk.types';
+import type { TrustLevelValue } from '../../domain/trust.types';
+import type { PairingStateValue } from '../../domain/pairing.types';
+
+// Injected as a token from AuthModule — see pairing-module-boundary.md §2:
+// Pairing consumes TokenService, the one agreed integration point.
+import { TokenService } from '../../../auth/application/services/token.service';
+import type { ITokenPair } from '../../../auth/domain/auth.types';
+
+export interface IDeviceRegistrationResult {
+  deviceId: string;
+  tokens: ITokenPair;
+}
+
+export interface IDeviceVerificationResult {
+  trustLevel: TrustLevelValue;
+  riskAssessment: IRiskAssessmentResult;
+}
+
+export interface IDeviceActivationResult {
+  status: 'ACTIVATED';
+  policyAssignedAt: Date;
+}
+
+export interface IPairingDeviceStatus {
+  pairingState: PairingStateValue | null;
+  trustLevel: TrustLevelValue | null;
+  riskLevel: string;
+  lastSeenAt: Date | null;
+  activationStatus: 'ACTIVATED' | 'NOT_ACTIVATED';
+}
+
+/**
+ * The full pairing vertical, orchestrated. Each method here corresponds
+ * 1:1 to an endpoint in pairing-backend-domain-architecture.md §3 — the
+ * controller (Step 2.2.3/Sprint 3) is a thin HTTP adapter over this
+ * class, following this project's established controller-stays-thin
+ * convention (see every other module's controller/service split).
+ */
+@Injectable()
+export class PairingOrchestratorService {
+  constructor(
+    private readonly invitationService: InvitationService,
+    private readonly registrationTokenService: RegistrationTokenService,
+    private readonly pairingStateMachine: PairingStateMachineService,
+    private readonly trustEvaluationService: TrustEvaluationService,
+    private readonly riskEvaluationService: RiskEvaluationService,
+    @Inject(PAIRING_DEVICE_REPOSITORY)
+    private readonly pairingDeviceRepository: IPairingDeviceRepository,
+    private readonly tokenService: TokenService,
+  ) {}
+
+  invite(childId: string, familyId: string, initiatedByUserId: string): Promise<IInvitationTicket> {
+    return this.invitationService.createInvitation({ childId, familyId, initiatedByUserId });
+  }
+
+  async accept(code: string): Promise<IRegistrationTokenTicket> {
+    const ticket: IRedeemedInvitation = await this.invitationService.redeemInvitation(code);
+    return this.registrationTokenService.issue({ childId: ticket.childId, familyId: ticket.familyId });
+  }
+
+  async registerDevice(
+    childId: string,
+    familyId: string,
+    input: Omit<ICreatePairingDeviceInput, 'childId' | 'familyId'>,
+  ): Promise<IDeviceRegistrationResult> {
+    const device = await this.pairingDeviceRepository.createDevice({ ...input, childId, familyId });
+
+    await this.pairingStateMachine.transition({
+      childId,
+      deviceId: device.id,
+      event: 'DEVICE_REGISTERED',
+      actorType: 'DEVICE',
+    });
+    await this.trustEvaluationService.evaluateAndApply({ deviceId: device.id, childId, stage: 'REGISTERED' });
+
+    const tokens = await this.tokenService.issueTokenPair({
+      subjectId: device.id,
+      actorType: 'DEVICE',
+      familyId,
+    });
+
+    return { deviceId: device.id, tokens };
+  }
+
+  async verify(
+    deviceId: string,
+    input: {
+      attestationChain?: string;
+      riskSignals: IRiskSignalInput;
+    },
+  ): Promise<IDeviceVerificationResult> {
+    const device = await this.getDeviceOrThrow(deviceId);
+
+    // NOTE (honest limitation, flagged not hidden): attestationChain
+    // presence alone is treated as "has valid attestation" — the
+    // cryptographic chain-of-trust verification against Google's root
+    // key (trust-levels-framework.md §3) is NOT implemented in this
+    // sprint. Tracked as a required follow-up before this trust level
+    // can be relied on for anything security-critical.
+    const hasValidAttestation = Boolean(input.attestationChain);
+
+    await this.pairingStateMachine.transition({
+      childId: device.childId,
+      deviceId,
+      event: 'DEVICE_VERIFIED',
+      actorType: 'DEVICE',
+    });
+
+    const trustLevel = await this.trustEvaluationService.evaluateAndApply({
+      deviceId,
+      childId: device.childId,
+      stage: 'VERIFIED',
+      hasValidAttestation,
+    });
+
+    // NOTE (honest limitation, flagged not hidden): riskSignals are
+    // self-reported by the device today — a compromised device could
+    // lie about its own root/emulator status. Independent server-side
+    // verification is out of this sprint's scope (would need Play
+    // Integrity API or similar, a separate follow-up).
+    const riskAssessment = await this.riskEvaluationService.assessAndRecord(deviceId, input.riskSignals);
+
+    await this.pairingStateMachine.transition({
+      childId: device.childId,
+      deviceId,
+      event: 'CAPABILITIES_UPLOADED',
+      actorType: 'DEVICE',
+    });
+
+    return { trustLevel, riskAssessment };
+  }
+
+  async activate(
+    deviceId: string,
+    familyId: string,
+    userId: string,
+    overrideRiskWarning: boolean,
+  ): Promise<IDeviceActivationResult> {
+    const device = await this.getDeviceOrThrowScopedToFamily(deviceId, familyId);
+
+    const latestRisk = await this.riskEvaluationService.getLatestRiskAssessment(deviceId);
+    const isHighRisk = latestRisk?.overallLevel === 'HIGH' || latestRisk?.overallLevel === 'CRITICAL';
+
+    if (isHighRisk && !overrideRiskWarning) {
+      await this.pairingStateMachine.transition({
+        childId: device.childId,
+        deviceId,
+        event: 'ACTIVATION_BLOCKED_HIGH_RISK',
+        actorType: 'SYSTEM',
+      });
+      throw new ConflictException(
+        `Device risk level is ${latestRisk?.overallLevel}. Set overrideRiskWarning to proceed anyway.`,
+      );
+    }
+
+    await this.pairingStateMachine.transition({
+      childId: device.childId,
+      deviceId,
+      event: 'PARENT_CONFIRMED',
+      actorType: 'USER',
+      actorId: userId,
+    });
+
+    // NOTE: real per-child policy assignment (pulling/creating a
+    // ScreenTimePolicy) is a Sprint-4 "Real Parental Control Engine"
+    // concern, per the reviewer's own sprint ordering — this transition
+    // records that policy assignment happened at the pairing-state
+    // level without yet wiring a concrete policy payload.
+    await this.pairingStateMachine.transition({
+      childId: device.childId,
+      deviceId,
+      event: 'POLICY_ASSIGNED',
+      actorType: 'SYSTEM',
+    });
+
+    await this.pairingStateMachine.transition({
+      childId: device.childId,
+      deviceId,
+      event: 'DEVICE_ACTIVATED',
+      actorType: 'SYSTEM',
+    });
+
+    await this.pairingDeviceRepository.activateDevice(deviceId);
+
+    return { status: 'ACTIVATED', policyAssignedAt: new Date() };
+  }
+
+  async reject(deviceId: string, familyId: string, userId: string, reason?: string): Promise<void> {
+    const device = await this.getDeviceOrThrowScopedToFamily(deviceId, familyId);
+    await this.pairingStateMachine.transition({
+      childId: device.childId,
+      deviceId,
+      event: 'PAIRING_REJECTED',
+      actorType: 'USER',
+      actorId: userId,
+      metadata: reason ? { reason } : undefined,
+    });
+  }
+
+  async revoke(deviceId: string, familyId: string, userId: string, reason?: string): Promise<void> {
+    const device = await this.getDeviceOrThrowScopedToFamily(deviceId, familyId);
+    await this.pairingStateMachine.transition({
+      childId: device.childId,
+      deviceId,
+      event: 'DEVICE_REVOKED',
+      actorType: 'USER',
+      actorId: userId,
+      metadata: reason ? { reason } : undefined,
+    });
+    await this.pairingDeviceRepository.revokeDevice(deviceId);
+    await this.tokenService.revokeAllTokensForDevice(deviceId);
+  }
+
+  async getStatus(deviceId: string): Promise<IPairingDeviceStatus> {
+    const device = await this.getDeviceOrThrow(deviceId);
+    const [pairingState, trustLevel, latestRisk] = await Promise.all([
+      this.pairingStateMachine.getCurrentState(device.childId),
+      this.trustEvaluationService.getCurrentTrustLevel(deviceId),
+      this.riskEvaluationService.getLatestRiskAssessment(deviceId),
+    ]);
+
+    return {
+      pairingState,
+      trustLevel,
+      riskLevel: latestRisk?.overallLevel ?? 'UNKNOWN',
+      lastSeenAt: device.lastSeenAt,
+      activationStatus: device.status === 'ACTIVE' ? 'ACTIVATED' : 'NOT_ACTIVATED',
+    };
+  }
+
+  /**
+   * Sprint 3's heartbeat receiver. Deliberately does NOT write a
+   * DevicePairingEvent on every call — only on an actual DEGRADED ->
+   * HEALTHY recovery (lifecycle ADR §10's sampling principle, same
+   * reasoning already applied to Risk Assessment in Sprint 2). A routine
+   * "still alive" ping while already HEALTHY just updates `lastSeenAt`.
+   */
+  async recordHeartbeat(deviceId: string): Promise<void> {
+    const device = await this.getDeviceOrThrow(deviceId);
+    await this.pairingDeviceRepository.touchLastSeen(deviceId);
+
+    const currentState = await this.pairingStateMachine.getCurrentState(device.childId);
+    if (currentState === 'ACTIVATED' || currentState === 'DEGRADED') {
+      await this.pairingStateMachine.transition({
+        childId: device.childId,
+        deviceId,
+        event: 'HEARTBEAT_RECEIVED',
+        actorType: 'DEVICE',
+      });
+    }
+    // If already HEALTHY, no event is written — the state doesn't
+    // change and lastSeenAt (above) is the only signal that needed updating.
+  }
+
+  private async getDeviceOrThrow(deviceId: string) {
+    const device = await this.pairingDeviceRepository.findById(deviceId);
+    if (!device) {
+      throw new NotFoundException(`Device "${deviceId}" was not found.`);
+    }
+    return device;
+  }
+
+  private async getDeviceOrThrowScopedToFamily(deviceId: string, familyId: string) {
+    const device = await this.getDeviceOrThrow(deviceId);
+    if (device.familyId !== familyId) {
+      // Same 404-not-403 principle as ChildNotFoundException
+      // (children-module.md §2) — don't reveal a device exists in
+      // another family.
+      throw new NotFoundException(`Device "${deviceId}" was not found.`);
+    }
+    return device;
+  }
+}

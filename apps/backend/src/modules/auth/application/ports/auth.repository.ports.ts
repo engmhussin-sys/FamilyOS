@@ -41,6 +41,11 @@ export interface IRefreshTokenRepository {
   findActiveByTokenHash(tokenHash: string): Promise<RefreshToken | null>;
   revokeById(id: string, revokedAt: Date): Promise<void>;
   revokeAllForUser(userId: string, revokedAt: Date): Promise<void>;
+  /** Sprint 3 addition — needed by PairingModule's /pairing/revoke to
+   * kill a specific device's session without touching any USER's other
+   * sessions. Mirrors revokeAllForUser's shape exactly, scoped to
+   * deviceId instead of userId. */
+  revokeAllForDevice(deviceId: string, revokedAt: Date): Promise<void>;
 }
 
 export interface ICreateChildDeviceInput {

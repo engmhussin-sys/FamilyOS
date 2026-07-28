@@ -134,6 +134,17 @@ export class TokenService {
     }
   }
 
+  /**
+   * Sprint 3 addition — the one new public surface TokenService exposes
+   * specifically for PairingModule's /pairing/revoke. Kept as a named
+   * method (not exposing the repository itself) so Pairing depends on
+   * TokenService's stable public contract, same as it already does for
+   * issueTokenPair — not on Auth's internal repository shape.
+   */
+  async revokeAllTokensForDevice(deviceId: string): Promise<void> {
+    await this.refreshTokenRepository.revokeAllForDevice(deviceId, new Date());
+  }
+
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
   }

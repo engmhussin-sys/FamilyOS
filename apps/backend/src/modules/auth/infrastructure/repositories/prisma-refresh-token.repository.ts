@@ -45,4 +45,11 @@ export class PrismaRefreshTokenRepository implements IRefreshTokenRepository {
       data: { revokedAt },
     });
   }
+
+  async revokeAllForDevice(deviceId: string, revokedAt: Date): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: { deviceId, revokedAt: null },
+      data: { revokedAt },
+    });
+  }
 }
