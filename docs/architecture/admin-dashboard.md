@@ -98,10 +98,13 @@ literal data-to-be-typed-elsewhere in this MVP).
 ## 5. Known follow-ups
 
 1. **Refresh-token storage hardening** — see §3.
-2. **`PairingCard`'s `childId` field is a manual text input**, not a
-   dropdown — there is no Children API yet to populate one from. Clearly
-   labeled in the UI and code (`TODO(follow-up)` comment in
-   `PairingCard.tsx`) as temporary, not silently shipped as if final.
+2. ~~`PairingCard`'s `childId` field is a manual text input.~~ **Resolved** —
+   now a `<select>` populated from a real `GET /children` query
+   (`features/children/`), defaulting to the first child for the common
+   single-child case. A new `ChildrenListCard` (with an inline "add child"
+   form) was added to the dashboard home page as part of the same fix,
+   since a working children picker needed somewhere to actually create
+   children first.
 3. **No `/auth/me` endpoint on the backend.** The dashboard currently
    restores the user's profile (name/email/role) from a `sessionStorage`
    cache written at login time, rather than re-fetching it fresh after a
@@ -113,7 +116,7 @@ literal data-to-be-typed-elsewhere in this MVP).
    own follow-up rather than bolted on here.
 5. **No Children/Screen-Time/Reports UI yet** — see §1.
 
-## 6. Verification performed in this session
+## 6. Verification performed in session 1
 
 - `npx tsc --noEmit` → 0 errors.
 - `npx vitest run` → **10/10 tests passed** (httpClient refresh-interceptor:
@@ -123,3 +126,15 @@ literal data-to-be-typed-elsewhere in this MVP).
   orchestration, logout clears session even when the server call fails).
 - `npx vite build` → succeeded, produced a working production bundle
   (`dist/`, ~68 KB gzipped JS).
+
+## 7. Session 2 update: Children feature + PairingCard fix
+
+Added `features/children/` (list + create, real `GET`/`POST /children`
+calls) and rewired `PairingCard` to use it — see §5 item 2 (now resolved).
+Also added `shared/lib/age.ts` (a small, independently tested
+birthday-boundary-aware age calculator) to display each child's age in
+`ChildrenListCard`.
+
+Verification for this session: `npx tsc --noEmit` → 0 errors;
+`npx vitest run` → **14/14 tests passed** (10 from session 1 + 4 new for
+`calculateAge`'s leap/boundary cases); `npx vite build` → succeeded.

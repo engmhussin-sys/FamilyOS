@@ -1,5 +1,6 @@
 import { useAuthStore } from '../../auth/store/authStore';
 import { Card } from '../../../shared/components/Card';
+import { ChildrenListCard } from '../../children/components/ChildrenListCard';
 import { PairingCard } from '../../pairing/components/PairingCard';
 
 export function DashboardHomePage() {
@@ -23,12 +24,12 @@ export function DashboardHomePage() {
         </dl>
       </Card>
 
+      <ChildrenListCard />
       <PairingCard />
 
       <Card className="border-dashed bg-transparent shadow-none">
         <p className="text-sm text-ink-soft">
-          إدارة الأطفال، الوقت الرقمي، والتقارير الذكية ستظهر هنا بمجرد اكتمال الوحدات
-          البرمجية الخاصة بها.
+          الوقت الرقمي والتقارير الذكية ستظهر هنا بمجرد اكتمال الوحدات البرمجية الخاصة بها.
         </p>
       </Card>
     </div>

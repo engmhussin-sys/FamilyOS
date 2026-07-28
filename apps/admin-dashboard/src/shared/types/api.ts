@@ -5,6 +5,18 @@
  * these from the backend's OpenAPI/Prisma schema once one exists.
  */
 
+export interface Child {
+  id: string;
+  familyId: string;
+  firstName: string;
+  lastName: string | null;
+  dateOfBirth: string;
+  gender: string | null;
+  avatarUrl: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
 export interface AuthenticatedUser {
   id: string;
   email: string;

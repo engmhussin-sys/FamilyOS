@@ -71,11 +71,8 @@ stand-ins for this test specifically; live-infra checks stay in
 
 ## 5. Known follow-ups
 
-1. **Admin Dashboard's `PairingCard` still has a manual `childId` text
-   field** (see `docs/architecture/admin-dashboard.md` §5). This module
-   now makes the real fix straightforward: add `GET /children` to the
-   dashboard's API layer and swap the text field for a `<select>`. Not
-   done in this step to keep it backend-scoped and reviewable on its own.
+1. ~~Admin Dashboard's `PairingCard` still has a manual `childId` text
+   field.~~ **Resolved** — see `docs/architecture/admin-dashboard.md` §7.
 2. **No `PATCH /children/:id/avatar` upload endpoint** — `avatarUrl` is
    currently just a validated URL string field, not a file upload. File
    upload (S3/equivalent) is a Phase 1 follow-up once storage
