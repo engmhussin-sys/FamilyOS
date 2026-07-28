@@ -20,6 +20,8 @@ import { RejectDto } from '../dto/reject.dto';
 import { RevokeDto } from '../dto/revoke.dto';
 import { RegistrationTokenGuard } from '../guards/registration-token.guard';
 import { RegistrationContext } from '../decorators/registration-context.decorator';
+import { ReportCapabilitiesDto } from '../dto/report-capabilities.dto';
+import { HeartbeatDto } from '../dto/heartbeat.dto';
 import { JwtAuthGuard, DeviceJwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
@@ -105,7 +107,29 @@ export class PairingController {
   @UseGuards(DeviceJwtAuthGuard)
   @Throttle({ default: { limit: 120, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
-  async heartbeat(@CurrentUser() device: IJwtPayload): Promise<void> {
-    await this.pairingOrchestrator.recordHeartbeat(device.sub);
+  async heartbeat(@Body() dto: HeartbeatDto, @CurrentUser() device: IJwtPayload): Promise<void> {
+    await this.pairingOrchestrator.recordHeartbeat(device.sub, dto);
+  }
+
+  @Post('device/capabilities')
+  @UseGuards(DeviceJwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async reportCapabilities(
+    @Body() dto: ReportCapabilitiesDto,
+    @CurrentUser() device: IJwtPayload,
+  ): Promise<void> {
+    await this.pairingOrchestrator.reportCapabilities(device.sub, dto);
+  }
+
+  @Get('device/policy')
+  @UseGuards(DeviceJwtAuthGuard)
+  getPolicySync(@CurrentUser() device: IJwtPayload) {
+    return this.pairingOrchestrator.getPolicySync(device.sub);
+  }
+
+  @Get('devices')
+  @UseGuards(JwtAuthGuard)
+  listDevices(@CurrentUser() user: IJwtPayload) {
+    return this.pairingOrchestrator.listFamilyDevices(user.familyId!);
   }
 }

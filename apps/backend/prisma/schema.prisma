@@ -379,6 +379,17 @@ model Device {
   /// not cross-app tracking.
   deviceFingerprint      String?    @map("device_fingerprint")
 
+  /// Sprint 4 — Full Capability Engine's cached report (Decision-019:
+  /// current-state cache, not history — same pattern as trustLevel
+  /// above, not a new append-only table).
+  capabilityProfile      Json?      @map("capability_profile")
+  capabilityProfileHash  String?    @map("capability_profile_hash")
+  /// Sprint 4 — latest heartbeat telemetry (battery/storage/connectivity),
+  /// cached current-state like capabilityProfile above — history isn't
+  /// needed for this MVP (a full DeviceHealthScore history table is a
+  /// deferred follow-up, not built here to avoid speculative schema).
+  lastTelemetry          Json?      @map("last_telemetry")
+
   createdAt          DateTime        @default(now()) @map("created_at")
   updatedAt          DateTime        @updatedAt @map("updated_at")
   deletedAt          DateTime?       @map("deleted_at")

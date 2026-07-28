@@ -16,4 +16,26 @@ object AgentChannel {
     const val METHOD_GET_ANDROID_SDK_INT = "getAndroidSdkInt"
     /** Sprint 3 — see DeviceIdentityKeyManager. */
     const val METHOD_GET_DEVICE_PUBLIC_KEY = "getDevicePublicKey"
+
+    // --- Sprint 4: Permission Manager ---
+    const val METHOD_IS_USAGE_ACCESS_GRANTED = "isUsageAccessGranted"
+    const val METHOD_OPEN_USAGE_ACCESS_SETTINGS = "openUsageAccessSettings"
+    const val METHOD_IS_ACCESSIBILITY_SERVICE_ENABLED = "isAccessibilityServiceEnabled"
+    const val METHOD_OPEN_ACCESSIBILITY_SETTINGS = "openAccessibilitySettings"
+    const val METHOD_HAS_OVERLAY_PERMISSION = "hasOverlayPermission"
+    const val METHOD_REQUEST_OVERLAY_PERMISSION = "requestOverlayPermission"
+    const val METHOD_IS_BATTERY_OPTIMIZATION_EXEMPTED = "isBatteryOptimizationExempted"
+    const val METHOD_REQUEST_BATTERY_OPTIMIZATION_EXEMPTION = "requestBatteryOptimizationExemption"
+    const val METHOD_ARE_NOTIFICATIONS_GRANTED = "areNotificationsGranted"
+
+    // --- Sprint 4: Device Capability Engine ---
+    const val METHOD_GET_CAPABILITY_REPORT = "getCapabilityReport"
+
+    /** Placeholder component name — the real AccessibilityService class
+     * doesn't exist yet (this project's explicitly flagged highest-risk,
+     * not-yet-built piece). Using this placeholder means
+     * isAccessibilityServiceEnabled/getCapabilityReport correctly report
+     * "false" today rather than referencing a nonexistent class. */
+    const val ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER =
+        "com.aifamilycoach.child_app/.core.ChildGuardAccessibilityService"
 }

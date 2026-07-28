@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { ChildrenModule } from '../children/children.module';
 import { AuthModule } from '../auth/auth.module';
+import { ScreenTimeModule } from '../screen-time/screen-time.module';
 import { PairingController } from './presentation/controllers/pairing.controller';
 import { RegistrationTokenGuard } from './presentation/guards/registration-token.guard';
 import { PairingStateMachineService } from './application/services/pairing-state-machine.service';
@@ -27,7 +28,7 @@ import { PAIRING_DEVICE_REPOSITORY } from './application/ports/pairing-device.re
  * DeviceJwtAuthGuard available where the controller references them.
  */
 @Module({
-  imports: [ChildrenModule, AuthModule],
+  imports: [ChildrenModule, AuthModule, ScreenTimeModule],
   controllers: [PairingController],
   providers: [
     PairingStateMachineService,

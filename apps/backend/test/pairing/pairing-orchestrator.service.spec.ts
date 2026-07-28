@@ -8,6 +8,7 @@ import { TrustEvaluationService } from '../../src/modules/pairing/application/se
 import { RiskEvaluationService } from '../../src/modules/pairing/application/services/risk-evaluation.service';
 import { PAIRING_DEVICE_REPOSITORY } from '../../src/modules/pairing/application/ports/pairing-device.repository.port';
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
+import { ScreenTimeService } from '../../src/modules/screen-time/application/services/screen-time.service';
 
 const NO_RISK_SIGNALS = {
   isEmulator: false,
@@ -33,8 +34,12 @@ describe('PairingOrchestratorService', () => {
     activateDevice: jest.fn(),
     revokeDevice: jest.fn(),
     touchLastSeen: jest.fn(),
+    updateCapabilityProfile: jest.fn(),
+    findAllByFamily: jest.fn(),
+    updateTelemetry: jest.fn(),
   };
   const tokenServiceMock = { issueTokenPair: jest.fn(), revokeAllTokensForDevice: jest.fn() };
+  const screenTimeServiceMock = { getPolicy: jest.fn() };
 
   let service: PairingOrchestratorService;
 
@@ -50,6 +55,7 @@ describe('PairingOrchestratorService', () => {
         { provide: RiskEvaluationService, useValue: riskEvaluationServiceMock },
         { provide: PAIRING_DEVICE_REPOSITORY, useValue: pairingDeviceRepositoryMock },
         { provide: TokenService, useValue: tokenServiceMock },
+        { provide: ScreenTimeService, useValue: screenTimeServiceMock },
       ],
     }).compile();
     service = moduleRef.get(PairingOrchestratorService);
@@ -278,6 +284,114 @@ describe('PairingOrchestratorService', () => {
       expect(pairingStateMachineMock.transition).toHaveBeenCalledWith(
         expect.objectContaining({ event: 'HEARTBEAT_RECEIVED' }),
       );
+    });
+  });
+
+  describe('reportCapabilities', () => {
+    it('stores the capability report and hash via the repository, caching current state', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      const report = {
+        manufacturer: 'Google', model: 'Pixel 8', sdkInt: 34,
+        usageAccessGranted: true, accessibilityEnabled: false, overlayGranted: true,
+        batteryOptimizationExempted: true, notificationsGranted: true, profileHash: 'hash-1',
+      };
+
+      await service.reportCapabilities('device-1', report);
+
+      expect(pairingDeviceRepositoryMock.updateCapabilityProfile).toHaveBeenCalledWith(
+        'device-1', report, 'hash-1',
+      );
+    });
+
+    it('throws NotFoundException for an unknown device', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue(null);
+      await expect(
+        service.reportCapabilities('device-1', {} as any),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('getPolicySync', () => {
+    it('returns real policy fields from ScreenTimeService when a policy exists', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      screenTimeServiceMock.getPolicy.mockResolvedValue({
+        id: 'policy-1', dailyLimitMinutes: 90, bedtimeStart: '21:00', bedtimeEnd: '07:00', focusModeEnabled: true,
+      });
+
+      const result = await service.getPolicySync('device-1');
+
+      expect(screenTimeServiceMock.getPolicy).toHaveBeenCalledWith('child-1', 'family-1');
+      expect(result.dailyLimitMinutes).toBe(90);
+      expect(result.blockedPackages).toEqual([]); // honest — no AppBlockRule service exists yet
+    });
+
+    it('returns sensible defaults when no policy has been set yet', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      screenTimeServiceMock.getPolicy.mockResolvedValue(null);
+
+      const result = await service.getPolicySync('device-1');
+
+      expect(result.dailyLimitMinutes).toBeNull();
+      expect(result.policyVersion).toBe('none');
+    });
+  });
+
+  describe('recordHeartbeat with telemetry (Sprint 4 extension)', () => {
+    it('persists telemetry via updateTelemetry when provided', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('HEALTHY');
+
+      await service.recordHeartbeat('device-1', { batteryPercent: 80, isConnected: true });
+
+      expect(pairingDeviceRepositoryMock.updateTelemetry).toHaveBeenCalledWith('device-1', {
+        batteryPercent: 80,
+        isConnected: true,
+      });
+    });
+
+    it('does not call updateTelemetry when no telemetry is provided', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('HEALTHY');
+
+      await service.recordHeartbeat('device-1');
+
+      expect(pairingDeviceRepositoryMock.updateTelemetry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listFamilyDevices', () => {
+    it('aggregates trust, risk, and capability data per device', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
+        {
+          id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE',
+          lastSeenAt: new Date('2026-07-28T00:00:00Z'), capabilityProfile: { manufacturer: 'Google' },
+          capabilityProfileHash: 'hash-1', childFirstName: 'Yusuf', platform: 'ANDROID',
+        },
+      ]);
+      trustEvaluationServiceMock.getCurrentTrustLevel.mockResolvedValue('L2_VERIFIED');
+      riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue({ overallLevel: 'LOW' });
+
+      const result = await service.listFamilyDevices('family-1');
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: 'device-1',
+        childFirstName: 'Yusuf',
+        trustLevel: 'L2_VERIFIED',
+        riskLevel: 'LOW',
+        capabilities: { manufacturer: 'Google' },
+      });
     });
   });
 });

@@ -20,6 +20,13 @@ import type { PairingStateValue } from '../../domain/pairing.types';
 // Pairing consumes TokenService, the one agreed integration point.
 import { TokenService } from '../../../auth/application/services/token.service';
 import type { ITokenPair } from '../../../auth/domain/auth.types';
+import { ScreenTimeService } from '../../../screen-time/application/services/screen-time.service';
+import type {
+  IDeviceCapabilityReport,
+  IDeviceSummary,
+  IHeartbeatTelemetryInput,
+  IPolicySyncResponse,
+} from '../../domain/device-status.types';
 
 export interface IDeviceRegistrationResult {
   deviceId: string;
@@ -62,6 +69,7 @@ export class PairingOrchestratorService {
     @Inject(PAIRING_DEVICE_REPOSITORY)
     private readonly pairingDeviceRepository: IPairingDeviceRepository,
     private readonly tokenService: TokenService,
+    private readonly screenTimeService: ScreenTimeService,
   ) {}
 
   invite(childId: string, familyId: string, initiatedByUserId: string): Promise<IInvitationTicket> {
@@ -244,15 +252,21 @@ export class PairingOrchestratorService {
   }
 
   /**
-   * Sprint 3's heartbeat receiver. Deliberately does NOT write a
-   * DevicePairingEvent on every call — only on an actual DEGRADED ->
-   * HEALTHY recovery (lifecycle ADR §10's sampling principle, same
-   * reasoning already applied to Risk Assessment in Sprint 2). A routine
-   * "still alive" ping while already HEALTHY just updates `lastSeenAt`.
+   * Sprint 3's heartbeat receiver, extended in Sprint 4 to accept
+   * optional telemetry (Decision-013's Heartbeat/Battery/Storage/
+   * Connectivity list). Still does NOT write a DevicePairingEvent on
+   * every call — only on an actual DEGRADED -> HEALTHY recovery
+   * (lifecycle ADR §10's sampling principle). Telemetry is cached
+   * current-state (Device.lastTelemetry), same reasoning as
+   * capabilityProfile below — no per-heartbeat history table.
    */
-  async recordHeartbeat(deviceId: string): Promise<void> {
+  async recordHeartbeat(deviceId: string, telemetry?: IHeartbeatTelemetryInput): Promise<void> {
     const device = await this.getDeviceOrThrow(deviceId);
     await this.pairingDeviceRepository.touchLastSeen(deviceId);
+
+    if (telemetry) {
+      await this.pairingDeviceRepository.updateTelemetry(deviceId, telemetry as Record<string, unknown>);
+    }
 
     const currentState = await this.pairingStateMachine.getCurrentState(device.childId);
     if (currentState === 'ACTIVATED' || currentState === 'DEGRADED') {
@@ -264,7 +278,76 @@ export class PairingOrchestratorService {
       });
     }
     // If already HEALTHY, no event is written — the state doesn't
-    // change and lastSeenAt (above) is the only signal that needed updating.
+    // change and lastSeenAt/telemetry (above) are the only signals that
+    // needed updating.
+  }
+
+  /**
+   * Sprint 4 — the Full Capability Engine's report endpoint. Cached
+   * (Decision-019): only updates the hash/profile, does not append a
+   * history row — `capabilityProfile`/`capabilityProfileHash` are
+   * current-state fields on `Device`, same pattern as `trustLevel`.
+   */
+  async reportCapabilities(deviceId: string, report: IDeviceCapabilityReport): Promise<void> {
+    await this.getDeviceOrThrow(deviceId);
+    await this.pairingDeviceRepository.updateCapabilityProfile(
+      deviceId,
+      report as unknown as Record<string, unknown>,
+      report.profileHash,
+    );
+  }
+
+  /**
+   * Sprint 4 — Policy Sync. Reuses ScreenTimeService directly (already
+   * built, Phase 1) rather than duplicating policy logic in Pairing —
+   * pairing-module-boundary.md's "Pairing triggers Screen Time, does not
+   * own its logic" rule, now exercised for a read instead of the
+   * write-trigger it was originally described for.
+   *
+   * NOTE (honest limitation, flagged not hidden): `blockedPackages` is
+   * always `[]` today. `AppBlockRule` exists in the schema but has no
+   * service/API built for it yet — returning fabricated data here would
+   * be worse than an honestly empty list. Tracked as a required
+   * follow-up (Sprint 5's "Parental Control Engine," per the reviewer's
+   * own sprint plan), not silently faked.
+   */
+  async getPolicySync(deviceId: string): Promise<IPolicySyncResponse> {
+    const device = await this.getDeviceOrThrow(deviceId);
+    const policy = await this.screenTimeService.getPolicy(device.childId, device.familyId);
+
+    return {
+      childId: device.childId,
+      policyVersion: policy?.id ?? 'none',
+      dailyLimitMinutes: policy?.dailyLimitMinutes ?? null,
+      bedtimeStart: policy?.bedtimeStart ?? null,
+      bedtimeEnd: policy?.bedtimeEnd ?? null,
+      focusModeEnabled: policy?.focusModeEnabled ?? false,
+      blockedPackages: [],
+    };
+  }
+
+  /** Sprint 4 — the Dashboard's live device list, per family. */
+  async listFamilyDevices(familyId: string): Promise<IDeviceSummary[]> {
+    const devices = await this.pairingDeviceRepository.findAllByFamily(familyId);
+
+    return Promise.all(
+      devices.map(async (device) => {
+        const [riskAssessment] = await Promise.all([
+          this.riskEvaluationService.getLatestRiskAssessment(device.id),
+        ]);
+        return {
+          id: device.id,
+          childId: device.childId,
+          childFirstName: device.childFirstName,
+          platform: device.platform,
+          status: device.status,
+          trustLevel: await this.trustEvaluationService.getCurrentTrustLevel(device.id),
+          riskLevel: riskAssessment?.overallLevel ?? 'UNKNOWN',
+          lastSeenAt: device.lastSeenAt,
+          capabilities: device.capabilityProfile as unknown as IDeviceCapabilityReport | null,
+        };
+      }),
+    );
   }
 
   private async getDeviceOrThrow(deviceId: string) {

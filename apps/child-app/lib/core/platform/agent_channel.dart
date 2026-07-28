@@ -28,4 +28,23 @@ abstract class AgentPlatformChannel {
   /// call if it doesn't exist yet. See
   /// android/.../core/DeviceIdentityKeyManager.kt.
   Future<String> getDevicePublicKey();
+
+  // --- Sprint 4: Permission Manager ---
+  Future<bool> isUsageAccessGranted();
+  Future<void> openUsageAccessSettings();
+  Future<bool> isAccessibilityServiceEnabled();
+  Future<void> openAccessibilitySettings();
+  Future<bool> hasOverlayPermission();
+  Future<void> requestOverlayPermission();
+  Future<bool> isBatteryOptimizationExempted();
+  Future<void> requestBatteryOptimizationExemption();
+  Future<bool> areNotificationsGranted();
+
+  // --- Sprint 4: Device Capability Engine ---
+  /// Returns the raw field map exactly matching the backend's
+  /// ReportCapabilitiesDto shape — kept as a Map here (not a typed
+  /// class) since this is the platform-channel boundary; the typed
+  /// `DeviceCapabilityReport` model lives in
+  /// features/device_status/domain, one layer up.
+  Future<Map<Object?, Object?>> getCapabilityReport();
 }

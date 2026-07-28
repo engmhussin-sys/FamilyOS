@@ -17,6 +17,13 @@ export interface IPairingDeviceRecord {
   familyId: string;
   status: string;
   lastSeenAt: Date | null;
+  capabilityProfile: Record<string, unknown> | null;
+  capabilityProfileHash: string | null;
+}
+
+export interface IPairingDeviceWithChild extends IPairingDeviceRecord {
+  childFirstName: string;
+  platform: string;
 }
 
 /**
@@ -42,4 +49,17 @@ export interface IPairingDeviceRepository {
    * time; only actual state transitions — DEGRADED -> HEALTHY — get an
    * event, via PairingStateMachineService). */
   touchLastSeen(deviceId: string): Promise<void>;
+  /** Sprint 4 — stores the Full Capability Engine's report, cached
+   * (Decision-019), replacing whatever was there before — this is
+   * current state, not history. */
+  updateCapabilityProfile(
+    deviceId: string,
+    profile: Record<string, unknown>,
+    profileHash: string,
+  ): Promise<void>;
+  /** Sprint 4 — the Dashboard's device-list query. Family-scoped by the
+   * caller (ownership already established via JwtAuthGuard's familyId). */
+  findAllByFamily(familyId: string): Promise<IPairingDeviceWithChild[]>;
+  /** Sprint 4 — cached heartbeat telemetry (current state, not history). */
+  updateTelemetry(deviceId: string, telemetry: Record<string, unknown>): Promise<void>;
 }

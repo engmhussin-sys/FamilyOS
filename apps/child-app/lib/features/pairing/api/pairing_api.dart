@@ -54,7 +54,31 @@ class PairingApi {
 
   /// Fire-and-forget from the caller's perspective — HeartbeatService
   /// owns retry/failure handling, not this method.
-  Future<void> heartbeat() async {
-    await _apiClient.post('/pairing/device/heartbeat');
+  Future<void> heartbeat({int? batteryPercent, bool? isConnected}) async {
+    await _apiClient.post('/pairing/device/heartbeat', body: {
+      if (batteryPercent != null) 'batteryPercent': batteryPercent,
+      if (isConnected != null) 'isConnected': isConnected,
+    });
+  }
+
+  /// Sprint 4 — sends the Full Capability Engine's report. Field names
+  /// match report-capabilities.dto.ts exactly.
+  Future<void> reportCapabilities(Map<Object?, Object?> report) async {
+    await _apiClient.post('/pairing/device/capabilities', body: {
+      'manufacturer': report['manufacturer'],
+      'model': report['model'],
+      'sdkInt': report['sdkInt'],
+      'usageAccessGranted': report['usageAccessGranted'],
+      'accessibilityEnabled': report['accessibilityEnabled'],
+      'overlayGranted': report['overlayGranted'],
+      'batteryOptimizationExempted': report['batteryOptimizationExempted'],
+      'notificationsGranted': report['notificationsGranted'],
+      'profileHash': report['profileHash'],
+    });
+  }
+
+  /// Sprint 4 — Policy Sync.
+  Future<Map<String, dynamic>> getPolicy() async {
+    return _apiClient.get('/pairing/device/policy');
   }
 }

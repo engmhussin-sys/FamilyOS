@@ -15,20 +15,27 @@ class AgentChannelConstants {
   /// Sprint 3.
   static const String methodGetDevicePublicKey = 'getDevicePublicKey';
 
-  // --- Methods reserved for future steps — NOT implemented on the native
-  // side yet. Listed here so the full eventual contract is visible in one
-  // place, even though calling any of these today throws
-  // AgentCapabilityNotImplementedException. Each will move into the
-  // "implemented" section above as its step lands:
-  //   Step 4  (Capability Engine):  getDeviceCapabilityProfile
-  //   Step 5  (Permission Manager): isAccessibilityServiceEnabled,
-  //                                 isUsageAccessGranted,
-  //                                 hasOverlayPermission,
-  //                                 requestOverlayPermission,
-  //                                 openAccessibilitySettings,
-  //                                 openUsageAccessSettings,
-  //                                 requestBatteryOptimizationExemption
-  //   Step 6  (Foreground Service): startAgentForegroundService,
-  //                                 stopAgentForegroundService
-  //   Step 9  (Anti-Tamper):        getTamperSignals
+  // --- Sprint 4: Permission Manager ---
+  static const String methodIsUsageAccessGranted = 'isUsageAccessGranted';
+  static const String methodOpenUsageAccessSettings = 'openUsageAccessSettings';
+  static const String methodIsAccessibilityServiceEnabled = 'isAccessibilityServiceEnabled';
+  static const String methodOpenAccessibilitySettings = 'openAccessibilitySettings';
+  static const String methodHasOverlayPermission = 'hasOverlayPermission';
+  static const String methodRequestOverlayPermission = 'requestOverlayPermission';
+  static const String methodIsBatteryOptimizationExempted = 'isBatteryOptimizationExempted';
+  static const String methodRequestBatteryOptimizationExemption =
+      'requestBatteryOptimizationExemption';
+  static const String methodAreNotificationsGranted = 'areNotificationsGranted';
+
+  // --- Sprint 4: Device Capability Engine ---
+  static const String methodGetCapabilityReport = 'getCapabilityReport';
+
+  // --- Methods still reserved for future steps — NOT implemented on the
+  // native side yet. Calling any of these today throws
+  // AgentCapabilityNotImplementedException:
+  //   Foreground Service (Sprint 4, explicitly deferred — see
+  //     docs/architecture/sprint4-android-native-layer.md):
+  //     startAgentForegroundService, stopAgentForegroundService
+  //   Anti-Tamper (Step 9, unscheduled in the current Sprint order):
+  //     getTamperSignals
 }

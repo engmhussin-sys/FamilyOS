@@ -25,6 +25,76 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     return _invoke<String>(AgentChannelConstants.methodGetDevicePublicKey);
   }
 
+  // --- Sprint 4: Permission Manager ---
+
+  @override
+  Future<bool> isUsageAccessGranted() async {
+    return _invoke<bool>(AgentChannelConstants.methodIsUsageAccessGranted);
+  }
+
+  @override
+  Future<void> openUsageAccessSettings() async {
+    await _invokeVoid(AgentChannelConstants.methodOpenUsageAccessSettings);
+  }
+
+  @override
+  Future<bool> isAccessibilityServiceEnabled() async {
+    return _invoke<bool>(AgentChannelConstants.methodIsAccessibilityServiceEnabled);
+  }
+
+  @override
+  Future<void> openAccessibilitySettings() async {
+    await _invokeVoid(AgentChannelConstants.methodOpenAccessibilitySettings);
+  }
+
+  @override
+  Future<bool> hasOverlayPermission() async {
+    return _invoke<bool>(AgentChannelConstants.methodHasOverlayPermission);
+  }
+
+  @override
+  Future<void> requestOverlayPermission() async {
+    await _invokeVoid(AgentChannelConstants.methodRequestOverlayPermission);
+  }
+
+  @override
+  Future<bool> isBatteryOptimizationExempted() async {
+    return _invoke<bool>(AgentChannelConstants.methodIsBatteryOptimizationExempted);
+  }
+
+  @override
+  Future<void> requestBatteryOptimizationExemption() async {
+    await _invokeVoid(AgentChannelConstants.methodRequestBatteryOptimizationExemption);
+  }
+
+  @override
+  Future<bool> areNotificationsGranted() async {
+    return _invoke<bool>(AgentChannelConstants.methodAreNotificationsGranted);
+  }
+
+  // --- Sprint 4: Device Capability Engine ---
+
+  @override
+  Future<Map<Object?, Object?>> getCapabilityReport() async {
+    return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetCapabilityReport);
+  }
+
+  /// Void-returning calls still go through the same MissingPluginException/
+  /// NOT_IMPLEMENTED handling as `_invoke` — factored out since `void`
+  /// calls don't have a meaningful generic return type to check for null.
+  Future<void> _invokeVoid(String method) async {
+    try {
+      await _channel.invokeMethod<void>(method);
+    } on MissingPluginException {
+      throw AgentCapabilityNotImplementedException(method);
+    } on PlatformException catch (e) {
+      if (e.code == 'NOT_IMPLEMENTED') {
+        throw AgentCapabilityNotImplementedException(method);
+      }
+      rethrow;
+    }
+  }
+
   Future<T> _invoke<T>(String method, [Map<String, dynamic>? args]) async {
     try {
       final result = await _channel.invokeMethod<T>(method, args);

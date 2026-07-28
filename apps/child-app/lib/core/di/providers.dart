@@ -9,6 +9,8 @@ import '../storage/secure_token_storage.dart';
 import '../../features/pairing/api/pairing_api.dart';
 import '../../features/pairing/application/device_registration_service.dart';
 import '../../features/pairing/application/heartbeat_service.dart';
+import '../../features/device_status/application/capability_reporting_service.dart';
+import '../../plugins/permissions/application/permission_status_service.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -62,4 +64,17 @@ final heartbeatServiceProvider = Provider<HeartbeatService>((ref) {
   final service = HeartbeatService(ref.watch(pairingApiProvider));
   ref.onDispose(service.stop);
   return service;
+});
+
+// --- Sprint 4: Permissions + Capabilities ---
+
+final permissionStatusServiceProvider = Provider<PermissionStatusService>((ref) {
+  return PermissionStatusService(ref.watch(agentPlatformChannelProvider));
+});
+
+final capabilityReportingServiceProvider = Provider<CapabilityReportingService>((ref) {
+  return CapabilityReportingService(
+    ref.watch(agentPlatformChannelProvider),
+    ref.watch(pairingApiProvider),
+  );
 });

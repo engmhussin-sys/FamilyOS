@@ -15,7 +15,7 @@ alerts, not raw surveillance data).
 | 1 — Project Foundation & Core Infrastructure | ✅ |
 | 2 — AI Core + Trust & Risk Foundation | ✅ |
 | 3 — Device Pairing & Child Agent Foundation | ✅ Closed — backend vertical (`pairing-sprint3-backend-vertical.md`) + Flutter vertical (`pairing-sprint3-flutter-vertical.md`) |
-| 4 — Real Child Agent Enforcement (Android Native Layer) | ⏳ Next |
+| 4 — Real Child Agent Enforcement (Android Native Layer) | 🔄 Partial — Backend (Policy Sync/Capability Reporting/Telemetry, 131/131 tests) + Permission Manager + Device Capability Engine done; AccessibilityService/Foreground Service/Boot Receiver/Overlay/Policy Enforcement deliberately deferred (security decision, see `docs/architecture/sprint4-partial-backend-permissions-capabilities.md` §4); Dashboard not started |
 | 5 — Parental Control Engine | ⏳ |
 | 6 — AI Behavioral & Digital Safety Engine | ⏳ |
 | 7 — Health & Habit Coach | ⏳ |
