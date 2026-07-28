@@ -32,8 +32,8 @@ Architecture, and Lifecycle Architecture are delivered.** Status below.
 | — | Plugin Architecture (Decision-018) | ✅ Done — `lib/plugins/*` folder structure + `AgentPlugin` base |
 | — | Lifecycle Architecture (10-question ADR) | ✅ Done — `docs/architecture/child-agent-lifecycle.md` |
 | 1 | Core Architecture | ✅ Done — `apps/child-app/` (⚠️ not compiled/tested — see step doc) |
-| 2 | Secure Pairing — Step 2.1 (Backend Domain Architecture) | ✅ Done — `docs/architecture/pairing-backend-domain-architecture.md` (architecture only, no code yet) |
-| 2.2 | Secure Pairing — Backend Implementation | ⏳ Next (pending review of 2.1) |
+| 2 | Secure Pairing — Step 2.1 (Backend Domain Architecture + Module Boundary) | ✅ Done — `docs/architecture/pairing-backend-domain-architecture.md`, `docs/architecture/pairing-module-boundary.md` (Decisions 052–057 incorporated; still architecture only, no code) |
+| 2.2 | Secure Pairing — Backend Implementation (DB Entities → Domain Services → Controllers → Guards → Audit → Tests) | ⏳ Next |
 
 **✅ Integrity disclosure — RESOLVED (see Repository Integrity Check
 Report, approved as Decision-050/051):** the concern below was

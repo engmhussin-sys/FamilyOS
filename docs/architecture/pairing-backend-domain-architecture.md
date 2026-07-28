@@ -5,7 +5,8 @@ explicit instruction. Gates Step 2.2 (implementation) and all Flutter
 pairing UI (Parent App and Child Agent screens).
 **Builds on:** `pairing-state-machine.md`, `trust-levels-framework.md`,
 `risk-score-framework.md`, `pairing-recovery.md`,
-`schema-change-proposal-pairing.md`.
+`schema-change-proposal-pairing.md`, `pairing-module-boundary.md`
+(module scope — read that document first for what belongs here at all).
 
 ---
 
@@ -79,7 +80,7 @@ table.
 | `POST /pairing/invite` | `USER` (parent) | — → `INVITATION_CREATED` → `INVITATION_SENT` (combined; delivery is synchronous — the code/QR/link is returned in the same response, not sent asynchronously) |
 | `POST /pairing/accept` | `DEVICE` (child, pre-auth) | `INVITATION_SENT` → `INVITATION_OPENED` → `AUTHENTICATING`. Returns a short-lived registration token (not yet a full DEVICE-actor session) — see §4.2 |
 | `POST /pairing/device/register` | `DEVICE` (using the registration token from `accept`) | `AUTHENTICATING` → `DEVICE_REGISTERED`. Submits the device's public key (§1.2/CR-1). Returns the real DEVICE-actor token pair (`TokenService`, unchanged) |
-| `POST /pairing/verify` | `DEVICE` | `DEVICE_REGISTERED` → `DEVICE_VERIFIED` → `CAPABILITIES_UPLOADED`. **Resolved gap:** capability upload has no dedicated endpoint in the requested six, and the full Capability Engine (Step 4) doesn't exist yet. Proposal: this call carries the Key Attestation chain (or none — §3 of Trust Levels doc) **and** a *minimal* capability payload (manufacturer, model, `SDK_INT` only — trivially available, no dependency on Step 4's full engine). The full/rich `CapabilityProfile` sync happens later via a Step-4-owned endpoint, replacing this minimal snapshot. Also triggers Risk Score's first assessment (`risk-score-framework.md` §8, trigger 1) |
+| `POST /pairing/verify` | `DEVICE` | `DEVICE_REGISTERED` → `DEVICE_VERIFIED` → `CAPABILITIES_UPLOADED`. Carries the Key Attestation chain (or none — §3 of Trust Levels doc) **and** the **Pairing Capability Snapshot** (Decision-055 — explicitly NOT the same thing as the future Full Capability Engine, see note below). Also triggers Risk Score's first assessment (`risk-score-framework.md` §8, trigger 1) |
 | `POST /pairing/activate` | `USER` (parent) | `CAPABILITIES_UPLOADED` → `PARENT_CONFIRMED` → `POLICY_ASSIGNED` → `ACTIVATED`, orchestrated server-side as one call — these three are sequential and automatic once the parent's explicit confirmation is given, so one parent-facing action drives all three, matching `risk-score-framework.md` §4's response-tier gating (a `HIGH`/`CRITICAL`-risk device requires the *separate* explicit override confirmation described there — modeled as a required `overrideRiskWarning: boolean` field on this same endpoint, not a seventh endpoint) |
 | `POST /pairing/revoke` | `USER` (parent) | Any of `ACTIVATED`/`HEALTHY`/`DEGRADED`/`SUSPENDED` → `REVOKED` |
 
@@ -87,7 +88,7 @@ table.
 
 | Endpoint (proposed addition) | Actor | Transitions triggered |
 |---|---|---|
-| `POST /pairing/reject` | `USER` (parent) | `CAPABILITIES_UPLOADED` → *(terminal failure)*, the `ParentRejected` path (`pairing-state-machine.md` §4/§6) — without this, a parent has no way to explicitly decline a pairing attempt they don't recognize, which `pairing-recovery.md`'s matrix explicitly requires as a distinct, non-auto-recoverable case |
+| `POST /pairing/reject` | `USER` (parent) | Any state from `INVITATION_OPENED` through `CAPABILITIES_UPLOADED` → *(terminal failure)*, `ParentRejected` (`pairing-state-machine.md` §4/§6). **Broadened per Decision-056** from the original design's single entry point (`CAPABILITIES_UPLOADED` only) — a parent recognizing an unfamiliar pairing attempt should be able to reject it as soon as it's visible to them, not only after the device finishes uploading its capability snapshot. Simplified state view for this flow, per Decision-056: `INVITED → ACCEPTED → PARENT_REJECTED` |
 | `GET /pairing/device/:deviceId/status` | `USER` or `DEVICE` (self) | No transition — read-only, serves §1.5's `PairingSession` concept for `pairing-recovery.md`'s resume logic |
 
 `SUSPENDED`/`REMOVED` transitions (Lost Device, Device Replacement,
@@ -134,9 +135,25 @@ Step 2.2 implementation detail.
 
 ### `POST /pairing/verify`
 - Auth: `DeviceJwtAuthGuard`
-- Request: `{ attestationChain?: string, manufacturer: string, model: string, sdkInt: number }`
+- Request: `{ attestationChain?: string, pairingCapabilitySnapshot: { manufacturer: string, model: string, sdkInt: number, agentVersion: string } }`
 - Response: `{ trustLevel: TrustLevel, riskAssessment: { overallLevel: RiskLevel, overallRisk: number, reasons: string[] } }` — Explainability (Decision-047) is not optional even at this early stage, per `risk-score-framework.md` §6's binding rule
 - Errors: `400` (SDK level below `minSdkVersion` 26 — maps to `pairing-recovery.md`'s "Device unsupported" row, terminal, not retryable)
+
+**Decision-055's two-tier separation, made explicit:** the
+**Pairing Capability Snapshot** above (`manufacturer`, `model`, `sdkInt`,
+`agentVersion` — four fields, all trivially available with zero
+dependency on Step 4) is a *permanent, minimal, pairing-time-only*
+payload — not a temporary stand-in silently replaced later. The
+**Full Capability Engine** (Step 4, unbuilt) is a *separate, richer,
+ongoing* data stream (permissions, restrictions, confidence levels,
+hardware features, vendor behavior — `child-agent-plugin-architecture.md`'s
+`ICapabilityProvider`) delivered via its own endpoint once Step 4 exists,
+continuously updated post-pairing, not just once. **These are not the
+same mechanism at two points in time — they are two permanently distinct
+mechanisms**, per Decision-055's explicit "لا نخلط الاثنين." The Pairing
+Capability Snapshot is never deprecated or replaced by the Full
+Capability Engine; both continue to exist, serving different purposes
+(one gates pairing itself, the other feeds ongoing risk/policy decisions).
 
 ### `POST /pairing/activate`
 - Auth: `JwtAuthGuard` (`USER`)
@@ -162,7 +179,16 @@ Step 2.2 implementation detail.
 ### `GET /pairing/device/:deviceId/status`
 - Auth: `JwtAuthGuard` (`USER`) or `DeviceJwtAuthGuard` (self only —
   a device may query its own status, never another device's)
-- Response: `{ currentState: PairingState, lastEventAt: DateTime, invitationStillValid: boolean }`
+- **Read-only, deliberately minimal response (Decision-057)** — returns
+  exactly five fields, nothing else, regardless of what other data exists
+  on the `Device` row:
+  `{ pairingState: PairingState, trustLevel: TrustLevel, riskLevel: RiskLevel, lastSeenAt: DateTime, activationStatus: 'ACTIVATED' | 'NOT_ACTIVATED' }`
+- **Explicitly excluded from this response, by rule, not by oversight:**
+  `publicKey`, `attestationChain`, `deviceFingerprint`, raw risk `reasons`/
+  `categoryScores` (available only via a separate, more privileged query —
+  not designed in this document), and the full `DevicePairingEvent`
+  history (§1.5's session concept is for *internal* resume logic, not
+  exposed wholesale through this endpoint).
 
 ## 4. Security Considerations
 
@@ -179,16 +205,28 @@ Step 2.2 implementation detail.
   these require an already-authenticated actor, meaningfully reducing
   abuse surface compared to the pre-auth endpoints above.
 
-### 4.2 Registration token — a deliberate third token type
-`accept`'s `registrationToken` is neither a USER access token nor a
-DEVICE access token — it exists specifically so a partially-authenticated
-device (has redeemed a code, has not yet registered a keypair) cannot
-call any other protected endpoint. This closes a gap the original
-two-endpoint pairing design didn't need to consider: with only
-`initiate`/`confirm`, there was no intermediate state to protect. The
-richer state machine introduces one, so the token model grows to match —
-not because more tokens are inherently better, but because this
-specific intermediate state now exists and needs its own boundary.
+### 4.2 Token Architecture (Decision-054) — three distinct token types, each with a bounded lifecycle
+
+| Token | Purpose | Lifecycle |
+|---|---|---|
+| **User Token** (existing, unchanged) | Parent authentication | `Login → Refresh → Logout` — `TokenService`, `AuthModule`, untouched by this work |
+| **Invitation** (§1.1, existing pattern formalized) | Inviting a child device | `Created → Sent → Accepted → Expired \| Used` — Redis-backed, 10-min TTL, one-time |
+| **Registration Token** (new, this document) | Registering a device after invitation acceptance | `Generated → Device Registered → Consumed → Invalid` |
+
+**Binding rule on Registration Token:** it is single-use in the strictest
+sense — **not just time-bound, but invalidated on its first successful
+use, permanently**, independent of its remaining TTL. A second call to
+`device/register` with an already-consumed registration token fails
+identically to an expired one (same non-distinguishing error message
+principle as §3's `pairing/accept` errors) — this closes a subtle gap the
+original design (TTL-only) didn't fully address: a 5-minute TTL alone
+would still permit two registrations within that window if the token
+weren't also burned on first success.
+
+This is a deliberate third category, distinct from both existing token
+types — not a variant of either. `Login`-style tokens represent ongoing
+identity; `Invitation`/`Registration` tokens represent a single
+transition each, consumed exactly once, by design.
 
 ### 4.3 Replay protection (closing `schema-change-proposal-pairing.md`'s
 flagged delta)
@@ -241,17 +279,11 @@ specifically (Screen Time, Location, etc. will define their own event
 lists when their turn comes, following this same pattern, not sharing
 this exact list).
 
-## 6. Migration note — relationship to the existing Auth module endpoints
+## 6. Migration note — RESOLVED by Decision-052/053
 
-`apps/backend/src/modules/auth/presentation/controllers/device-pairing.controller.ts`
-(built in an earlier step) already implements a simpler two-endpoint
-version of `invite`/`accept` combined (`/auth/devices/pairing/initiate`
-and `/auth/devices/pairing/confirm`). Step 2.2 must decide, as an
-explicit implementation-time question, whether to:
-(a) evolve those two endpoints in place to match this richer contract, or
-(b) build the new `/pairing/*` endpoints as a parallel `PairingModule`
-and deprecate the old ones.
-**Not resolved in this architecture document** — flagged as the first
-question Step 2.2 must answer before writing any code, consistent with
-this project's practice of surfacing decisions rather than making them
-implicitly mid-implementation.
+Previously open question, now answered: **standalone `PairingModule`**,
+not an evolution of the existing Auth endpoints in place. Full rationale
+and module boundary: `docs/architecture/pairing-module-boundary.md`.
+`/auth/devices/pairing/initiate` and `/auth/devices/pairing/confirm`
+become `Deprecated` (not removed), internally delegating to the new
+module — see that document §5.
