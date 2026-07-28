@@ -22,9 +22,16 @@ alerts, not raw surveillance data).
 | 5 | Parent App (Flutter) | ⏳ Planned |
 | 6 | Child App (Flutter) | ⏳ Planned |
 
-**Phase 2 — AI Intelligence + Health/Education**
-AI Digital Safety · AI Parenting Assistant · Health & Wellness · Education ·
-Habit Builder + Gamification · Keyboard Behavior Analysis
+**Phase 2 — AI Intelligence + Health/Education** *(started)*
+| # | Deliverable | Status |
+|---|---|---|
+| 1 | AI Parenting Assistant (backend) | ✅ Done — `apps/backend/src/modules/ai-assistant/` |
+| 2 | AI Parenting Assistant UI (Admin Dashboard) | ⏳ Next |
+| 3 | AI Digital Safety | ⏳ Planned |
+| 4 | Health & Wellness | ⏳ Planned |
+| 5 | Education | ⏳ Planned |
+| 6 | Habit Builder + Gamification | ⏳ Planned |
+| 7 | Keyboard Behavior Analysis | ⏳ Planned |
 
 **Phase 3 — Scale, Compliance & Ecosystem**
 Islamic Mode · Enterprise/School multi-tenant version · Router/Smart Home ·
@@ -38,10 +45,12 @@ Wearables · Formal GDPR/COPPA compliance tooling
 | Children module (family-scoped CRUD, closes pairing ownership gap) | ✅ Done — `apps/backend/src/modules/children/` |
 | Admin Dashboard MVP (Auth flows, Children, Device Pairing) | ✅ Done — `apps/admin-dashboard/` |
 | Screen Time module (backend) | ✅ Done — `apps/backend/src/modules/screen-time/` |
+| AI Parenting Assistant (backend) | ✅ Done — `apps/backend/src/modules/ai-assistant/` |
 
 See `docs/database/README.md`, `docs/architecture/auth-module.md`,
 `docs/architecture/children-module.md`, `docs/architecture/admin-dashboard.md`,
-and `docs/architecture/screen-time-module.md` for the detailed design
+`docs/architecture/screen-time-module.md`, and
+`docs/architecture/ai-assistant-module.md` for the detailed design
 rationale behind what's built so far.
 
 ## Repository Structure

@@ -9,6 +9,7 @@ import { RedisModule } from './common/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ChildrenModule } from './modules/children/children.module';
 import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
+import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
     AuthModule,
     ChildrenModule,
     ScreenTimeModule,
+    AiAssistantModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

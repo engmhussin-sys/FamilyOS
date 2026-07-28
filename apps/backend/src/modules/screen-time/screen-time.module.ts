@@ -13,5 +13,9 @@ import { SCREEN_TIME_POLICY_REPOSITORY } from './application/ports/screen-time.r
     ScreenTimeService,
     { provide: SCREEN_TIME_POLICY_REPOSITORY, useClass: PrismaScreenTimePolicyRepository },
   ],
+  // Exported so other modules — starting with AiAssistantModule, which
+  // needs the child's current policy to ground its prompts — can read
+  // screen time data without duplicating this module's logic.
+  exports: [ScreenTimeService],
 })
 export class ScreenTimeModule {}
