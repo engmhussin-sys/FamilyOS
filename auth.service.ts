@@ -1,0 +1,146 @@
+import { Inject, Injectable, Logger } from '@nestjs/common';
+
+import type {
+  IAuthenticatedUser,
+  IDeviceSessionContext,
+  IRegisterParentInput,
+  ITokenPair,
+} from '../../domain/auth.types';
+import {
+  AccountNotActiveException,
+  EmailAlreadyRegisteredException,
+  InvalidCredentialsException,
+} from '../../domain/auth.errors';
+import {
+  USER_REPOSITORY,
+  type IUserRepository,
+} from '../ports/auth.repository.ports';
+import { PasswordService } from './password.service';
+import { TokenService } from './token.service';
+
+/**
+ * The domain layer intentionally does not import Prisma's generated
+ * `FamilyRole` enum type directly (application/domain code should not
+ * depend on the ORM's generated types — see docs/architecture/auth-module.md
+ * §"Why a role-mapping helper"). Prisma guarantees the persisted value is
+ * always one of these two strings, so this narrows safely rather than
+ * silently trusting an arbitrary string.
+ */
+function toFamilyRole(role: string): IAuthenticatedUser['familyRole'] {
+  if (role === 'OWNER' || role === 'PARENT') return role;
+  throw new Error(`Unexpected family role value from persistence: "${role}"`);
+}
+
+@Injectable()
+export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
+  constructor(
+    @Inject(USER_REPOSITORY) private readonly userRepository: IUserRepository,
+    private readonly passwordService: PasswordService,
+    private readonly tokenService: TokenService,
+  ) {}
+
+  /**
+   * Registers a new parent account. Also creates that parent's Family and
+   * makes them its OWNER, atomically (see PrismaUserRepository) — a
+   * standalone "User" with no Family is not a valid state in this system,
+   * so we never let one exist even transiently.
+   */
+  async register(input: IRegisterParentInput): Promise<IAuthenticatedUser> {
+    const existing = await this.userRepository.findByEmail(input.email.toLowerCase());
+    if (existing) {
+      throw new EmailAlreadyRegisteredException(input.email);
+    }
+
+    const passwordHash = await this.passwordService.hash(input.password);
+    const { user, family, membership } = await this.userRepository.createParentWithFamily(
+      { ...input, email: input.email.toLowerCase() },
+      passwordHash,
+    );
+
+    this.logger.log(`New parent registered: userId=${user.id} familyId=${family.id}`);
+
+    return {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      familyId: family.id,
+      familyRole: toFamilyRole(membership.role),
+    };
+  }
+
+  async login(
+    email: string,
+    password: string,
+    context: IDeviceSessionContext,
+  ): Promise<{ user: IAuthenticatedUser; tokens: ITokenPair }> {
+    const user = await this.userRepository.findByEmail(email.toLowerCase());
+    if (!user) {
+      // Deliberately identical error/timing profile to "wrong password" —
+      // never reveal whether an email is registered.
+      throw new InvalidCredentialsException();
+    }
+
+    const passwordValid = await this.passwordService.verify(user.passwordHash, password);
+    if (!passwordValid) {
+      throw new InvalidCredentialsException();
+    }
+
+    if (user.status !== 'ACTIVE' && user.status !== 'PENDING_VERIFICATION') {
+      throw new AccountNotActiveException();
+    }
+
+    const membership = await this.userRepository.findPrimaryFamilyMembership(user.id);
+    if (!membership) {
+      // Should be unreachable given registration always creates a family —
+      // if it happens, it indicates data corruption, worth its own alert.
+      this.logger.error(`User ${user.id} has no family membership.`);
+      throw new AccountNotActiveException();
+    }
+
+    const tokens = await this.tokenService.issueTokenPair({
+      subjectId: user.id,
+      actorType: 'USER',
+      familyId: membership.familyId,
+      userAgent: context.userAgent,
+      ipAddress: context.ipAddress,
+    });
+
+    await this.userRepository.updateLastLoginAt(user.id, new Date());
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        familyId: membership.familyId,
+        familyRole: toFamilyRole(membership.role),
+      },
+      tokens,
+    };
+  }
+
+  async refresh(
+    refreshToken: string,
+    context: IDeviceSessionContext,
+  ): Promise<ITokenPair> {
+    const { payload } = await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
+
+    // Rotation: the old token is already revoked (inside verifyAndConsume);
+    // issue a fresh pair bound to the same subject/actor/family.
+    return this.tokenService.issueTokenPair({
+      subjectId: payload.sub,
+      actorType: payload.actorType,
+      familyId: payload.familyId,
+      userAgent: context.userAgent,
+      ipAddress: context.ipAddress,
+    });
+  }
+
+  async logout(refreshToken: string): Promise<void> {
+    // Reuses the same verify-and-revoke path as refresh; we simply don't
+    // issue a replacement pair afterward.
+    await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
+  }
+}
