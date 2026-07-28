@@ -8,6 +8,7 @@ import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ChildrenModule } from './modules/children/children.module';
+import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ChildrenModule } from './modules/children/children.module';
     RedisModule,
     AuthModule,
     ChildrenModule,
+    ScreenTimeModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

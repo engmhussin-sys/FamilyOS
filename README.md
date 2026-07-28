@@ -10,21 +10,39 @@ alerts, not raw surveillance data).
 
 **Phase 1 (MVP) — in progress.**
 
+## Roadmap — Remaining Work in 3 Phases
+
+**Phase 1 — Core Safety & Control MVP**
+| # | Deliverable | Status |
+|---|---|---|
+| 1 | Screen Time & App Blocking (backend) | ✅ Done — `apps/backend/src/modules/screen-time/` |
+| 2 | Screen Time UI (Admin Dashboard) | ⏳ Next |
+| 3 | Location & Safety (GPS, Safe Zones, SOS) | ⏳ Planned |
+| 4 | Landing Page | ⏳ Planned |
+| 5 | Parent App (Flutter) | ⏳ Planned |
+| 6 | Child App (Flutter) | ⏳ Planned |
+
+**Phase 2 — AI Intelligence + Health/Education**
+AI Digital Safety · AI Parenting Assistant · Health & Wellness · Education ·
+Habit Builder + Gamification · Keyboard Behavior Analysis
+
+**Phase 3 — Scale, Compliance & Ecosystem**
+Islamic Mode · Enterprise/School multi-tenant version · Router/Smart Home ·
+Wearables · Formal GDPR/COPPA compliance tooling
+
+### Already built
 | Deliverable | Status |
 |---|---|
 | Database schema (Auth, Family/Child, Devices, Screen Time, App Control, Location, AI Safety, Consent, Audit) | ✅ Done — `apps/backend/prisma/schema.prisma` |
 | Auth module (Register, Login, Refresh rotation, Logout, Device Pairing) | ✅ Done — `apps/backend/src/modules/auth/` |
 | Children module (family-scoped CRUD, closes pairing ownership gap) | ✅ Done — `apps/backend/src/modules/children/` |
-| Admin Dashboard MVP (Register/Login flows, protected shell, Device Pairing UI) | ✅ Done — `apps/admin-dashboard/` |
-| Landing Page | ⏳ Planned |
-| Screen Time / App Blocking module (backend) | ⏳ Next |
-| Parent App / Child App (Flutter) | ⏳ Planned |
-| AI Engine (Behavior/Safety/Health/Learning) | ⏳ Planned (Phase 1 minimal → Phase 2 full) |
+| Admin Dashboard MVP (Auth flows, Children, Device Pairing) | ✅ Done — `apps/admin-dashboard/` |
+| Screen Time module (backend) | ✅ Done — `apps/backend/src/modules/screen-time/` |
 
 See `docs/database/README.md`, `docs/architecture/auth-module.md`,
-`docs/architecture/children-module.md`, and
-`docs/architecture/admin-dashboard.md` for the detailed design rationale
-behind what's built so far.
+`docs/architecture/children-module.md`, `docs/architecture/admin-dashboard.md`,
+and `docs/architecture/screen-time-module.md` for the detailed design
+rationale behind what's built so far.
 
 ## Repository Structure
 
