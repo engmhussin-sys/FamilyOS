@@ -189,13 +189,22 @@ CR:                <change-request id from the relevant Schema Change
 Retroactively applied to the pending pairing-related migration proposed
 in `schema-change-proposal-pairing.md`:
 
-| CR | Migration ID | Schema Version | ADR |
-|---|---|---|---|
-| CR-1 (`Device.publicKey`/`attestationChain`) | M-0001 | 1.1 | `pairing-state-machine.md` |
-| CR-2 (`DevicePairingEvent`) | M-0002 | 1.2 | `pairing-state-machine.md` |
-| CR-3 (`Device.trustLevel` / `DeviceRiskAssessment`) | M-0003 | 1.3 | `trust-levels-framework.md`, `risk-score-framework.md` |
-| CR-4 (`Device.pairingProtocolVersion`) | M-0004 | 1.4 | `pairing-state-machine.md` |
-| CR-5 (`Device.deviceFingerprint`) | M-0005 | 1.5 | `pairing-state-machine.md` |
+| CR | Migration ID | Schema Version | ADR | Status |
+|---|---|---|---|---|
+| CR-1 (`Device.publicKey`/`attestationChain`) | M-0001 | 1.1 | `pairing-state-machine.md` | ✅ In `schema.prisma` (Step 2.2.1) |
+| CR-2 (`DevicePairingEvent`) | M-0002 | 1.2 | `pairing-state-machine.md` | ✅ In `schema.prisma` (Step 2.2.1) |
+| CR-3 (`Device.trustLevel` / `DeviceRiskAssessment`) | M-0003 | 1.3 | `trust-levels-framework.md`, `risk-score-framework.md` | ✅ In `schema.prisma` (Step 2.2.1) |
+| CR-4 (`Device.pairingProtocolVersion`) | M-0004 | 1.4 | `pairing-state-machine.md` | ✅ In `schema.prisma` (Step 2.2.1) |
+| CR-5 (`Device.deviceFingerprint`) | M-0005 | 1.5 | `pairing-state-machine.md` | ✅ In `schema.prisma` (Step 2.2.1) |
+
+**"In `schema.prisma`" ≠ "migrated."** `npx prisma migrate dev --name secure_pairing_entities`
+must still be run in a real environment with database access (this
+sandbox cannot reach `binaries.prisma.sh` to run the Prisma engine at
+all — same limitation documented since the original database step).
+Manual verification performed instead: brace/relation balance check
+(34→40 open/close braces, matched) and a full relation-naming review for
+ambiguity — both passed; this is not a substitute for `prisma validate`
+in a real environment, which must be run before `migrate dev`.
 
 (All five remain unimplemented pending final approval — this table
 assigns their IDs now per Decision-038 so the eventual single combined

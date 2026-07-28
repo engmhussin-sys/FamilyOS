@@ -124,6 +124,79 @@ enum ActorType {
   SYSTEM
 }
 
+// --- Secure Pairing (Step 2.2.1) — see docs/architecture/pairing-*.md ---
+
+/// Per trust-levels-framework.md. Changes RARELY (Decision-043) — never
+/// recomputed on a routine heartbeat. Cached on Device, derived from
+/// pairing-time verification events, not incrementally mutated.
+enum TrustLevel {
+  L0_UNKNOWN
+  L1_REGISTERED
+  L2_VERIFIED
+  L3_ATTESTED
+  L4_ENTERPRISE
+  L5_HIGH_TRUST // reserved — no current logic assigns this value
+}
+
+/// Per risk-score-framework.md v2. Changes frequently (Decision-043) —
+/// this is a cached summary of the LATEST DeviceRiskAssessment row, not
+/// a value mutated in place by many writers.
+enum RiskLevel {
+  UNKNOWN
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// Per pairing-state-machine.md §4. Device.status (existing DeviceStatus
+/// enum, 4 values) remains the fast-read summary field; this is the
+/// richer state tracked per-event in DevicePairingEvent below.
+enum PairingState {
+  INVITATION_CREATED
+  INVITATION_SENT
+  INVITATION_OPENED
+  AUTHENTICATING
+  DEVICE_REGISTERED
+  DEVICE_VERIFIED
+  CAPABILITIES_UPLOADED
+  PARENT_CONFIRMED
+  POLICY_ASSIGNED
+  ACTIVATED
+  HEALTHY
+  DEGRADED
+  SUSPENDED
+  REVOKED
+  REMOVED
+}
+
+/// Per pairing-backend-domain-architecture.md §5, reconciled with
+/// Decision-059's example list. Superset, not a replacement — every
+/// transition in PairingState has a corresponding event here.
+enum PairingEventType {
+  PAIRING_INVITED
+  PAIRING_ACCEPTED
+  PAIRING_REJECTED
+  PAIRING_EXPIRED
+  AUTHENTICATION_STARTED
+  AUTHENTICATION_SUCCEEDED
+  AUTHENTICATION_FAILED
+  DEVICE_REGISTERED
+  DEVICE_VERIFIED
+  DEVICE_VERIFICATION_FAILED
+  CAPABILITIES_UPLOADED
+  PARENT_CONFIRMED
+  POLICY_ASSIGNED
+  DEVICE_ACTIVATED
+  ACTIVATION_BLOCKED_HIGH_RISK
+  HEARTBEAT_RECEIVED
+  HEARTBEAT_MISSED
+  DEVICE_SUSPENDED
+  DEVICE_REACTIVATED
+  DEVICE_REVOKED
+  DEVICE_REMOVED
+}
+
 // ============================================================================
 // DOMAIN: IDENTITY & FAMILY
 // ============================================================================
@@ -271,22 +344,95 @@ model Device {
   status             DeviceStatus    @default(PENDING_PAIRING)
   lastSeenAt         DateTime?       @map("last_seen_at")
   pairedAt           DateTime?       @map("paired_at")
+
+  // --- Secure Pairing additions (Step 2.2.1) ---
+  // All five nullable/defaulted — additive-only per
+  // schema-change-proposal-pairing.md, zero impact on existing rows.
+  /// Device's Keystore-generated public key (CR-1). Null until Device
+  /// Registration (pairing-backend-domain-architecture.md's
+  /// /pairing/device/register) completes.
+  publicKey              String?    @map("public_key")
+  /// Key Attestation certificate chain (CR-1), where the device's
+  /// hardware supports it — null is an expected, non-error outcome for
+  /// a meaningful fraction of real devices (trust-levels-framework.md §3).
+  attestationChain       String?    @map("attestation_chain")
+  /// Cached, derived summary — changes rarely (Decision-043). The full
+  /// derivation history lives in DevicePairingEvent below, not here.
+  trustLevel             TrustLevel @default(L0_UNKNOWN) @map("trust_level")
+  /// CR-4. Which version of the pairing state machine this device
+  /// paired under (pairing-state-machine.md, Decision-037's versioning).
+  pairingProtocolVersion String?    @map("pairing_protocol_version")
+  /// CR-5. Hash of (ANDROID_ID + publicKey + basic hardware profile) —
+  /// deliberately NOT IMEI/serial/MAC, per the Privacy Rule in
+  /// docs/database/README.md §6.4. Used for replacement-detection only,
+  /// not cross-app tracking.
+  deviceFingerprint      String?    @map("device_fingerprint")
+
   createdAt          DateTime        @default(now()) @map("created_at")
   updatedAt          DateTime        @updatedAt @map("updated_at")
   deletedAt          DateTime?       @map("deleted_at")
 
-  family         Family          @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  user           User?           @relation("UserOwnedDevices", fields: [userId], references: [id], onDelete: Cascade)
-  child          Child?          @relation(fields: [childId], references: [id], onDelete: Cascade)
-  refreshTokens  RefreshToken[]
-  appCatalog     AppCatalogEntry[]
-  appUsageLogs   AppUsageLog[]
-  locationEvents LocationEvent[]
+  family           Family                @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user             User?                 @relation("UserOwnedDevices", fields: [userId], references: [id], onDelete: Cascade)
+  child            Child?                @relation(fields: [childId], references: [id], onDelete: Cascade)
+  refreshTokens    RefreshToken[]
+  appCatalog       AppCatalogEntry[]
+  appUsageLogs     AppUsageLog[]
+  locationEvents   LocationEvent[]
+  pairingEvents    DevicePairingEvent[]
+  riskAssessments  DeviceRiskAssessment[]
 
   @@index([familyId])
   @@index([userId])
   @@index([childId])
   @@map("devices")
+}
+
+/// Append-only pairing/trust audit ledger (CR-2, Decision-039's
+/// "Security/Trust/Pairing/Audit" category rule — no UPDATE or DELETE
+/// against a historical row, ever). This is the "PairingAuditEvents"
+/// entity from Step 2.2.1's brief, and the sole source of truth
+/// pairing-recovery.md's "resume from last confirmed state" logic and
+/// pairing-backend-domain-architecture.md §1.5's derived PairingSession
+/// read both depend on.
+model DevicePairingEvent {
+  id         String           @id @default(uuid()) @db.Uuid
+  deviceId   String           @map("device_id") @db.Uuid
+  eventType  PairingEventType @map("event_type")
+  fromState  PairingState?    @map("from_state") // null for the very first event (no prior state)
+  toState    PairingState     @map("to_state")
+  actorType  ActorType        @map("actor_type")
+  actorId    String?          @map("actor_id") // userId or deviceId, matching actorType; null for SYSTEM
+  metadata   Json?
+  occurredAt DateTime         @default(now()) @map("occurred_at")
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, occurredAt])
+  @@map("device_pairing_events")
+}
+
+/// Append-only risk assessment history (CR-3, risk-score-framework.md
+/// v2 §7). One row per assessment — never overwritten. Device.trustLevel
+/// (above) is a SEPARATE, rarely-changing cache; this table is the
+/// frequently-changing counterpart (Decision-043's core distinction).
+model DeviceRiskAssessment {
+  id             String    @id @default(uuid()) @db.Uuid
+  deviceId       String    @map("device_id") @db.Uuid
+  overallRisk    Int       @map("overall_risk") // 0-100
+  overallLevel   RiskLevel @map("overall_level")
+  /// One entry per category from risk-score-framework.md §3
+  /// (security/privacy/compliance/stability/connectivity/behavioral).
+  categoryScores Json      @map("category_scores")
+  /// Human-readable explainability strings (Decision-047) — never
+  /// omitted, per that document's binding rule.
+  reasons        Json
+  assessedAt     DateTime  @default(now()) @map("assessed_at")
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, assessedAt])
+  @@map("device_risk_assessments")
 }
 
 /// Refresh tokens are bound to a device, never issued "floating" —
