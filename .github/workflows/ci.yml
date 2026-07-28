@@ -1,0 +1,106 @@
+name: CI
+
+# Runs Decision-014's pipeline automatically on every push/PR — this file
+# IS the "part of the system itself" the review asked for. A red run here
+# means the corresponding feature is a draft, per
+# docs/development/definition_of_done.md, regardless of what anyone
+# believes about it locally.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (NestJS)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: afdc
+          POSTGRES_PASSWORD: afdc_ci_password
+          POSTGRES_DB: afdc_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U afdc -d afdc_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://afdc:afdc_ci_password@localhost:5432/afdc_ci?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci-only-access-secret-not-a-real-secret-32chars
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-not-a-real-secret-32ch
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit + DI-graph tests
+        run: npx jest --testPathIgnorePatterns=test/database --coverage
+      - name: Database integration test
+        run: npx jest test/database --forceExit
+      - name: Build
+        run: npx nest build
+
+  admin-dashboard:
+    name: Admin Dashboard (React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/admin-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/admin-dashboard/package-lock.json
+      - run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npx vitest run
+      - name: Build
+        run: npx vite build
+
+  child-app:
+    name: Child Agent (Flutter)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/child-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+      - run: flutter pub get
+      - name: Static analysis
+        run: flutter analyze --fatal-infos
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Unit tests
+        run: flutter test
+      - name: Build (debug APK, no signing needed for CI verification)
+        run: flutter build apk --debug

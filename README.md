@@ -18,10 +18,21 @@ observability, edge AI). Everything below reflects work done **before**
 this decision.
 
 ### Child Agent build order (12 steps, per Decision-013)
+**⚠️ Review gate (per the Architecture Review): Secure Pairing (Step 2) is
+blocked until Definition of Done, Interfaces, Event Bus, Plugin
+Architecture, and Lifecycle Architecture are delivered.** Status below.
+
 | # | Step | Status |
 |---|---|---|
+| — | Definition of Done | ✅ Done — `docs/development/definition_of_done.md` |
+| — | CI pipeline (Decision-014, automated) | ✅ Done — `.github/workflows/ci.yml` |
+| — | Shared HTTP client specification | ✅ Done — `docs/specifications/http_client.md` |
+| — | Agent contracts (Decision-016) | ✅ Done — `apps/child-app/lib/core/contracts/`, `lib/plugins/*/contracts/` |
+| — | Event Bus (Decision-017) | ✅ Done — `apps/child-app/lib/core/events/` |
+| — | Plugin Architecture (Decision-018) | ✅ Done — `lib/plugins/*` folder structure + `AgentPlugin` base |
+| — | Lifecycle Architecture (10-question ADR) | ✅ Done — `docs/architecture/child-agent-lifecycle.md` |
 | 1 | Core Architecture | ✅ Done — `apps/child-app/` (⚠️ not compiled/tested — see step doc) |
-| 2 | Secure Pairing | ⏳ Next |
+| 2 | Secure Pairing | ⏳ Blocked pending review of the above |
 | 3 | Device Registration | ⏳ Planned |
 | 4 | Capability Engine | ⏳ Planned |
 | 5 | Permission Manager | ⏳ Planned |
