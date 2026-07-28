@@ -31,6 +31,9 @@ object AgentChannel {
     // --- Sprint 4: Device Capability Engine ---
     const val METHOD_GET_CAPABILITY_REPORT = "getCapabilityReport"
 
+    // --- Child Runtime Engine: Anti-Tamper ---
+    const val METHOD_CHECK_TAMPER_SIGNALS = "checkTamperSignals"
+
     /** Placeholder component name — the real AccessibilityService class
      * doesn't exist yet (this project's explicitly flagged highest-risk,
      * not-yet-built piece). Using this placeholder means

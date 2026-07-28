@@ -79,6 +79,11 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetCapabilityReport);
   }
 
+  @override
+  Future<List<Object?>> checkTamperSignals() async {
+    return _invoke<List<Object?>>(AgentChannelConstants.methodCheckTamperSignals);
+  }
+
   /// Void-returning calls still go through the same MissingPluginException/
   /// NOT_IMPLEMENTED handling as `_invoke` — factored out since `void`
   /// calls don't have a meaningful generic return type to check for null.

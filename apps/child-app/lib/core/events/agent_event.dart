@@ -74,3 +74,80 @@ class DevicePairedEvent extends AgentEvent {
 class DeviceSessionExpiredEvent extends AgentEvent {
   const DeviceSessionExpiredEvent(DateTime occurredAt) : super(occurredAt);
 }
+
+// --- Child Runtime Engine (CRE) events, declared for Track B ---
+// These types exist so Track B's Accessibility Manager/Policy
+// Enforcement Engine has a contract to emit/consume against once built —
+// none of these are emitted by any code today. Same "declare before the
+// consumer exists" discipline as the five events above were originally
+// declared under in Step 1.
+
+/// Would be emitted by the Accessibility Manager (Track B) on every
+/// detected foreground-app change — the actual trigger for policy
+/// evaluation. Not emitted by any code yet.
+class ForegroundAppChangedEvent extends AgentEvent {
+  const ForegroundAppChangedEvent({
+    required this.packageName,
+    required DateTime occurredAt,
+  }) : super(occurredAt);
+
+  final String packageName;
+}
+
+/// Would be emitted by the Policy Enforcement Engine (Track B) after
+/// evaluating a ForegroundAppChangedEvent against the cached policy
+/// (plugins/policy/) — the Overlay Runtime (Track B) would subscribe to
+/// this, not be called directly.
+class PolicyDecisionMadeEvent extends AgentEvent {
+  const PolicyDecisionMadeEvent({
+    required this.packageName,
+    required this.isBlocked,
+    required this.reason,
+    required DateTime occurredAt,
+  }) : super(occurredAt);
+
+  final String packageName;
+  final bool isBlocked;
+  final String reason;
+}
+
+/// Would be emitted by the Overlay Runtime (Track B) once it actually
+/// shows a blocking screen — the Heartbeat Scheduler (already built)
+/// would subscribe to this to include enforcement activity in the next
+/// heartbeat's telemetry (§9 of child-runtime-engine.md).
+class OverlayTriggeredEvent extends AgentEvent {
+  const OverlayTriggeredEvent({
+    required this.packageName,
+    required DateTime occurredAt,
+  }) : super(occurredAt);
+
+  final String packageName;
+}
+
+/// Emitted by AntiTamperDetector (built this session) whenever a check
+/// flips from clean to flagged. Unlike the events above, THIS one IS
+/// wired to a real detector today (see plugins/anti_tamper/).
+class TamperDetectedEvent extends AgentEvent {
+  const TamperDetectedEvent({
+    required this.signal,
+    required DateTime occurredAt,
+  }) : super(occurredAt);
+
+  /// e.g. "accessibility_disabled", "developer_mode_enabled" — matches
+  /// AntiTamperSignal's kind field, not a raw platform string.
+  final String signal;
+}
+
+/// Would be emitted periodically by the Runtime Watchdog (Track B —
+/// depends on the Foreground Runtime existing) summarizing overall
+/// runtime health for telemetry.
+class RuntimeHealthEvent extends AgentEvent {
+  const RuntimeHealthEvent({
+    required this.isHealthy,
+    required this.warnings,
+    required DateTime occurredAt,
+  }) : super(occurredAt);
+
+  final bool isHealthy;
+  final List<String> warnings;
+}

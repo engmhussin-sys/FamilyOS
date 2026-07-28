@@ -2,6 +2,7 @@ package com.aifamilycoach.child_app
 
 import android.os.Build
 import com.aifamilycoach.child_app.core.AgentChannel
+import com.aifamilycoach.child_app.core.AntiTamperDetector
 import com.aifamilycoach.child_app.core.DeviceCapabilityEngine
 import com.aifamilycoach.child_app.core.DeviceIdentityKeyManager
 import com.aifamilycoach.child_app.core.PermissionManager
@@ -28,6 +29,7 @@ class MainActivity : FlutterActivity() {
 
         val permissionManager = PermissionManager(applicationContext)
         val capabilityEngine = DeviceCapabilityEngine(applicationContext)
+        val antiTamperDetector = AntiTamperDetector(applicationContext)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -103,6 +105,14 @@ class MainActivity : FlutterActivity() {
                             "batteryOptimizationExempted" to report.batteryOptimizationExempted,
                             "notificationsGranted" to report.notificationsGranted,
                             "profileHash" to report.profileHash,
+                        ),
+                    )
+                }
+
+                AgentChannel.METHOD_CHECK_TAMPER_SIGNALS -> {
+                    result.success(
+                        antiTamperDetector.checkAll(
+                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
                         ),
                     )
                 }

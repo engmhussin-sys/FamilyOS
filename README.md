@@ -15,7 +15,8 @@ alerts, not raw surveillance data).
 | 1 — Project Foundation & Core Infrastructure | ✅ |
 | 2 — AI Core + Trust & Risk Foundation | ✅ |
 | 3 — Device Pairing & Child Agent Foundation | ✅ Closed — backend vertical (`pairing-sprint3-backend-vertical.md`) + Flutter vertical (`pairing-sprint3-flutter-vertical.md`) |
-| 4 — Real Child Agent Enforcement (Android Native Layer) | 🔄 **Track A complete** (Backend + AI Diagnostics + Dashboard, 138/138 tests, real security fix — see `docs/architecture/sprint4-track-a-completion.md`); **Track B pending** (AccessibilityService/Foreground Service/Boot Receiver/Overlay/Enforcement — requires real-device testing on 3+ manufacturers before Sprint 4 closes) |
+| 4 — Real Child Agent Enforcement (Android Native Layer) | 🔄 Track A complete (Backend + AI Diagnostics + Dashboard, 138/138 tests, real security fix — see `docs/architecture/sprint4-track-a-completion.md`) |
+| — | Child Runtime Engine (architecture + lower-risk components) | ✅ Done — Event Bus extended, Anti-Tamper (7/14 signals, real), Device Capability Engine (expanded matrix), Local Policy Engine (cache + default offline policy), Local AI Runtime (1 real deterministic engine + 5 declared interfaces), Keyboard Monitoring (interfaces only, per explicit instruction); see `docs/architecture/child-runtime-engine.md`. **Track B pending** (Accessibility Manager, Foreground/Overlay/Boot Runtimes — requires real-device testing on 3+ manufacturers before Sprint 4 closes). |
 | 5 — Parental Control Engine | ⏳ |
 | 6 — AI Behavioral & Digital Safety Engine | ⏳ |
 | 7 — Health & Habit Coach | ⏳ |

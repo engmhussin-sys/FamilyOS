@@ -47,4 +47,10 @@ abstract class AgentPlatformChannel {
   /// `DeviceCapabilityReport` model lives in
   /// features/device_status/domain, one layer up.
   Future<Map<Object?, Object?>> getCapabilityReport();
+
+  // --- Child Runtime Engine: Anti-Tamper ---
+  /// Returns raw signal-id strings (e.g. "accessibility_disabled") —
+  /// mapped to TamperSignal by the plugin layer, not here, keeping this
+  /// port a thin platform boundary.
+  Future<List<Object?>> checkTamperSignals();
 }

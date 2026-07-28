@@ -30,6 +30,9 @@ class AgentChannelConstants {
   // --- Sprint 4: Device Capability Engine ---
   static const String methodGetCapabilityReport = 'getCapabilityReport';
 
+  // --- Child Runtime Engine: Anti-Tamper ---
+  static const String methodCheckTamperSignals = 'checkTamperSignals';
+
   // --- Methods still reserved for future steps — NOT implemented on the
   // native side yet. Calling any of these today throws
   // AgentCapabilityNotImplementedException:
