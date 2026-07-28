@@ -10,11 +10,28 @@ alerts, not raw surveillance data).
 
 **⚠️ Decision-004 (active):** No new Dashboard/AI/Compliance features until
 the Child Agent has working end-to-end enforcement on a real device. See
-`docs/architecture/child-agent-android-enforcement.md` for the full
-architecture decision and rationale. Everything below reflects work done
-**before** this decision — it is not paused retroactively, but nothing new
-in those areas should start until the Agent's core loop (steps 1–6 in that
-ADR) is proven.
+`docs/architecture/child-agent-android-enforcement.md` (initial ADR) and
+`docs/architecture/child-agent-step1-core-architecture.md` (Decisions
+005–013: multi-distribution strategy, expanded Device Capability Engine,
+Anti-Tamper Framework, offline-first sync, secure multi-method pairing,
+observability, edge AI). Everything below reflects work done **before**
+this decision.
+
+### Child Agent build order (12 steps, per Decision-013)
+| # | Step | Status |
+|---|---|---|
+| 1 | Core Architecture | ✅ Done — `apps/child-app/` (⚠️ not compiled/tested — see step doc) |
+| 2 | Secure Pairing | ⏳ Next |
+| 3 | Device Registration | ⏳ Planned |
+| 4 | Capability Engine | ⏳ Planned |
+| 5 | Permission Manager | ⏳ Planned |
+| 6 | Foreground Service | ⏳ Planned |
+| 7 | Offline Sync | ⏳ Planned |
+| 8 | Policy Engine | ⏳ Planned |
+| 9 | Anti-Tamper Framework | ⏳ Planned |
+| 10 | Observability | ⏳ Planned |
+| 11 | Screen Time Enforcement | ⏳ Planned |
+| 12 | App Usage Collection | ⏳ Planned |
 
 **Phase 1 (MVP) — in progress.**
 

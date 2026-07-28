@@ -1,0 +1,34 @@
+name: child_app
+description: AI Family Digital Coach — Child Agent (Core Architecture, Step 1/12 per ADR child-agent-android-enforcement.md)
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # State management + DI. Chosen for the same "explicit ports, explicit
+  # providers" instinct used throughout the backend/dashboard — no hidden
+  # service locators.
+  flutter_riverpod: ^2.5.1
+  # HTTP client with interceptor support, needed for the same
+  # refresh-and-retry pattern already implemented in the Admin Dashboard's
+  # httpClient.ts — see core/network/api_client.dart.
+  dio: ^5.4.3
+  # Android Keystore-backed secure storage for the device-bound refresh
+  # token (Decision-012: Device Certificate + Refresh Token + Device UUID
+  # must never sit in plain SharedPreferences).
+  flutter_secure_storage: ^9.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  mockito: ^5.4.4
+  build_runner: ^2.4.9
+  lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
