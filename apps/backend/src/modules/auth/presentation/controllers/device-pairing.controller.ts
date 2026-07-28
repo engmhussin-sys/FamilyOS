@@ -10,13 +10,11 @@ import { CurrentUser } from '../../../../common/decorators/current-user.decorato
 import type { IJwtPayload } from '../../domain/auth.types';
 
 /**
- * NOTE: `initiate` currently trusts `payload.familyId` from the parent's
- * access token as the scope for the pairing. It does NOT yet verify that
- * `childId` belongs to that family — that check belongs to a ChildrenModule
- * (family-scoped Child lookups) which is the next module to build. Until
- * then, `PairingService.initiate` is only safe to call with a childId the
- * caller is trusted to have obtained from a family-scoped "list my
- * children" endpoint. Tracked as a follow-up, not silently skipped.
+ * `initiate` trusts `payload.familyId` from the parent's access token as
+ * the scope for the pairing, and `PairingService.initiate` now verifies
+ * (via `ChildrenService.assertChildBelongsToFamily`) that `childId`
+ * actually belongs to that family before a pairing code is ever
+ * generated — see docs/architecture/children-module.md §3.
  */
 @Controller('auth/devices/pairing')
 export class DevicePairingController {

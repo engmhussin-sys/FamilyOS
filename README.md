@@ -14,13 +14,15 @@ alerts, not raw surveillance data).
 |---|---|
 | Database schema (Auth, Family/Child, Devices, Screen Time, App Control, Location, AI Safety, Consent, Audit) | ✅ Done — `apps/backend/prisma/schema.prisma` |
 | Auth module (Register, Login, Refresh rotation, Logout, Device Pairing) | ✅ Done — `apps/backend/src/modules/auth/` |
+| Children module (family-scoped CRUD, closes pairing ownership gap) | ✅ Done — `apps/backend/src/modules/children/` |
 | Admin Dashboard MVP (Register/Login flows, protected shell, Device Pairing UI) | ✅ Done — `apps/admin-dashboard/` |
-| Children/Family management module (backend) | ⏳ Next |
 | Landing Page | ⏳ Planned |
+| Screen Time / App Blocking module (backend) | ⏳ Next |
 | Parent App / Child App (Flutter) | ⏳ Planned |
 | AI Engine (Behavior/Safety/Health/Learning) | ⏳ Planned (Phase 1 minimal → Phase 2 full) |
 
-See `docs/database/README.md`, `docs/architecture/auth-module.md`, and
+See `docs/database/README.md`, `docs/architecture/auth-module.md`,
+`docs/architecture/children-module.md`, and
 `docs/architecture/admin-dashboard.md` for the detailed design rationale
 behind what's built so far.
 

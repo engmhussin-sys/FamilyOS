@@ -1,4 +1,4 @@
-import { ConflictException, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 
 /**
  * Domain errors for Auth. They extend Nest's HTTP exceptions directly so
@@ -36,11 +36,5 @@ export class InvalidOrExpiredTokenException extends UnauthorizedException {
 export class InvalidOrExpiredPairingCodeException extends UnauthorizedException {
   constructor() {
     super('Pairing code is invalid or has expired. Please generate a new one.');
-  }
-}
-
-export class ChildNotFoundException extends NotFoundException {
-  constructor(childId: string) {
-    super(`Child "${childId}" was not found in your family.`);
   }
 }

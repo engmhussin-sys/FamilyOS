@@ -8,6 +8,7 @@ import type {
 } from '../../domain/auth.types';
 import { InvalidOrExpiredPairingCodeException } from '../../domain/auth.errors';
 import { RedisService } from '../../../../common/redis/redis.service';
+import { ChildrenService } from '../../../children/application/services/children.service';
 import {
   DEVICE_REPOSITORY,
   type IDeviceRepository,
@@ -37,10 +38,17 @@ export class PairingService {
     private readonly redisService: RedisService,
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
+    private readonly childrenService: ChildrenService,
     @Inject(DEVICE_REPOSITORY) private readonly deviceRepository: IDeviceRepository,
   ) {}
 
   async initiate(ticket: IPairingTicket): Promise<{ code: string; expiresInSeconds: number }> {
+    // Closes a previously-documented gap: verify the child actually
+    // belongs to the caller's family BEFORE a pairing code is ever
+    // generated — see docs/architecture/auth-module.md §4 (now resolved,
+    // see docs/architecture/children-module.md).
+    await this.childrenService.assertChildBelongsToFamily(ticket.childId, ticket.familyId);
+
     const code = this.passwordService.generatePairingCode();
     await this.redisService.setWithTtl(
       this.redisKeyFor(code),

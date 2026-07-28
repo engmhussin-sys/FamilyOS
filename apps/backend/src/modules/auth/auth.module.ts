@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { ChildrenModule } from '../children/children.module';
+
 import { AuthController } from './presentation/controllers/auth.controller';
 import { DevicePairingController } from './presentation/controllers/device-pairing.controller';
 import { JwtStrategy } from './presentation/strategies/jwt.strategy';
@@ -24,6 +26,7 @@ import {
 @Module({
   imports: [
     PassportModule,
+    ChildrenModule,
     // JwtModule is registered without global secret/expiry options —
     // TokenService and the two Passport strategies each pass their own
     // secret/expiresIn per call, since access and refresh tokens use

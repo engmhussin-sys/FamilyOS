@@ -72,13 +72,10 @@ fields are rejected outright, not silently dropped or trusted.
 
 ## 4. Known follow-ups (explicitly, not silently, deferred)
 
-1. **`DevicePairingController.initiate` does not yet verify that `childId`
-   belongs to the caller's family.** It trusts `familyId` from the caller's
-   own access token, but not that the specific `childId` is actually one of
-   *their* children. This closes once the `ChildrenModule` (family-scoped
-   child CRUD + a `FamilyGuard`) exists — tracked as the next module to
-   build, not silently ignored. Documented in-code with a `NOTE:` comment
-   at the top of `device-pairing.controller.ts`.
+1. ~~`DevicePairingController.initiate` does not yet verify that `childId`
+   belongs to the caller's family.~~ **Resolved** — see
+   `docs/architecture/children-module.md` §3. `PairingService` now depends
+   on `ChildrenService.assertChildBelongsToFamily`.
 2. **Email verification flow** (`User.emailVerifiedAt`) is modeled in the
    schema but no endpoint sends/confirms a verification email yet — Phase 1
    follow-up.

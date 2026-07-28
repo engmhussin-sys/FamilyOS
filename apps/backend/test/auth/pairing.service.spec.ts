@@ -3,14 +3,17 @@ import { PairingService } from '../../src/modules/auth/application/services/pair
 import { PasswordService } from '../../src/modules/auth/application/services/password.service';
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { RedisService } from '../../src/common/redis/redis.service';
+import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { DEVICE_REPOSITORY } from '../../src/modules/auth/application/ports/auth.repository.ports';
 import { InvalidOrExpiredPairingCodeException } from '../../src/modules/auth/domain/auth.errors';
+import { ChildNotFoundException } from '../../src/modules/children/domain/child.errors';
 
 describe('PairingService', () => {
   const redisServiceMock = { setWithTtl: jest.fn(), getAndDelete: jest.fn() };
   const passwordServiceMock = { generatePairingCode: jest.fn() };
   const tokenServiceMock = { issueTokenPair: jest.fn() };
   const deviceRepositoryMock = { createPairedChildDevice: jest.fn() };
+  const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
 
   let pairingService: PairingService;
 
@@ -23,6 +26,7 @@ describe('PairingService', () => {
         { provide: RedisService, useValue: redisServiceMock },
         { provide: PasswordService, useValue: passwordServiceMock },
         { provide: TokenService, useValue: tokenServiceMock },
+        { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: DEVICE_REPOSITORY, useValue: deviceRepositoryMock },
       ],
     }).compile();
@@ -31,7 +35,24 @@ describe('PairingService', () => {
   });
 
   describe('initiate', () => {
-    it('stores the pairing ticket in Redis under the generated code, with a TTL', async () => {
+    it('rejects with ChildNotFoundException when the child does not belong to the caller\'s family, before touching Redis', async () => {
+      childrenServiceMock.assertChildBelongsToFamily.mockRejectedValue(
+        new ChildNotFoundException('child-1'),
+      );
+
+      await expect(
+        pairingService.initiate({
+          familyId: 'family-1',
+          childId: 'child-1',
+          initiatedByUserId: 'user-1',
+        }),
+      ).rejects.toBeInstanceOf(ChildNotFoundException);
+
+      expect(redisServiceMock.setWithTtl).not.toHaveBeenCalled();
+    });
+
+    it('stores the pairing ticket in Redis under the generated code, with a TTL, once ownership is confirmed', async () => {
+      childrenServiceMock.assertChildBelongsToFamily.mockResolvedValue(undefined);
       passwordServiceMock.generatePairingCode.mockReturnValue('ABCD-1234');
 
       const result = await pairingService.initiate({
