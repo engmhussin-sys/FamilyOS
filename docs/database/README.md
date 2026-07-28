@@ -170,6 +170,84 @@ Rules for this project (enforced in code review, not tooling):
 3. `prisma migrate deploy` runs in the deploy pipeline; `prisma migrate dev`
    is local-only.
 
+### 6.1 Schema Versioning (Decision-038)
+
+Every migration going forward is traceable to *why* it exists, not just
+*what* it does. Each migration's description/commit message must record:
+
+```text
+Schema Version: <major>.<minor>   (bumped per migration; minor for
+                                    additive/nullable changes, major for
+                                    anything touching §6.3's "no" answers)
+Migration:       M-<sequential id, zero-padded, e.g. M-0007>
+ADR:              <path to the architecture doc that motivated this, e.g.
+                    docs/architecture/trust-levels-framework.md>
+CR:                <change-request id from the relevant Schema Change
+                     Proposal doc, e.g. CR-0003>
+```
+
+Retroactively applied to the pending pairing-related migration proposed
+in `schema-change-proposal-pairing.md`:
+
+| CR | Migration ID | Schema Version | ADR |
+|---|---|---|---|
+| CR-1 (`Device.publicKey`/`attestationChain`) | M-0001 | 1.1 | `pairing-state-machine.md` |
+| CR-2 (`DevicePairingEvent`) | M-0002 | 1.2 | `pairing-state-machine.md` |
+| CR-3 (`Device.trustLevel` / `DeviceRiskAssessment`) | M-0003 | 1.3 | `trust-levels-framework.md`, `risk-score-framework.md` |
+| CR-4 (`Device.pairingProtocolVersion`) | M-0004 | 1.4 | `pairing-state-machine.md` |
+| CR-5 (`Device.deviceFingerprint`) | M-0005 | 1.5 | `pairing-state-machine.md` |
+
+(All five remain unimplemented pending final approval — this table
+assigns their IDs now per Decision-038 so the eventual single combined
+migration, per the earlier "دفعة واحدة" decision, can cite them
+individually in its description even though they land in one migration
+file.)
+
+### 6.2 Append-Only tables — general rule (Decision-039)
+
+**Any table representing Security, Trust, Pairing (state history), Audit,
+Tamper, or Telemetry data is append-only by policy**, not just the
+specific tables identified so far (`AuditLog`, and the proposed
+`DevicePairingEvent` / `DeviceRiskAssessment`). Concretely: no `UPDATE` or
+hard `DELETE` against a historical row in these categories — a new event
+row is added instead. This is a *category* rule, applied to every future
+table that falls into one of these six categories, not a per-table
+special case decided individually each time one comes up.
+
+### 6.3 Database Compatibility Policy (Decision-041)
+
+Every schema change proposal must explicitly answer these four questions
+— "unclear" on any of them blocks implementation until it's resolved, not
+just documented as a caveat:
+
+1. **Is it backward compatible?** (Can already-deployed application code,
+   pre-change, keep running against the new schema without errors?)
+2. **Does it need a data migration?** (Not just a schema migration — does
+   existing data need to be transformed, not just new nullable columns added?)
+3. **Can it be rolled back?** (Is there a clean `DOWN` path, or is this a
+   one-way door — e.g. a destructive column drop with data loss?)
+4. **Does it affect existing clients?** (Any consumer — Admin Dashboard,
+   Child Agent, or a future integration — relying on the current shape?)
+
+Every CR in `schema-change-proposal-pairing.md` was written to already
+answer these implicitly via its "Impact on existing data" / "Migration
+required?" / "Breaking change?" / "Rollback plan" fields — this section
+formalizes that as the standing template for every future proposal, not
+just that one.
+
+### 6.4 Privacy Rule — banned identifiers (per Decision-034's fingerprint discussion, generalized)
+
+No table, field, or Child Agent capability may rely on: IMEI, hardware
+serial number, MAC address, or any other identifier Android restricts or
+Google Play policy prohibits using for cross-app/cross-reset tracking.
+Device identification and fingerprinting (see `schema-change-proposal-pairing.md`
+CR-5) must be built exclusively from identifiers Android's current
+privacy model actually permits for this use case (`ANDROID_ID`, an
+app-generated Keystore public key, and non-identifying hardware profile
+fields already collected by the Capability Engine). This is a hard
+constraint on every future device-identity-adjacent feature, not
+specific to the fingerprint field alone.
+
 > **Environment note:** schema validation (`prisma validate` / `migrate dev`)
 > could not be executed inside this sandboxed session because the Prisma
 > engine binary download is blocked by network egress rules here. The schema
