@@ -20,6 +20,11 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     return _invoke<int>(AgentChannelConstants.methodGetAndroidSdkInt);
   }
 
+  @override
+  Future<String> getDevicePublicKey() async {
+    return _invoke<String>(AgentChannelConstants.methodGetDevicePublicKey);
+  }
+
   Future<T> _invoke<T>(String method, [Map<String, dynamic>? args]) async {
     try {
       final result = await _channel.invokeMethod<T>(method, args);

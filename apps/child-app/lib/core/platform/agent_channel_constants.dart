@@ -12,6 +12,8 @@ class AgentChannelConstants {
   // --- Methods implemented as of Step 1 (Core Architecture) ---
   static const String methodGetNativeAppVersion = 'getNativeAppVersion';
   static const String methodGetAndroidSdkInt = 'getAndroidSdkInt';
+  /// Sprint 3.
+  static const String methodGetDevicePublicKey = 'getDevicePublicKey';
 
   // --- Methods reserved for future steps — NOT implemented on the native
   // side yet. Listed here so the full eventual contract is visible in one

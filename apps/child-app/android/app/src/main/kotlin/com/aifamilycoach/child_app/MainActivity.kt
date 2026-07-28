@@ -33,6 +33,14 @@ class MainActivity : FlutterActivity() {
                     result.success(Build.VERSION.SDK_INT)
                 }
 
+                AgentChannel.METHOD_GET_DEVICE_PUBLIC_KEY -> {
+                    try {
+                        result.success(DeviceIdentityKeyManager.getPublicKeyBase64())
+                    } catch (e: Exception) {
+                        result.error("KEYSTORE_ERROR", e.message, null)
+                    }
+                }
+
                 else -> result.notImplemented()
             }
         }

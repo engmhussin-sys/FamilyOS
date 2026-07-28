@@ -127,6 +127,34 @@ class ApiClient {
     }
   }
 
+  /// Sprint 3 — a third auth mode, distinct from both the stored-session
+  /// path and `skipAuth`: sends a ONE-TIME caller-supplied token (the
+  /// Registration Token, `RegistrationTokenService`'s single-use bearer
+  /// token) instead of whatever is in `SecureTokenStorage`. Marked
+  /// `skipAuth: true` internally so the request interceptor doesn't
+  /// overwrite this header with the stored access token, and so the
+  /// 401 interceptor doesn't attempt a refresh cycle that makes no sense
+  /// for a token that was never a session token to begin with.
+  Future<Map<String, dynamic>> postWithBearerToken(
+    String path,
+    String token, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final response = await _dio.post(
+        path,
+        data: body,
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+          extra: {'skipAuth': true},
+        ),
+      );
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw _toApiException(e);
+    }
+  }
+
   ApiException _toApiException(DioException e) {
     final statusCode = e.response?.statusCode ?? 0;
     final data = e.response?.data;

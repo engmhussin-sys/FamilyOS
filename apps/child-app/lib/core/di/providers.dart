@@ -6,6 +6,9 @@ import '../network/api_client.dart';
 import '../platform/agent_channel.dart';
 import '../platform/agent_channel_impl.dart';
 import '../storage/secure_token_storage.dart';
+import '../../features/pairing/api/pairing_api.dart';
+import '../../features/pairing/application/device_registration_service.dart';
+import '../../features/pairing/application/heartbeat_service.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -39,4 +42,24 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 
 final agentPlatformChannelProvider = Provider<AgentPlatformChannel>((ref) {
   return MethodChannelAgentPlatform();
+});
+
+// --- Sprint 3: Pairing ---
+
+final pairingApiProvider = Provider<PairingApi>((ref) {
+  return PairingApi(ref.watch(apiClientProvider));
+});
+
+final deviceRegistrationServiceProvider = Provider<DeviceRegistrationService>((ref) {
+  return DeviceRegistrationService(
+    ref.watch(pairingApiProvider),
+    ref.watch(agentPlatformChannelProvider),
+    ref.watch(tokenStorageProvider),
+  );
+});
+
+final heartbeatServiceProvider = Provider<HeartbeatService>((ref) {
+  final service = HeartbeatService(ref.watch(pairingApiProvider));
+  ref.onDispose(service.stop);
+  return service;
 });

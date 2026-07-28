@@ -8,6 +8,22 @@ alerts, not raw surveillance data).
 
 ## Project Status
 
+## Project Execution Plan v1.0 — 10 Sprint Accelerated Plan
+
+| Sprint | Status |
+|---|---|
+| 1 — Project Foundation & Core Infrastructure | ✅ |
+| 2 — AI Core + Trust & Risk Foundation | ✅ |
+| 3 — Device Pairing & Child Agent Foundation | ✅ Closed — backend vertical (`pairing-sprint3-backend-vertical.md`) + Flutter vertical (`pairing-sprint3-flutter-vertical.md`) |
+| 4 — Real Child Agent Enforcement (Android Native Layer) | ⏳ Next |
+| 5 — Parental Control Engine | ⏳ |
+| 6 — AI Behavioral & Digital Safety Engine | ⏳ |
+| 7 — Health & Habit Coach | ⏳ |
+| 8 — Education & Character Development | ⏳ |
+| 9 — Security, Compliance & Monetization | ⏳ |
+| 10 — Production Launch | ⏳ |
+
+
 **⚠️ Decision-004 (active):** No new Dashboard/AI/Compliance features until
 the Child Agent has working end-to-end enforcement on a real device. See
 `docs/architecture/child-agent-android-enforcement.md` (initial ADR) and
@@ -40,7 +56,7 @@ Architecture, and Lifecycle Architecture are delivered.** Status below.
 | 2.2.2.4 | Secure Pairing — Domain Services 4 & 5: Trust/Risk Evaluation | ✅ Done — `TRUST_SIGNAL_PROVIDER`/`RISK_SIGNAL_PROVIDER` + `IIntelligenceSignalProvider` (Decision-070) ready for future AI Core consumption; see `docs/architecture/pairing-sprint2-trust-risk-intelligence.md` |
 | 2.2.3 | Secure Pairing — Controllers (Sprint 3 backend vertical) | ✅ Done — 8 endpoints under `/pairing` (invite/accept/register/verify/activate/reject/revoke/status) + heartbeat; see `docs/architecture/pairing-sprint3-backend-vertical.md` |
 | — | Full backend test suite | **124/124 passing**, DI graph clean |
-| — | Sprint 3 (Flutter/Kotlin half: device registration flow, heartbeat scheduling) | ⏳ Deferred — explicitly flagged, not silently dropped (see backend doc §8) |
+| — | Sprint 3 (Flutter/Kotlin half: device registration flow, heartbeat) | ✅ Done — Device Identity (Keystore keypair), Device Registration flow, Heartbeat foundation; see `docs/architecture/pairing-sprint3-flutter-vertical.md` (⚠️ not compiled/tested — standing sandbox limitation) |
 | — | Full backend test suite | **80/80 passing**, DI graph clean |
 
 **✅ Integrity disclosure — RESOLVED (see Repository Integrity Check

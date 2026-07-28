@@ -4,12 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/di/providers.dart';
 import 'core/platform/agent_capability_not_implemented_exception.dart';
 import 'core/platform/agent_channel.dart';
+import 'features/pairing/presentation/pairing_screen.dart';
 
-/// Deliberately NOT a real feature screen — Decision-009/013's
-/// instruction was explicit: no additional UI screens before Steps 2–12
-/// of the Core Architecture are complete. This widget exists solely to
-/// prove, end-to-end, that Dart can call into native Android and get a
-/// real answer back — the one thing every later step depends on.
+/// Sprint 3 update: routes between the pairing onboarding screen (no
+/// stored session) and a paired-status screen (session exists) —
+/// still exactly the "onboarding/diagnostic screens only" scope this
+/// project has held to since Step 1; no feature UI beyond that line.
 class ChildAgentApp extends ConsumerWidget {
   const ChildAgentApp({super.key});
 
@@ -18,11 +18,56 @@ class ChildAgentApp extends ConsumerWidget {
     return const MaterialApp(
       title: 'AI Family Digital Coach — Agent',
       debugShowCheckedModeBanner: false,
-      home: _PlatformChannelDiagnosticScreen(),
+      home: _AppRoot(),
     );
   }
 }
 
+class _AppRoot extends ConsumerStatefulWidget {
+  const _AppRoot();
+
+  @override
+  ConsumerState<_AppRoot> createState() => _AppRootState();
+}
+
+class _AppRootState extends ConsumerState<_AppRoot> {
+  bool? _isPaired;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSession();
+  }
+
+  Future<void> _checkSession() async {
+    final tokenStorage = ref.read(tokenStorageProvider);
+    final hasSession = await tokenStorage.hasSession();
+    if (mounted) setState(() => _isPaired = hasSession);
+    if (hasSession) {
+      ref.read(heartbeatServiceProvider).start();
+    }
+  }
+
+  void _onPaired() {
+    setState(() => _isPaired = true);
+    ref.read(heartbeatServiceProvider).start();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isPaired == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_isPaired == false) {
+      return PairingScreen(onPaired: _onPaired);
+    }
+    return const _PlatformChannelDiagnosticScreen();
+  }
+}
+
+/// Retained from Step 1 as the paired-state landing screen — now also
+/// serves as visible proof the platform channel (including Sprint 3's
+/// new `getDevicePublicKey`) is wired, post-pairing.
 class _PlatformChannelDiagnosticScreen extends ConsumerWidget {
   const _PlatformChannelDiagnosticScreen();
 
@@ -31,7 +76,7 @@ class _PlatformChannelDiagnosticScreen extends ConsumerWidget {
     final channel = ref.watch(agentPlatformChannelProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Core Architecture — Diagnostic')),
+      appBar: AppBar(title: const Text('Device Status')),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: FutureBuilder<_Diagnostics>(
@@ -56,7 +101,7 @@ class _PlatformChannelDiagnosticScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  '✅ Dart ↔ Kotlin channel is working.',
+                  '✅ Device paired. Heartbeat running.',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),

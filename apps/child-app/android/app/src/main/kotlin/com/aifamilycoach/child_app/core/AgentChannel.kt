@@ -14,4 +14,6 @@ object AgentChannel {
 
     const val METHOD_GET_NATIVE_APP_VERSION = "getNativeAppVersion"
     const val METHOD_GET_ANDROID_SDK_INT = "getAndroidSdkInt"
+    /** Sprint 3 — see DeviceIdentityKeyManager. */
+    const val METHOD_GET_DEVICE_PUBLIC_KEY = "getDevicePublicKey"
 }

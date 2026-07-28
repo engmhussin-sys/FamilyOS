@@ -22,4 +22,10 @@ abstract class AgentPlatformChannel {
   /// value feeds capability decisions, not version-number branching in
   /// application code directly.
   Future<int> getAndroidSdkInt();
+
+  /// Sprint 3 — returns the device's Keystore-backed identity public key
+  /// (Base64-encoded X.509 SubjectPublicKeyInfo), generating it on first
+  /// call if it doesn't exist yet. See
+  /// android/.../core/DeviceIdentityKeyManager.kt.
+  Future<String> getDevicePublicKey();
 }
