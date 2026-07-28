@@ -94,13 +94,8 @@ export class PairingController {
 
   @Get('device/:deviceId/status')
   @UseGuards(JwtAuthGuard)
-  getStatus(@Param('deviceId') deviceId: string) {
-    // NOTE: per pairing-backend-domain-architecture.md, this endpoint
-    // should also accept DeviceJwtAuthGuard for device-self queries —
-    // deferred to a follow-up (needs a combined-guard mechanism NestJS
-    // doesn't provide for free); JwtAuthGuard-only (parent) covers
-    // Sprint 3's actual consumer (Parent App/Dashboard status checks).
-    return this.pairingOrchestrator.getStatus(deviceId);
+  getStatus(@Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
+    return this.pairingOrchestrator.getStatus(deviceId, user.familyId!);
   }
 
   @Post('device/heartbeat')

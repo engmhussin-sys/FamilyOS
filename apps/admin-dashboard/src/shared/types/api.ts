@@ -42,6 +42,48 @@ export interface PairingInitiateResponse {
   expiresInSeconds: number;
 }
 
+export interface DeviceCapabilityReport {
+  manufacturer: string;
+  model: string;
+  sdkInt: number;
+  usageAccessGranted: boolean;
+  accessibilityEnabled: boolean;
+  overlayGranted: boolean;
+  batteryOptimizationExempted: boolean;
+  notificationsGranted: boolean;
+  profileHash: string;
+}
+
+export interface DeviceSummary {
+  id: string;
+  childId: string;
+  childFirstName: string;
+  platform: string;
+  status: string;
+  trustLevel: string | null;
+  riskLevel: string;
+  lastSeenAt: string | null;
+  capabilities: DeviceCapabilityReport | null;
+}
+
+export interface DeviceHealthDiagnosis {
+  deviceId: string;
+  trustLevel: string | null;
+  riskLevel: string;
+  riskReasons: string[];
+  summary: string;
+  generatedAt: string;
+}
+
+export interface ScreenTimePolicy {
+  id: string;
+  childId: string;
+  dailyLimitMinutes: number | null;
+  bedtimeStart: string | null;
+  bedtimeEnd: string | null;
+  focusModeEnabled: boolean;
+}
+
 export interface ApiErrorBody {
   message: string | string[];
   statusCode: number;

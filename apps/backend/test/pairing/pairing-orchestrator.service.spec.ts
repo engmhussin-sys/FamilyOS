@@ -238,7 +238,7 @@ describe('PairingOrchestratorService', () => {
       trustEvaluationServiceMock.getCurrentTrustLevel.mockResolvedValue('L3_ATTESTED');
       riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue({ overallLevel: 'LOW' });
 
-      const status = await service.getStatus('device-1');
+      const status = await service.getStatus('device-1', 'family-1');
 
       expect(status).toEqual({
         pairingState: 'HEALTHY',
@@ -247,6 +247,35 @@ describe('PairingOrchestratorService', () => {
         lastSeenAt: new Date('2026-07-28T00:00:00Z'),
         activationStatus: 'ACTIVATED',
       });
+    });
+
+    it('SECURITY: throws NotFoundException (not the status) when the device belongs to a different family', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'someone-elses-family', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      await expect(service.getStatus('device-1', 'family-1')).rejects.toBeInstanceOf(NotFoundException);
+      expect(pairingStateMachineMock.getCurrentState).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('assertDeviceBelongsToFamily', () => {
+    it('returns the childId when ownership matches', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      await expect(service.assertDeviceBelongsToFamily('device-1', 'family-1')).resolves.toEqual({
+        childId: 'child-1',
+      });
+    });
+
+    it('throws NotFoundException when ownership does not match', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'someone-elses-family', status: 'ACTIVE', lastSeenAt: null,
+      });
+      await expect(
+        service.assertDeviceBelongsToFamily('device-1', 'family-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 

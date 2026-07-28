@@ -234,8 +234,8 @@ export class PairingOrchestratorService {
     await this.tokenService.revokeAllTokensForDevice(deviceId);
   }
 
-  async getStatus(deviceId: string): Promise<IPairingDeviceStatus> {
-    const device = await this.getDeviceOrThrow(deviceId);
+  async getStatus(deviceId: string, familyId: string): Promise<IPairingDeviceStatus> {
+    const device = await this.getDeviceOrThrowScopedToFamily(deviceId, familyId);
     const [pairingState, trustLevel, latestRisk] = await Promise.all([
       this.pairingStateMachine.getCurrentState(device.childId),
       this.trustEvaluationService.getCurrentTrustLevel(deviceId),
@@ -249,6 +249,19 @@ export class PairingOrchestratorService {
       lastSeenAt: device.lastSeenAt,
       activationStatus: device.status === 'ACTIVE' ? 'ACTIVATED' : 'NOT_ACTIVATED',
     };
+  }
+
+  /**
+   * Sprint 4 (Track A) — a thin, reusable ownership check for other
+   * modules that need to confirm a device belongs to a family before
+   * doing anything with it, WITHOUT duplicating
+   * getDeviceOrThrowScopedToFamily's logic. First consumer:
+   * AiDiagnosticsService (ai-core module) — see
+   * docs/architecture/sprint4-track-a-completion.md.
+   */
+  async assertDeviceBelongsToFamily(deviceId: string, familyId: string): Promise<{ childId: string }> {
+    const device = await this.getDeviceOrThrowScopedToFamily(deviceId, familyId);
+    return { childId: device.childId };
   }
 
   /**

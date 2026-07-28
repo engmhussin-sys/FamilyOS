@@ -2,6 +2,8 @@ import { useAuthStore } from '../../auth/store/authStore';
 import { Card } from '../../../shared/components/Card';
 import { ChildrenListCard } from '../../children/components/ChildrenListCard';
 import { PairingCard } from '../../pairing/components/PairingCard';
+import { DeviceStatusCard } from '../../devices/components/DeviceStatusCard';
+import { ScreenTimePolicyCard } from '../../screen-time/components/ScreenTimePolicyCard';
 
 export function DashboardHomePage() {
   const user = useAuthStore((s) => s.user);
@@ -26,12 +28,8 @@ export function DashboardHomePage() {
 
       <ChildrenListCard />
       <PairingCard />
-
-      <Card className="border-dashed bg-transparent shadow-none">
-        <p className="text-sm text-ink-soft">
-          الوقت الرقمي والتقارير الذكية ستظهر هنا بمجرد اكتمال الوحدات البرمجية الخاصة بها.
-        </p>
-      </Card>
+      <DeviceStatusCard />
+      <ScreenTimePolicyCard />
     </div>
   );
 }
