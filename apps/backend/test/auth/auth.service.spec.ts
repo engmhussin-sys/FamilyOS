@@ -3,6 +3,7 @@ import { AuthService } from '../../src/modules/auth/application/services/auth.se
 import { PasswordService } from '../../src/modules/auth/application/services/password.service';
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { USER_REPOSITORY } from '../../src/modules/auth/application/ports/auth.repository.ports';
+import { AuditService } from '../../src/modules/audit/application/audit.service';
 import {
   EmailAlreadyRegisteredException,
   InvalidCredentialsException,
@@ -27,6 +28,8 @@ describe('AuthService', () => {
     verifyAndConsumeRefreshToken: jest.fn(),
   };
 
+  const auditServiceMock = { record: jest.fn() };
+
   let authService: AuthService;
 
   beforeEach(async () => {
@@ -38,6 +41,7 @@ describe('AuthService', () => {
         { provide: USER_REPOSITORY, useValue: userRepositoryMock },
         { provide: PasswordService, useValue: passwordServiceMock },
         { provide: TokenService, useValue: tokenServiceMock },
+        { provide: AuditService, useValue: auditServiceMock },
       ],
     }).compile();
 
@@ -161,6 +165,40 @@ describe('AuthService', () => {
         'old-refresh-token',
       );
       expect(result.accessToken).toBe('new-access');
+    });
+  });
+
+  describe('logout (Sprint 9: now audited)', () => {
+    it('revokes the token and records an audit event for a USER actor', async () => {
+      tokenServiceMock.verifyAndConsumeRefreshToken.mockResolvedValue({
+        payload: { sub: 'user-1', actorType: 'USER', familyId: 'family-1' },
+        record: { id: 'old-token-id' },
+      });
+
+      await authService.logout('refresh-token');
+
+      expect(auditServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorType: 'USER',
+          actorUserId: 'user-1',
+          action: 'auth.logout',
+          entityType: 'User',
+          entityId: 'user-1',
+        }),
+      );
+    });
+
+    it('records a DEVICE-actor audit event without actorUserId for a device logout', async () => {
+      tokenServiceMock.verifyAndConsumeRefreshToken.mockResolvedValue({
+        payload: { sub: 'device-1', actorType: 'DEVICE', familyId: 'family-1' },
+        record: { id: 'old-token-id' },
+      });
+
+      await authService.logout('refresh-token');
+
+      expect(auditServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({ actorType: 'DEVICE', actorUserId: undefined, entityType: 'Device' }),
+      );
     });
   });
 });

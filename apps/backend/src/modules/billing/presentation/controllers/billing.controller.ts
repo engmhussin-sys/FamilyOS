@@ -39,12 +39,12 @@ export class BillingController {
 
   @Post('subscribe')
   subscribe(@Body() dto: SubscribeDto, @CurrentUser() user: IJwtPayload) {
-    return this.subscriptionService.subscribe(user.familyId!, dto.planTier, dto.provider);
+    return this.subscriptionService.subscribe(user.familyId!, dto.planTier, dto.provider, user.sub);
   }
 
   @Post('cancel')
   async cancel(@CurrentUser() user: IJwtPayload): Promise<void> {
-    await this.subscriptionService.cancel(user.familyId!);
+    await this.subscriptionService.cancel(user.familyId!, user.sub);
   }
 
   @Get('history')

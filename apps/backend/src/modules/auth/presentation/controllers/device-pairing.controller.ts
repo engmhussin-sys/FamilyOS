@@ -10,6 +10,16 @@ import { CurrentUser } from '../../../../common/decorators/current-user.decorato
 import type { IJwtPayload } from '../../domain/auth.types';
 
 /**
+ * @deprecated Sprint 9 (Final Architecture Review) finding: this
+ * controller predates the full PairingModule (Sprint 2 onward) and was
+ * documented as "Deprecated, not removed" in
+ * docs/architecture/pairing-module-boundary.md \u00a75 \u2014 but had NO
+ * deprecation marker anywhere in the actual code until this fix, and
+ * the Admin Dashboard was still calling it (also fixed this session \u2014
+ * see admin-dashboard's pairingApi.ts). Kept for backward compatibility
+ * with any external caller that may still target this path; all new
+ * code must use `POST /pairing/invite` (PairingController).
+ *
  * `initiate` trusts `payload.familyId` from the parent's access token as
  * the scope for the pairing, and `PairingService.initiate` now verifies
  * (via `ChildrenService.assertChildBelongsToFamily`) that `childId`

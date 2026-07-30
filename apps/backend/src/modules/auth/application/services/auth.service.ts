@@ -17,6 +17,7 @@ import {
 } from '../ports/auth.repository.ports';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
+import { AuditService } from '../../../audit/application/audit.service';
 
 /**
  * The domain layer intentionally does not import Prisma's generated
@@ -39,6 +40,7 @@ export class AuthService {
     @Inject(USER_REPOSITORY) private readonly userRepository: IUserRepository,
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -60,6 +62,15 @@ export class AuthService {
     );
 
     this.logger.log(`New parent registered: userId=${user.id} familyId=${family.id}`);
+
+    await this.auditService.record({
+      actorType: 'USER',
+      actorUserId: user.id,
+      action: 'auth.register',
+      entityType: 'User',
+      entityId: user.id,
+      metadata: { familyId: family.id },
+    });
 
     return {
       id: user.id,
@@ -109,6 +120,15 @@ export class AuthService {
 
     await this.userRepository.updateLastLoginAt(user.id, new Date());
 
+    await this.auditService.record({
+      actorType: 'USER',
+      actorUserId: user.id,
+      action: 'auth.login',
+      entityType: 'User',
+      entityId: user.id,
+      ipAddress: context.ipAddress,
+    });
+
     return {
       user: {
         id: user.id,
@@ -141,6 +161,14 @@ export class AuthService {
   async logout(refreshToken: string): Promise<void> {
     // Reuses the same verify-and-revoke path as refresh; we simply don't
     // issue a replacement pair afterward.
-    await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
+    const { payload } = await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
+
+    await this.auditService.record({
+      actorType: payload.actorType,
+      actorUserId: payload.actorType === 'USER' ? payload.sub : undefined,
+      action: 'auth.logout',
+      entityType: payload.actorType === 'USER' ? 'User' : 'Device',
+      entityId: payload.sub,
+    });
   }
 }

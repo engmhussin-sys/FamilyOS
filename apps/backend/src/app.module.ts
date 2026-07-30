@@ -22,10 +22,16 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { SearchModule } from './modules/search/search.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './modules/health/health.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { SystemDiagnosticsModule } from './modules/system-diagnostics/system-diagnostics.module';
+import { DataRetentionModule } from './modules/data-retention/data-retention.module';
+import { ConfigurationModule } from './config/configuration.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    ConfigurationModule,
+    AuditModule,
     // Application-wide default rate limit. Individual endpoints (login,
     // register, pairing/confirm) override this with a stricter @Throttle()
     // — see AuthController / DevicePairingController.
@@ -47,6 +53,8 @@ import { HealthModule } from './modules/health/health.module';
     SearchModule,
     AnalyticsModule,
     HealthModule,
+    SystemDiagnosticsModule,
+    DataRetentionModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

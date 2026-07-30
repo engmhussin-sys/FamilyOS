@@ -7,6 +7,7 @@ import {
   SCREEN_TIME_POLICY_REPOSITORY,
   type IScreenTimePolicyRepository,
 } from '../ports/screen-time.repository.port';
+import { AuditService } from '../../../audit/application/audit.service';
 
 @Injectable()
 export class ScreenTimeService {
@@ -14,6 +15,7 @@ export class ScreenTimeService {
     private readonly childrenService: ChildrenService,
     @Inject(SCREEN_TIME_POLICY_REPOSITORY)
     private readonly policyRepository: IScreenTimePolicyRepository,
+    private readonly auditService: AuditService,
   ) {}
 
   async getPolicy(childId: string, familyId: string): Promise<ScreenTimePolicy | null> {
@@ -41,6 +43,17 @@ export class ScreenTimeService {
       await this.policyRepository.deactivate(existing.id);
     }
 
-    return this.policyRepository.create(childId, createdByUserId, input);
+    const created = await this.policyRepository.create(childId, createdByUserId, input);
+
+    await this.auditService.record({
+      actorType: 'USER',
+      actorUserId: createdByUserId,
+      action: 'screenTime.policy.changed',
+      entityType: 'Child',
+      entityId: childId,
+      metadata: { previousPolicyId: existing?.id ?? null, newPolicyId: created.id },
+    });
+
+    return created;
   }
 }

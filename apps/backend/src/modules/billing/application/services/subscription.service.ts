@@ -4,6 +4,7 @@ import { BILLING_REPOSITORY, type IBillingRepository } from '../ports/billing.re
 import { TrialManager } from './trial-manager.service';
 import { PaymentService } from './payment.service';
 import { InvoiceService } from './invoice.service';
+import { AuditService } from '../../../audit/application/audit.service';
 import type { PaymentProviderValue, SubscriptionPlanTier } from '../../domain/billing.types';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class SubscriptionService {
     private readonly trialManager: TrialManager,
     private readonly paymentService: PaymentService,
     private readonly invoiceService: InvoiceService,
+    private readonly auditService: AuditService,
   ) {}
 
   getForFamily(familyId: string) {
@@ -42,7 +44,12 @@ export class SubscriptionService {
    * provider throws PaymentProviderNotConfiguredException, which
    * propagates untouched (a 503, correctly signaling "try again once
    * this is set up," not a generic subscription failure). */
-  async subscribe(familyId: string, planTier: SubscriptionPlanTier, provider: PaymentProviderValue) {
+  async subscribe(
+    familyId: string,
+    planTier: SubscriptionPlanTier,
+    provider: PaymentProviderValue,
+    actorUserId?: string,
+  ) {
     const plan = await this.repository.findPlanByTier(planTier);
     if (!plan) {
       throw new NotFoundException(`Plan tier "${planTier}" does not exist.`);
@@ -74,15 +81,32 @@ export class SubscriptionService {
       await this.repository.updateSubscriptionStatus(subscription.id, 'PAST_DUE');
     }
 
+    await this.auditService.record({
+      actorType: actorUserId ? 'USER' : 'SYSTEM',
+      actorUserId,
+      action: chargeResult.success ? 'billing.subscribed' : 'billing.charge_failed',
+      entityType: 'Subscription',
+      entityId: subscription.id,
+      metadata: { planTier, provider, success: chargeResult.success },
+    });
+
     return { subscription, invoice, chargeResult };
   }
 
-  async cancel(familyId: string) {
+  async cancel(familyId: string, actorUserId?: string) {
     const subscription = await this.repository.findSubscriptionByFamily(familyId);
     if (!subscription) {
       throw new NotFoundException('No subscription found for this family.');
     }
     await this.repository.updateSubscriptionStatus(subscription.id, 'CANCELED', { canceledAt: new Date() });
+
+    await this.auditService.record({
+      actorType: actorUserId ? 'USER' : 'SYSTEM',
+      actorUserId,
+      action: 'billing.canceled',
+      entityType: 'Subscription',
+      entityId: subscription.id,
+    });
   }
 
   async getBillingHistory(familyId: string) {

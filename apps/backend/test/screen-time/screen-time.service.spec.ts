@@ -3,6 +3,7 @@ import { ScreenTimeService } from '../../src/modules/screen-time/application/ser
 import { SCREEN_TIME_POLICY_REPOSITORY } from '../../src/modules/screen-time/application/ports/screen-time.repository.port';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { ChildNotFoundException } from '../../src/modules/children/domain/child.errors';
+import { AuditService } from '../../src/modules/audit/application/audit.service';
 
 describe('ScreenTimeService', () => {
   const policyRepositoryMock = {
@@ -11,6 +12,7 @@ describe('ScreenTimeService', () => {
     deactivate: jest.fn(),
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
+  const auditServiceMock = { record: jest.fn() };
 
   let service: ScreenTimeService;
 
@@ -21,6 +23,7 @@ describe('ScreenTimeService', () => {
         ScreenTimeService,
         { provide: SCREEN_TIME_POLICY_REPOSITORY, useValue: policyRepositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
+        { provide: AuditService, useValue: auditServiceMock },
       ],
     }).compile();
     service = moduleRef.get(ScreenTimeService);

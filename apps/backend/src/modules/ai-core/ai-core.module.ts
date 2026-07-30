@@ -61,6 +61,10 @@ import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
     SafetyEngineService,
     RecommendationEngineService,
     BehavioralIntelligenceEngineService,
+    // Sprint 9: ReadinessCheckService needs the raw provider to run its
+    // own liveness ping — exported now, wasn't needed by any consumer
+    // before this.
+    AI_PROVIDER,
   ],
 })
 export class AiCoreModule {}

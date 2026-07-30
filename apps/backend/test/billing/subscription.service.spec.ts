@@ -5,6 +5,7 @@ import { BILLING_REPOSITORY } from '../../src/modules/billing/application/ports/
 import { TrialManager } from '../../src/modules/billing/application/services/trial-manager.service';
 import { PaymentService } from '../../src/modules/billing/application/services/payment.service';
 import { InvoiceService } from '../../src/modules/billing/application/services/invoice.service';
+import { AuditService } from '../../src/modules/audit/application/audit.service';
 
 describe('SubscriptionService', () => {
   const repositoryMock = {
@@ -20,6 +21,7 @@ describe('SubscriptionService', () => {
     markPaid: jest.fn(),
     listForSubscription: jest.fn(),
   };
+  const auditServiceMock = { record: jest.fn() };
 
   let service: SubscriptionService;
 
@@ -32,6 +34,7 @@ describe('SubscriptionService', () => {
         { provide: TrialManager, useValue: trialManagerMock },
         { provide: PaymentService, useValue: paymentServiceMock },
         { provide: InvoiceService, useValue: invoiceServiceMock },
+        { provide: AuditService, useValue: auditServiceMock },
       ],
     }).compile();
     service = moduleRef.get(SubscriptionService);
