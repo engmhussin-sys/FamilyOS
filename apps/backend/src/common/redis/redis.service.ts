@@ -24,6 +24,12 @@ export class RedisService implements OnModuleDestroy {
     await this.client.set(key, value, 'EX', ttlSeconds);
   }
 
+  /** Sprint 9 \u2014 the Health Controller's readiness check. Throws if Redis
+   * is unreachable; the caller (HealthController) catches it. */
+  async ping(): Promise<void> {
+    await this.client.ping();
+  }
+
   async get(key: string): Promise<string | null> {
     return this.client.get(key);
   }
