@@ -127,4 +127,16 @@ export class PairingController {
   listDevices(@CurrentUser() user: IJwtPayload) {
     return this.pairingOrchestrator.listFamilyDevices(user.familyId!);
   }
+
+  @Get('device/:deviceId/timeline')
+  @UseGuards(JwtAuthGuard)
+  getTimeline(@Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
+    return this.pairingOrchestrator.getTimeline(deviceId, user.familyId!);
+  }
+
+  @Get('alerts')
+  @UseGuards(JwtAuthGuard)
+  listAlerts(@CurrentUser() user: IJwtPayload) {
+    return this.pairingOrchestrator.listAlerts(user.sub);
+  }
 }

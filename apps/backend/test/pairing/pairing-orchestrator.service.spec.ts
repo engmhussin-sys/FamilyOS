@@ -9,6 +9,9 @@ import { RiskEvaluationService } from '../../src/modules/pairing/application/ser
 import { PAIRING_DEVICE_REPOSITORY } from '../../src/modules/pairing/application/ports/pairing-device.repository.port';
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { ScreenTimeService } from '../../src/modules/screen-time/application/services/screen-time.service';
+import { PAIRING_EVENT_REPOSITORY } from '../../src/modules/pairing/application/ports/pairing-event.repository.port';
+import { RuntimeAlertService } from '../../src/modules/pairing/application/services/runtime-alert.service';
+import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
 
 const NO_RISK_SIGNALS = {
   isEmulator: false,
@@ -40,6 +43,9 @@ describe('PairingOrchestratorService', () => {
   };
   const tokenServiceMock = { issueTokenPair: jest.fn(), revokeAllTokensForDevice: jest.fn() };
   const screenTimeServiceMock = { getPolicy: jest.fn() };
+  const pairingEventRepositoryMock = { findAllByChild: jest.fn() };
+  const runtimeAlertServiceMock = { evaluateTransition: jest.fn() };
+  const runtimeAlertRepositoryMock = { listForUser: jest.fn() };
 
   let service: PairingOrchestratorService;
 
@@ -56,6 +62,9 @@ describe('PairingOrchestratorService', () => {
         { provide: PAIRING_DEVICE_REPOSITORY, useValue: pairingDeviceRepositoryMock },
         { provide: TokenService, useValue: tokenServiceMock },
         { provide: ScreenTimeService, useValue: screenTimeServiceMock },
+        { provide: PAIRING_EVENT_REPOSITORY, useValue: pairingEventRepositoryMock },
+        { provide: RuntimeAlertService, useValue: runtimeAlertServiceMock },
+        { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertRepositoryMock },
       ],
     }).compile();
     service = moduleRef.get(PairingOrchestratorService);
@@ -396,6 +405,89 @@ describe('PairingOrchestratorService', () => {
       await service.recordHeartbeat('device-1');
 
       expect(pairingDeviceRepositoryMock.updateTelemetry).not.toHaveBeenCalled();
+    });
+
+    it('Sprint 6: calls RuntimeAlertService.evaluateTransition with old and new accessibility state', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+        lastTelemetry: { accessibilityServiceEnabled: true },
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('HEALTHY');
+
+      await service.recordHeartbeat('device-1', { accessibilityServiceEnabled: false });
+
+      expect(runtimeAlertServiceMock.evaluateTransition).toHaveBeenCalledWith({
+        familyId: 'family-1',
+        childId: 'child-1',
+        previousAccessibilityEnabled: true,
+        currentAccessibilityEnabled: false,
+      });
+    });
+
+    it('Sprint 6: does not call evaluateTransition when accessibilityServiceEnabled is absent from telemetry', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingStateMachineMock.getCurrentState.mockResolvedValue('HEALTHY');
+
+      await service.recordHeartbeat('device-1', { batteryPercent: 80 });
+
+      expect(runtimeAlertServiceMock.evaluateTransition).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getTimeline (Sprint 6)', () => {
+    it('returns the full childId-scoped event history for an owned device', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingEventRepositoryMock.findAllByChild.mockResolvedValue([{ id: 'event-1' }, { id: 'event-2' }]);
+
+      const timeline = await service.getTimeline('device-1', 'family-1');
+
+      expect(pairingEventRepositoryMock.findAllByChild).toHaveBeenCalledWith('child-1');
+      expect(timeline).toHaveLength(2);
+    });
+
+    it('SECURITY: throws NotFoundException for a device in a different family', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'someone-elses-family', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      await expect(service.getTimeline('device-1', 'family-1')).rejects.toBeInstanceOf(NotFoundException);
+      expect(pairingEventRepositoryMock.findAllByChild).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listAlerts (Sprint 6)', () => {
+    it('delegates to the repository, scoped by userId', async () => {
+      runtimeAlertRepositoryMock.listForUser.mockResolvedValue([{ id: 'alert-1' }]);
+      const result = await service.listAlerts('user-1');
+      expect(runtimeAlertRepositoryMock.listForUser).toHaveBeenCalledWith('user-1');
+      expect(result).toEqual([{ id: 'alert-1' }]);
+    });
+  });
+
+  describe('getRuntimeStatus (Sprint 6)', () => {
+    it('reads accessibilityServiceEnabled/enforcementActive from cached telemetry', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+        lastTelemetry: { accessibilityServiceEnabled: true, enforcementActive: true },
+      });
+
+      const status = await service.getRuntimeStatus('device-1');
+
+      expect(status).toEqual({ accessibilityServiceEnabled: true, enforcementActive: true });
+    });
+
+    it('defaults to null fields when no telemetry has ever arrived', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      const status = await service.getRuntimeStatus('device-1');
+
+      expect(status).toEqual({ accessibilityServiceEnabled: null, enforcementActive: null });
     });
   });
 

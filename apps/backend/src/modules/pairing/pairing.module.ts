@@ -11,14 +11,17 @@ import { RegistrationTokenService } from './application/services/registration-to
 import { TrustEvaluationService } from './application/services/trust-evaluation.service';
 import { RiskEvaluationService } from './application/services/risk-evaluation.service';
 import { PairingOrchestratorService } from './application/services/pairing-orchestrator.service';
+import { RuntimeAlertService } from './application/services/runtime-alert.service';
 import { PrismaPairingEventRepository } from './infrastructure/repositories/prisma-pairing-event.repository';
 import { PrismaDeviceTrustRepository } from './infrastructure/repositories/prisma-device-trust.repository';
 import { PrismaDeviceRiskRepository } from './infrastructure/repositories/prisma-device-risk.repository';
 import { PrismaPairingDeviceRepository } from './infrastructure/repositories/prisma-pairing-device.repository';
+import { PrismaRuntimeAlertRepository } from './infrastructure/repositories/prisma-runtime-alert.repository';
 import { PAIRING_EVENT_REPOSITORY } from './application/ports/pairing-event.repository.port';
 import { DEVICE_TRUST_REPOSITORY, TRUST_SIGNAL_PROVIDER } from './application/ports/device-trust.repository.port';
 import { DEVICE_RISK_REPOSITORY, RISK_SIGNAL_PROVIDER } from './application/ports/device-risk.repository.port';
 import { PAIRING_DEVICE_REPOSITORY } from './application/ports/pairing-device.repository.port';
+import { RUNTIME_ALERT_REPOSITORY } from './application/ports/runtime-alert.repository.port';
 
 /**
  * Sprint 3: PairingController is now live (Step 2.2.3, previously
@@ -37,11 +40,13 @@ import { PAIRING_DEVICE_REPOSITORY } from './application/ports/pairing-device.re
     TrustEvaluationService,
     RiskEvaluationService,
     PairingOrchestratorService,
+    RuntimeAlertService,
     RegistrationTokenGuard,
     { provide: PAIRING_EVENT_REPOSITORY, useClass: PrismaPairingEventRepository },
     { provide: DEVICE_TRUST_REPOSITORY, useClass: PrismaDeviceTrustRepository },
     { provide: DEVICE_RISK_REPOSITORY, useClass: PrismaDeviceRiskRepository },
     { provide: PAIRING_DEVICE_REPOSITORY, useClass: PrismaPairingDeviceRepository },
+    { provide: RUNTIME_ALERT_REPOSITORY, useClass: PrismaRuntimeAlertRepository },
     { provide: TRUST_SIGNAL_PROVIDER, useExisting: TrustEvaluationService },
     { provide: RISK_SIGNAL_PROVIDER, useExisting: RiskEvaluationService },
   ],

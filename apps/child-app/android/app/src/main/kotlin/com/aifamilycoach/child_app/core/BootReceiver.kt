@@ -23,5 +23,14 @@ class BootReceiver : BroadcastReceiver() {
         } else {
             context.startService(serviceIntent)
         }
+
+        // Sprint 6: Boot Recovery also re-establishes the Watchdog and
+        // the bedtime alarm — both are lost on reboot (WorkManager
+        // periodic work generally survives reboot, but re-enqueuing here
+        // is cheap and removes any doubt; AlarmManager alarms are NOT
+        // persisted across reboot and MUST be rescheduled here).
+        RuntimeWatchdogScheduler.scheduleWatchdog(context)
+        val policy = NativePolicyStore(context).load()
+        RuntimeWatchdogScheduler.scheduleBedtimeAlarm(context, policy.bedtimeStart)
     }
 }

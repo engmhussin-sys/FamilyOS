@@ -161,6 +161,10 @@ class MainActivity : FlutterActivity() {
                                 blockedPackages = blockedPackages,
                             ),
                         )
+                        RuntimeWatchdogScheduler.scheduleBedtimeAlarm(
+                            applicationContext,
+                            args["bedtimeStart"] as? String,
+                        )
                         result.success(null)
                     }
                 }
@@ -186,6 +190,9 @@ class MainActivity : FlutterActivity() {
                     } else {
                         startService(serviceIntent)
                     }
+                    RuntimeWatchdogScheduler.scheduleWatchdog(applicationContext)
+                    val policy = nativePolicyStore.load()
+                    RuntimeWatchdogScheduler.scheduleBedtimeAlarm(applicationContext, policy.bedtimeStart)
                     result.success(null)
                 }
 

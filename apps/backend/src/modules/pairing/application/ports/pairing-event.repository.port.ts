@@ -49,4 +49,10 @@ export interface IPairingEventRepository {
     childId: string,
     eventType: PairingEventTypeValue,
   ): Promise<IPairingEventRecord[]>;
+
+  /** Sprint 6 — Runtime Timeline. Every event for the child, regardless
+   * of type, chronological. Reuses the same DevicePairingEvent ledger —
+   * no new table, per this project's established "one audit trail"
+   * discipline. */
+  findAllByChild(childId: string): Promise<IPairingEventRecord[]>;
 }

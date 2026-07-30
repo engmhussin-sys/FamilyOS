@@ -58,14 +58,16 @@ export class AiDiagnosticsService {
 
     const riskLevel = riskAssessment?.overallLevel ?? 'UNKNOWN';
     const riskReasons = riskAssessment?.reasons ?? [];
+    const runtimeStatus = await this.pairingOrchestrator.getRuntimeStatus(deviceId);
 
-    const summary = await this.generateSummary(trustLevel, riskLevel, riskReasons);
+    const summary = await this.generateSummary(trustLevel, riskLevel, riskReasons, runtimeStatus);
 
     return {
       deviceId,
       trustLevel,
       riskLevel,
       riskReasons,
+      runtimeStatus,
       summary,
       generatedAt: new Date(),
     };
@@ -75,11 +77,14 @@ export class AiDiagnosticsService {
     trustLevel: string | null,
     riskLevel: string,
     riskReasons: string[],
+    runtimeStatus: { accessibilityServiceEnabled: boolean | null; enforcementActive: boolean | null },
   ): Promise<string> {
     const userMessage = [
       `Trust level: ${trustLevel ?? 'not yet established'}.`,
       `Risk level: ${riskLevel}.`,
       riskReasons.length > 0 ? `Risk factors: ${riskReasons.join(', ')}.` : 'No risk factors currently flagged.',
+      `Enforcement active: ${runtimeStatus.enforcementActive ?? 'unknown'}.`,
+      `Accessibility Service enabled: ${runtimeStatus.accessibilityServiceEnabled ?? 'unknown'}.`,
     ].join('\n');
 
     try {

@@ -10,6 +10,10 @@ import {
   type ICreatePairingDeviceInput,
   type IPairingDeviceRepository,
 } from '../ports/pairing-device.repository.port';
+import {
+  PAIRING_EVENT_REPOSITORY,
+  type IPairingEventRepository,
+} from '../ports/pairing-event.repository.port';
 import type { IInvitationTicket, IRedeemedInvitation } from '../../domain/invitation.types';
 import type { IRegistrationTokenTicket } from '../../domain/registration-token.types';
 import type { IRiskAssessmentResult, IRiskSignalInput } from '../../domain/risk.types';
@@ -21,6 +25,11 @@ import type { PairingStateValue } from '../../domain/pairing.types';
 import { TokenService } from '../../../auth/application/services/token.service';
 import type { ITokenPair } from '../../../auth/domain/auth.types';
 import { ScreenTimeService } from '../../../screen-time/application/services/screen-time.service';
+import { RuntimeAlertService } from './runtime-alert.service';
+import {
+  RUNTIME_ALERT_REPOSITORY,
+  type IRuntimeAlertRepository,
+} from '../ports/runtime-alert.repository.port';
 import type {
   IDeviceCapabilityReport,
   IDeviceSummary,
@@ -68,8 +77,13 @@ export class PairingOrchestratorService {
     private readonly riskEvaluationService: RiskEvaluationService,
     @Inject(PAIRING_DEVICE_REPOSITORY)
     private readonly pairingDeviceRepository: IPairingDeviceRepository,
+    @Inject(PAIRING_EVENT_REPOSITORY)
+    private readonly pairingEventRepository: IPairingEventRepository,
     private readonly tokenService: TokenService,
     private readonly screenTimeService: ScreenTimeService,
+    private readonly runtimeAlertService: RuntimeAlertService,
+    @Inject(RUNTIME_ALERT_REPOSITORY)
+    private readonly runtimeAlertRepository: IRuntimeAlertRepository,
   ) {}
 
   invite(childId: string, familyId: string, initiatedByUserId: string): Promise<IInvitationTicket> {
@@ -278,7 +292,21 @@ export class PairingOrchestratorService {
     await this.pairingDeviceRepository.touchLastSeen(deviceId);
 
     if (telemetry) {
+      // Sprint 6: compare against the PREVIOUS telemetry before it's
+      // overwritten — this is the one place that "before" state exists.
+      const previousAccessibilityEnabled =
+        (device.lastTelemetry?.['accessibilityServiceEnabled'] as boolean) ?? null;
+
       await this.pairingDeviceRepository.updateTelemetry(deviceId, telemetry as Record<string, unknown>);
+
+      if (telemetry.accessibilityServiceEnabled !== undefined) {
+        await this.runtimeAlertService.evaluateTransition({
+          familyId: device.familyId,
+          childId: device.childId,
+          previousAccessibilityEnabled,
+          currentAccessibilityEnabled: telemetry.accessibilityServiceEnabled,
+        });
+      }
     }
 
     const currentState = await this.pairingStateMachine.getCurrentState(device.childId);
@@ -366,6 +394,37 @@ export class PairingOrchestratorService {
         };
       }),
     );
+  }
+
+  /** Sprint 6 — Runtime Timeline. Family-ownership-checked, same as
+   * getStatus (this session's earlier security fix, reused here rather
+   * than re-derived). */
+  async getTimeline(deviceId: string, familyId: string) {
+    const device = await this.getDeviceOrThrowScopedToFamily(deviceId, familyId);
+    return this.pairingEventRepository.findAllByChild(device.childId);
+  }
+
+  /** Sprint 6 — Alert Center. userId-scoped, not familyId — a runtime
+   * alert was created for a specific recipient (createForFamilyOwner),
+   * so reading it back is naturally scoped to "my notifications," same
+   * as any notification system. */
+  listAlerts(userId: string) {
+    return this.runtimeAlertRepository.listForUser(userId);
+  }
+
+  /** Sprint 6 — the read path AiDiagnosticsService (ai-core module)
+   * consumes, so Runtime signals reach AI Core without ai-core needing
+   * to know about Device.lastTelemetry's storage shape directly. */
+  async getRuntimeStatus(deviceId: string): Promise<{
+    accessibilityServiceEnabled: boolean | null;
+    enforcementActive: boolean | null;
+  }> {
+    const device = await this.getDeviceOrThrow(deviceId);
+    return {
+      accessibilityServiceEnabled:
+        (device.lastTelemetry?.['accessibilityServiceEnabled'] as boolean) ?? null,
+      enforcementActive: (device.lastTelemetry?.['enforcementActive'] as boolean) ?? null,
+    };
   }
 
   private async getDeviceOrThrow(deviceId: string) {

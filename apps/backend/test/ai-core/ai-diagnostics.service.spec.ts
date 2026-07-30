@@ -10,7 +10,13 @@ describe('AiDiagnosticsService', () => {
   const trustSignalProviderMock = { getCurrentTrustLevel: jest.fn() };
   const riskSignalProviderMock = { getLatestRiskAssessment: jest.fn() };
   const aiProviderMock = { complete: jest.fn() };
-  const pairingOrchestratorMock = { assertDeviceBelongsToFamily: jest.fn() };
+  const pairingOrchestratorMock = {
+    assertDeviceBelongsToFamily: jest.fn(),
+    getRuntimeStatus: jest.fn().mockResolvedValue({
+      accessibilityServiceEnabled: null,
+      enforcementActive: null,
+    }),
+  };
 
   let service: AiDiagnosticsService;
 
