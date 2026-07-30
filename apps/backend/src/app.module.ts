@@ -12,6 +12,7 @@ import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
 import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
 import { PairingModule } from './modules/pairing/pairing.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PairingModule } from './modules/pairing/pairing.module';
     AiAssistantModule,
     ComplianceModule,
     PairingModule,
+    NotificationsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

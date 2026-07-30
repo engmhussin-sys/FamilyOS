@@ -54,7 +54,15 @@ describe('RecommendationEngineService', () => {
 
     expect(result.wasPhrasedByAI).toBe(false);
     expect(result.title).toBe('No screen time policy yet');
-    expect(memoryEngineMock.recordRecommendation).toHaveBeenCalled();
+    expect(memoryEngineMock.recordRecommendation).toHaveBeenCalledWith(
+      'child-1',
+      expect.objectContaining({
+        recommendationType: 'SET_SCREEN_TIME_POLICY',
+        rulesApplied: [],
+        reasoningPath: [],
+        inputs: {},
+      }),
+    );
   });
 
   it('SAFETY: falls back to ALL_CLEAR when the Safety Engine rejects the deterministic copy', async () => {

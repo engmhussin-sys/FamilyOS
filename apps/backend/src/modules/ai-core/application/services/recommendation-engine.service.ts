@@ -104,6 +104,14 @@ export class RecommendationEngineService {
         recommendationType: decision.recommendationType,
         confidence: decision.confidence,
         title: copy.title,
+        // Sprint 8 (AI Decision History): the full explainable record,
+        // not just the summary line above — every field the directive
+        // named (inputs/rulesApplied/confidence/reasoningPath/recommendation)
+        // is retrievable later exactly as it was decided, not
+        // reconstructed approximately from a smaller stored subset.
+        rulesApplied: decision.rulesApplied,
+        reasoningPath: decision.reasoningPath,
+        inputs: decision.inputs,
       });
     }
 

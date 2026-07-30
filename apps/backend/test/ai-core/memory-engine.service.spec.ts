@@ -53,4 +53,25 @@ describe('MemoryEngineService', () => {
       recommendationType: 'SET_SCREEN_TIME_POLICY',
     });
   });
+
+  describe('getDecisionHistory (Sprint 8)', () => {
+    it('returns the full stored decision records, most recent first, capped at the limit', async () => {
+      const records = Array.from({ length: 25 }, (_, i) => ({ id: `entry-${i}` }));
+      repositoryMock.findAllByCategory.mockResolvedValue(records);
+
+      const history = await service.getDecisionHistory('child-1');
+
+      expect(repositoryMock.findAllByCategory).toHaveBeenCalledWith('child-1', 'RECOMMENDATION');
+      expect(history).toHaveLength(20); // default limit
+    });
+
+    it('respects a custom limit', async () => {
+      const records = Array.from({ length: 25 }, (_, i) => ({ id: `entry-${i}` }));
+      repositoryMock.findAllByCategory.mockResolvedValue(records);
+
+      const history = await service.getDecisionHistory('child-1', 5);
+
+      expect(history).toHaveLength(5);
+    });
+  });
 });

@@ -38,6 +38,17 @@ export class MemoryEngineService {
     return this.repository.findAllByCategory(childId, 'RECOMMENDATION');
   }
 
+  /** Sprint 8 — AI Decision History. Same underlying data as
+   * getRecommendationHistory (RECOMMENDATION category rows), named
+   * distinctly because the read intent differs: this is "show me every
+   * decision and why," not "what have we recommended." Both accessors
+   * are kept since existing callers of the former shouldn't need to
+   * change meaning. */
+  async getDecisionHistory(childId: string, limit: number = 20) {
+    const history = await this.repository.findAllByCategory(childId, 'RECOMMENDATION');
+    return history.slice(0, limit);
+  }
+
   async setPreference(childId: string, key: string, value: Record<string, unknown>): Promise<void> {
     await this.repository.upsert(childId, 'PREFERENCE', key, value);
   }

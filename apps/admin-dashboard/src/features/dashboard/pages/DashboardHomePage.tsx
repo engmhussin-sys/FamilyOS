@@ -5,14 +5,15 @@ import { PairingCard } from '../../pairing/components/PairingCard';
 import { DeviceStatusCard } from '../../devices/components/DeviceStatusCard';
 import { ScreenTimePolicyCard } from '../../screen-time/components/ScreenTimePolicyCard';
 import { RuntimeTimelineCard } from '../../runtime/components/RuntimeTimelineCard';
-import { AlertCenterCard } from '../../runtime/components/AlertCenterCard';
+import { NotificationCenterCard } from '../../notifications/components/NotificationCenterCard';
+import { FamilyInsightsCard } from '../../insights/components/FamilyInsightsCard';
 
 export function DashboardHomePage() {
   const user = useAuthStore((s) => s.user);
 
   return (
     <div className="flex flex-col gap-6">
-      <AlertCenterCard />
+      <NotificationCenterCard />
       <Card>
         <h1 className="font-display text-xl text-ink">عائلتك</h1>
         <dl className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
@@ -34,6 +35,7 @@ export function DashboardHomePage() {
       <DeviceStatusCard />
       <ScreenTimePolicyCard />
       <RuntimeTimelineCard />
+      <FamilyInsightsCard />
     </div>
   );
 }
