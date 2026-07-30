@@ -35,12 +35,29 @@ export class RedisService implements OnModuleDestroy {
   }
 
   /** Atomically read-and-delete — used for one-time pairing codes. */
+  /** CRITICAL FIX (Beta Validation Phase 6 — Replay Attacks): this used
+   * to be a plain `GET` followed by a separate `DEL` — NOT atomic. Two
+   * concurrent calls with the same key (a network retry racing the
+   * original request, or a deliberate double-submit) could both
+   * successfully `GET` the value before either `DEL`'d it, meaning a
+   * single-use pairing invitation code or registration token
+   * (`InvitationService`/`RegistrationTokenService`, both built
+   * specifically on the assumption this method is atomic) could be
+   * consumed TWICE. Fixed with a Lua script — `EVAL` scripts run
+   * atomically on the Redis server itself, the standard way to get a
+   * true compare-and-delete without a client-side round-trip gap.
+   * (Redis 6.2+'s native `GETDEL` command would also solve this, but a
+   * Lua script works on any Redis version without needing to confirm
+   * the deployed server's version.) */
+  private static readonly GET_AND_DELETE_SCRIPT = `
+    local v = redis.call('GET', KEYS[1])
+    if v then redis.call('DEL', KEYS[1]) end
+    return v
+  `;
+
   async getAndDelete(key: string): Promise<string | null> {
-    const value = await this.client.get(key);
-    if (value !== null) {
-      await this.client.del(key);
-    }
-    return value;
+    const result = await this.client.eval(RedisService.GET_AND_DELETE_SCRIPT, 1, key);
+    return result as string | null;
   }
 
   async onModuleDestroy(): Promise<void> {

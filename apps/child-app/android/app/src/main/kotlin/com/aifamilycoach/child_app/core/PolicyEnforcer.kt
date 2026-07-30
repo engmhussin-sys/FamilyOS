@@ -1,8 +1,6 @@
 package com.aifamilycoach.child_app.core
 
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Locale
 
 enum class EnforcementDecision { ALLOW, BLOCK }
 
@@ -45,7 +43,6 @@ object PolicyEnforcer {
     private fun isWithinBedtime(start: String?, end: String?, now: Calendar): Boolean {
         if (start == null || end == null) return false
 
-        val format = SimpleDateFormat("HH:mm", Locale.US)
         val startParts = start.split(":").map { it.toInt() }
         val endParts = end.split(":").map { it.toInt() }
 
