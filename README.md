@@ -34,6 +34,7 @@ alerts, not raw surveillance data).
 | 6 — AI Behavioral & Digital Safety Engine | ⏳ |
 | 7 — Health & Habit Coach | ⏳ |
 | 8 — Education & Character Development | ⏳ |
+| Field Readiness Documentation | ✅ 7 documents, all grounded in real code verification, not aspirational: `DEVICE_VALIDATION_MATRIX.md` (8 manufacturers, every cell honestly NOT TESTED), `IOS_COMPATIBILITY_MATRIX.md`, `THREAT_MODEL.md` (**real finding: 7/18 threats have on-device detection, 0/7 reach the backend — surfaced by grep this session**), `DATA_CLASSIFICATION.md` (**real gap found: `LocationEvent` has no retention policy**), `RECOVERY_FLOW.md`, `MONITORING_DASHBOARD_METRICS.md` (~4/10 metrics computable today, rest need real infra decisions), `RELEASE_1_0.md`. All in `docs/release/` and `docs/architecture/`. |
 | 9 — Security, Compliance & Monetization | ⏳ |
 | 10 — Production Launch | ⏳ |
 
