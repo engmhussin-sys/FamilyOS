@@ -11,6 +11,7 @@ class SettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
     final t = ref.watch(localeControllerProvider.notifier).t;
     final currentLocale = ref.watch(localeControllerProvider);
 

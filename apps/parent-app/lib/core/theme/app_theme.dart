@@ -27,4 +27,28 @@ class AppTheme {
       ),
     );
   }
+
+  /// PRODUCTION READINESS REVIEW FINDING (UI/UX Review — Dark Mode
+  /// Readiness): no dark variant existed at all. `ThemeMode.system`
+  /// (set in `main.dart`) would have silently fallen back to Flutter's
+  /// own default Material theme on a device set to dark mode, clashing
+  /// visibly with the light-mode-only screens around it.
+  static ThemeData dark() {
+    return ThemeData(
+      useMaterial3: true,
+      scaffoldBackgroundColor: const Color(0xFF0F1729),
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: guardian950,
+        primary: sage500,
+        secondary: amber500,
+        error: brick500,
+        brightness: Brightness.dark,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF0F1729),
+        foregroundColor: sand50,
+        elevation: 0,
+      ),
+    );
+  }
 }

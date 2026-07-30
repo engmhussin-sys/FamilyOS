@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../auth/session_expired_notifier.dart';
 import '../network/api_client.dart';
 import '../storage/secure_session_storage.dart';
 import '../../features/authentication/api/auth_api.dart';
@@ -18,7 +19,10 @@ final sessionStorageProvider = Provider<SecureSessionStorage>(
 );
 
 final apiClientProvider = Provider<ApiClient>(
-  (ref) => ApiClient(ref.watch(sessionStorageProvider)),
+  (ref) => ApiClient(
+    ref.watch(sessionStorageProvider),
+    onSessionExpired: () => ref.read(sessionExpiredProvider.notifier).state++,
+  ),
 );
 
 final authApiProvider = Provider<AuthApi>((ref) => AuthApi(ref.watch(apiClientProvider)));

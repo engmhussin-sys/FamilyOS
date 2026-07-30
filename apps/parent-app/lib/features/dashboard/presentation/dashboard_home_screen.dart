@@ -18,6 +18,7 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   List<dynamic>? _devices;
   int _unreadCount = 0;
   bool _isLoading = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -26,6 +27,10 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
     final api = ref.read(dashboardApiProvider);
     try {
       final results = await Future.wait([
@@ -40,13 +45,25 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
         _unreadCount = results[2] as int;
         _isLoading = false;
       });
-    } catch (_) {
-      if (mounted) setState(() => _isLoading = false);
+    } catch (e) {
+      // PRODUCTION READINESS REVIEW FIX (UI/UX Review — Error State):
+      // this catch block previously discarded the error entirely,
+      // leaving `_children`/`_devices` null and `_isLoading` false —
+      // which rendered as an empty dashboard indistinguishable from "no
+      // children yet," silently hiding a real network/server failure
+      // from the user with no way to retry.
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = e.toString();
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
     final t = ref.watch(localeControllerProvider.notifier).t;
 
     return Scaffold(
@@ -69,7 +86,23 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : _errorMessage != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.wifi_off, size: 40, color: Theme.of(context).colorScheme.error),
+                        const SizedBox(height: 12),
+                        Text(t('common.error'), textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        FilledButton(onPressed: _load, child: Text(t('common.retry'))),
+                      ],
+                    ),
+                  ),
+                )
+              : RefreshIndicator(
               onRefresh: _load,
               child: ListView(
                 padding: const EdgeInsets.all(16),

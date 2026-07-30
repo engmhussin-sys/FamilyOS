@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/auth/session_expired_notifier.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/routing/app_routes.dart';
 import 'core/theme/app_theme.dart';
@@ -17,17 +18,35 @@ void main() {
   runApp(const ProviderScope(child: ParentApp()));
 }
 
+final _navigatorKey = GlobalKey<NavigatorState>();
+
 class ParentApp extends ConsumerWidget {
   const ParentApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(localeControllerProvider);
     final isRtl = ref.watch(localeControllerProvider.notifier).isRtl;
 
+    // PRODUCTION READINESS REVIEW FIX (API Review — Unauthorized
+    // Handling): reacts to ApiClient's onSessionExpired callback
+    // (bumped via sessionExpiredProvider) by forcing navigation to
+    // Login from wherever the user currently is — closes the gap where
+    // a mid-session refresh failure left the user stranded on a screen
+    // with a dead session and no path back to Login.
+    ref.listen(sessionExpiredProvider, (previous, next) {
+      if (previous != null && next != previous) {
+        _navigatorKey.currentState?.pushNamedAndRemoveUntil(AppRoutes.login, (route) => false);
+      }
+    });
+
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'FamilyOS',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: ThemeMode.system,
       // No Flutter-native localization delegate is wired here — this
       // app's translation is `LocaleController`'s own mechanism (mirrors
       // the Dashboard's LocaleProvider), not `flutter_localizations`.

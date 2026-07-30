@@ -10,8 +10,24 @@ import 'api_exception.dart';
 /// coordinated-single-refresh-on-401 behavior, applied here to
 /// USER-actor tokens (`POST /auth/refresh`) instead of DEVICE-actor ones.
 class ApiClient {
-  ApiClient(this._sessionStorage, {Dio? dio})
-      : _dio = dio ?? Dio(BaseOptions(baseUrl: AppConfig.apiBaseUrl)) {
+  ApiClient(this._sessionStorage, {Dio? dio, void Function()? onSessionExpired})
+      : _onSessionExpired = onSessionExpired,
+        _dio = dio ??
+            Dio(BaseOptions(
+              baseUrl: AppConfig.apiBaseUrl,
+              // PRODUCTION READINESS REVIEW FINDING: no timeout was
+              // configured at all — a hung request (dead connection,
+              // server not responding) would wait indefinitely with no
+              // error ever surfaced to the UI, leaving a screen stuck
+              // on its loading state forever. 15s connect / 20s receive
+              // chosen to comfortably exceed the AI recommendation
+              // endpoint's own worst case (the backend's Anthropic
+              // provider timeout is 20s — see anthropic-ai-provider.ts)
+              // without making the user wait unreasonably long for an
+              // error on a genuinely dead connection.
+              connectTimeout: const Duration(seconds: 15),
+              receiveTimeout: const Duration(seconds: 20),
+            )) {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -42,6 +58,7 @@ class ApiClient {
               }
             }
             await _sessionStorage.clear();
+            _onSessionExpired?.call();
           }
           handler.next(error);
         },
@@ -51,6 +68,7 @@ class ApiClient {
 
   final Dio _dio;
   final SecureSessionStorage _sessionStorage;
+  final void Function()? _onSessionExpired;
   Future<String?>? _refreshCompleter;
 
   Future<String?> _refreshAccessToken() {
@@ -93,6 +111,12 @@ class ApiClient {
       final response = await call();
       return response.data is Map<String, dynamic> ? response.data as Map<String, dynamic> : {'data': response.data};
     } on DioException catch (e) {
+      if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.receiveTimeout) {
+        throw ApiException('The request took too long. Check your connection and try again.');
+      }
+      if (e.type == DioExceptionType.connectionError) {
+        throw ApiException('No internet connection.');
+      }
       final body = e.response?.data;
       final message = (body is Map && body['message'] != null) ? body['message'].toString() : 'Network error.';
       final correlationId = (body is Map) ? body['correlationId']?.toString() : null;

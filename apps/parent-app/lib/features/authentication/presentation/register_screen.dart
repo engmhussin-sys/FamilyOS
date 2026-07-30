@@ -39,7 +39,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       // flow (Register -> Create Family -> Dashboard). The backend
       // already created a default Family row during register(); this
       // screen fills in the real name.
-      Navigator.of(context).pushReplacementNamed(AppRoutes.familySetup);
+      //
+      // PRODUCTION READINESS REVIEW FIX (Navigation Review): was
+      // `pushReplacementNamed`, which only replaces the TOP of the
+      // stack. Login->Register used `push` (not replace), so the stack
+      // here is [Login, Register] — a plain replace would leave
+      // [Login, FamilySetup], and FamilySetup's own later replace-to-
+      // Dashboard would leave [Login, Dashboard]: pressing back on
+      // Dashboard would incorrectly return a freshly-registered user to
+      // the Login screen. `pushNamedAndRemoveUntil(..., (route) =>
+      // false)` clears the ENTIRE stack instead.
+      Navigator.of(context).pushNamedAndRemoveUntil(AppRoutes.familySetup, (route) => false);
     } else {
       setState(() => _errorMessage = ref.read(authControllerProvider).errorMessage);
     }
@@ -47,12 +57,19 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
     final t = ref.watch(localeControllerProvider.notifier).t;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('auth.registerTitle'))),
       body: SafeArea(
-        child: Padding(
+        // PRODUCTION READINESS REVIEW FIX (UI/UX Review — Responsive Layout):
+        // this form had no scroll view. On a small device with the
+        // keyboard open, the fields + button could exceed the available
+        // height and throw a RenderFlex overflow error instead of
+        // scrolling — a real, common Flutter form bug.
+        child: SingleChildScrollView(
+          child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -86,6 +103,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

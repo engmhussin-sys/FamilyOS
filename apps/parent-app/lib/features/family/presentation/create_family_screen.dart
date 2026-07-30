@@ -38,12 +38,19 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
     final t = ref.watch(localeControllerProvider.notifier).t;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('family.setupTitle'))),
       body: SafeArea(
-        child: Padding(
+        // PRODUCTION READINESS REVIEW FIX (UI/UX Review — Responsive Layout):
+        // this form had no scroll view. On a small device with the
+        // keyboard open, the fields + button could exceed the available
+        // height and throw a RenderFlex overflow error instead of
+        // scrolling — a real, common Flutter form bug.
+        child: SingleChildScrollView(
+          child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -80,6 +87,7 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

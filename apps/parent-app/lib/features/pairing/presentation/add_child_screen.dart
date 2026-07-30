@@ -71,6 +71,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
     final t = ref.watch(localeControllerProvider.notifier).t;
 
     return Scaffold(
@@ -82,6 +83,20 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
           children: [
             if (_children == null)
               const Center(child: CircularProgressIndicator())
+            else if (_children!.isEmpty)
+              // PRODUCTION READINESS REVIEW FIX (UI/UX Review — Empty
+              // State): previously fell through to a
+              // DropdownButtonFormField with zero items and a
+              // Generate-Code button the user could still tap with
+              // `_selectedChildId == null`, calling the pairing API
+              // with a null childId. Now explicitly explains there's
+              // nothing to pair yet.
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(t('pairing.noChildrenYet'), textAlign: TextAlign.center),
+                ),
+              )
             else ...[
               DropdownButtonFormField<String>(
                 value: _selectedChildId,

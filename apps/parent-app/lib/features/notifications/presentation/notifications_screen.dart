@@ -13,6 +13,7 @@ class NotificationsScreen extends ConsumerStatefulWidget {
 
 class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   List<dynamic>? _notifications;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -21,8 +22,16 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   Future<void> _load() async {
-    final result = await ref.read(notificationsApiProvider).list();
-    if (mounted) setState(() => _notifications = result);
+    setState(() => _errorMessage = null);
+    try {
+      final result = await ref.read(notificationsApiProvider).list();
+      if (mounted) setState(() => _notifications = result);
+    } catch (e) {
+      // PRODUCTION READINESS REVIEW FIX (UI/UX Review — Error State):
+      // previously unhandled — a failure here left `_notifications` null
+      // forever, showing an infinite loading spinner with no way out.
+      if (mounted) setState(() => _errorMessage = e.toString());
+    }
   }
 
   Future<void> _markAllRead() async {
@@ -32,6 +41,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
     final t = ref.watch(localeControllerProvider.notifier).t;
 
     return Scaffold(
@@ -41,9 +51,23 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           TextButton(onPressed: _markAllRead, child: Text(t('notifications.markAllRead'))),
         ],
       ),
-      body: _notifications == null
-          ? const Center(child: CircularProgressIndicator())
-          : _notifications!.isEmpty
+      body: _errorMessage != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(t('common.error'), textAlign: TextAlign.center),
+                    const SizedBox(height: 16),
+                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
+                  ],
+                ),
+              ),
+            )
+          : _notifications == null
+              ? const Center(child: CircularProgressIndicator())
+              : _notifications!.isEmpty
               ? Center(child: Text(t('notifications.empty')))
               : RefreshIndicator(
                   onRefresh: _load,
