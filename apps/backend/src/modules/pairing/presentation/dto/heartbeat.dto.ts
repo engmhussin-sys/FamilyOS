@@ -12,4 +12,10 @@ export class HeartbeatDto {
 
   @IsOptional() @IsString()
   appVersion?: string;
+
+  @IsOptional() @IsBoolean()
+  accessibilityServiceEnabled?: boolean;
+
+  @IsOptional() @IsBoolean()
+  enforcementActive?: boolean;
 }

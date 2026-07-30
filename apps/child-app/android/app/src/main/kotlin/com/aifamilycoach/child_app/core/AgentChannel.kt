@@ -31,14 +31,21 @@ object AgentChannel {
     // --- Sprint 4: Device Capability Engine ---
     const val METHOD_GET_CAPABILITY_REPORT = "getCapabilityReport"
 
+    // --- Sprint 4: Runtime Telemetry ---
+    const val METHOD_GET_RUNTIME_HEALTH = "getRuntimeHealth"
+
     // --- Child Runtime Engine: Anti-Tamper ---
     const val METHOD_CHECK_TAMPER_SIGNALS = "checkTamperSignals"
 
-    /** Placeholder component name — the real AccessibilityService class
-     * doesn't exist yet (this project's explicitly flagged highest-risk,
-     * not-yet-built piece). Using this placeholder means
-     * isAccessibilityServiceEnabled/getCapabilityReport correctly report
-     * "false" today rather than referencing a nonexistent class. */
+    // --- Sprint 5: Runtime Enforcement Engine ---
+    const val METHOD_SYNC_POLICY_TO_NATIVE = "syncPolicyToNative"
+    const val METHOD_GET_ENFORCEMENT_STATUS = "getEnforcementStatus"
+    const val METHOD_START_ENFORCEMENT_SERVICE = "startEnforcementService"
+
+    /** No longer a placeholder as of Sprint 5 — `ChildGuardAccessibilityService`
+     * is real (see core/ChildGuardAccessibilityService.kt) and registered
+     * in AndroidManifest.xml. Name kept unchanged from when it WAS a
+     * placeholder so no caller needed to change. */
     const val ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER =
         "com.aifamilycoach.child_app/.core.ChildGuardAccessibilityService"
 }

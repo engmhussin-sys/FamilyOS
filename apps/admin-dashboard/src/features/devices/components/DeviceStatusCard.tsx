@@ -86,6 +86,23 @@ export function DeviceStatusCard() {
               </div>
             )}
 
+            <div className="mt-2 flex items-center gap-1.5 text-xs">
+              <span className="text-ink-soft">حالة الحماية:</span>
+              {device.runtimeStatus.enforcementActive === true ? (
+                <span className="rounded-full bg-sage-100 px-2 py-0.5 font-medium text-sage-700">
+                  فعّالة
+                </span>
+              ) : device.runtimeStatus.accessibilityServiceEnabled === false ? (
+                <span className="rounded-full bg-brick-100 px-2 py-0.5 font-medium text-brick-700">
+                  خدمة الوصول متوقفة
+                </span>
+              ) : (
+                <span className="rounded-full bg-sand-100 px-2 py-0.5 font-medium text-ink-soft">
+                  غير مؤكَّدة بعد
+                </span>
+              )}
+            </div>
+
             <div className="mt-3 flex items-center gap-2">
               <Button variant="ghost" onClick={() => loadDiagnosis(device.id)}>
                 تحليل ذكاء اصطناعي

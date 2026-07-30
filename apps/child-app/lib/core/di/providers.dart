@@ -11,6 +11,9 @@ import '../../features/pairing/application/device_registration_service.dart';
 import '../../features/pairing/application/heartbeat_service.dart';
 import '../../features/device_status/application/capability_reporting_service.dart';
 import '../../plugins/permissions/application/permission_status_service.dart';
+import '../../plugins/policy/application/policy_cache_service.dart';
+import '../../plugins/telemetry/application/runtime_telemetry_collector.dart';
+import '../../plugins/runtime/application/runtime_coordinator.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -60,8 +63,21 @@ final deviceRegistrationServiceProvider = Provider<DeviceRegistrationService>((r
   );
 });
 
+// --- Sprint 5: Runtime Enforcement Engine ---
+
+final runtimeCoordinatorProvider = Provider<RuntimeCoordinator>((ref) {
+  return RuntimeCoordinator(
+    ref.watch(agentPlatformChannelProvider),
+    ref.watch(pairingApiProvider),
+    ref.watch(policyCacheServiceProvider),
+  );
+});
+
 final heartbeatServiceProvider = Provider<HeartbeatService>((ref) {
-  final service = HeartbeatService(ref.watch(pairingApiProvider));
+  final service = HeartbeatService(
+    ref.watch(pairingApiProvider),
+    telemetryProvider: () => ref.read(runtimeCoordinatorProvider).collectTelemetryFields(),
+  );
   ref.onDispose(service.stop);
   return service;
 });
@@ -76,5 +92,21 @@ final capabilityReportingServiceProvider = Provider<CapabilityReportingService>(
   return CapabilityReportingService(
     ref.watch(agentPlatformChannelProvider),
     ref.watch(pairingApiProvider),
+  );
+});
+
+// --- Child Runtime Engine: Policy Cache + Telemetry ---
+
+/// Was built (previous session) but never actually wired into DI —
+/// closed now, alongside the telemetry collector that depends on it.
+final policyCacheServiceProvider = Provider<PolicyCacheService>((ref) {
+  return PolicyCacheService(ref.watch(secureStorageProvider));
+});
+
+final runtimeTelemetryCollectorProvider = Provider<RuntimeTelemetryCollector>((ref) {
+  return RuntimeTelemetryCollector(
+    ref.watch(agentPlatformChannelProvider),
+    ref.watch(policyCacheServiceProvider),
+    ref.watch(heartbeatServiceProvider),
   );
 });

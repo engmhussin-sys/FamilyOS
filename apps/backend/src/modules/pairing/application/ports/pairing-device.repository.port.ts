@@ -19,6 +19,9 @@ export interface IPairingDeviceRecord {
   lastSeenAt: Date | null;
   capabilityProfile: Record<string, unknown> | null;
   capabilityProfileHash: string | null;
+  /** Sprint 5 — exposed so listFamilyDevices can surface runtime
+   * enforcement status without a second query. */
+  lastTelemetry: Record<string, unknown> | null;
 }
 
 export interface IPairingDeviceWithChild extends IPairingDeviceRecord {

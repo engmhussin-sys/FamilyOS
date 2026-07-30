@@ -15,12 +15,24 @@ import '../api/pairing_api.dart';
 /// built now so the backend contract has a real, testable Dart consumer
 /// today, not left unconsumed.
 class HeartbeatService {
-  HeartbeatService(this._pairingApi);
+  HeartbeatService(this._pairingApi, {Future<Map<String, dynamic>> Function()? telemetryProvider})
+      : _telemetryProvider = telemetryProvider;
 
   final PairingApi _pairingApi;
+  /// Sprint 5 addition — optional, so existing callers (and existing
+  /// tests) that construct `HeartbeatService(fakeApi)` with no second
+  /// argument are unaffected. Supplies extra fields (e.g. Runtime
+  /// enforcement status) merged into every heartbeat call.
+  final Future<Map<String, dynamic>> Function()? _telemetryProvider;
   Timer? _timer;
+  DateTime? _lastSentAt;
 
   bool get isRunning => _timer != null;
+
+  /// Sprint 4 (Child Runtime Engine) §9 — Runtime Telemetry needs a real
+  /// "last heartbeat" timestamp; exposed here rather than duplicating
+  /// heartbeat bookkeeping in a second place.
+  DateTime? get lastSentAt => _lastSentAt;
 
   void start({Duration interval = const Duration(seconds: 30)}) {
     stop();
@@ -35,7 +47,22 @@ class HeartbeatService {
 
   Future<void> _sendHeartbeat() async {
     try {
-      await _pairingApi.heartbeat();
+      Map<String, dynamic>? extra;
+      if (_telemetryProvider != null) {
+        try {
+          extra = await _telemetryProvider();
+        } catch (_) {
+          // A telemetry-gathering failure must never block the
+          // heartbeat itself — the backend still needs to know the
+          // device is alive even if enforcement-status collection failed.
+          extra = null;
+        }
+      }
+      await _pairingApi.heartbeat(
+        accessibilityServiceEnabled: extra?['accessibilityServiceEnabled'] as bool?,
+        enforcementActive: extra?['enforcementActive'] as bool?,
+      );
+      _lastSentAt = DateTime.now();
     } catch (_) {
       // Per Decision-011 (Offline Mode): a failed heartbeat is an
       // expected, recoverable condition, not a crash-worthy error — the

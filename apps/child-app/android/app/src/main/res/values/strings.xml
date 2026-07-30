@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">
+        Lets AI Family Digital Coach know which app is currently open, so it can apply the
+        screen time rules a parent has set. It does not read anything on the screen.
+    </string>
+</resources>

@@ -422,5 +422,44 @@ describe('PairingOrchestratorService', () => {
         capabilities: { manufacturer: 'Google' },
       });
     });
+
+    it('Sprint 5: exposes runtimeStatus read from cached telemetry', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
+        {
+          id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE',
+          lastSeenAt: null, capabilityProfile: null, capabilityProfileHash: null,
+          lastTelemetry: { accessibilityServiceEnabled: true, enforcementActive: true, batteryPercent: 80 },
+          childFirstName: 'Yusuf', platform: 'ANDROID',
+        },
+      ]);
+      trustEvaluationServiceMock.getCurrentTrustLevel.mockResolvedValue('L2_VERIFIED');
+      riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue(null);
+
+      const result = await service.listFamilyDevices('family-1');
+
+      expect(result[0].runtimeStatus).toEqual({
+        accessibilityServiceEnabled: true,
+        enforcementActive: true,
+      });
+    });
+
+    it('Sprint 5: defaults runtimeStatus fields to null when no telemetry has ever arrived', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
+        {
+          id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE',
+          lastSeenAt: null, capabilityProfile: null, capabilityProfileHash: null,
+          lastTelemetry: null, childFirstName: 'Yusuf', platform: 'ANDROID',
+        },
+      ]);
+      trustEvaluationServiceMock.getCurrentTrustLevel.mockResolvedValue(null);
+      riskEvaluationServiceMock.getLatestRiskAssessment.mockResolvedValue(null);
+
+      const result = await service.listFamilyDevices('family-1');
+
+      expect(result[0].runtimeStatus).toEqual({
+        accessibilityServiceEnabled: null,
+        enforcementActive: null,
+      });
+    });
   });
 });

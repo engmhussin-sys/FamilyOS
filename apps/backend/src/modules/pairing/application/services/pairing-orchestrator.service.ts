@@ -358,6 +358,11 @@ export class PairingOrchestratorService {
           riskLevel: riskAssessment?.overallLevel ?? 'UNKNOWN',
           lastSeenAt: device.lastSeenAt,
           capabilities: device.capabilityProfile as unknown as IDeviceCapabilityReport | null,
+          runtimeStatus: {
+            accessibilityServiceEnabled:
+              (device.lastTelemetry?.['accessibilityServiceEnabled'] as boolean) ?? null,
+            enforcementActive: (device.lastTelemetry?.['enforcementActive'] as boolean) ?? null,
+          },
         };
       }),
     );

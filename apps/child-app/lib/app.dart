@@ -46,12 +46,33 @@ class _AppRootState extends ConsumerState<_AppRoot> {
     if (mounted) setState(() => _isPaired = hasSession);
     if (hasSession) {
       ref.read(heartbeatServiceProvider).start();
+      await _syncRuntimeAndStartEnforcement();
     }
   }
 
   void _onPaired() {
     setState(() => _isPaired = true);
     ref.read(heartbeatServiceProvider).start();
+    _syncRuntimeAndStartEnforcement();
+  }
+
+  Future<void> _syncRuntimeAndStartEnforcement() async {
+    final coordinator = ref.read(runtimeCoordinatorProvider);
+    try {
+      await coordinator.syncPolicy();
+    } catch (_) {
+      // Sync failure here is non-fatal — NativePolicyStore's
+      // DEFAULT_OFFLINE_POLICY (or whatever was last successfully
+      // synced) keeps enforcing regardless. The next heartbeat cycle
+      // retries naturally.
+    }
+    try {
+      await coordinator.startEnforcementService();
+    } catch (_) {
+      // Same reasoning — a transient failure here shouldn't crash the
+      // paired-state screen; DeviceHomeScreen's permission checklist
+      // will surface if Accessibility itself was never enabled.
+    }
   }
 
   @override

@@ -53,4 +53,23 @@ abstract class AgentPlatformChannel {
   /// mapped to TamperSignal by the plugin layer, not here, keeping this
   /// port a thin platform boundary.
   Future<List<Object?>> checkTamperSignals();
+
+  // --- Child Runtime Engine: Runtime Telemetry ---
+  Future<Map<Object?, Object?>> getRuntimeHealth();
+
+  // --- Sprint 5: Runtime Enforcement Engine ---
+  /// Pushes the currently-synced policy into native storage
+  /// (NativePolicyStore.kt) so ChildGuardAccessibilityService can
+  /// enforce it even if this Flutter engine later isn't running.
+  Future<void> syncPolicyToNative({
+    required int? dailyLimitMinutes,
+    required String? bedtimeStart,
+    required String? bedtimeEnd,
+    required bool focusModeEnabled,
+    required List<String> blockedPackages,
+  });
+
+  Future<Map<Object?, Object?>> getEnforcementStatus();
+
+  Future<void> startEnforcementService();
 }

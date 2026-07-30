@@ -54,10 +54,18 @@ class PairingApi {
 
   /// Fire-and-forget from the caller's perspective — HeartbeatService
   /// owns retry/failure handling, not this method.
-  Future<void> heartbeat({int? batteryPercent, bool? isConnected}) async {
+  Future<void> heartbeat({
+    int? batteryPercent,
+    bool? isConnected,
+    bool? accessibilityServiceEnabled,
+    bool? enforcementActive,
+  }) async {
     await _apiClient.post('/pairing/device/heartbeat', body: {
       if (batteryPercent != null) 'batteryPercent': batteryPercent,
       if (isConnected != null) 'isConnected': isConnected,
+      if (accessibilityServiceEnabled != null)
+        'accessibilityServiceEnabled': accessibilityServiceEnabled,
+      if (enforcementActive != null) 'enforcementActive': enforcementActive,
     });
   }
 

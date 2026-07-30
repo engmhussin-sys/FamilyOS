@@ -64,6 +64,10 @@ export interface DeviceSummary {
   riskLevel: string;
   lastSeenAt: string | null;
   capabilities: DeviceCapabilityReport | null;
+  runtimeStatus: {
+    accessibilityServiceEnabled: boolean | null;
+    enforcementActive: boolean | null;
+  };
 }
 
 export interface DeviceHealthDiagnosis {

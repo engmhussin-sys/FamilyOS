@@ -101,7 +101,12 @@ class _FakePairingApi implements PairingApi {
   }
 
   @override
-  Future<void> heartbeat() async {}
+  Future<void> heartbeat({
+    int? batteryPercent,
+    bool? isConnected,
+    bool? accessibilityServiceEnabled,
+    bool? enforcementActive,
+  }) async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

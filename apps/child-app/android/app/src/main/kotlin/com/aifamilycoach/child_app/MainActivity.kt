@@ -1,10 +1,14 @@
 package com.aifamilycoach.child_app
 
+import android.content.Intent
 import android.os.Build
 import com.aifamilycoach.child_app.core.AgentChannel
 import com.aifamilycoach.child_app.core.AntiTamperDetector
+import com.aifamilycoach.child_app.core.ChildGuardForegroundService
 import com.aifamilycoach.child_app.core.DeviceCapabilityEngine
 import com.aifamilycoach.child_app.core.DeviceIdentityKeyManager
+import com.aifamilycoach.child_app.core.NativePolicy
+import com.aifamilycoach.child_app.core.NativePolicyStore
 import com.aifamilycoach.child_app.core.PermissionManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -30,6 +34,7 @@ class MainActivity : FlutterActivity() {
         val permissionManager = PermissionManager(applicationContext)
         val capabilityEngine = DeviceCapabilityEngine(applicationContext)
         val antiTamperDetector = AntiTamperDetector(applicationContext)
+        val nativePolicyStore = NativePolicyStore(applicationContext)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -115,6 +120,73 @@ class MainActivity : FlutterActivity() {
                             AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
                         ),
                     )
+                }
+
+                AgentChannel.METHOD_GET_RUNTIME_HEALTH -> {
+                    val activityManager = getSystemService(android.content.Context.ACTIVITY_SERVICE)
+                        as android.app.ActivityManager
+                    val memoryInfo = android.app.ActivityManager.MemoryInfo()
+                    activityManager.getMemoryInfo(memoryInfo)
+                    val usedMemoryMb =
+                        (memoryInfo.totalMem - memoryInfo.availMem) / (1024 * 1024)
+
+                    val batteryManager = getSystemService(android.content.Context.BATTERY_SERVICE)
+                        as android.os.BatteryManager
+                    val batteryPercent = batteryManager.getIntProperty(
+                        android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY,
+                    )
+
+                    result.success(
+                        mapOf(
+                            "memoryUsageMb" to usedMemoryMb.toInt(),
+                            "batteryPercent" to batteryPercent,
+                            "isLowMemory" to memoryInfo.lowMemory,
+                        ),
+                    )
+                }
+
+                AgentChannel.METHOD_SYNC_POLICY_TO_NATIVE -> {
+                    val args = call.arguments as? Map<*, *>
+                    if (args == null) {
+                        result.error("INVALID_ARGS", "Expected a policy map", null)
+                    } else {
+                        @Suppress("UNCHECKED_CAST")
+                        val blockedPackages = (args["blockedPackages"] as? List<String>) ?: emptyList()
+                        nativePolicyStore.save(
+                            NativePolicy(
+                                dailyLimitMinutes = (args["dailyLimitMinutes"] as? Int),
+                                bedtimeStart = args["bedtimeStart"] as? String,
+                                bedtimeEnd = args["bedtimeEnd"] as? String,
+                                focusModeEnabled = (args["focusModeEnabled"] as? Boolean) ?: false,
+                                blockedPackages = blockedPackages,
+                            ),
+                        )
+                        result.success(null)
+                    }
+                }
+
+                AgentChannel.METHOD_GET_ENFORCEMENT_STATUS -> {
+                    val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
+                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
+                    )
+                    val lastSyncedAt = nativePolicyStore.lastSyncedAtMillis()
+                    result.success(
+                        mapOf(
+                            "accessibilityServiceEnabled" to accessibilityEnabled,
+                            "policyLastSyncedAtMillis" to lastSyncedAt,
+                            "hasEverSyncedPolicy" to (lastSyncedAt > 0),
+                        ),
+                    )
+                }
+
+                AgentChannel.METHOD_START_ENFORCEMENT_SERVICE -> {
+                    val serviceIntent = Intent(this, ChildGuardForegroundService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(serviceIntent)
+                    } else {
+                        startService(serviceIntent)
+                    }
+                    result.success(null)
                 }
 
                 else -> result.notImplemented()

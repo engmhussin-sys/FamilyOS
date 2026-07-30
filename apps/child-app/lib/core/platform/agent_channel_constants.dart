@@ -33,6 +33,14 @@ class AgentChannelConstants {
   // --- Child Runtime Engine: Anti-Tamper ---
   static const String methodCheckTamperSignals = 'checkTamperSignals';
 
+  // --- Child Runtime Engine: Runtime Telemetry ---
+  static const String methodGetRuntimeHealth = 'getRuntimeHealth';
+
+  // --- Sprint 5: Runtime Enforcement Engine ---
+  static const String methodSyncPolicyToNative = 'syncPolicyToNative';
+  static const String methodGetEnforcementStatus = 'getEnforcementStatus';
+  static const String methodStartEnforcementService = 'startEnforcementService';
+
   // --- Methods still reserved for future steps — NOT implemented on the
   // native side yet. Calling any of these today throws
   // AgentCapabilityNotImplementedException:

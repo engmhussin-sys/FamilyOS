@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../plugins/permissions/domain/permission_status.dart';
+import '../../../plugins/runtime/application/runtime_coordinator.dart';
 
 /// Combines Sprint 4's three Flutter requirements ("Permission
 /// onboarding," "Child status," "Device health") into ONE screen rather
@@ -22,12 +23,14 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
   bool _isLoadingPermissions = true;
   bool _isSyncingCapabilities = false;
   String? _syncMessage;
+  RuntimeEnforcementStatus? _enforcementStatus;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _refreshPermissions();
+    _refreshEnforcementStatus();
   }
 
   @override
@@ -43,6 +46,17 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
     // "re-check every cycle, don't assume a one-time grant holds" principle.
     if (state == AppLifecycleState.resumed) {
       _refreshPermissions();
+      _refreshEnforcementStatus();
+    }
+  }
+
+  Future<void> _refreshEnforcementStatus() async {
+    try {
+      final status = await ref.read(runtimeCoordinatorProvider).getStatus();
+      if (mounted) setState(() => _enforcementStatus = status);
+    } catch (_) {
+      // Leave _enforcementStatus as-is (null or last known) — a
+      // read failure here shouldn't crash the whole status screen.
     }
   }
 
@@ -87,6 +101,10 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
+            const Text('Runtime Status', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            _buildEnforcementStatusTile(),
+            const SizedBox(height: 16),
             const Text('Permissions', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             if (_isLoadingPermissions)
@@ -112,6 +130,28 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEnforcementStatusTile() {
+    final status = _enforcementStatus;
+    if (status == null) {
+      return const Text('Checking...', style: TextStyle(color: Colors.grey));
+    }
+    final isActive = status.accessibilityServiceEnabled && status.hasEverSyncedPolicy;
+    return ListTile(
+      leading: Icon(
+        isActive ? Icons.shield : Icons.shield_outlined,
+        color: isActive ? Colors.green : Colors.orange,
+      ),
+      title: Text(isActive ? 'Protection is active' : 'Protection is not fully active'),
+      subtitle: Text(
+        !status.accessibilityServiceEnabled
+            ? 'Accessibility Service is turned off'
+            : !status.hasEverSyncedPolicy
+                ? 'No policy has synced yet'
+                : 'Enforcing the current policy',
       ),
     );
   }

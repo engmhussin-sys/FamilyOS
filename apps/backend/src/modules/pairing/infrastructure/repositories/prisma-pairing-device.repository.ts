@@ -87,6 +87,7 @@ export class PrismaPairingDeviceRepository implements IPairingDeviceRepository {
     lastSeenAt: Date | null;
     capabilityProfile: unknown;
     capabilityProfileHash: string | null;
+    lastTelemetry: unknown;
   }): IPairingDeviceRecord {
     return {
       id: device.id,
@@ -96,6 +97,7 @@ export class PrismaPairingDeviceRepository implements IPairingDeviceRepository {
       lastSeenAt: device.lastSeenAt,
       capabilityProfile: (device.capabilityProfile as Record<string, unknown>) ?? null,
       capabilityProfileHash: device.capabilityProfileHash,
+      lastTelemetry: (device.lastTelemetry as Record<string, unknown>) ?? null,
     };
   }
 }

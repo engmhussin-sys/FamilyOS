@@ -8,7 +8,12 @@ class _FakePairingApi implements PairingApi {
   bool shouldThrow = false;
 
   @override
-  Future<void> heartbeat() async {
+  Future<void> heartbeat({
+    int? batteryPercent,
+    bool? isConnected,
+    bool? accessibilityServiceEnabled,
+    bool? enforcementActive,
+  }) async {
     heartbeatCallCount++;
     if (shouldThrow) throw Exception('network error');
   }

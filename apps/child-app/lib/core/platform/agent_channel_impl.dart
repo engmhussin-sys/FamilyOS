@@ -84,6 +84,52 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     return _invoke<List<Object?>>(AgentChannelConstants.methodCheckTamperSignals);
   }
 
+  @override
+  Future<Map<Object?, Object?>> getRuntimeHealth() async {
+    return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetRuntimeHealth);
+  }
+
+  // --- Sprint 5: Runtime Enforcement Engine ---
+
+  @override
+  Future<void> syncPolicyToNative({
+    required int? dailyLimitMinutes,
+    required String? bedtimeStart,
+    required String? bedtimeEnd,
+    required bool focusModeEnabled,
+    required List<String> blockedPackages,
+  }) async {
+    try {
+      await _channel.invokeMethod<void>(
+        AgentChannelConstants.methodSyncPolicyToNative,
+        {
+          'dailyLimitMinutes': dailyLimitMinutes,
+          'bedtimeStart': bedtimeStart,
+          'bedtimeEnd': bedtimeEnd,
+          'focusModeEnabled': focusModeEnabled,
+          'blockedPackages': blockedPackages,
+        },
+      );
+    } on MissingPluginException {
+      throw AgentCapabilityNotImplementedException(AgentChannelConstants.methodSyncPolicyToNative);
+    } on PlatformException catch (e) {
+      if (e.code == 'NOT_IMPLEMENTED') {
+        throw AgentCapabilityNotImplementedException(AgentChannelConstants.methodSyncPolicyToNative);
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<Map<Object?, Object?>> getEnforcementStatus() async {
+    return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetEnforcementStatus);
+  }
+
+  @override
+  Future<void> startEnforcementService() async {
+    await _invokeVoid(AgentChannelConstants.methodStartEnforcementService);
+  }
+
   /// Void-returning calls still go through the same MissingPluginException/
   /// NOT_IMPLEMENTED handling as `_invoke` — factored out since `void`
   /// calls don't have a meaningful generic return type to check for null.
