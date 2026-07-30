@@ -5,6 +5,7 @@ import { LoginPage } from '../features/auth/pages/LoginPage';
 import { RegisterPage } from '../features/auth/pages/RegisterPage';
 import { DashboardHomePage } from '../features/dashboard/pages/DashboardHomePage';
 import { DashboardShell } from '../features/dashboard/components/DashboardShell';
+import { SettingsPage } from '../features/settings/components/SettingsPage';
 import { ProtectedRoute } from './ProtectedRoute';
 import { LocaleProvider } from '../shared/i18n/LocaleProvider';
 
@@ -28,6 +29,16 @@ export function App() {
                 <ProtectedRoute>
                   <DashboardShell>
                     <DashboardHomePage />
+                  </DashboardShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <DashboardShell>
+                    <SettingsPage />
                   </DashboardShell>
                 </ProtectedRoute>
               }

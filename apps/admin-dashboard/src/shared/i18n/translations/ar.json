@@ -14,6 +14,7 @@
     "navOverview": "نظرة عامة",
     "navChildren": "الأطفال",
     "navReports": "التقارير",
+    "navSettings": "الإعدادات",
     "welcomeBack": "مرحبًا بعودتك",
     "logout": "تسجيل الخروج"
   },
@@ -41,7 +42,16 @@
     "protectionDisabled": "خدمة الوصول متوقفة",
     "protectionUnknown": "غير مؤكَّدة بعد",
     "aiDiagnosis": "تحليل ذكاء اصطناعي",
-    "analyzing": "جارٍ التحليل..."
+    "analyzing": "جارٍ التحليل...",
+    "deviceOf": "جهاز {{name}}",
+    "notSeenYet": "لم يتصل بعد",
+    "seenNow": "الآن",
+    "seenMinutesAgo": "منذ {{minutes}} دقيقة",
+    "seenHoursAgo": "منذ {{hours}} ساعة",
+    "seenDaysAgo": "منذ {{days}} يوم",
+    "notSet": "غير محدد",
+    "accessibilityDisabledShort": "خدمة الوصول غير مفعّلة",
+    "loadError": "تعذّر تحميل قائمة الأجهزة."
   },
   "screenTime": {
     "title": "وقت الشاشة",
@@ -52,7 +62,10 @@
     "bedtimeStart": "بداية وقت النوم",
     "bedtimeEnd": "نهاية وقت النوم",
     "focusMode": "تفعيل وضع التركيز",
-    "noPolicySet": "لا توجد سياسة مضبوطة بعد."
+    "noPolicySet": "لا توجد سياسة مضبوطة بعد.",
+    "dailyLimitSummary": "الحد اليومي: {{minutes}} دقيقة",
+    "saveError": "تعذّر حفظ السياسة. تأكد من صحة القيم المدخلة.",
+    "childrenLoadError": "تعذّر تحميل قائمة الأطفال."
   },
   "insights": {
     "title": "رؤى العائلة (بالذكاء الاصطناعي الداخلي)",
@@ -61,12 +74,85 @@
     "decisionHistory": "سجل القرارات",
     "hideHistory": "إخفاء السجل",
     "noHistory": "لا يوجد قرارات سابقة.",
-    "confidence": "الثقة"
+    "confidence": "الثقة",
+    "analyzing": "جارٍ التحليل...",
+    "summaryLine": "الثقة: {{confidence}}% · {{trend}}"
   },
   "timeline": {
     "title": "سجل الأحداث الزمني",
     "empty": "لا يوجد أحداث بعد.",
     "viewLog": "عرض السجل",
     "hideLog": "إخفاء"
+  },
+  "children": {
+    "title": "الأطفال",
+    "addChild": "+ إضافة طفل",
+    "empty": "لا يوجد أطفال بعد. أضف أول طفل للبدء.",
+    "yearsOld": "{{age}} سنة",
+    "childName": "اسم الطفل",
+    "dateOfBirth": "تاريخ الميلاد",
+    "addError": "تعذّر إضافة الطفل.",
+    "add": "إضافة"
+  },
+  "pairing": {
+    "title": "إقران جهاز الطفل",
+    "description": "اطلب رمزًا واكتبه في تطبيق الطفل لإقران الجهاز بالعائلة.",
+    "addChildFirst": "أضف طفلاً أولاً من بطاقة \"الأطفال\" فوق قبل إقران جهاز.",
+    "childLabel": "الطفل",
+    "generateCode": "إنشاء رمز إقران",
+    "validFor": "صالح لمدة",
+    "genericError": "تعذّر إنشاء رمز الإقران."
+  },
+  "reports": {
+    "title": "التقارير",
+    "generate": "إنشاء تقرير",
+    "exportCsv": "تصدير CSV",
+    "trustLevel": "مستوى الثقة",
+    "dailyLimit": "الحد اليومي",
+    "recentViolations": "المخالفات الأخيرة (30 يوم)",
+    "generating": "جارٍ الإنشاء..."
+  },
+  "search": {
+    "placeholder": "ابحث عن أطفال، أجهزة، إشعارات...",
+    "noResults": "لا يوجد نتائج.",
+    "typeToSearch": "اكتب حرفين على الأقل للبحث."
+  },
+  "settings": {
+    "title": "الإعدادات",
+    "profileTab": "الملف الشخصي",
+    "familyTab": "العائلة",
+    "billingTab": "الفوترة",
+    "fullName": "الاسم الكامل",
+    "phone": "الهاتف",
+    "familyName": "اسم العائلة",
+    "timezone": "المنطقة الزمنية",
+    "saved": "تم الحفظ بنجاح."
+  },
+  "billing": {
+    "currentPlan": "الخطة الحالية",
+    "trialDaysLeft": "متبقّي {{days}} يوم من الفترة التجريبية",
+    "subscribe": "اشتراك",
+    "cancel": "إلغاء الاشتراك",
+    "startTrial": "ابدأ الفترة التجريبية المجانية",
+    "history": "سجل الفواتير",
+    "noHistory": "لا يوجد فواتير بعد.",
+    "providerNotConfigured": "طريقة الدفع دي مش متاحة لسه. اختر طريقة تانية من فضلك."
+  },
+  "auth": {
+    "loginTitle": "دخول الوالدين",
+    "loginTagline": "تابع، احمِ، ووجّه رحلة أطفالك الرقمية",
+    "email": "البريد الإلكتروني",
+    "password": "كلمة المرور",
+    "login": "دخول",
+    "noAccount": "ليس لديك حساب؟",
+    "createAccount": "إنشاء حساب جديد",
+    "registerTitle": "إنشاء حساب العائلة",
+    "registerTagline": "دقيقة واحدة، وستبدأ بمتابعة عائلتك بأمان",
+    "fullName": "الاسم الكامل",
+    "passwordHint": "10 أحرف على الأقل، تحتوي على حرف ورقم",
+    "register": "إنشاء الحساب",
+    "haveAccount": "لديك حساب بالفعل؟",
+    "passwordTooShort": "كلمة المرور يجب أن تكون 10 أحرف على الأقل.",
+    "passwordNeedsLetterAndDigit": "يجب أن تحتوي كلمة المرور على حرف ورقم واحد على الأقل."
   }
 }

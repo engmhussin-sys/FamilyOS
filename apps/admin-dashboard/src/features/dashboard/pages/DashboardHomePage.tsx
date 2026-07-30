@@ -7,6 +7,7 @@ import { ScreenTimePolicyCard } from '../../screen-time/components/ScreenTimePol
 import { RuntimeTimelineCard } from '../../runtime/components/RuntimeTimelineCard';
 import { NotificationCenterCard } from '../../notifications/components/NotificationCenterCard';
 import { FamilyInsightsCard } from '../../insights/components/FamilyInsightsCard';
+import { ReportsCard } from '../../reports/components/ReportsCard';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
 export function DashboardHomePage() {
@@ -38,6 +39,7 @@ export function DashboardHomePage() {
       <ScreenTimePolicyCard />
       <RuntimeTimelineCard />
       <FamilyInsightsCard />
+      <ReportsCard />
     </div>
   );
 }

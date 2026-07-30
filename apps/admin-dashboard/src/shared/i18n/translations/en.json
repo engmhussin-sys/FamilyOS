@@ -14,6 +14,7 @@
     "navOverview": "Overview",
     "navChildren": "Children",
     "navReports": "Reports",
+    "navSettings": "Settings",
     "welcomeBack": "Welcome back",
     "logout": "Log out"
   },
@@ -41,7 +42,16 @@
     "protectionDisabled": "Accessibility Service disabled",
     "protectionUnknown": "Not confirmed yet",
     "aiDiagnosis": "AI Diagnosis",
-    "analyzing": "Analyzing..."
+    "analyzing": "Analyzing...",
+    "deviceOf": "{{name}}'s device",
+    "notSeenYet": "Not seen yet",
+    "seenNow": "Now",
+    "seenMinutesAgo": "{{minutes}} minute(s) ago",
+    "seenHoursAgo": "{{hours}} hour(s) ago",
+    "seenDaysAgo": "{{days}} day(s) ago",
+    "notSet": "Not set",
+    "accessibilityDisabledShort": "Accessibility disabled",
+    "loadError": "Could not load device list."
   },
   "screenTime": {
     "title": "Screen Time",
@@ -52,7 +62,10 @@
     "bedtimeStart": "Bedtime Start",
     "bedtimeEnd": "Bedtime End",
     "focusMode": "Enable Focus Mode",
-    "noPolicySet": "No policy set yet."
+    "noPolicySet": "No policy set yet.",
+    "dailyLimitSummary": "Daily limit: {{minutes}} minutes",
+    "saveError": "Could not save the policy. Check the values entered.",
+    "childrenLoadError": "Could not load the children list."
   },
   "insights": {
     "title": "Family Insights (Internal AI)",
@@ -61,12 +74,85 @@
     "decisionHistory": "Decision History",
     "hideHistory": "Hide history",
     "noHistory": "No previous decisions.",
-    "confidence": "Confidence"
+    "confidence": "Confidence",
+    "analyzing": "Analyzing...",
+    "summaryLine": "Confidence: {{confidence}}% · {{trend}}"
   },
   "timeline": {
     "title": "Event Timeline",
     "empty": "No events yet.",
     "viewLog": "View Log",
     "hideLog": "Hide"
+  },
+  "children": {
+    "title": "Children",
+    "addChild": "+ Add Child",
+    "empty": "No children yet. Add your first child to get started.",
+    "yearsOld": "{{age}} years old",
+    "childName": "Child's Name",
+    "dateOfBirth": "Date of Birth",
+    "addError": "Could not add the child.",
+    "add": "Add"
+  },
+  "pairing": {
+    "title": "Pair Child's Device",
+    "description": "Request a code and enter it in the child's app to pair the device with the family.",
+    "addChildFirst": "Add a child first from the \"Children\" card above before pairing a device.",
+    "childLabel": "Child",
+    "generateCode": "Generate Pairing Code",
+    "validFor": "Valid for",
+    "genericError": "Could not generate a pairing code."
+  },
+  "reports": {
+    "title": "Reports",
+    "generate": "Generate Report",
+    "exportCsv": "Export CSV",
+    "trustLevel": "Trust Level",
+    "dailyLimit": "Daily Limit",
+    "recentViolations": "Recent Violations (30 days)",
+    "generating": "Generating..."
+  },
+  "search": {
+    "placeholder": "Search children, devices, notifications...",
+    "noResults": "No results found.",
+    "typeToSearch": "Type at least 2 characters to search."
+  },
+  "settings": {
+    "title": "Settings",
+    "profileTab": "Profile",
+    "familyTab": "Family",
+    "billingTab": "Billing",
+    "fullName": "Full Name",
+    "phone": "Phone",
+    "familyName": "Family Name",
+    "timezone": "Timezone",
+    "saved": "Saved successfully."
+  },
+  "billing": {
+    "currentPlan": "Current Plan",
+    "trialDaysLeft": "{{days}} day(s) left in trial",
+    "subscribe": "Subscribe",
+    "cancel": "Cancel Subscription",
+    "startTrial": "Start Free Trial",
+    "history": "Billing History",
+    "noHistory": "No invoices yet.",
+    "providerNotConfigured": "This payment method is not available yet. Please choose another."
+  },
+  "auth": {
+    "loginTitle": "Parent Login",
+    "loginTagline": "Follow, protect, and guide your children's digital journey",
+    "email": "Email",
+    "password": "Password",
+    "login": "Log In",
+    "noAccount": "Don't have an account?",
+    "createAccount": "Create a new account",
+    "registerTitle": "Create Your Family Account",
+    "registerTagline": "One minute, and you'll start keeping your family safe",
+    "fullName": "Full Name",
+    "passwordHint": "At least 10 characters, with a letter and a number",
+    "register": "Create Account",
+    "haveAccount": "Already have an account?",
+    "passwordTooShort": "Password must be at least 10 characters long.",
+    "passwordNeedsLetterAndDigit": "Password must contain at least one letter and one number."
   }
 }

@@ -3,8 +3,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { childrenApi, CHILDREN_QUERY_KEY } from '../api/childrenApi';
 import { Input } from '../../../shared/components/Input';
 import { Button } from '../../../shared/components/Button';
+import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
 export function AddChildForm({ onDone }: { onDone: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [firstName, setFirstName] = useState('');
   const [dateOfBirth, setDateOfBirth] = useState('');
@@ -25,13 +27,13 @@ export function AddChildForm({ onDone }: { onDone: () => void }) {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-card bg-sage-100 p-4">
       <Input
-        label="اسم الطفل"
+        label={t('children.childName')}
         required
         value={firstName}
         onChange={(e) => setFirstName(e.target.value)}
       />
       <Input
-        label="تاريخ الميلاد"
+        label={t('children.dateOfBirth')}
         type="date"
         required
         max={new Date().toISOString().split('T')[0]}
@@ -40,15 +42,15 @@ export function AddChildForm({ onDone }: { onDone: () => void }) {
       />
       {mutation.isError && (
         <p role="alert" className="text-sm text-brick-600">
-          {mutation.error instanceof Error ? mutation.error.message : 'تعذّر إضافة الطفل.'}
+          {mutation.error instanceof Error ? mutation.error.message : t('children.addError')}
         </p>
       )}
       <div className="flex gap-2">
         <Button type="submit" isLoading={mutation.isPending}>
-          إضافة
+          {t('children.add')}
         </Button>
         <Button type="button" variant="ghost" onClick={onDone}>
-          إلغاء
+          {t('common.cancel')}
         </Button>
       </div>
     </form>

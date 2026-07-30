@@ -17,6 +17,9 @@ import { BillingModule } from './modules/billing/billing.module';
 import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { SearchModule } from './modules/search/search.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 
 @Module({
   imports: [
@@ -38,6 +41,9 @@ import { SettingsModule } from './modules/settings/settings.module';
     FeatureFlagsModule,
     ProfileModule,
     SettingsModule,
+    ReportsModule,
+    SearchModule,
+    AnalyticsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

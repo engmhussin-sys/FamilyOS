@@ -4,20 +4,22 @@ import { useAuthStore } from '../store/authStore';
 import { Button } from '../../../shared/components/Button';
 import { Input } from '../../../shared/components/Input';
 import { Card } from '../../../shared/components/Card';
-
-/** Mirrors apps/backend/.../presentation/dto/register.dto.ts — client-side
- * validation is a UX convenience only; the backend DTO is the source of truth. */
-function validatePassword(password: string): string | undefined {
-  if (password.length < 10) return 'كلمة المرور يجب أن تكون 10 أحرف على الأقل.';
-  if (!/(?=.*[A-Za-z])(?=.*\d)/.test(password)) {
-    return 'يجب أن تحتوي كلمة المرور على حرف ورقم واحد على الأقل.';
-  }
-  return undefined;
-}
+import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
 export function RegisterPage() {
+  const { t } = useTranslation();
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
+
+  /** Mirrors apps/backend/.../presentation/dto/register.dto.ts \u2014 client-side
+   * validation is a UX convenience only; the backend DTO is the source of truth. */
+  function validatePassword(password: string): string | undefined {
+    if (password.length < 10) return t('auth.passwordTooShort');
+    if (!/(?=.*[A-Za-z])(?=.*\d)/.test(password)) {
+      return t('auth.passwordNeedsLetterAndDigit');
+    }
+    return undefined;
+  }
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -39,7 +41,7 @@ export function RegisterPage() {
       await register({ email, password, fullName });
       navigate('/', { replace: true });
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Something went wrong.');
+      setFormError(err instanceof Error ? err.message : t('common.error'));
     } finally {
       setIsSubmitting(false);
     }
@@ -49,23 +51,21 @@ export function RegisterPage() {
     <div className="flex min-h-screen items-center justify-center bg-guardian-950 px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-2 text-sand-50">
-          <h1 className="font-display text-2xl">إنشاء حساب العائلة</h1>
-          <p className="text-center text-sm text-sand-200/70">
-            دقيقة واحدة، وستبدأ بمتابعة عائلتك بأمان
-          </p>
+          <h1 className="font-display text-2xl">{t('auth.registerTitle')}</h1>
+          <p className="text-center text-sm text-sand-200/70">{t('auth.registerTagline')}</p>
         </div>
 
         <Card>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
             <Input
-              label="الاسم الكامل"
+              label={t('auth.fullName')}
               autoComplete="name"
               required
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
             />
             <Input
-              label="البريد الإلكتروني"
+              label={t('auth.email')}
               type="email"
               autoComplete="email"
               required
@@ -73,11 +73,11 @@ export function RegisterPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
             <Input
-              label="كلمة المرور"
+              label={t('auth.password')}
               type="password"
               autoComplete="new-password"
               required
-              hint="10 أحرف على الأقل، تحتوي على حرف ورقم"
+              hint={t('auth.passwordHint')}
               error={passwordError}
               value={password}
               onChange={(e) => {
@@ -91,15 +91,15 @@ export function RegisterPage() {
               </p>
             )}
             <Button type="submit" isLoading={isSubmitting} className="mt-2 w-full">
-              إنشاء الحساب
+              {t('auth.register')}
             </Button>
           </form>
         </Card>
 
         <p className="mt-6 text-center text-sm text-sand-200/70">
-          لديك حساب بالفعل؟{' '}
+          {t('auth.haveAccount')}{' '}
           <Link to="/login" className="font-medium text-amber-500 hover:underline">
-            دخول
+            {t('auth.login')}
           </Link>
         </p>
       </div>

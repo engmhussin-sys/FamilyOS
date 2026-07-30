@@ -822,6 +822,23 @@ model FeatureFlag {
   @@map("feature_flags")
 }
 
+/// Sprint 8 \u2014 Analytics Core's Event Store. `payload` passes through
+/// PrivacyFilter (application layer) before ever reaching this table \u2014
+/// no PII is stored here by construction, not by convention.
+model AnalyticsEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  familyId  String?  @map("family_id") @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  sessionId String   @map("session_id")
+  eventName String   @map("event_name")
+  payload   Json?
+  occurredAt DateTime @default(now()) @map("occurred_at")
+
+  @@index([eventName, occurredAt])
+  @@index([familyId])
+  @@map("analytics_events")
+}
+
 model Notification {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @map("user_id") @db.Uuid

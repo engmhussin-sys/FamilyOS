@@ -5,8 +5,10 @@ import { screenTimeApi, screenTimePolicyQueryKey } from '../api/screenTimeApi';
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { Input } from '../../../shared/components/Input';
+import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
 function ChildPolicyRow({ childId, childFirstName }: { childId: string; childFirstName: string }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -44,7 +46,7 @@ function ChildPolicyRow({ childId, childFirstName }: { childId: string; childFir
       await queryClient.invalidateQueries({ queryKey: screenTimePolicyQueryKey(childId) });
       setIsEditing(false);
     } catch {
-      setError('تعذّر حفظ السياسة. تأكد من صحة القيم المدخلة.');
+      setError(t('screenTime.saveError'));
     } finally {
       setIsSaving(false);
     }
@@ -56,7 +58,7 @@ function ChildPolicyRow({ childId, childFirstName }: { childId: string; childFir
         <p className="font-medium text-ink">{childFirstName}</p>
         {!isEditing && (
           <Button variant="ghost" onClick={startEditing}>
-            {policy ? 'تعديل' : 'ضبط سياسة'}
+            {policy ? t('screenTime.editPolicy') : t('screenTime.setPolicy')}
           </Button>
         )}
       </div>
@@ -64,15 +66,15 @@ function ChildPolicyRow({ childId, childFirstName }: { childId: string; childFir
       {!isEditing && !isLoading && (
         <p className="mt-1 text-xs text-ink-soft">
           {policy
-            ? `الحد اليومي: ${policy.dailyLimitMinutes ?? 'غير محدد'} دقيقة`
-            : 'لا توجد سياسة مضبوطة بعد.'}
+            ? t('screenTime.dailyLimitSummary', { minutes: policy.dailyLimitMinutes ?? t('devices.notSet') })
+            : t('screenTime.noPolicySet')}
         </p>
       )}
 
       {isEditing && (
         <div className="mt-3 flex flex-col gap-3">
           <Input
-            label="الحد اليومي (بالدقائق)"
+            label={t('screenTime.dailyLimit')}
             type="number"
             min={0}
             max={1440}
@@ -81,13 +83,13 @@ function ChildPolicyRow({ childId, childFirstName }: { childId: string; childFir
           />
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="بداية وقت النوم"
+              label={t('screenTime.bedtimeStart')}
               type="time"
               value={bedtimeStart}
               onChange={(e) => setBedtimeStart(e.target.value)}
             />
             <Input
-              label="نهاية وقت النوم"
+              label={t('screenTime.bedtimeEnd')}
               type="time"
               value={bedtimeEnd}
               onChange={(e) => setBedtimeEnd(e.target.value)}
@@ -99,17 +101,17 @@ function ChildPolicyRow({ childId, childFirstName }: { childId: string; childFir
               checked={focusMode}
               onChange={(e) => setFocusMode(e.target.checked)}
             />
-            تفعيل وضع التركيز
+            {t('screenTime.focusMode')}
           </label>
 
           {error && <p className="text-xs text-brick-600">{error}</p>}
 
           <div className="flex gap-2">
             <Button onClick={save} isLoading={isSaving}>
-              حفظ
+              {t('common.save')}
             </Button>
             <Button variant="ghost" onClick={() => setIsEditing(false)}>
-              إلغاء
+              {t('common.cancel')}
             </Button>
           </div>
         </div>
@@ -119,6 +121,7 @@ function ChildPolicyRow({ childId, childFirstName }: { childId: string; childFir
 }
 
 export function ScreenTimePolicyCard() {
+  const { t } = useTranslation();
   const { data: children, isLoading, isError } = useQuery({
     queryKey: CHILDREN_QUERY_KEY,
     queryFn: childrenApi.list,
@@ -126,12 +129,12 @@ export function ScreenTimePolicyCard() {
 
   return (
     <Card>
-      <h2 className="font-display text-lg text-ink">وقت الشاشة</h2>
+      <h2 className="font-display text-lg text-ink">{t('screenTime.title')}</h2>
       <div className="mt-4 flex flex-col gap-3">
-        {isLoading && <p className="text-sm text-ink-soft">جارٍ التحميل...</p>}
-        {isError && <p className="text-sm text-brick-600">تعذّر تحميل قائمة الأطفال.</p>}
+        {isLoading && <p className="text-sm text-ink-soft">{t('common.loading')}</p>}
+        {isError && <p className="text-sm text-brick-600">{t('screenTime.childrenLoadError')}</p>}
         {children?.length === 0 && (
-          <p className="text-sm text-ink-soft">أضف طفلًا أولًا لضبط سياسة وقت الشاشة.</p>
+          <p className="text-sm text-ink-soft">{t('screenTime.empty')}</p>
         )}
         {children?.map((child) => (
           <ChildPolicyRow key={child.id} childId={child.id} childFirstName={child.firstName} />

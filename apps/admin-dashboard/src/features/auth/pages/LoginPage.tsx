@@ -5,8 +5,10 @@ import { Button } from '../../../shared/components/Button';
 import { Input } from '../../../shared/components/Input';
 import { Card } from '../../../shared/components/Card';
 import { GuardianRing } from '../../../shared/components/GuardianRing';
+import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
 export function LoginPage() {
+  const { t } = useTranslation();
   const login = useAuthStore((s) => s.login);
   const navigate = useNavigate();
   const location = useLocation();
@@ -25,7 +27,7 @@ export function LoginPage() {
       await login({ email, password });
       navigate(redirectTo, { replace: true });
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Something went wrong.');
+      setFormError(err instanceof Error ? err.message : t('common.error'));
     } finally {
       setIsSubmitting(false);
     }
@@ -36,16 +38,14 @@ export function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-sand-50">
           <GuardianRing progressPercent={100} size={48} />
-          <h1 className="font-display text-2xl">دخول الوالدين</h1>
-          <p className="text-center text-sm text-sand-200/70">
-            تابع، احمِ، ووجّه رحلة أطفالك الرقمية
-          </p>
+          <h1 className="font-display text-2xl">{t('auth.loginTitle')}</h1>
+          <p className="text-center text-sm text-sand-200/70">{t('auth.loginTagline')}</p>
         </div>
 
         <Card>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
             <Input
-              label="البريد الإلكتروني"
+              label={t('auth.email')}
               type="email"
               autoComplete="email"
               required
@@ -53,7 +53,7 @@ export function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
             <Input
-              label="كلمة المرور"
+              label={t('auth.password')}
               type="password"
               autoComplete="current-password"
               required
@@ -66,15 +66,15 @@ export function LoginPage() {
               </p>
             )}
             <Button type="submit" isLoading={isSubmitting} className="mt-2 w-full">
-              دخول
+              {t('auth.login')}
             </Button>
           </form>
         </Card>
 
         <p className="mt-6 text-center text-sm text-sand-200/70">
-          ليس لديك حساب؟{' '}
+          {t('auth.noAccount')}{' '}
           <Link to="/register" className="font-medium text-amber-500 hover:underline">
-            إنشاء حساب جديد
+            {t('auth.createAccount')}
           </Link>
         </p>
       </div>

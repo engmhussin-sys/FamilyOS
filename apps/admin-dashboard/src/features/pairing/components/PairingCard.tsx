@@ -5,15 +5,15 @@ import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi'
 import { Button } from '../../../shared/components/Button';
 import { Card } from '../../../shared/components/Card';
 import { GuardianRing } from '../../../shared/components/GuardianRing';
+import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
 export function PairingCard() {
+  const { t } = useTranslation();
   const { data: children } = useQuery({ queryKey: CHILDREN_QUERY_KEY, queryFn: childrenApi.list });
 
   const [childId, setChildId] = useState('');
   const [secondsLeft, setSecondsLeft] = useState(0);
 
-  // Once children load, default the selector to the first one so the
-  // dashboard is usable in one click for the common single-child case.
   useEffect(() => {
     if (children && children.length > 0 && !childId) {
       setChildId(children[0].id);
@@ -37,20 +37,18 @@ export function PairingCard() {
 
   return (
     <Card>
-      <h2 className="font-display text-lg text-ink">إقران جهاز الطفل</h2>
-      <p className="mt-1 text-sm text-ink-soft">
-        اطلب رمزًا واكتبه في تطبيق الطفل لإقران الجهاز بالعائلة.
-      </p>
+      <h2 className="font-display text-lg text-ink">{t('pairing.title')}</h2>
+      <p className="mt-1 text-sm text-ink-soft">{t('pairing.description')}</p>
 
       {!children || children.length === 0 ? (
         <p className="mt-4 rounded-card bg-sand-100 px-4 py-3 text-sm text-ink-soft">
-          أضف طفلاً أولاً من بطاقة "الأطفال" فوق قبل إقران جهاز.
+          {t('pairing.addChildFirst')}
         </p>
       ) : (
         <>
           <div className="mt-4 flex flex-col gap-1.5">
             <label htmlFor="pairing-child-select" className="text-sm font-medium text-ink">
-              الطفل
+              {t('pairing.childLabel')}
             </label>
             <select
               id="pairing-child-select"
@@ -74,7 +72,7 @@ export function PairingCard() {
               disabled={!childId}
               onClick={() => mutation.mutate()}
             >
-              إنشاء رمز إقران
+              {t('pairing.generateCode')}
             </Button>
           ) : (
             <div className="mt-4 flex items-center gap-4 rounded-card bg-sage-100 p-4">
@@ -88,7 +86,7 @@ export function PairingCard() {
                   {code}
                 </p>
                 <p className="text-xs text-ink-soft">
-                  صالح لمدة {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
+                  {t('pairing.validFor')} {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
                 </p>
               </div>
             </div>
@@ -98,7 +96,7 @@ export function PairingCard() {
 
       {mutation.isError && (
         <p role="alert" className="mt-3 text-sm text-brick-600">
-          {mutation.error instanceof Error ? mutation.error.message : 'تعذّر إنشاء رمز الإقران.'}
+          {mutation.error instanceof Error ? mutation.error.message : t('pairing.genericError')}
         </p>
       )}
     </Card>
