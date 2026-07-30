@@ -13,6 +13,10 @@ import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
 import { PairingModule } from './modules/pairing/pairing.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module';
+import { ProfileModule } from './modules/profile/profile.module';
+import { SettingsModule } from './modules/settings/settings.module';
 
 @Module({
   imports: [
@@ -30,6 +34,10 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     ComplianceModule,
     PairingModule,
     NotificationsModule,
+    BillingModule,
+    FeatureFlagsModule,
+    ProfileModule,
+    SettingsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

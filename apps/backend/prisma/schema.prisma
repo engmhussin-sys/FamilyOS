@@ -48,6 +48,33 @@ enum SubscriptionPlan {
   ENTERPRISE
 }
 
+/// Sprint 8 (Billing Platform) additions — kept separate from the
+/// pre-existing SubscriptionPlan enum above (which stays as Family's
+/// cached-current-tier field, same pattern as Device.trustLevel) rather
+/// than renamed/merged, avoiding a breaking change to an already-used field.
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum PaymentProvider {
+  STRIPE
+  PAYMOB
+  FAWRY
+  MANUAL
+}
+
 enum DevicePlatform {
   ANDROID
   IOS
@@ -258,6 +285,7 @@ model Family {
 
   members  FamilyMember[]
   children Child[]
+  subscription Subscription?
 
   @@map("families")
 }
@@ -717,6 +745,81 @@ model AiMemoryEntry {
   @@unique([childId, category, key])
   @@index([childId, category])
   @@map("ai_memory_entries")
+}
+
+/// Sprint 8 — the price/feature definition PER TIER. Deliberately named
+/// PlanDefinition, not "SubscriptionPlan" (that name is the pre-existing
+/// enum on Family) — one row per SubscriptionPlan enum value, seeded
+/// once, admin-editable later.
+model PlanDefinition {
+  id                     String           @id @default(uuid()) @db.Uuid
+  tier                   SubscriptionPlan @unique
+  name                   String
+  priceCents             Int              @map("price_cents")
+  currency               String           @default("USD")
+  billingIntervalMonths  Int              @default(1) @map("billing_interval_months")
+  /// Array of entitlement keys this tier grants, e.g.
+  /// ["ai_diagnostics", "family_insights", "multiple_children"] —
+  /// EntitlementsService checks membership in this list, nowhere else.
+  features               Json
+  isActive               Boolean          @default(true) @map("is_active")
+  createdAt              DateTime         @default(now()) @map("created_at")
+
+  @@map("plan_definitions")
+}
+
+model Subscription {
+  id                     String             @id @default(uuid()) @db.Uuid
+  familyId               String             @unique @map("family_id") @db.Uuid
+  planTier               SubscriptionPlan   @map("plan_tier")
+  status                 SubscriptionStatus @default(TRIALING)
+  provider               PaymentProvider    @default(MANUAL)
+  /// The provider's own subscription identifier (e.g. Stripe's `sub_...`)
+  /// — null for MANUAL and until a real provider is configured.
+  providerSubscriptionId String?            @map("provider_subscription_id")
+  trialEndsAt            DateTime?          @map("trial_ends_at")
+  currentPeriodStart     DateTime?          @map("current_period_start")
+  currentPeriodEnd       DateTime?          @map("current_period_end")
+  canceledAt             DateTime?          @map("canceled_at")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+
+  family   Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id                String        @id @default(uuid()) @db.Uuid
+  subscriptionId    String        @map("subscription_id") @db.Uuid
+  amountCents       Int           @map("amount_cents")
+  currency          String        @default("USD")
+  status            InvoiceStatus @default(DRAFT)
+  providerInvoiceId String?       @map("provider_invoice_id")
+  issuedAt          DateTime      @default(now()) @map("issued_at")
+  paidAt            DateTime?     @map("paid_at")
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@map("invoices")
+}
+
+/// Sprint 8 — internal Feature Flag engine's storage. Deliberately flat:
+/// a flag is either globally on/off, or scoped to specific families via
+/// `enabledFamilyIds`. No percentage rollout / A-B testing here (that's
+/// real additional scope, not silently included).
+model FeatureFlag {
+  id               String   @id @default(uuid()) @db.Uuid
+  key              String   @unique
+  description      String
+  isEnabledGlobally Boolean @default(false) @map("is_enabled_globally")
+  enabledFamilyIds String[] @map("enabled_family_ids") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("feature_flags")
 }
 
 model Notification {
