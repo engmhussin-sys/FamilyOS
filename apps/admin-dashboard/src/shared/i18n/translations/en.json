@@ -1,0 +1,72 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "close": "Close",
+    "error": "Something went wrong.",
+    "comingSoon": "(coming soon)"
+  },
+  "shell": {
+    "appName": "AI Family Coach",
+    "navOverview": "Overview",
+    "navChildren": "Children",
+    "navReports": "Reports",
+    "welcomeBack": "Welcome back",
+    "logout": "Log out"
+  },
+  "dashboard": {
+    "familyTitle": "Your Family",
+    "email": "Email",
+    "role": "Role",
+    "roleOwner": "Family Owner",
+    "roleParent": "Parent"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "unreadCount": "{{count}} unread",
+    "unreadCount_one": "{{count}} unread",
+    "unreadCount_other": "{{count}} unread",
+    "markAllRead": "Mark all as read",
+    "markRead": "Mark as read",
+    "empty": "No notifications yet."
+  },
+  "devices": {
+    "title": "Children's Devices",
+    "empty": "No devices paired yet.",
+    "trust": "Trust",
+    "protectionActive": "Active",
+    "protectionDisabled": "Accessibility Service disabled",
+    "protectionUnknown": "Not confirmed yet",
+    "aiDiagnosis": "AI Diagnosis",
+    "analyzing": "Analyzing..."
+  },
+  "screenTime": {
+    "title": "Screen Time",
+    "empty": "Add a child first to set a screen time policy.",
+    "setPolicy": "Set Policy",
+    "editPolicy": "Edit",
+    "dailyLimit": "Daily Limit (minutes)",
+    "bedtimeStart": "Bedtime Start",
+    "bedtimeEnd": "Bedtime End",
+    "focusMode": "Enable Focus Mode",
+    "noPolicySet": "No policy set yet."
+  },
+  "insights": {
+    "title": "Family Insights (Internal AI)",
+    "whyThisRecommendation": "Why this recommendation?",
+    "hideReasoning": "Hide reasoning",
+    "decisionHistory": "Decision History",
+    "hideHistory": "Hide history",
+    "noHistory": "No previous decisions.",
+    "confidence": "Confidence"
+  },
+  "timeline": {
+    "title": "Event Timeline",
+    "empty": "No events yet.",
+    "viewLog": "View Log",
+    "hideLog": "Hide"
+  }
+}

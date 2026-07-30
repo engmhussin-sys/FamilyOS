@@ -1,0 +1,72 @@
+{
+  "common": {
+    "loading": "جارٍ التحميل...",
+    "save": "حفظ",
+    "cancel": "إلغاء",
+    "edit": "تعديل",
+    "delete": "حذف",
+    "close": "إغلاق",
+    "error": "حدث خطأ ما.",
+    "comingSoon": "(قريبًا)"
+  },
+  "shell": {
+    "appName": "AI Family Coach",
+    "navOverview": "نظرة عامة",
+    "navChildren": "الأطفال",
+    "navReports": "التقارير",
+    "welcomeBack": "مرحبًا بعودتك",
+    "logout": "تسجيل الخروج"
+  },
+  "dashboard": {
+    "familyTitle": "عائلتك",
+    "email": "البريد الإلكتروني",
+    "role": "الدور",
+    "roleOwner": "مالك العائلة",
+    "roleParent": "والد/والدة"
+  },
+  "notifications": {
+    "title": "الإشعارات",
+    "unreadCount": "{{count}} غير مقروء",
+    "unreadCount_one": "{{count}} غير مقروء",
+    "unreadCount_other": "{{count}} غير مقروءة",
+    "markAllRead": "تعليم الكل كمقروء",
+    "markRead": "تعليم كمقروء",
+    "empty": "لا يوجد إشعارات بعد."
+  },
+  "devices": {
+    "title": "أجهزة الأطفال",
+    "empty": "لا يوجد أجهزة مقترنة بعد.",
+    "trust": "الثقة",
+    "protectionActive": "فعّالة",
+    "protectionDisabled": "خدمة الوصول متوقفة",
+    "protectionUnknown": "غير مؤكَّدة بعد",
+    "aiDiagnosis": "تحليل ذكاء اصطناعي",
+    "analyzing": "جارٍ التحليل..."
+  },
+  "screenTime": {
+    "title": "وقت الشاشة",
+    "empty": "أضف طفلًا أولًا لضبط سياسة وقت الشاشة.",
+    "setPolicy": "ضبط سياسة",
+    "editPolicy": "تعديل",
+    "dailyLimit": "الحد اليومي (بالدقائق)",
+    "bedtimeStart": "بداية وقت النوم",
+    "bedtimeEnd": "نهاية وقت النوم",
+    "focusMode": "تفعيل وضع التركيز",
+    "noPolicySet": "لا توجد سياسة مضبوطة بعد."
+  },
+  "insights": {
+    "title": "رؤى العائلة (بالذكاء الاصطناعي الداخلي)",
+    "whyThisRecommendation": "لماذا هذه التوصية؟",
+    "hideReasoning": "إخفاء التفسير",
+    "decisionHistory": "سجل القرارات",
+    "hideHistory": "إخفاء السجل",
+    "noHistory": "لا يوجد قرارات سابقة.",
+    "confidence": "الثقة"
+  },
+  "timeline": {
+    "title": "سجل الأحداث الزمني",
+    "empty": "لا يوجد أحداث بعد.",
+    "viewLog": "عرض السجل",
+    "hideLog": "إخفاء"
+  }
+}

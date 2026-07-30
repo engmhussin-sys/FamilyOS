@@ -6,9 +6,11 @@ import {
 } from '../api/notificationsApi';
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
+import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
 export function NotificationCenterCard() {
   const queryClient = useQueryClient();
+  const { t, locale } = useTranslation();
   const { data: notifications, isLoading } = useQuery({
     queryKey: NOTIFICATIONS_QUERY_KEY,
     queryFn: () => notificationsApi.list(),
@@ -39,11 +41,12 @@ export function NotificationCenterCard() {
     <Card className={unreadCount > 0 ? 'border-brick-200 bg-brick-50' : ''}>
       <div className="flex items-center justify-between">
         <h2 className="font-display text-lg text-ink">
-          الإشعارات {unreadCount > 0 && `(${unreadCount} غير مقروء)`}
+          {t('notifications.title')}{' '}
+          {unreadCount > 0 && `(${t('notifications.unreadCount', { count: unreadCount })})`}
         </h2>
         {unreadCount > 0 && (
           <Button variant="ghost" onClick={handleMarkAllAsRead}>
-            تعليم الكل كمقروء
+            {t('notifications.markAllRead')}
           </Button>
         )}
       </div>
@@ -60,12 +63,12 @@ export function NotificationCenterCard() {
                 <p className="text-sm font-medium text-ink">{notification.title}</p>
                 <p className="text-xs text-ink-soft">{notification.body}</p>
                 <p className="mt-1 text-xs text-ink-soft">
-                  {new Date(notification.createdAt).toLocaleString('ar-EG')}
+                  {new Date(notification.createdAt).toLocaleString(locale === 'ar' ? 'ar-EG' : 'en-US')}
                 </p>
               </div>
               {notification.readAt === null && (
                 <Button variant="ghost" onClick={() => handleMarkAsRead(notification.id)}>
-                  تعليم كمقروء
+                  {t('notifications.markRead')}
                 </Button>
               )}
             </div>
