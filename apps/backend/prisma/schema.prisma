@@ -271,6 +271,7 @@ model User {
   ownedDevices      Device[]          @relation("UserOwnedDevices")
   consentsGranted   ParentalConsent[] @relation("ConsentGrantedBy")
   reviewedAlerts    AiAlert[]         @relation("AlertReviewedBy")
+  organizationMemberships OrganizationMember[] @relation("OrganizationMemberships")
   notifications     Notification[]
   auditLogEntries   AuditLog[]        @relation("AuditActorUser")
 
@@ -844,6 +845,166 @@ model AnalyticsEvent {
   @@index([eventName, occurredAt])
   @@index([familyId])
   @@map("analytics_events")
+}
+
+/// ============================================================
+/// ORGANIZATION PLATFORM (Sprint 9 addendum \u2014 architecture direction
+/// only, per the explicit "database direction, not full system" scope).
+/// See docs/architecture/ORGANIZATION_PLATFORM_ARCHITECTURE.md for the
+/// full reasoning. THREE hard constraints honored here:
+///   1. Zero foreign key FROM any existing table INTO these new ones \u2014
+///      Family/FamilyMember/Child/etc. are completely untouched.
+///   2. Zero foreign key FROM these new tables INTO Family \u2014 this is a
+///      parallel, currently-unused structure, not a live migration.
+///   3. Government is NOT in this enum \u2014 explicitly out of v1 scope
+///      per the product decision; adding it later is a safe additive
+///      enum value when v2 arrives.
+/// ============================================================
+
+enum OrganizationType {
+  FAMILY
+  SCHOOL
+  COMPANY
+  BANK
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MANAGER
+  MEMBER
+  GUEST
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum PartnerCampaignType {
+  REFERRAL
+  COUPON
+  TRIAL_EXTENSION
+  DISCOUNT
+  QR_CODE
+}
+
+/// The generalized tenant. `Family` is NOT migrated to this table in
+/// this sprint \u2014 the eventual convergence path (documented in the ADR)
+/// is that a Family becomes `Organization{type: FAMILY}` with a matching
+/// `id`, backfilled in a dedicated future migration, not here. Until
+/// that migration runs, this table has zero rows and zero readers.
+model Organization {
+  id                   String            @id @default(uuid()) @db.Uuid
+  type                 OrganizationType
+  name                 String
+  /// Self-referential, for School→Department or Company→Branch
+  /// hierarchies. Null for a top-level org (including every Family).
+  parentOrganizationId String?           @map("parent_organization_id") @db.Uuid
+  /// White-label branding + per-org feature toggles (Sprint 9's White
+  /// Label direction) \u2014 shape intentionally loose (Json) since the
+  /// concrete fields (logo URL, color scheme, enabled modules) are a
+  /// product decision for whoever builds the White Label config UI,
+  /// not an architecture-layer concern.
+  settings             Json?
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+  deletedAt            DateTime?         @map("deleted_at")
+
+  parentOrganization   Organization?     @relation("OrganizationHierarchy", fields: [parentOrganizationId], references: [id])
+  childOrganizations   Organization[]    @relation("OrganizationHierarchy")
+  members              OrganizationMember[]
+  policies             OrganizationPolicy[]
+  invitations          OrganizationInvitation[]
+  partnerCampaigns     PartnerCampaign[]
+
+  @@index([type])
+  @@index([parentOrganizationId])
+  @@map("organizations")
+}
+
+/// Generalizes FamilyMember's role concept across every organization
+/// type. NOT wired to replace FamilyMember in this sprint.
+model OrganizationMember {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  role           OrganizationRole @default(MEMBER)
+  joinedAt       DateTime         @default(now()) @map("joined_at")
+  deletedAt      DateTime?        @map("deleted_at")
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User             @relation("OrganizationMemberships", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+/// Generalizes the pattern ScreenTimePolicy already established (a
+/// versioned, per-owner policy row) to the organization level \u2014 e.g. a
+/// School setting a default screen-time policy for all its students'
+/// Family sub-organizations, or a Bank setting a compliance policy for
+/// all employee accounts. Deliberately Json-valued and key-based (not
+/// one column per policy type) so School/Company/Bank policies \u2014
+/// which don't exist yet and shouldn't be guessed at schema level \u2014
+/// don't require a migration each time a new policy type is invented.
+model OrganizationPolicy {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  key            String
+  value          Json
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+  @@map("organization_policies")
+}
+
+/// Generalizes the invite-a-member concept (distinct from Pairing's
+/// device-invite flow, which stays exactly as-is \u2014 this is for
+/// inviting a HUMAN to join an Organization as a member, e.g. a
+/// School admin inviting a teacher).
+model OrganizationInvitation {
+  id              String           @id @default(uuid()) @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  email           String
+  role            OrganizationRole @default(MEMBER)
+  invitedByUserId String           @map("invited_by_user_id") @db.Uuid
+  status          InvitationStatus @default(PENDING)
+  expiresAt       DateTime         @map("expires_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@map("organization_invitations")
+}
+
+/// Partner Program (Sprint 9 direction): a campaign is always owned by
+/// an Organization (the partner) \u2014 no separate Partner entity needed,
+/// since a partner IS an Organization (of any type) with campaigns
+/// attached. `config` shape varies by `type` (discount percentage for
+/// DISCOUNT, trial-day extension for TRIAL_EXTENSION, etc.) \u2014 Json by
+/// design, same reasoning as OrganizationPolicy.value.
+model PartnerCampaign {
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @map("organization_id") @db.Uuid
+  code           String              @unique
+  type           PartnerCampaignType
+  config         Json
+  isActive       Boolean             @default(true) @map("is_active")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  expiresAt      DateTime?           @map("expires_at")
+
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([code])
+  @@map("partner_campaigns")
 }
 
 model Notification {
