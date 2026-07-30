@@ -9,6 +9,8 @@ import { ManualPaymentAdapter } from './manual-payment.adapter';
 import { StripeAdapter } from './stripe.adapter';
 import { PaymobAdapter } from './paymob.adapter';
 import { FawryAdapter } from './fawry.adapter';
+import { AppleIAPAdapter } from './apple-iap.adapter';
+import { GooglePlayBillingAdapter } from './google-play-billing.adapter';
 
 @Injectable()
 export class PaymentProviderRegistry implements IPaymentProviderRegistry {
@@ -19,12 +21,16 @@ export class PaymentProviderRegistry implements IPaymentProviderRegistry {
     stripeAdapter: StripeAdapter,
     paymobAdapter: PaymobAdapter,
     fawryAdapter: FawryAdapter,
+    appleIapAdapter: AppleIAPAdapter,
+    googlePlayAdapter: GooglePlayBillingAdapter,
   ) {
     this.adapters = {
       MANUAL: manualAdapter,
       STRIPE: stripeAdapter,
       PAYMOB: paymobAdapter,
       FAWRY: fawryAdapter,
+      APPLE_IAP: appleIapAdapter,
+      GOOGLE_PLAY: googlePlayAdapter,
     };
   }
 

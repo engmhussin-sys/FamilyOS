@@ -73,6 +73,13 @@ enum PaymentProvider {
   PAYMOB
   FAWRY
   MANUAL
+  /// Sprint 9 addendum \u2014 extends the already-approved adapter pattern
+  /// (Decision established Sprint 8). Structurally different from the
+  /// four above: purchases are client-initiated (StoreKit/Play Billing),
+  /// this backend verifies rather than charges \u2014 see AppleIAPAdapter's
+  /// own docstring.
+  APPLE_IAP
+  GOOGLE_PLAY
 }
 
 enum DevicePlatform {

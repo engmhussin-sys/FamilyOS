@@ -1,7 +1,7 @@
 export type SubscriptionPlanTier = 'FREE' | 'PREMIUM' | 'FAMILY' | 'ENTERPRISE';
 export type SubscriptionStatusValue = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'EXPIRED';
 export type InvoiceStatusValue = 'DRAFT' | 'OPEN' | 'PAID' | 'VOID' | 'UNCOLLECTIBLE';
-export type PaymentProviderValue = 'STRIPE' | 'PAYMOB' | 'FAWRY' | 'MANUAL';
+export type PaymentProviderValue = 'STRIPE' | 'PAYMOB' | 'FAWRY' | 'MANUAL' | 'APPLE_IAP' | 'GOOGLE_PLAY';
 
 export interface IPlanDefinition {
   id: string;

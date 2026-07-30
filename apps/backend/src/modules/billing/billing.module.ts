@@ -12,6 +12,8 @@ import { ManualPaymentAdapter } from './infrastructure/adapters/manual-payment.a
 import { StripeAdapter } from './infrastructure/adapters/stripe.adapter';
 import { PaymobAdapter } from './infrastructure/adapters/paymob.adapter';
 import { FawryAdapter } from './infrastructure/adapters/fawry.adapter';
+import { AppleIAPAdapter } from './infrastructure/adapters/apple-iap.adapter';
+import { GooglePlayBillingAdapter } from './infrastructure/adapters/google-play-billing.adapter';
 import { PaymentProviderRegistry } from './infrastructure/adapters/payment-provider.registry';
 import { BILLING_REPOSITORY } from './application/ports/billing.repository.port';
 import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.port';
@@ -39,6 +41,8 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
     StripeAdapter,
     PaymobAdapter,
     FawryAdapter,
+    AppleIAPAdapter,
+    GooglePlayBillingAdapter,
     PaymentProviderRegistry,
     { provide: BILLING_REPOSITORY, useClass: PrismaBillingRepository },
     { provide: PAYMENT_PROVIDER_REGISTRY, useClass: PaymentProviderRegistry },

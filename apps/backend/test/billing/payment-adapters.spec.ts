@@ -3,6 +3,8 @@ import { ManualPaymentAdapter } from '../../src/modules/billing/infrastructure/a
 import { StripeAdapter } from '../../src/modules/billing/infrastructure/adapters/stripe.adapter';
 import { PaymobAdapter } from '../../src/modules/billing/infrastructure/adapters/paymob.adapter';
 import { FawryAdapter } from '../../src/modules/billing/infrastructure/adapters/fawry.adapter';
+import { AppleIAPAdapter } from '../../src/modules/billing/infrastructure/adapters/apple-iap.adapter';
+import { GooglePlayBillingAdapter } from '../../src/modules/billing/infrastructure/adapters/google-play-billing.adapter';
 import { PaymentProviderNotConfiguredException } from '../../src/modules/billing/domain/billing.errors';
 
 describe('ManualPaymentAdapter', () => {
@@ -34,6 +36,22 @@ describe('Unconfigured provider adapters (Stripe/Paymob/Fawry)', () => {
   it('FawryAdapter throws PaymentProviderNotConfiguredException with no API key set', async () => {
     const configService = { get: jest.fn(() => undefined) } as unknown as ConfigService;
     const adapter = new FawryAdapter(configService);
+    await expect(
+      adapter.charge({ subscriptionId: 'sub-1', amountCents: 999, currency: 'USD' }),
+    ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredException);
+  });
+
+  it('AppleIAPAdapter throws PaymentProviderNotConfiguredException with no shared secret set', async () => {
+    const configService = { get: jest.fn(() => undefined) } as unknown as ConfigService;
+    const adapter = new AppleIAPAdapter(configService);
+    await expect(
+      adapter.charge({ subscriptionId: 'sub-1', amountCents: 999, currency: 'USD' }),
+    ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredException);
+  });
+
+  it('GooglePlayBillingAdapter throws PaymentProviderNotConfiguredException with no service account key set', async () => {
+    const configService = { get: jest.fn(() => undefined) } as unknown as ConfigService;
+    const adapter = new GooglePlayBillingAdapter(configService);
     await expect(
       adapter.charge({ subscriptionId: 'sub-1', amountCents: 999, currency: 'USD' }),
     ).rejects.toBeInstanceOf(PaymentProviderNotConfiguredException);
