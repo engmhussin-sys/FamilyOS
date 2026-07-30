@@ -14,6 +14,8 @@ import '../../plugins/permissions/application/permission_status_service.dart';
 import '../../plugins/policy/application/policy_cache_service.dart';
 import '../../plugins/telemetry/application/runtime_telemetry_collector.dart';
 import '../../plugins/runtime/application/runtime_coordinator.dart';
+import '../../plugins/runtime/application/recovery_coordinator.dart';
+import '../../plugins/offline_queue/application/offline_queue.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -73,10 +75,19 @@ final runtimeCoordinatorProvider = Provider<RuntimeCoordinator>((ref) {
   );
 });
 
+final recoveryCoordinatorProvider = Provider<RecoveryCoordinator>((ref) {
+  return RecoveryCoordinator(ref.watch(runtimeCoordinatorProvider));
+});
+
+final offlineQueueProvider = Provider<OfflineQueue>((ref) {
+  return OfflineQueue(ref.watch(secureStorageProvider));
+});
+
 final heartbeatServiceProvider = Provider<HeartbeatService>((ref) {
   final service = HeartbeatService(
     ref.watch(pairingApiProvider),
     telemetryProvider: () => ref.read(runtimeCoordinatorProvider).collectTelemetryFields(),
+    offlineQueue: ref.watch(offlineQueueProvider),
   );
   ref.onDispose(service.stop);
   return service;

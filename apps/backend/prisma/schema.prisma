@@ -307,6 +307,7 @@ model Child {
   aiRiskScores        AiRiskScore[]
   aiAlerts            AiAlert[]
   notifications       Notification[]
+  aiMemoryEntries     AiMemoryEntry[]
 
   @@index([familyId])
   @@map("children")
@@ -696,6 +697,26 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([actorUserId])
   @@map("audit_logs")
+}
+
+model AiMemoryEntry {
+  id        String   @id @default(uuid()) @db.Uuid
+  childId   String   @map("child_id") @db.Uuid
+  /// HABIT | PREFERENCE | VIOLATION | RECOMMENDATION | CONFIDENCE —
+  /// Sprint 7's explicit memory categories. Plain string, not an enum:
+  /// this table is meant to grow new categories (Health/Education
+  /// engines, later) without a schema migration per category.
+  category  String
+  key       String
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, category, key])
+  @@index([childId, category])
+  @@map("ai_memory_entries")
 }
 
 model Notification {

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/providers.dart';
 import '../../../plugins/permissions/domain/permission_status.dart';
 import '../../../plugins/runtime/application/runtime_coordinator.dart';
+import '../../../plugins/telemetry/contracts/runtime_telemetry.dart';
 
 /// Combines Sprint 4's three Flutter requirements ("Permission
 /// onboarding," "Child status," "Device health") into ONE screen rather
@@ -24,6 +25,8 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
   bool _isSyncingCapabilities = false;
   String? _syncMessage;
   RuntimeEnforcementStatus? _enforcementStatus;
+  RuntimeTelemetrySnapshot? _telemetry;
+  int _queuedEventCount = 0;
 
   @override
   void initState() {
@@ -31,6 +34,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
     WidgetsBinding.instance.addObserver(this);
     _refreshPermissions();
     _refreshEnforcementStatus();
+    _refreshDiagnostics();
   }
 
   @override
@@ -45,8 +49,30 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
     // just came back from a Settings screen. Matches lifecycle ADR §8's
     // "re-check every cycle, don't assume a one-time grant holds" principle.
     if (state == AppLifecycleState.resumed) {
+      ref.read(recoveryCoordinatorProvider).attemptRecoveryIfNeeded();
       _refreshPermissions();
       _refreshEnforcementStatus();
+      _refreshDiagnostics();
+    }
+  }
+
+  /// Sprint 7's Runtime Diagnostics UI — surfaces
+  /// RuntimeTelemetryCollector's snapshot (memory/battery/health) and
+  /// the Offline Queue's current backlog, both already built (Sprint 4
+  /// §9 and Sprint 7's OfflineQueue) but never previously shown anywhere.
+  Future<void> _refreshDiagnostics() async {
+    try {
+      final telemetry = await ref.read(runtimeTelemetryCollectorProvider).collect();
+      final queueLength = await ref.read(offlineQueueProvider).length();
+      if (mounted) {
+        setState(() {
+          _telemetry = telemetry;
+          _queuedEventCount = queueLength;
+        });
+      }
+    } catch (_) {
+      // Diagnostics are supplementary — a failure here shouldn't crash
+      // the rest of the status screen.
     }
   }
 
@@ -105,6 +131,10 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
             const SizedBox(height: 8),
             _buildEnforcementStatusTile(),
             const SizedBox(height: 16),
+            const Text('Diagnostics', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            _buildDiagnosticsTile(),
+            const SizedBox(height: 16),
             const Text('Permissions', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             if (_isLoadingPermissions)
@@ -153,6 +183,34 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
                 ? 'No policy has synced yet'
                 : 'Enforcing the current policy',
       ),
+    );
+  }
+
+  Widget _buildDiagnosticsTile() {
+    final telemetry = _telemetry;
+    if (telemetry == null) {
+      return const Text('Checking...', style: TextStyle(color: Colors.grey));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Memory usage: ${telemetry.memoryUsageMb} MB'),
+        Text('Battery: ${telemetry.batteryPercent ?? 'unknown'}%'),
+        Text('Health: ${telemetry.isHealthy ? 'Normal' : 'Attention needed'}'),
+        if (telemetry.warnings.isNotEmpty)
+          Text(
+            telemetry.warnings.join(', '),
+            style: const TextStyle(color: Colors.orange),
+          ),
+        if (_queuedEventCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '$_queuedEventCount update(s) waiting to sync (offline)',
+              style: const TextStyle(color: Colors.orange),
+            ),
+          ),
+      ],
     );
   }
 
