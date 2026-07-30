@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../auth/session_expired_notifier.dart';
 import '../network/api_client.dart';
+import '../offline/pending_operations_queue.dart';
 import '../storage/secure_session_storage.dart';
 import '../../features/authentication/api/auth_api.dart';
 import '../../features/authentication/application/auth_controller.dart';
@@ -18,6 +19,10 @@ final sessionStorageProvider = Provider<SecureSessionStorage>(
   (ref) => SecureSessionStorage(ref.watch(secureStorageProvider)),
 );
 
+final pendingOperationsQueueProvider = Provider<PendingOperationsQueue>(
+  (ref) => PendingOperationsQueue(ref.watch(secureStorageProvider)),
+);
+
 final apiClientProvider = Provider<ApiClient>(
   (ref) => ApiClient(
     ref.watch(sessionStorageProvider),
@@ -29,7 +34,9 @@ final authApiProvider = Provider<AuthApi>((ref) => AuthApi(ref.watch(apiClientPr
 final familyApiProvider = Provider<FamilyApi>((ref) => FamilyApi(ref.watch(apiClientProvider)));
 final pairingApiProvider = Provider<PairingApi>((ref) => PairingApi(ref.watch(apiClientProvider)));
 final dashboardApiProvider = Provider<DashboardApi>((ref) => DashboardApi(ref.watch(apiClientProvider)));
-final notificationsApiProvider = Provider<NotificationsApi>((ref) => NotificationsApi(ref.watch(apiClientProvider)));
+final notificationsApiProvider = Provider<NotificationsApi>(
+  (ref) => NotificationsApi(ref.watch(apiClientProvider), ref.watch(pendingOperationsQueueProvider)),
+);
 final settingsApiProvider = Provider<SettingsApi>((ref) => SettingsApi(ref.watch(apiClientProvider)));
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(

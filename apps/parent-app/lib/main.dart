@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/auth/session_expired_notifier.dart';
+import 'core/connectivity/connectivity_controller.dart';
+import 'core/di/providers.dart';
 import 'core/localization/locale_controller.dart';
+import 'core/offline/offline_banner.dart';
 import 'core/routing/app_routes.dart';
 import 'core/theme/app_theme.dart';
 import 'features/authentication/presentation/login_screen.dart';
@@ -40,6 +43,23 @@ class ParentApp extends ConsumerWidget {
       }
     });
 
+    // Auto-retry requirement (Offline Detection): when connectivity
+    // flips from offline -> online, drain every queued write action
+    // against the real API. Runs once per transition, not on every
+    // rebuild — `ref.listen` only fires on an actual state change.
+    ref.listen(connectivityControllerProvider, (previous, isOnline) {
+      if (previous == false && isOnline == true) {
+        // NotificationsApi is the only producer of queued operations
+        // today — replay routes through it directly rather than a
+        // generic dispatcher table, since there's exactly one real
+        // consumer to route to (see NotificationsApi.replay's own
+        // switch statement for how a second producer would extend this).
+        ref.read(pendingOperationsQueueProvider).drain(
+              (operation) => ref.read(notificationsApiProvider).replay(operation),
+            );
+      }
+    });
+
     return MaterialApp(
       navigatorKey: _navigatorKey,
       title: 'FamilyOS',
@@ -54,7 +74,7 @@ class ParentApp extends ConsumerWidget {
       // `MaterialApp.locale`, for the same reason.
       builder: (context, child) => Directionality(
         textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-        child: child!,
+        child: OfflineBanner(child: child!),
       ),
       initialRoute: AppRoutes.splash,
       routes: {

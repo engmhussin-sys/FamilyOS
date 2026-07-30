@@ -35,7 +35,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   Future<void> _markAllRead() async {
-    await ref.read(notificationsApiProvider).markAllAsRead();
+    try {
+      await ref.read(notificationsApiProvider).markAllAsRead();
+    } catch (_) {
+      // Already enqueued by NotificationsApi — no error surfaced here;
+      // the OfflineBanner's pending-count badge is the feedback.
+    }
     await _load();
   }
 
@@ -82,7 +87,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                         subtitle: Text(n['body'] as String? ?? ''),
                         onTap: isUnread
                             ? () async {
-                                await ref.read(notificationsApiProvider).markAsRead(n['id'] as String);
+                                try {
+                                  await ref.read(notificationsApiProvider).markAsRead(n['id'] as String);
+                                } catch (_) {
+                                  // Already enqueued by NotificationsApi.
+                                }
                                 await _load();
                               }
                             : null,

@@ -20,6 +20,9 @@ dependencies:
   # from child-app's SecureTokenStorage (DEVICE-actor tokens) even though
   # the mechanism is identical.
   flutter_secure_storage: ^9.2.2
+  # Production Readiness Review follow-up: real connectivity detection —
+  # was entirely absent, flagged as a mandatory-before-release gap.
+  connectivity_plus: ^6.0.5
 
 dev_dependencies:
   flutter_test:
