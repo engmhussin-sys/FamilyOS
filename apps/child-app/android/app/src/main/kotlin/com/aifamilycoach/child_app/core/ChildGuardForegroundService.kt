@@ -70,7 +70,7 @@ class ChildGuardForegroundService : Service() {
         val runnable = object : Runnable {
             override fun run() {
                 val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-                    AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
+                    AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
                 )
                 val notification = buildNotification(isHealthy = accessibilityEnabled)
                 val notificationManager =

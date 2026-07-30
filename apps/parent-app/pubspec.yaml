@@ -1,0 +1,32 @@
+name: parent_app
+description: AI Family Digital Coach — Parent Application (Sprint 10 Foundation)
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Same choice as apps/child-app, for the same reason: explicit ports,
+  # explicit providers, no hidden service locator.
+  flutter_riverpod: ^2.5.1
+  # Same refresh-and-retry HTTP pattern as child-app's ApiClient and the
+  # Admin Dashboard's httpClient.ts — see core/network/api_client.dart.
+  dio: ^5.4.3
+  # USER-actor session storage (access + refresh token). Distinct purpose
+  # from child-app's SecureTokenStorage (DEVICE-actor tokens) even though
+  # the mechanism is identical.
+  flutter_secure_storage: ^9.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  mockito: ^5.4.4
+  build_runner: ^2.4.9
+  lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

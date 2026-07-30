@@ -35,7 +35,7 @@ class RuntimeWatchdogWorker(
         val prefs = applicationContext.getSharedPreferences("afdc_runtime_watchdog", Context.MODE_PRIVATE)
 
         val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
+            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
         )
         val wasEnabledLastCheck = prefs.getBoolean("was_accessibility_enabled", true)
 

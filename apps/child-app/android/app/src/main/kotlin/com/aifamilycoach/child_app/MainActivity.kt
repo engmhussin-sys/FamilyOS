@@ -68,7 +68,7 @@ class MainActivity : FlutterActivity() {
                 AgentChannel.METHOD_IS_ACCESSIBILITY_SERVICE_ENABLED -> {
                     result.success(
                         permissionManager.isAccessibilityServiceEnabled(
-                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
+                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
                         ),
                     )
                 }
@@ -97,7 +97,7 @@ class MainActivity : FlutterActivity() {
                 // --- Sprint 4: Device Capability Engine ---
                 AgentChannel.METHOD_GET_CAPABILITY_REPORT -> {
                     val report = capabilityEngine.collect(
-                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
+                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
                     )
                     result.success(
                         mapOf(
@@ -117,7 +117,7 @@ class MainActivity : FlutterActivity() {
                 AgentChannel.METHOD_CHECK_TAMPER_SIGNALS -> {
                     result.success(
                         antiTamperDetector.checkAll(
-                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
+                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
                         ),
                     )
                 }
@@ -171,7 +171,7 @@ class MainActivity : FlutterActivity() {
 
                 AgentChannel.METHOD_GET_ENFORCEMENT_STATUS -> {
                     val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER,
+                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
                     )
                     val lastSyncedAt = nativePolicyStore.lastSyncedAtMillis()
                     result.success(

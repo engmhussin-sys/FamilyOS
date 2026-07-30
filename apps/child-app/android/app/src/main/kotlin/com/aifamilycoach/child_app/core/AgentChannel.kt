@@ -42,10 +42,28 @@ object AgentChannel {
     const val METHOD_GET_ENFORCEMENT_STATUS = "getEnforcementStatus"
     const val METHOD_START_ENFORCEMENT_SERVICE = "startEnforcementService"
 
-    /** No longer a placeholder as of Sprint 5 — `ChildGuardAccessibilityService`
-     * is real (see core/ChildGuardAccessibilityService.kt) and registered
-     * in AndroidManifest.xml. Name kept unchanged from when it WAS a
-     * placeholder so no caller needed to change. */
-    const val ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER =
-        "com.aifamilycoach.child_app/.core.ChildGuardAccessibilityService"
+    /** CRITICAL FIX (Sprint 10 Android Runtime Audit): this held the
+     * manifest's SHORTHAND relative class reference
+     * (`"com.aifamilycoach.child_app/.core.ChildGuardAccessibilityService"`)
+     * — but `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` (the only
+     * place this constant is ever compared against, in
+     * `PermissionManager.isAccessibilityServiceEnabled`) returns the
+     * FULLY QUALIFIED form (`ComponentName.flattenToString()`:
+     * `package/fully.qualified.ClassName`), never the shorthand form.
+     * The string comparison was silently always false — exactly the
+     * "parent sees 'protected,' child isn't" failure mode this file's
+     * own docstring warned about, undetected until this audit because
+     * nothing in the sandbox could exercise the real Android Settings
+     * API to catch it. Renamed to drop "_PLACEHOLDER" now that it both
+     * holds a real value AND is verified correct in format. */
+    const val ACCESSIBILITY_SERVICE_COMPONENT_NAME =
+        "com.aifamilycoach.child_app/com.aifamilycoach.child_app.core.ChildGuardAccessibilityService"
+
+    @Deprecated(
+        "Renamed to ACCESSIBILITY_SERVICE_COMPONENT_NAME after the Sprint 10 audit fixed its value " +
+            "(the old name/value pair was silently always-false against the real Android Settings API). " +
+            "Kept as an alias only so nothing breaks if referenced externally; do not use in new code.",
+        ReplaceWith("ACCESSIBILITY_SERVICE_COMPONENT_NAME"),
+    )
+    const val ACCESSIBILITY_SERVICE_COMPONENT_NAME_PLACEHOLDER = ACCESSIBILITY_SERVICE_COMPONENT_NAME
 }
