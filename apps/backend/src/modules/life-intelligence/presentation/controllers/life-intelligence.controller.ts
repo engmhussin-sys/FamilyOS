@@ -71,6 +71,23 @@ export class LifeIntelligenceController {
     return this.habitEngine.getScoreBreakdown(childId, user.familyId!);
   }
 
+  /** Sprint 16 — CLOSES A REAL GAP (Missed Habit tracking, flagged
+   * unbuilt since Sprint 15's own final report). On-demand trigger —
+   * no scheduled-job infrastructure exists in this codebase yet, so
+   * this is callable directly rather than silently assuming a cron
+   * that doesn't exist. `date` defaults to yesterday server-side. */
+  @Post('habits/:childId/mark-missed')
+  markMissedHabits(@Param('childId') childId: string, @Body() dto: { date?: string }, @CurrentUser() user: IJwtPayload) {
+    return this.habitEngine.markMissedHabits(childId, user.familyId!, dto?.date);
+  }
+
+  @Get('habits/:childId/missed')
+  getMissedHabits(@Param('childId') childId: string, @Query('windowDays') windowDays: string | undefined, @CurrentUser() user: IJwtPayload) {
+    const parsed = windowDays ? parseInt(windowDays, 10) : 7;
+    const safeWindow = Number.isFinite(parsed) && parsed > 0 && parsed <= 90 ? parsed : 7;
+    return this.habitEngine.getMissedHabitsSignal(childId, user.familyId!, safeWindow);
+  }
+
   // ---- Health ----
   @Post('health/:childId/nutrition-logs')
   logNutrition(@Param('childId') childId: string, @Body() dto: LogNutritionDto, @CurrentUser() user: IJwtPayload) {

@@ -5,22 +5,34 @@ import { PrismaHabitRepository } from '../../infrastructure/repositories/prisma-
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { IHabit, IHabitCompletion, IHabitScoreBreakdown, ICreateHabitInput } from '../../domain/habit.types';
+import { computeCurrentStreak } from './streak-calculator';
 
 const SCORE_WINDOW_DAYS = 30;
+const STREAK_LOOKBACK_DAYS = 30;
+const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100];
 
 /**
- * Architecture 1.0 \u00a73/\u00a75: the static, parent-defined habit list \u2014
+ * Architecture 1.0 §3/§5: the static, parent-defined habit list —
  * deliberately distinct from the (not built this sprint) Smart Tasks
  * Engine's AI-generated dynamic suggestions.
  *
- * Follows the Future-Engine Contract (Architecture 1.0 \u00a72):
+ * Follows the Future-Engine Contract (Architecture 1.0 §2):
  * - Memory: none needed yet.
  * - Events: writes to the Unified Timeline via ILifeTimelineWriter,
  *   and (Sprint 25) triggers Reward Rules via IRewardTriggerWriter on
- *   every completion \u2014 never a bespoke event mechanism for either.
+ *   every completion — never a bespoke event mechanism for either.
  * - AI Provider: not used.
- * - Audit: no AuditLog entry \u2014 a deliberate scope decision.
+ * - Audit: no AuditLog entry — a deliberate scope decision.
  * - Safety Validation: no AI/system-generated free-text copy exists here.
+ *
+ * Sprint 16 (Smart Daily Life Layer): completeHabit now determines
+ * COMPLETED vs COMPLETED_LATE from the habit's own scheduled window,
+ * fires STREAK_ACHIEVED/DAILY_GOAL_COMPLETED at the explicit contract
+ * event names Sprint 16 asks for (additively — 'habit_completed'
+ * unchanged, in case an existing Reward Rule already depends on it),
+ * and adds Missed Habit tracking (markMissedHabits/getMissedHabitsSignal)
+ * — a real, previously-flagged gap from Sprint 15's own final report,
+ * used strictly as a Coaching SIGNAL, never a punishment.
  */
 @Injectable()
 export class HabitEngineService {
@@ -49,12 +61,24 @@ export class HabitEngineService {
       // Same ownership-check discipline as every other module's
       // getChildOrThrow pattern: a habitId that exists but belongs to
       // a DIFFERENT child must fail identically to a habitId that
-      // doesn't exist at all \u2014 never leak which case it was.
+      // doesn't exist at all — never leak which case it was.
       throw new NotFoundException('Habit not found');
     }
 
     const date = dateStr ? new Date(dateStr) : this.today();
-    const completion = await this.habitRepository.recordCompletion(habitId, childId, date);
+
+    // Sprint 16 — CLOSES A REAL GAP: no distinction between on-time
+    // and late completion existed. Only evaluated when completing
+    // for TODAY (a past-dated completion has no meaningful "late"
+    // concept relative to a window that has already fully elapsed
+    // either way) and only when the habit actually has a scheduled
+    // end time (habits with no scheduled window are never "late").
+    const isToday = date.getTime() === this.today().getTime();
+    const status = isToday && habit.scheduledEndTime && this.isPastScheduledEnd(habit.scheduledEndTime)
+      ? 'COMPLETED_LATE' as const
+      : 'COMPLETED' as const;
+
+    const completion = await this.habitRepository.recordCompletion(habitId, childId, date, status);
 
     const priorCompletions = await this.habitRepository.countCompletionsInWindow(childId, this.daysAgo(SCORE_WINDOW_DAYS));
     // KNOWN, ASSESSED-LOW-SEVERITY RACE CONDITION (found in this
@@ -72,8 +96,8 @@ export class HabitEngineService {
     // duplicate that at worst shows a milestone message twice.
     if (priorCompletions === 1) {
       // First-ever completion in the scoring window is genuinely
-      // milestone-worthy \u2014 exactly the kind of curated moment
-      // Architecture 1.0 \u00a75.11 says belongs on the Timeline, not
+      // milestone-worthy — exactly the kind of curated moment
+      // Architecture 1.0 §5.11 says belongs on the Timeline, not
       // every single daily checkbox tick.
       await this.timeline.record({
         childId,
@@ -96,6 +120,36 @@ export class HabitEngineService {
         type: 'habit_completed',
         payload: { habitId, category: habit.category, isShared: habit.isShared },
       });
+
+      // Sprint 16 — CLOSES A REAL GAP: the brief's own explicit
+      // contract event names (HABIT_COMPLETED, DAILY_GOAL_COMPLETED),
+      // fired ADDITIVELY alongside the pre-existing 'habit_completed'
+      // type above.
+      await this.rewardTrigger.trigger(childId, familyId, {
+        engine: 'habit-builder',
+        type: 'HABIT_COMPLETED',
+        payload: { habitId, category: habit.category, isShared: habit.isShared, status },
+      });
+
+      const since = this.daysAgo(STREAK_LOOKBACK_DAYS);
+      const dailyCompletions = await this.habitRepository.countCompletionsInWindow(childId, since);
+      // Streak here is measured across ALL habits completed that day
+      // (at least one), matching this engine's own "Habits Score is a
+      // completion RATE, not per-habit" existing discipline — a
+      // per-individual-habit streak is a real, separate future
+      // extension this pass doesn't invent.
+      if (dailyCompletions > 0) {
+        const qualifyingDays = await this.getQualifyingCompletionDays(childId, since);
+        const todayStr = this.today().toISOString().slice(0, 10);
+        const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
+        if (STREAK_MILESTONES.includes(streakDays)) {
+          await this.rewardTrigger.trigger(childId, familyId, {
+            engine: 'habit-builder',
+            type: 'STREAK_ACHIEVED',
+            payload: { metric: 'habits', streakDays },
+          });
+        }
+      }
     } catch {
       // Intentionally swallowed — see comment above.
     }
@@ -103,8 +157,33 @@ export class HabitEngineService {
     return completion;
   }
 
+  /** Sprint 16 — CLOSES A REAL GAP explicitly flagged in Sprint 15's
+   * own final report ("Missed Habit tracking" did not exist). Marks
+   * every active habit with no completion record for `dateStr`
+   * (defaults to yesterday — "today" cannot be missed until it's
+   * over) as MISSED. Idempotent (repository-level unique constraint
+   * + skipDuplicates). Designed to run once daily (e.g. from a
+   * scheduled job once that infrastructure exists) OR on-demand —
+   * this method itself makes no assumption about its own caller's
+   * schedule. */
+  async markMissedHabits(childId: string, familyId: string, dateStr?: string): Promise<number> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    const date = dateStr ? new Date(dateStr) : this.daysAgo(1);
+    return this.habitRepository.markMissedHabitsForDate(childId, date);
+  }
+
+  /** Sprint 16 — Coaching-facing read: recent missed habits as a
+   * SIGNAL. Deliberately returns raw facts (which habit, which date)
+   * — no severity score, no "this is bad" framing baked in here; a
+   * Coaching layer decides what tone/action, if any, this warrants. */
+  async getMissedHabitsSignal(childId: string, familyId: string, windowDays = 7) {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    const since = this.daysAgo(windowDays);
+    return this.habitRepository.findMissedHabitsInWindow(childId, since);
+  }
+
   /** Feeds the Habits Score sub-component of the Digital Twin
-   * (Architecture 1.0 \u00a76.2) \u2014 a plain, explainable rate over a
+   * (Architecture 1.0 §6.2) — a plain, explainable rate over a
    * trailing window, not a hidden formula. */
   async getScoreBreakdown(childId: string, familyId: string): Promise<IHabitScoreBreakdown> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
@@ -125,6 +204,31 @@ export class HabitEngineService {
       completionRate: totalHabitDays > 0 ? completedHabitDays / totalHabitDays : 0,
       sharedTaskCompletionRate: totalSharedDays > 0 ? sharedCompletions / totalSharedDays : 0,
     };
+  }
+
+  /** "HH:MM" 24h comparison against the current local server time —
+   * an honest, documented approximation (server time, not the
+   * child's own device timezone, which this backend doesn't track
+   * per-request) rather than a false claim of timezone-perfect
+   * precision. */
+  private isPastScheduledEnd(scheduledEndTime: string): boolean {
+    const [hours, minutes] = scheduledEndTime.split(':').map(Number);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return false;
+    const now = new Date();
+    const scheduledEnd = new Date(now);
+    scheduledEnd.setHours(hours, minutes, 0, 0);
+    return now.getTime() > scheduledEnd.getTime();
+  }
+
+  private async getQualifyingCompletionDays(childId: string, since: Date): Promise<string[]> {
+    // Reuses countCompletionsInWindow's own status filter
+    // (COMPLETED/COMPLETED_LATE) conceptually, but needs per-day
+    // dates for streak calculation rather than a single count —
+    // delegated to the repository's own findMissedHabitsInWindow
+    // SIBLING query shape would be a real duplicate; instead this
+    // reads distinct completion dates directly via a small, honest
+    // repository extension.
+    return this.habitRepository.findDistinctCompletionDates(childId, since);
   }
 
   private today(): Date {

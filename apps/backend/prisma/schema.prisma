@@ -1293,6 +1293,27 @@ model Habit {
   childId     String   @map("child_id") @db.Uuid
   title       String
   category    String
+  /// Sprint 16 (Smart Daily Life Layer) — CLOSES A REAL GAP: Daily
+  /// Tasks Engine requires description/scheduling/priority, none of
+  /// which existed on Habit before this. All nullable/defaulted —
+  /// every existing habit row remains valid without a data migration
+  /// beyond adding the columns themselves.
+  description String?
+  /// "HH:MM" 24h local time, e.g. "07:30" — the start of the
+  /// scheduled window this task is meant for (e.g. morning routine
+  /// vs. evening). Null means "no specific time — anytime today",
+  /// an honest absence, not a fabricated default time.
+  scheduledStartTime String? @map("scheduled_start_time")
+  scheduledEndTime   String? @map("scheduled_end_time")
+  /// String, not enum — same "grows without migration" reasoning
+  /// this schema already uses for `category` itself. Real values in
+  /// use: DAILY, WEEKLY, SPECIFIC_DAYS (paired with
+  /// recurrenceDaysOfWeek below).
+  recurrence  String   @default("DAILY")
+  /// 0-6 (Sunday-Saturday), only meaningful when recurrence is
+  /// SPECIFIC_DAYS — null otherwise.
+  recurrenceDaysOfWeek Int[] @default([]) @map("recurrence_days_of_week")
+  priority    String   @default("NORMAL") // LOW | NORMAL | HIGH — a plain string, same reasoning as category
   /// Whether a parent authored this (custom) or it's a built-in
   /// default — mirrors AiMemoryEntry.category's "plain string, grows
   /// without migration" reasoning: category is a string, not an enum.
@@ -1317,6 +1338,14 @@ model HabitCompletion {
   childId     String   @map("child_id") @db.Uuid
   date        DateTime @db.Date
   completedAt DateTime @default(now()) @map("completed_at")
+  /// Sprint 16 — CLOSES A REAL GAP explicitly flagged in Sprint 15's
+  /// own final report: "Missed Habit tracking" did not exist at all.
+  /// COMPLETED (default, for existing rows and the normal on-time
+  /// case) | COMPLETED_LATE | SKIPPED | MISSED. A plain string, same
+  /// discipline as every other open-ended classification field in
+  /// this schema — this is a SIGNAL for Coaching, never a
+  /// punishment mechanism (the brief's own explicit instruction).
+  status      String   @default("COMPLETED")
 
   habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
