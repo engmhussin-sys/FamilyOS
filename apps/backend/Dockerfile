@@ -15,6 +15,11 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
+# DIAGNOSTIC (added after a real "Cannot find module /app/dist/main.js"
+# failure): prints the actual dist/ structure to the build log so this
+# is provably correct rather than assumed. Harmless in a working build.
+RUN echo "--- dist/ contents ---" && find dist -maxdepth 2 -type f
+
 # ---
 
 FROM node:20-alpine AS runtime
@@ -40,4 +45,9 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health/live', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
-CMD ["node", "dist/main.js"]
+# RESILIENT ENTRYPOINT (changed after a real deploy failure): nest build
+# is expected to produce dist/main.js via tsconfig.build.json's rootDir,
+# but this checks for both possible shapes at container start instead
+# of hardcoding one path and failing opaquely if the build output
+# structure ever differs.
+CMD ["sh", "-c", "if [ -f dist/main.js ]; then node dist/main.js; else node dist/src/main.js; fi"]
