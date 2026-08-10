@@ -45,15 +45,23 @@ export class RewardsEngineService implements IRewardTriggerWriter {
   }
 
   /** The single entry point every other engine calls when a
-   * reward-worthy event happens \u2014 evaluates every active Reward Rule
+   * reward-worthy event happens — evaluates every active Reward Rule
    * for this family/engine and grants whatever matches. Cross-engine
    * wiring (Habit/Faith/Health calling this) is a separate, later step
-   * \u2014 the mechanism exists here, not yet invoked elsewhere this sprint. */
+   * — the mechanism exists here, not yet invoked elsewhere this sprint.
+   *
+   * Sprint 16.1 (Double Reward Protection) — event.idempotencyKey, if
+   * provided, is combined with the specific grant (badge/XP/coins)
+   * to form a real, unique-per-grant key — a single trigger event
+   * that matches multiple rules must still let EACH distinct grant
+   * through once, not treat the whole event as one atomic unit. */
   async processTriggerEvent(childId: string, familyId: string, event: IRewardTriggerEvent): Promise<number> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
     const rules = await this.repository.listActiveRewardRules(familyId, event.engine);
     const grants = evaluateRewardRules(rules, event);
+
+    let actualGrantCount = 0;
 
     // Theoretical N+1 (found in this session's own performance review):
     // each grant does its own sequential DB round trips inside this
@@ -63,31 +71,40 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     // grant types each need different follow-up logic) isn't worth it
     // at this N. Revisit if a family configures dozens of overlapping rules.
     for (const grant of grants) {
+      const grantIdempotencyKey = event.idempotencyKey ? `${event.idempotencyKey}:${grant.rewardType}:${grant.source}` : undefined;
+
       if (grant.rewardType === 'BADGE') {
         const badge = await this.repository.findBadgeByKey(grant.amountOrBadgeId);
         if (!badge) continue; // misconfigured rule referencing a deleted badge key — skip, don't crash
         const awarded = await this.repository.awardBadgeIfNotAlready(childId, badge.id);
         if (awarded) {
-          await this.repository.applyEarn(childId, 'BADGE', 1, undefined, grant.source);
-          await this.timeline.record({
-            childId,
-            sourceEngine: 'rewards',
-            category: 'REWARDS',
-            eventType: 'badge_awarded',
-            title: `Earned the "${badge.title}" badge`,
-          });
+          const granted = await this.repository.applyEarn(childId, 'BADGE', 1, undefined, grant.source, grantIdempotencyKey);
+          if (granted) {
+            actualGrantCount++;
+            await this.timeline.record({
+              childId,
+              sourceEngine: 'rewards',
+              category: 'REWARDS',
+              eventType: 'badge_awarded',
+              title: `Earned the "${badge.title}" badge`,
+            });
+          }
         }
       } else {
         const amount = Number(grant.amountOrBadgeId);
         if (!Number.isFinite(amount) || amount <= 0) continue; // malformed rule config — skip, don't crash
-        await this.grantAmount(childId, grant.rewardType, amount, grant.source);
+        const granted = await this.grantAmount(childId, grant.rewardType, amount, grant.source, grantIdempotencyKey);
+        if (granted) actualGrantCount++;
       }
     }
 
-    return grants.length;
+    return actualGrantCount;
   }
 
-  private async grantAmount(childId: string, rewardType: 'XP' | 'COINS', amount: number, source: string): Promise<void> {
+  /** Returns whether a NEW grant actually happened (false when
+   * idempotencyKey matched an existing entry — a real duplicate,
+   * silently and correctly no-op'd, not an error). */
+  private async grantAmount(childId: string, rewardType: 'XP' | 'COINS', amount: number, source: string, idempotencyKey?: string): Promise<boolean> {
     const account = await this.repository.getOrCreateAccount(childId);
     let newLevel: number | undefined;
 
@@ -99,9 +116,14 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       }
     }
 
-    await this.repository.applyEarn(childId, rewardType, amount, newLevel, source);
+    const granted = await this.repository.applyEarn(childId, rewardType, amount, newLevel, source, idempotencyKey);
 
-    if (newLevel !== undefined) {
+    // FIXES A REAL BUG found while wiring idempotency through: this
+    // Timeline write previously fired unconditionally, with zero
+    // check on whether applyEarn actually succeeded — a caught
+    // duplicate would still have written a duplicate "Reached Level
+    // X" Timeline entry even though no new XP was actually granted.
+    if (granted && newLevel !== undefined) {
       await this.timeline.record({
         childId,
         sourceEngine: 'rewards',
@@ -110,6 +132,8 @@ export class RewardsEngineService implements IRewardTriggerWriter {
         title: `Reached Level ${newLevel}`,
       });
     }
+
+    return granted;
   }
 
   async listFamilyStore(familyId: string): Promise<Awaited<ReturnType<PrismaRewardsRepository['listActiveCatalogItems']>>> {

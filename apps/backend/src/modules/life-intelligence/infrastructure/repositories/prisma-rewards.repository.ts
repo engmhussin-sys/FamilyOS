@@ -22,21 +22,42 @@ export class PrismaRewardsRepository {
     return { id: row.id, childId: row.childId, xp: row.xp, coins: row.coins, stars: row.stars, level: row.level };
   }
 
-  async applyEarn(childId: string, rewardType: 'XP' | 'COINS' | 'BADGE', amount: number, newLevel: number | undefined, source: string): Promise<void> {
-    await this.prisma.$transaction([
-      this.prisma.rewardsAccount.update({
-        where: { childId },
-        data: {
-          ...(rewardType === 'XP' ? { xp: { increment: amount } } : {}),
-          ...(rewardType === 'COINS' ? { coins: { increment: amount } } : {}),
-          ...(rewardType === 'BADGE' ? { stars: { increment: 1 } } : {}),
-          ...(newLevel !== undefined ? { level: newLevel } : {}),
-        },
-      }),
-      this.prisma.rewardsLedgerEntry.create({
-        data: { childId, type: 'EARN', rewardType, amount, source },
-      }),
-    ]);
+  /** Returns true if a NEW ledger entry was actually created, false
+   * if idempotencyKey (when provided) matched an existing entry — a
+   * real, previously-processed duplicate, not an error. The account
+   * balance itself is updated ONLY inside the same transaction as
+   * the ledger write, so a caught duplicate never double-increments
+   * xp/coins/stars either. */
+  async applyEarn(childId: string, rewardType: 'XP' | 'COINS' | 'BADGE', amount: number, newLevel: number | undefined, source: string, idempotencyKey?: string): Promise<boolean> {
+    try {
+      await this.prisma.$transaction([
+        this.prisma.rewardsAccount.update({
+          where: { childId },
+          data: {
+            ...(rewardType === 'XP' ? { xp: { increment: amount } } : {}),
+            ...(rewardType === 'COINS' ? { coins: { increment: amount } } : {}),
+            ...(rewardType === 'BADGE' ? { stars: { increment: 1 } } : {}),
+            ...(newLevel !== undefined ? { level: newLevel } : {}),
+          },
+        }),
+        this.prisma.rewardsLedgerEntry.create({
+          data: { childId, type: 'EARN', rewardType, amount, source, idempotencyKey },
+        }),
+      ]);
+      return true;
+    } catch (err: any) {
+      // Sprint 16.1 (Double Reward Protection) — CLOSES A REAL GAP:
+      // Prisma's P2002 is the unique-constraint-violation code —
+      // this is the database itself catching a real duplicate
+      // (retry, duplicate event, or a genuine concurrent race), the
+      // SAME discipline awardBadgeIfNotAlready already established
+      // for badges. Any OTHER error re-throws — this must never
+      // silently swallow a real failure.
+      if (idempotencyKey && err?.code === 'P2002') {
+        return false;
+      }
+      throw err;
+    }
   }
 
   async findBadgeByKey(key: string): Promise<IBadgeDefinition | null> {

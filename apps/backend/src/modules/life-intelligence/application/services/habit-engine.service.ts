@@ -125,10 +125,17 @@ export class HabitEngineService {
       // contract event names (HABIT_COMPLETED, DAILY_GOAL_COMPLETED),
       // fired ADDITIVELY alongside the pre-existing 'habit_completed'
       // type above.
+      // Sprint 16.1 (Double Reward Protection): idempotencyKey is
+      // habitId+date — the SAME habit completed twice for the SAME
+      // date (a retry, a duplicate client request, or two concurrent
+      // taps) must grant this reward exactly once, matching
+      // recordCompletion's own [habitId, date] uniqueness at the
+      // data layer.
       await this.rewardTrigger.trigger(childId, familyId, {
         engine: 'habit-builder',
         type: 'HABIT_COMPLETED',
         payload: { habitId, category: habit.category, isShared: habit.isShared, status },
+        idempotencyKey: `habit-completion:${habitId}:${date.toISOString().slice(0, 10)}`,
       });
 
       const since = this.daysAgo(STREAK_LOOKBACK_DAYS);
@@ -143,10 +150,15 @@ export class HabitEngineService {
         const todayStr = this.today().toISOString().slice(0, 10);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
         if (STREAK_MILESTONES.includes(streakDays)) {
+          // Sprint 16.1: idempotencyKey is childId+metric+streakDays
+          // — reaching the SAME milestone (e.g. "7-day streak")
+          // twice (e.g. two completions logged the same day, or a
+          // retry) must grant this milestone reward exactly once.
           await this.rewardTrigger.trigger(childId, familyId, {
             engine: 'habit-builder',
             type: 'STREAK_ACHIEVED',
             payload: { metric: 'habits', streakDays },
+            idempotencyKey: `streak:${childId}:habits:${streakDays}`,
           });
         }
       }

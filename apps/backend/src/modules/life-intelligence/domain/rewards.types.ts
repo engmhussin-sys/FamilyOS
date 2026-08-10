@@ -61,6 +61,16 @@ export interface IRewardTriggerEvent {
   engine: string;
   type: string;
   payload: Record<string, unknown>;
+  /** Sprint 16.1 (Double Reward Protection) — CLOSES A REAL GAP:
+   * optional, honest-absence-by-default. When the calling engine can
+   * identify "this exact same real-world event" (e.g.
+   * `habit-completion:${habitId}:${date}`, or
+   * `streak:${childId}:${metric}:${streakDays}`), it should pass a
+   * stable key here so a retry/duplicate/concurrent-request never
+   * grants the same reward twice. Callers with no natural key (rare
+   * — most engines have an obvious one) simply omit this; the
+   * request proceeds exactly as it did before this field existed. */
+  idempotencyKey?: string;
 }
 
 export interface IRewardGrant {

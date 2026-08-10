@@ -1378,10 +1378,26 @@ model RewardsLedgerEntry {
   rewardType RewardType @map("reward_type")
   amount    Int
   source    String     // e.g. 'habit_streak', 'reward_rule:<id>', 'manual:<userId>', 'redemption:<id>'
+  /// Sprint 16.1 (Double Reward Protection) — CLOSES A REAL GAP:
+  /// zero idempotency mechanism existed anywhere in the reward
+  /// pipeline before this — a retried request, a duplicate event, or
+  /// two concurrent requests for the SAME real-world event (e.g. one
+  /// habit completion) could each grant a full reward independently.
+  /// Nullable BY DESIGN, not by oversight: manual grants and any
+  /// caller with no natural idempotency key (e.g. an admin action)
+  /// simply pass none — PostgreSQL's own unique index treats every
+  /// NULL as distinct from every other NULL, so this never blocks
+  /// those. The REAL defense is the unique constraint below, not an
+  /// application-level "check then insert" (which would itself be a
+  /// real race condition under concurrent requests) — this column
+  /// exists specifically so the DATABASE rejects a true duplicate
+  /// insert atomically.
+  idempotencyKey String? @map("idempotency_key")
   createdAt DateTime   @default(now()) @map("created_at")
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  @@unique([childId, idempotencyKey])
   @@index([childId, createdAt])
   @@map("rewards_ledger_entries")
 }

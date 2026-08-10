@@ -95,10 +95,15 @@ export class HealthEngineService {
         // type above — a future Rewards Engine consumer can listen
         // for this specific name without this project guessing at
         // that engine's own internal rule structure.
+        // Sprint 16.1 (Double Reward Protection): idempotencyKey is
+        // childId+metric+date — reaching today's hydration goal is a
+        // once-per-day event; a retry or duplicate log crossing the
+        // threshold again must not grant this twice.
         await this.rewardTrigger.trigger(childId, familyId, {
           engine: 'health',
           type: 'DAILY_GOAL_COMPLETED',
           payload: { metric: 'hydration', targetMl: target, totalMl: totalToday },
+          idempotencyKey: `daily-goal:hydration:${childId}:${this.today().toISOString().slice(0, 10)}`,
         });
 
         // Streak milestone — only fires a SEPARATE event on real
@@ -112,10 +117,13 @@ export class HealthEngineService {
         const todayStr = this.today().toISOString().slice(0, 10);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
         if ([3, 7, 14, 30].includes(streakDays)) {
+          // Sprint 16.1: idempotencyKey is childId+metric+streakDays —
+          // reaching the same milestone twice must grant it once.
           await this.rewardTrigger.trigger(childId, familyId, {
             engine: 'health',
             type: 'STREAK_ACHIEVED',
             payload: { metric: 'hydration', streakDays },
+            idempotencyKey: `streak:${childId}:hydration:${streakDays}`,
           });
         }
       } catch {
