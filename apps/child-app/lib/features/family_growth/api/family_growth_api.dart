@@ -27,6 +27,37 @@ class FamilyGrowthApi {
     return _client.post('/life-intelligence/self/health/hydration-logs', body: {'amountMl': amountMl});
   }
 
+  /// Sprint 16.4 — CLOSES A REAL GAP: getDailyProgress existed since
+  /// Sprint 15/16.1 but had zero Child App consumer (or even a
+  /// reachable endpoint) before this sprint's backend addition.
+  Future<Map<String, dynamic>> getHealthProgress() {
+    return _client.get('/life-intelligence/self/health/progress');
+  }
+
+  Future<void> logActivity({required String date, required String activityType, required int durationMinutes, required String socialContext}) {
+    return _client.post('/life-intelligence/self/health/activity-logs', body: {
+      'date': date,
+      'activityType': activityType,
+      'durationMinutes': durationMinutes,
+      'socialContext': socialContext,
+    });
+  }
+
+  /// Sprint 16.4 — CLOSES A REAL GAP: LearningEngineService had zero
+  /// Child App consumer at all — Education had no path to the Child
+  /// App whatsoever before this sprint.
+  Future<Map<String, dynamic>> getLearningProgress() {
+    return _client.get('/life-intelligence/self/learning/progress');
+  }
+
+  Future<void> logLearningSession({required String subject, required int durationMinutes, required String date}) {
+    return _client.post('/life-intelligence/self/learning/sessions', body: {
+      'subject': subject,
+      'durationMinutes': durationMinutes,
+      'date': date,
+    });
+  }
+
   Future<List<dynamic>> getFaithPractices() {
     return _client.getList('/life-intelligence/self/faith/practices');
   }

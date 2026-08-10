@@ -335,6 +335,42 @@ export class LifeIntelligenceController {
     return this.healthEngine.logHydration(childId, familyId, dto);
   }
 
+  /** Sprint 16.4 — CLOSES A REAL GAP: getDailyProgress existed
+   * (Sprint 15/16.1) but was only reachable via the parent-facing
+   * JwtAuthGuard route — a child had NO way to see their own
+   * hydration/activity progress at all, which would have blocked
+   * this sprint's entire "Today" screen from showing anything real. */
+  @Get('self/health/progress')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfGetDailyProgress(@CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.healthEngine.getDailyProgress(childId, familyId);
+  }
+
+  @Post('self/health/activity-logs')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfLogActivity(@Body() dto: LogActivityDto, @CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.healthEngine.logActivity(childId, familyId, dto);
+  }
+
+  /** Sprint 16.4 — CLOSES A REAL GAP: LearningEngineService had zero
+   * /self/* consumer at all — Education had no path to the Child App
+   * whatsoever before this. */
+  @Get('self/learning/progress')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfGetLearningProgress(@CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.learningEngine.getProgressSummary(childId, familyId);
+  }
+
+  @Post('self/learning/sessions')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfLogLearningSession(@Body() dto: LogLearningSessionDto, @CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.learningEngine.logSession(childId, familyId, dto);
+  }
+
   @Get('self/faith/practices')
   @UseGuards(DeviceJwtAuthGuard)
   async selfListFaithPractices(@CurrentUser() device: IJwtPayload) {

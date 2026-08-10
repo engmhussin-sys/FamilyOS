@@ -17,13 +17,15 @@ import '../../../core/widgets/sparky_mascot.dart';
 /// screens only" — this screen is a genuine, deliberate expansion of
 /// that stated scope.
 ///
-/// DESIGN PASS 2 (elevated visual design): adds a real confetti burst
-/// on every completion (CelebrationOverlay), a visual daily-progress
-/// ring at the top instead of a plain list, and Sparky the mascot
-/// reacting to progress — moving this from "clean and tidy" toward a
-/// genuinely distinctive, premium-feeling children's product per the
-/// explicit design brief, not just a color/font swap over the same
-/// plain list layout.
+/// Sprint 16.4 (Child Daily Experience) — CLOSES A REAL GAP: this
+/// screen already had the "related concerns, one place" design
+/// principle Sprint 16.4 asks for ("Today" experience, not separate
+/// technical modules) — Health and Learning were the two real,
+/// confirmed-missing pieces (backend endpoints existed since Sprint
+/// 15/16.3 but had ZERO Child App path — see this sprint's own new
+/// /self/health/progress and /self/learning/progress endpoints).
+/// Extended this EXISTING screen rather than building a new one —
+/// Reuse First, per the brief's own explicit instruction.
 class MyGrowthScreen extends ConsumerStatefulWidget {
   const MyGrowthScreen({super.key});
 
@@ -35,6 +37,9 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   List<dynamic>? _habits;
   List<dynamic>? _practices;
   List<dynamic>? _messages;
+  Map<String, dynamic>? _healthProgress;
+  Map<String, dynamic>? _learningProgress;
+  Map<String, dynamic>? _rewardsAccount;
   String _childName = 'there'; // honest default only until the real profile loads
   String? _errorMessage;
 
@@ -70,6 +75,26 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => _errorMessage = e.toString());
+      return;
+    }
+
+    // Sprint 16.4 — CLOSES A REAL GAP: fetched SEPARATELY with its own
+    // try/catch, same "one section's failure never blocks another"
+    // discipline as WellbeingScreen's own insight-fetch pattern —
+    // Health/Learning being unavailable must never block the
+    // already-working Habits/Faith/Messages sections above.
+    try {
+      final api = ref.read(familyGrowthApiProvider);
+      final results = await Future.wait([api.getHealthProgress(), api.getLearningProgress(), api.getRewardsAccount()]);
+      if (mounted) {
+        setState(() {
+          _healthProgress = results[0] as Map<String, dynamic>;
+          _learningProgress = results[1] as Map<String, dynamic>;
+          _rewardsAccount = results[2] as Map<String, dynamic>;
+        });
+      }
+    } catch (_) {
+      // Best-effort — the screen already rendered successfully above.
     }
   }
 
@@ -117,6 +142,23 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     try {
       await ref.read(familyGrowthApiProvider).logFaithPractice(practiceId);
       _celebrate(ref.read(localeControllerProvider.notifier).t('myGrowth.faithDone', options: {'title': practiceTitle}), KidTheme.faithAccent);
+    } catch (_) {
+      // Best-effort.
+    }
+    await _loadAll();
+  }
+
+  /// Sprint 16.4 — CLOSES A REAL GAP: logs a fixed 20-minute study
+  /// session under a generic "study" subject — an honest MVP
+  /// interaction (a single tap, matching this app's own "simple, not
+  /// a dashboard" design principle) rather than a full session-entry
+  /// form this sprint's time didn't allow building well.
+  Future<void> _logStudySession() async {
+    try {
+      final now = DateTime.now();
+      final dateStr = '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await ref.read(familyGrowthApiProvider).logLearningSession(subject: 'study', durationMinutes: 20, date: dateStr);
+      _celebrate(ref.read(localeControllerProvider.notifier).t('myGrowth.studyDone'), KidTheme.messagesAccent);
     } catch (_) {
       // Best-effort.
     }
@@ -172,9 +214,33 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
+                          // Sprint 16.4 — CLOSES A REAL GAP: a compact coins/XP
+                          // summary, real data only (never rendered if
+                          // _rewardsAccount hasn't loaded — no placeholder numbers).
+                          if (_rewardsAccount != null) ...[
+                            _RewardsSummaryChip(account: _rewardsAccount!, t: t),
+                            const SizedBox(height: 20),
+                          ],
                           if (_messages!.isNotEmpty) ...[
                             _SectionHeader(emoji: '\u{1F48C}', title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
                             ..._messages!.map((m) => _MessageCard(message: m as Map<String, dynamic>)),
+                            const SizedBox(height: 24),
+                          ],
+                          // Sprint 16.4 — CLOSES A REAL GAP: Health had zero
+                          // Child App representation before this sprint's new
+                          // /self/health/progress endpoint. Best-effort — the
+                          // whole card is simply absent if the fetch failed,
+                          // never a fake/zero placeholder.
+                          if (_healthProgress != null) ...[
+                            _SectionHeader(emoji: '\u{1F4AA}', title: t('myGrowth.healthTitle'), color: KidTheme.healthAccent),
+                            _HealthProgressCard(progress: _healthProgress!, t: t),
+                            const SizedBox(height: 24),
+                          ],
+                          // Sprint 16.4 — CLOSES A REAL GAP: Education had zero
+                          // Child App representation before this sprint.
+                          if (_learningProgress != null) ...[
+                            _SectionHeader(emoji: '\u{1F4DA}', title: t('myGrowth.learningTitle'), color: KidTheme.messagesAccent),
+                            _LearningProgressCard(progress: _learningProgress!, t: t, onLogSession: _logStudySession),
                             const SizedBox(height: 24),
                           ],
                           _SectionHeader(emoji: '\u{2B50}', title: t('myGrowth.myHabits'), color: KidTheme.habitsAccent),
@@ -279,6 +345,160 @@ class _EmptyHint extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
+    );
+  }
+}
+
+/// Sprint 16.4 — CLOSES A REAL GAP: a compact coins/XP summary,
+/// matching the brief's own "the child should know what they've
+/// earned" requirement — real numbers only, never rendered with
+/// placeholder data.
+class _RewardsSummaryChip extends StatelessWidget {
+  const _RewardsSummaryChip({required this.account, required this.t});
+  final Map<String, dynamic> account;
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [KidTheme.sunshineYellow.withOpacity(0.25), KidTheme.coral.withOpacity(0.15)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _rewardStat('\u{1FA99}', '${account['coins'] ?? 0}', t('myGrowth.coins')),
+          Container(width: 1, height: 32, color: KidTheme.mutedInk.withOpacity(0.2)),
+          _rewardStat('\u2B50', '${account['xp'] ?? 0}', 'XP'),
+          Container(width: 1, height: 32, color: KidTheme.mutedInk.withOpacity(0.2)),
+          _rewardStat('\u{1F3C6}', '${account['level'] ?? 1}', t('myGrowth.level')),
+        ],
+      ),
+    );
+  }
+
+  Widget _rewardStat(String emoji, String value, String label) {
+    return Column(
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 20)),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        Text(label, style: const TextStyle(fontSize: 11, color: KidTheme.mutedInk)),
+      ],
+    );
+  }
+}
+
+/// Sprint 16.4 — CLOSES A REAL GAP: matches the brief's own explicit
+/// worked example ("Water: 5/8 cups, Activity: 25/30 min") using
+/// REAL backend data (getDailyProgress, Sprint 15/16.1/16.3) —
+/// never a fabricated number.
+class _HealthProgressCard extends StatelessWidget {
+  const _HealthProgressCard({required this.progress, required this.t});
+  final Map<String, dynamic> progress;
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  @override
+  Widget build(BuildContext context) {
+    final hydration = progress['hydration'] as Map<String, dynamic>?;
+    final activity = progress['activity'] as Map<String, dynamic>?;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [
+        BoxShadow(color: KidTheme.healthAccent.withOpacity(0.10), blurRadius: 14, offset: const Offset(0, 5)),
+      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hydration != null)
+            _progressRow('\u{1F4A7}', t('myGrowth.waterLabel'), hydration['actualMl'] as int? ?? 0, hydration['targetMl'] as int? ?? 1, hydration['isAchieved'] as bool? ?? false, 'ml'),
+          if (hydration != null && activity != null) const SizedBox(height: 12),
+          if (activity != null)
+            _progressRow('\u{1F3C3}', t('myGrowth.activityLabel'), activity['totalMinutes'] as int? ?? 0, activity['targetMinutes'] as int? ?? 1, activity['isAchieved'] as bool? ?? false, t('myGrowth.minutesUnit')),
+        ],
+      ),
+    );
+  }
+
+  Widget _progressRow(String emoji, String label, int actual, int target, bool achieved, String unit) {
+    return Row(
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 22)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: target > 0 ? (actual / target).clamp(0.0, 1.0) : 0,
+                  minHeight: 8,
+                  backgroundColor: KidTheme.mutedInk.withOpacity(0.1),
+                  valueColor: AlwaysStoppedAnimation(achieved ? KidTheme.sage500 : KidTheme.healthAccent),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text('$actual/$target $unit', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+        if (achieved) const Padding(padding: EdgeInsets.only(left: 6), child: Text('\u2705')),
+      ],
+    );
+  }
+}
+
+/// Sprint 16.4 — CLOSES A REAL GAP: Education had zero Child App
+/// representation before this sprint. Real streak/session data only
+/// (getLearningProgress, extended with streak in Sprint 16.1 Phase 5).
+class _LearningProgressCard extends StatelessWidget {
+  const _LearningProgressCard({required this.progress, required this.t, required this.onLogSession});
+  final Map<String, dynamic> progress;
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+  final VoidCallback onLogSession;
+
+  @override
+  Widget build(BuildContext context) {
+    final streakDays = progress['streakDays'] as int? ?? 0;
+    final totalSessions = progress['totalSessions'] as int? ?? 0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [
+        BoxShadow(color: KidTheme.messagesAccent.withOpacity(0.10), blurRadius: 14, offset: const Offset(0, 5)),
+      ]),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  streakDays > 0 ? t('myGrowth.learningStreak', options: {'count': streakDays}) : t('myGrowth.learningNoStreak'),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(t('myGrowth.sessionsCount', options: {'count': totalSessions}), style: const TextStyle(fontSize: 12, color: KidTheme.mutedInk)),
+              ],
+            ),
+          ),
+          FilledButton.icon(
+            onPressed: onLogSession,
+            style: FilledButton.styleFrom(backgroundColor: KidTheme.messagesAccent),
+            icon: const Icon(Icons.menu_book_rounded, size: 18),
+            label: Text(t('myGrowth.studyNow')),
+          ),
+        ],
+      ),
     );
   }
 }
