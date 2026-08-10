@@ -333,5 +333,10 @@
       "MEMBER": "عضو",
       "GUEST": "زائر"
     }
+  },
+  "pendingApprovals": {
+    "title": "بانتظار الموافقة",
+    "approve": "موافقة",
+    "reject": "رفض"
   }
 }

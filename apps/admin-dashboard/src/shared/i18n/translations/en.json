@@ -333,5 +333,10 @@
       "MEMBER": "Member",
       "GUEST": "Guest"
     }
+  },
+  "pendingApprovals": {
+    "title": "Pending Approvals",
+    "approve": "Approve",
+    "reject": "Decline"
   }
 }

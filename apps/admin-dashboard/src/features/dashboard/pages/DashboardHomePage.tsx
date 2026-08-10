@@ -6,6 +6,7 @@ import { DeviceStatusCard } from '../../devices/components/DeviceStatusCard';
 import { ScreenTimePolicyCard } from '../../screen-time/components/ScreenTimePolicyCard';
 import { RuntimeTimelineCard } from '../../runtime/components/RuntimeTimelineCard';
 import { NotificationCenterCard } from '../../notifications/components/NotificationCenterCard';
+import { PendingApprovalsCard } from '../../notifications/components/PendingApprovalsCard';
 import { FamilyInsightsCard } from '../../insights/components/FamilyInsightsCard';
 import { DigitalTwinCard } from '../../life-intelligence/components/DigitalTwinCard';
 import { LifeTimelineCard } from '../../life-intelligence/components/LifeTimelineCard';
@@ -25,6 +26,7 @@ export function DashboardHomePage() {
   return (
     <div className="flex flex-col gap-6">
       <NotificationCenterCard />
+      <PendingApprovalsCard />
       <Card>
         <h1 className="font-display text-xl text-ink">{t('dashboard.familyTitle')}</h1>
         <dl className="mt-4 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
