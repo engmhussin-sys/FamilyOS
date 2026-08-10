@@ -28,6 +28,7 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   List<dynamic>? _children;
   List<dynamic>? _devices;
   int _unreadCount = 0;
+  int _pendingApprovalsCount = 0;
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -69,6 +70,19 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
           _errorMessage = e.toString();
         });
       }
+      return;
+    }
+
+    // CLOSES A REAL UX GAP: fetched separately with its own try/catch —
+    // same "one section's failure never blocks another" discipline as
+    // every other multi-fetch screen in this app. A pending-approvals
+    // count failure must never prevent the already-working dashboard
+    // (children/devices/unread) from rendering.
+    try {
+      final pending = await ref.read(lifeIntelligenceApiProvider).getPendingMessages();
+      if (mounted) setState(() => _pendingApprovalsCount = pending.length);
+    } catch (_) {
+      // Best-effort — the dashboard already rendered successfully above.
     }
   }
 
@@ -81,6 +95,17 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
       appBar: AppBar(
         title: Text(t('dashboard.title')),
         actions: [
+          IconButton(
+            icon: Badge(
+              label: Text('$_pendingApprovalsCount'),
+              isLabelVisible: _pendingApprovalsCount > 0,
+              child: const Icon(Icons.mark_email_unread_outlined),
+            ),
+            tooltip: t('pendingApprovals.title'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const PendingApprovalsScreen()),
+            ),
+          ),
           IconButton(
             icon: Badge(
               label: Text('$_unreadCount'),
@@ -356,16 +381,6 @@ class _ChildCard extends StatelessWidget {
                 Navigator.of(sheetContext).pop();
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => LearningProgressScreen(childId: childId, childName: childName)),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.mark_email_unread_outlined),
-              title: Text(t('pendingApprovals.title')),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const PendingApprovalsScreen()),
                 );
               },
             ),
