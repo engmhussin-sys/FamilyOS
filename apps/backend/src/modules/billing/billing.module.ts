@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 
 import { BillingController } from './presentation/controllers/billing.controller';
+import { StripeWebhookController } from './presentation/controllers/stripe-webhook.controller';
+import { StripeWebhookService } from './application/services/stripe-webhook.service';
 import { PlanService } from './application/services/plan.service';
 import { TrialManager } from './application/services/trial-manager.service';
 import { EntitlementsService } from './application/services/entitlements.service';
@@ -29,7 +31,7 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
  * as directed.
  */
 @Module({
-  controllers: [BillingController],
+  controllers: [BillingController, StripeWebhookController],
   providers: [
     PlanService,
     TrialManager,
@@ -37,6 +39,7 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
     InvoiceService,
     PaymentService,
     SubscriptionService,
+    StripeWebhookService,
     ManualPaymentAdapter,
     StripeAdapter,
     PaymobAdapter,

@@ -32,6 +32,10 @@ export class PrismaBillingRepository implements IBillingRepository {
     return this.prisma.subscription.findUnique({ where: { familyId } });
   }
 
+  async findSubscriptionByProviderSubscriptionId(providerSubscriptionId: string): Promise<ISubscriptionRecord | null> {
+    return this.prisma.subscription.findFirst({ where: { providerSubscriptionId } });
+  }
+
   async createSubscription(input: ICreateSubscriptionInput): Promise<ISubscriptionRecord> {
     return this.prisma.subscription.create({
       data: {

@@ -23,6 +23,11 @@ export interface IBillingRepository {
   findPlanByTier(tier: SubscriptionPlanTier): Promise<IPlanDefinition | null>;
 
   findSubscriptionByFamily(familyId: string): Promise<ISubscriptionRecord | null>;
+  /** CLOSES A REAL GAP (previously NOT VERIFIED in the master audit,
+   * confirmed as genuinely missing: zero payment webhook architecture
+   * existed at all). Needed to map an incoming provider webhook event
+   * back to our own subscription record. */
+  findSubscriptionByProviderSubscriptionId(providerSubscriptionId: string): Promise<ISubscriptionRecord | null>;
   createSubscription(input: ICreateSubscriptionInput): Promise<ISubscriptionRecord>;
   updateSubscriptionStatus(
     subscriptionId: string,

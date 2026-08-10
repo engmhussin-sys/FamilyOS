@@ -29,7 +29,7 @@ Sentry.init({
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Sprint 9: stricter helmet config than the bare default \u2014 a real CSP
   // for a JSON API (no inline scripts/styles ever served from here) plus
