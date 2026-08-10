@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma, PairingEventType } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type {
@@ -21,7 +22,7 @@ export class PrismaPairingEventRepository implements IPairingEventRepository {
         toState: input.toState,
         actorType: input.actorType,
         actorId: input.actorId,
-        metadata: input.metadata,
+        metadata: input.metadata as Prisma.InputJsonValue | undefined,
       },
     });
     return row;
@@ -43,7 +44,7 @@ export class PrismaPairingEventRepository implements IPairingEventRepository {
     eventType: string,
   ): Promise<IPairingEventRecord[]> {
     return this.prisma.devicePairingEvent.findMany({
-      where: { childId, eventType },
+      where: { childId, eventType: eventType as PairingEventType },
       orderBy: { occurredAt: 'asc' },
     });
   }

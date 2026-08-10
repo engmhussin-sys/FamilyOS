@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IGeneratedSmartTask, ISmartTask } from '../../domain/smart-task.types';
 
@@ -14,7 +15,7 @@ export class PrismaSmartTaskRepository {
         title: s.title,
         category: s.category,
         generatedReason: s.reason,
-        sourceSignals,
+        sourceSignals: sourceSignals as Prisma.InputJsonValue,
         suggestedDate,
       })),
     });

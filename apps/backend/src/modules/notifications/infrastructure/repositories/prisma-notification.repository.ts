@@ -11,11 +11,12 @@ export class PrismaNotificationRepository implements INotificationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async listForUser(userId: string, unreadOnly: boolean): Promise<INotificationRecord[]> {
-    return this.prisma.notification.findMany({
+    const rows = await this.prisma.notification.findMany({
       where: { userId, ...(unreadOnly ? { readAt: null } : {}) },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
+    return rows as unknown as INotificationRecord[];
   }
 
   async markAsRead(notificationId: string, userId: string): Promise<boolean> {

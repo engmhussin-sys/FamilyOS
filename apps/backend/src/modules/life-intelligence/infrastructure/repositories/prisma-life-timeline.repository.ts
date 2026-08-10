@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { ILifeTimelineEvent, IRecordTimelineEventInput } from '../../domain/life-timeline.types';
 
@@ -15,7 +16,7 @@ export class PrismaLifeTimelineRepository {
         category: input.category,
         eventType: input.eventType,
         title: input.title,
-        metadata: input.metadata ?? undefined,
+        metadata: (input.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
       },
     });
     return this.toDomain(row);

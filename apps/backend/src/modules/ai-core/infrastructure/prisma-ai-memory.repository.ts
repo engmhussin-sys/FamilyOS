@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import type {
@@ -20,8 +21,8 @@ export class PrismaAiMemoryRepository implements IAiMemoryRepository {
   ): Promise<void> {
     await this.prisma.aiMemoryEntry.upsert({
       where: { childId_category_key: { childId, category, key } },
-      update: { value },
-      create: { childId, category, key, value },
+      update: { value: value as Prisma.InputJsonValue },
+      create: { childId, category, key, value: value as Prisma.InputJsonValue },
     });
   }
 
@@ -33,7 +34,7 @@ export class PrismaAiMemoryRepository implements IAiMemoryRepository {
     // A random key per row — this category is event history, not state,
     // so every call must produce a new, independently-countable row.
     await this.prisma.aiMemoryEntry.create({
-      data: { childId, category, key: randomUUID(), value },
+      data: { childId, category, key: randomUUID(), value: value as Prisma.InputJsonValue },
     });
   }
 
@@ -45,14 +46,15 @@ export class PrismaAiMemoryRepository implements IAiMemoryRepository {
     const record = await this.prisma.aiMemoryEntry.findUnique({
       where: { childId_category_key: { childId, category, key } },
     });
-    return record as IAiMemoryRecord | null;
+    return record as unknown as IAiMemoryRecord | null;
   }
 
   async findAllByCategory(childId: string, category: AiMemoryCategory): Promise<IAiMemoryRecord[]> {
-    return this.prisma.aiMemoryEntry.findMany({
+    const records = await this.prisma.aiMemoryEntry.findMany({
       where: { childId, category },
       orderBy: { createdAt: 'desc' },
     });
+    return records as unknown as IAiMemoryRecord[];
   }
 
   async countByCategorySince(childId: string, category: AiMemoryCategory, since: Date): Promise<number> {

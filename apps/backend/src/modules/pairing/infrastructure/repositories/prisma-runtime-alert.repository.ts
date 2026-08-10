@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type {
@@ -33,7 +34,7 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
         type: 'RUNTIME_ALERT',
         title: input.title,
         body: input.body,
-        data: input.data,
+        data: input.data as Prisma.InputJsonValue | undefined,
       },
     });
   }

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type {
@@ -55,7 +56,7 @@ export class PrismaPairingDeviceRepository implements IPairingDeviceRepository {
   ): Promise<void> {
     await this.prisma.device.update({
       where: { id: deviceId },
-      data: { capabilityProfile: profile, capabilityProfileHash: profileHash },
+      data: { capabilityProfile: profile as Prisma.InputJsonValue, capabilityProfileHash: profileHash },
     });
   }
 
@@ -75,7 +76,7 @@ export class PrismaPairingDeviceRepository implements IPairingDeviceRepository {
   async updateTelemetry(deviceId: string, telemetry: Record<string, unknown>): Promise<void> {
     await this.prisma.device.update({
       where: { id: deviceId },
-      data: { lastTelemetry: telemetry },
+      data: { lastTelemetry: telemetry as Prisma.InputJsonValue },
     });
   }
 

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type { IAnalyticsEventInput, IAnalyticsProviderAdapter } from '../../domain/analytics.types';
@@ -18,7 +19,7 @@ export class SelfHostedAnalyticsAdapter implements IAnalyticsProviderAdapter {
         userId: event.userId,
         sessionId: event.sessionId,
         eventName: event.eventName,
-        payload: event.payload,
+        payload: event.payload as Prisma.InputJsonValue | undefined,
       },
     });
   }

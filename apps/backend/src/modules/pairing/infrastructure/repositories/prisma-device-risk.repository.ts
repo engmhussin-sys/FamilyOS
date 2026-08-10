@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type {
@@ -17,24 +18,26 @@ export class PrismaDeviceRiskRepository implements IDeviceRiskRepository {
         deviceId: input.deviceId,
         overallRisk: input.overallRisk,
         overallLevel: input.overallLevel,
-        categoryScores: input.categoryScores,
-        reasons: input.reasons,
+        categoryScores: input.categoryScores as unknown as Prisma.InputJsonValue,
+        reasons: input.reasons as unknown as Prisma.InputJsonValue,
       },
     });
-    return row as IRiskAssessmentRecord;
+    return row as unknown as IRiskAssessmentRecord;
   }
 
   async findLatestByDevice(deviceId: string): Promise<IRiskAssessmentRecord | null> {
-    return this.prisma.deviceRiskAssessment.findFirst({
+    const row = await this.prisma.deviceRiskAssessment.findFirst({
       where: { deviceId },
       orderBy: { assessedAt: 'desc' },
     });
+    return row as unknown as IRiskAssessmentRecord | null;
   }
 
   async findHistoryByDevice(deviceId: string): Promise<IRiskAssessmentRecord[]> {
-    return this.prisma.deviceRiskAssessment.findMany({
+    const rows = await this.prisma.deviceRiskAssessment.findMany({
       where: { deviceId },
       orderBy: { assessedAt: 'asc' },
     });
+    return rows as unknown as IRiskAssessmentRecord[];
   }
 }

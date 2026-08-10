@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import {
   IActivityLog,
@@ -22,7 +23,7 @@ export class PrismaHealthRepository {
         childId: input.childId,
         date: new Date(input.date),
         mealType: input.mealType,
-        items: input.items,
+        items: input.items as Prisma.InputJsonValue,
         calories: input.calories,
         proteinG: input.proteinG,
         calciumMg: input.calciumMg,
@@ -131,8 +132,8 @@ export class PrismaHealthRepository {
   async upsertHealthScore(childId: string, date: Date, score: number, breakdown: Record<string, unknown>): Promise<void> {
     await this.prisma.healthScoreDaily.upsert({
       where: { childId_date: { childId, date } },
-      create: { childId, date, score, breakdown },
-      update: { score, breakdown },
+      create: { childId, date, score, breakdown: breakdown as Prisma.InputJsonValue },
+      update: { score, breakdown: breakdown as Prisma.InputJsonValue },
     });
   }
 }
