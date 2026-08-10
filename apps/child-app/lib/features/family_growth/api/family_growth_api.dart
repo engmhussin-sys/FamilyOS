@@ -58,6 +58,15 @@ class FamilyGrowthApi {
     });
   }
 
+  /// CLOSES A REAL GAP: CoachingEngineService had zero Child App
+  /// consumer at all. Server-side already filters to CHILD-track
+  /// recommendations only (see the backend endpoint's own docstring
+  /// for why this filtering can never happen client-side) — every
+  /// item this returns is real, encouraging, child-appropriate text.
+  Future<List<dynamic>> getCoaching() {
+    return _client.getList('/life-intelligence/self/coaching');
+  }
+
   Future<List<dynamic>> getFaithPractices() {
     return _client.getList('/life-intelligence/self/faith/practices');
   }

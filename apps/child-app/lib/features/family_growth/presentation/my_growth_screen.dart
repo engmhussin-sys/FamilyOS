@@ -40,6 +40,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   Map<String, dynamic>? _healthProgress;
   Map<String, dynamic>? _learningProgress;
   Map<String, dynamic>? _rewardsAccount;
+  List<dynamic>? _coachingTips;
   String _childName = 'there'; // honest default only until the real profile loads
   String? _errorMessage;
 
@@ -85,12 +86,13 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     // already-working Habits/Faith/Messages sections above.
     try {
       final api = ref.read(familyGrowthApiProvider);
-      final results = await Future.wait([api.getHealthProgress(), api.getLearningProgress(), api.getRewardsAccount()]);
+      final results = await Future.wait([api.getHealthProgress(), api.getLearningProgress(), api.getRewardsAccount(), api.getCoaching()]);
       if (mounted) {
         setState(() {
           _healthProgress = results[0] as Map<String, dynamic>;
           _learningProgress = results[1] as Map<String, dynamic>;
           _rewardsAccount = results[2] as Map<String, dynamic>;
+          _coachingTips = results[3] as List<dynamic>;
         });
       }
     } catch (_) {
@@ -219,6 +221,16 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                           // _rewardsAccount hasn't loaded — no placeholder numbers).
                           if (_rewardsAccount != null) ...[
                             _RewardsSummaryChip(account: _rewardsAccount!, t: t),
+                            const SizedBox(height: 20),
+                          ],
+                          // Sprint 16.4 continuation — CLOSES A REAL GAP: Coaching
+                          // had zero Child App representation before this.
+                          // Best-effort — absent entirely if unavailable, and
+                          // ALSO absent when the list is empty (no tip is a
+                          // valid, honest state — never a fabricated
+                          // placeholder message).
+                          if (_coachingTips != null && _coachingTips!.isNotEmpty) ...[
+                            ..._coachingTips!.map((tip) => _CoachingTipCard(tip: tip as Map<String, dynamic>)),
                             const SizedBox(height: 20),
                           ],
                           if (_messages!.isNotEmpty) ...[
@@ -353,6 +365,49 @@ class _EmptyHint extends StatelessWidget {
 /// matching the brief's own "the child should know what they've
 /// earned" requirement — real numbers only, never rendered with
 /// placeholder data.
+/// Sprint 16.4 continuation — CLOSES A REAL GAP: displays a
+/// CoachingEngineService recommendation (already server-side filtered
+/// to CHILD track only — see the backend endpoint's own docstring).
+/// Deterministic, encouraging text — this app never runs an LLM per
+/// display, matching Architecture 1.0's own "no LLM per event" rule.
+class _CoachingTipCard extends StatelessWidget {
+  const _CoachingTipCard({required this.tip});
+  final Map<String, dynamic> tip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [KidTheme.sage500.withOpacity(0.18), KidTheme.sage500.withOpacity(0.06)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('\u{1F31F}', style: TextStyle(fontSize: 20)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tip['title'] as String? ?? '', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(tip['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyMedium),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _RewardsSummaryChip extends StatelessWidget {
   const _RewardsSummaryChip({required this.account, required this.t});
   final Map<String, dynamic> account;

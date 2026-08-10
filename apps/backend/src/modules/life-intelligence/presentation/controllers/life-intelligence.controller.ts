@@ -288,6 +288,24 @@ export class LifeIntelligenceController {
     return this.coachingEngine.getRecommendations(childId, user.familyId!);
   }
 
+  /** CLOSES A REAL GAP: zero self-coaching endpoint existed — Coaching
+   * had no path to the Child App at all. CRITICAL, found while
+   * building this: getRecommendations returns ALL three tracks
+   * (PARENT/CHILD/FAMILY) mixed together in one array — passing that
+   * raw to a child would leak PARENT-track content (e.g. "habits are
+   * slipping this week, check in with your child" — written for a
+   * parent's eyes, not appropriate for the child to read about
+   * themselves). Filtered to CHILD track only, server-side, before
+   * this ever reaches the response — never trust a client to filter
+   * something this sensitive. */
+  @Get('self/coaching')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfGetCoaching(@CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    const all = await this.coachingEngine.getRecommendations(childId, familyId);
+    return all.filter((rec) => rec.track === 'CHILD');
+  }
+
   // ---- Digital Twin ----
   @Get('digital-twin/:childId')
   getDigitalTwin(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
