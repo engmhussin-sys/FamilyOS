@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/kid_theme.dart';
 import '../../../core/widgets/celebration_overlay.dart';
 
@@ -53,7 +54,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
         CelebrationOverlay.of(context).burst();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Yay! "$title" requested \u2014 ask a grown-up to approve it!'),
+            content: Text(ref.read(localeControllerProvider.notifier).t('rewards.requested', options: {'title': title})),
             backgroundColor: KidTheme.celebrationAccent,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -63,7 +64,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Couldn't request that right now \u2014 try again!")),
+          SnackBar(content: Text(ref.read(localeControllerProvider.notifier).t('rewards.redeemFailed'))),
         );
       }
     } finally {
@@ -74,50 +75,60 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return CelebrationOverlay(
-      child: Scaffold(
-        appBar: AppBar(title: const Text('My Rewards')),
-        body: _errorMessage != null
-            ? _buildFriendlyError()
-            : (_account == null || _store == null)
-                ? const Center(child: CircularProgressIndicator(color: KidTheme.skyBlue))
-                : RefreshIndicator(
-                    color: KidTheme.skyBlue,
-                    onRefresh: _load,
-                    child: ListView(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                      children: [
-                        _CoinBalanceCard(account: _account!),
-                        const SizedBox(height: 24),
-                        Text('Reward Store', style: Theme.of(context).textTheme.headlineMedium),
-                        const SizedBox(height: 12),
-                        if (_store!.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8),
-                            child: Text("No rewards yet - ask a grown-up to add some!"),
-                          ),
-                        ..._store!.map((item) {
-                          final map = item as Map<String, dynamic>;
-                          final costCoins = map['costCoins'] as int? ?? 0;
-                          final coins = _account!['coins'] as int? ?? 0;
-                          final canAfford = coins >= costCoins;
-                          final itemId = map['id'] as String;
-                          return _StoreItemCard(
-                            title: map['title'] as String? ?? '',
-                            costCoins: costCoins,
-                            canAfford: canAfford,
-                            isRedeeming: _redeemingItemId == itemId,
-                            onRedeem: canAfford ? () => _redeem(itemId, map['title'] as String? ?? 'reward') : null,
-                          );
-                        }),
-                      ],
+    ref.watch(localeControllerProvider);
+    final localeController = ref.watch(localeControllerProvider.notifier);
+    final t = localeController.t;
+
+    return Directionality(
+      textDirection: localeController.isRtl ? TextDirection.rtl : TextDirection.ltr,
+      child: CelebrationOverlay(
+        child: Scaffold(
+          appBar: AppBar(title: Text(t('rewards.title'))),
+          body: _errorMessage != null
+              ? _buildFriendlyError(t)
+              : (_account == null || _store == null)
+                  ? const Center(child: CircularProgressIndicator(color: KidTheme.skyBlue))
+                  : RefreshIndicator(
+                      color: KidTheme.skyBlue,
+                      onRefresh: _load,
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                        children: [
+                          _CoinBalanceCard(account: _account!, coinsLabel: t('rewards.coinsLabel'), xpLabel: t('rewards.xpLabel')),
+                          const SizedBox(height: 24),
+                          Text(t('rewards.storeTitle'), style: Theme.of(context).textTheme.headlineMedium),
+                          const SizedBox(height: 12),
+                          if (_store!.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Text(t('rewards.noRewardsYet')),
+                            ),
+                          ..._store!.map((item) {
+                            final map = item as Map<String, dynamic>;
+                            final costCoins = map['costCoins'] as int? ?? 0;
+                            final coins = _account!['coins'] as int? ?? 0;
+                            final canAfford = coins >= costCoins;
+                            final itemId = map['id'] as String;
+                            return _StoreItemCard(
+                              title: map['title'] as String? ?? '',
+                              costCoins: costCoins,
+                              costLabel: t('rewards.coins', options: {'count': costCoins}),
+                              canAfford: canAfford,
+                              isRedeeming: _redeemingItemId == itemId,
+                              getItLabel: t('rewards.getIt'),
+                              needMoreLabel: t('rewards.needMore'),
+                              onRedeem: canAfford ? () => _redeem(itemId, map['title'] as String? ?? 'reward') : null,
+                            );
+                          }),
+                        ],
+                      ),
                     ),
-                  ),
+        ),
       ),
     );
   }
 
-  Widget _buildFriendlyError() {
+  Widget _buildFriendlyError(String Function(String, {int? count, Map<String, Object>? options}) t) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -126,9 +137,9 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
           children: [
             const Text('\u{1F605}', style: TextStyle(fontSize: 56)),
             const SizedBox(height: 16),
-            Text("Oops! Something didn't load.", style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
+            Text(t('rewards.loadError'), style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
             const SizedBox(height: 20),
-            FilledButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded), label: const Text('Try Again')),
+            FilledButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded), label: Text(t('rewards.tryAgain'))),
           ],
         ),
       ),
@@ -137,8 +148,10 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
 }
 
 class _CoinBalanceCard extends StatelessWidget {
-  const _CoinBalanceCard({required this.account});
+  const _CoinBalanceCard({required this.account, required this.coinsLabel, required this.xpLabel});
   final Map<String, dynamic> account;
+  final String coinsLabel;
+  final String xpLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -158,9 +171,9 @@ class _CoinBalanceCard extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _BalanceStat(emoji: '\u{1FA99}', value: '$coins', label: 'Coins'),
+          _BalanceStat(emoji: '\u{1FA99}', value: '$coins', label: coinsLabel),
           Container(width: 1, height: 50, color: KidTheme.mutedInk.withOpacity(0.2)),
-          _BalanceStat(emoji: '\u2B50', value: '$xp', label: 'XP'),
+          _BalanceStat(emoji: '\u2B50', value: '$xp', label: xpLabel),
         ],
       ),
     );
@@ -190,15 +203,21 @@ class _StoreItemCard extends StatelessWidget {
   const _StoreItemCard({
     required this.title,
     required this.costCoins,
+    required this.costLabel,
     required this.canAfford,
     required this.isRedeeming,
+    required this.getItLabel,
+    required this.needMoreLabel,
     required this.onRedeem,
   });
 
   final String title;
   final int costCoins;
+  final String costLabel;
   final bool canAfford;
   final bool isRedeeming;
+  final String getItLabel;
+  final String needMoreLabel;
   final VoidCallback? onRedeem;
 
   @override
@@ -226,7 +245,7 @@ class _StoreItemCard extends StatelessWidget {
                   Row(
                     children: [
                       const Text('\u{1FA99} ', style: TextStyle(fontSize: 14)),
-                      Text('$costCoins coins', style: Theme.of(context).textTheme.bodyMedium),
+                      Text(costLabel, style: Theme.of(context).textTheme.bodyMedium),
                     ],
                   ),
                 ],
@@ -241,7 +260,7 @@ class _StoreItemCard extends StatelessWidget {
                   backgroundColor: canAfford ? KidTheme.sunshineYellow : Colors.grey.shade300,
                   minimumSize: const Size(80, 44),
                 ),
-                child: Text(canAfford ? 'Get it!' : 'Need more'),
+                child: Text(canAfford ? getItLabel : needMoreLabel),
               ),
           ],
         ),

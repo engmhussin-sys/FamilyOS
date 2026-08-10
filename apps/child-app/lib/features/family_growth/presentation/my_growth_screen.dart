@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/kid_theme.dart';
 import '../../../core/widgets/celebration_overlay.dart';
 import '../../../core/widgets/daily_progress_ring.dart';
@@ -95,7 +96,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   Future<void> _completeHabit(String habitId, String habitTitle) async {
     try {
       await ref.read(familyGrowthApiProvider).completeHabit(habitId);
-      _celebrate('Awesome! "$habitTitle" done!', KidTheme.habitsAccent);
+      _celebrate(ref.read(localeControllerProvider.notifier).t('myGrowth.habitDone', options: {'title': habitTitle}), KidTheme.habitsAccent);
     } catch (_) {
       // Best-effort — no scary error text for a single low-stakes retry-safe action.
     }
@@ -105,7 +106,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   Future<void> _logWater() async {
     try {
       await ref.read(familyGrowthApiProvider).logHydration(250);
-      _celebrate('Great job staying hydrated!', KidTheme.healthAccent);
+      _celebrate(ref.read(localeControllerProvider.notifier).t('myGrowth.hydrationDone'), KidTheme.healthAccent);
     } catch (_) {
       // Best-effort.
     }
@@ -115,7 +116,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   Future<void> _logFaithPractice(String practiceId, String practiceTitle) async {
     try {
       await ref.read(familyGrowthApiProvider).logFaithPractice(practiceId);
-      _celebrate('Well done! "$practiceTitle" complete!', KidTheme.faithAccent);
+      _celebrate(ref.read(localeControllerProvider.notifier).t('myGrowth.faithDone', options: {'title': practiceTitle}), KidTheme.faithAccent);
     } catch (_) {
       // Best-effort.
     }
@@ -124,82 +125,91 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return CelebrationOverlay(
-      child: Scaffold(
-        appBar: AppBar(title: const Text('My Growth')),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: _logWater,
-          icon: const Text('\u{1F4A7}', style: TextStyle(fontSize: 20)),
-          label: const Text('Log water'),
-        ),
-        body: _errorMessage != null
-            ? _buildFriendlyError()
-            : (_habits == null || _practices == null || _messages == null)
-                ? const Center(child: CircularProgressIndicator(color: KidTheme.skyBlue))
-                : RefreshIndicator(
-                    color: KidTheme.skyBlue,
-                    onRefresh: _loadAll,
-                    child: ListView(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Expanded(
-                              child: DailyProgressRing(
-                                completed: _completedToday,
-                                total: _totalTasks,
-                                childName: _childName,
+    ref.watch(localeControllerProvider);
+    final localeController = ref.watch(localeControllerProvider.notifier);
+    final t = localeController.t;
+
+    return Directionality(
+      textDirection: localeController.isRtl ? TextDirection.rtl : TextDirection.ltr,
+      child: CelebrationOverlay(
+        child: Scaffold(
+          appBar: AppBar(title: Text(t('myGrowth.title'))),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: _logWater,
+            icon: const Text('\u{1F4A7}', style: TextStyle(fontSize: 20)),
+            label: Text(t('myGrowth.logWater')),
+          ),
+          body: _errorMessage != null
+              ? _buildFriendlyError(t)
+              : (_habits == null || _practices == null || _messages == null)
+                  ? const Center(child: CircularProgressIndicator(color: KidTheme.skyBlue))
+                  : RefreshIndicator(
+                      color: KidTheme.skyBlue,
+                      onRefresh: _loadAll,
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: DailyProgressRing(
+                                  completed: _completedToday,
+                                  total: _totalTasks,
+                                  childName: _childName,
+                                ),
                               ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.center,
+                            child: SparkyMascot(
+                              mood: _totalTasks > 0 && _completedToday >= _totalTasks
+                                  ? SparkyMood.celebrating
+                                  : SparkyMood.happy,
+                              size: 64,
                             ),
+                          ),
+                          const SizedBox(height: 20),
+                          if (_messages!.isNotEmpty) ...[
+                            _SectionHeader(emoji: '\u{1F48C}', title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
+                            ..._messages!.map((m) => _MessageCard(message: m as Map<String, dynamic>)),
+                            const SizedBox(height: 24),
                           ],
-                        ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.center,
-                          child: SparkyMascot(
-                            mood: _totalTasks > 0 && _completedToday >= _totalTasks
-                                ? SparkyMood.celebrating
-                                : SparkyMood.happy,
-                            size: 64,
+                          _SectionHeader(emoji: '\u{2B50}', title: t('myGrowth.myHabits'), color: KidTheme.habitsAccent),
+                          if (_habits!.isEmpty) _EmptyHint(text: t('myGrowth.noHabitsYet')),
+                          ..._habits!.map(
+                            (h) => _TaskCard(
+                              title: (h as Map<String, dynamic>)['title'] as String? ?? '',
+                              subtitle: h['category'] as String?,
+                              color: KidTheme.habitsAccent,
+                              isDone: h['completedToday'] as bool? ?? false,
+                              doneLabel: t('myGrowth.done'),
+                              onDone: () => _completeHabit(h['id'] as String, h['title'] as String? ?? 'habit'),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 20),
-                        if (_messages!.isNotEmpty) ...[
-                          _SectionHeader(emoji: '\u{1F48C}', title: 'Messages', color: KidTheme.messagesAccent),
-                          ..._messages!.map((m) => _MessageCard(message: m as Map<String, dynamic>)),
                           const SizedBox(height: 24),
+                          _SectionHeader(emoji: '\u{1F54C}', title: t('myGrowth.faith'), color: KidTheme.faithAccent),
+                          if (_practices!.isEmpty) _EmptyHint(text: t('myGrowth.noPracticesYet')),
+                          ..._practices!.map(
+                            (p) => _TaskCard(
+                              title: (p as Map<String, dynamic>)['title'] as String? ?? '',
+                              color: KidTheme.faithAccent,
+                              isDone: p['completedToday'] as bool? ?? false,
+                              doneLabel: t('myGrowth.done'),
+                              onDone: () => _logFaithPractice(p['id'] as String, p['title'] as String? ?? 'practice'),
+                            ),
+                          ),
                         ],
-                        _SectionHeader(emoji: '\u{2B50}', title: 'My Habits', color: KidTheme.habitsAccent),
-                        if (_habits!.isEmpty) const _EmptyHint(text: "No habits yet - ask a grown-up to add one!"),
-                        ..._habits!.map(
-                          (h) => _TaskCard(
-                            title: (h as Map<String, dynamic>)['title'] as String? ?? '',
-                            subtitle: h['category'] as String?,
-                            color: KidTheme.habitsAccent,
-                            isDone: h['completedToday'] as bool? ?? false,
-                            onDone: () => _completeHabit(h['id'] as String, h['title'] as String? ?? 'habit'),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        _SectionHeader(emoji: '\u{1F54C}', title: 'Faith', color: KidTheme.faithAccent),
-                        if (_practices!.isEmpty) const _EmptyHint(text: "No practices yet - ask a grown-up to add one!"),
-                        ..._practices!.map(
-                          (p) => _TaskCard(
-                            title: (p as Map<String, dynamic>)['title'] as String? ?? '',
-                            color: KidTheme.faithAccent,
-                            isDone: p['completedToday'] as bool? ?? false,
-                            onDone: () => _logFaithPractice(p['id'] as String, p['title'] as String? ?? 'practice'),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
+        ),
       ),
     );
   }
 
-  Widget _buildFriendlyError() {
+  Widget _buildFriendlyError(String Function(String, {int? count, Map<String, Object>? options}) t) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -209,13 +219,13 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
             const SparkyMascot(mood: SparkyMood.neutral, size: 72),
             const SizedBox(height: 16),
             Text(
-              "Oops! Something didn't load.",
+              t('myGrowth.loadError'),
               style: Theme.of(context).textTheme.titleLarge,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
             Text(
-              "Let's try again!",
+              t('myGrowth.tryAgainPrompt'),
               style: Theme.of(context).textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),
@@ -223,7 +233,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
             FilledButton.icon(
               onPressed: _loadAll,
               icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Try Again'),
+              label: Text(t('myGrowth.tryAgain')),
             ),
           ],
         ),
@@ -276,12 +286,13 @@ class _EmptyHint extends StatelessWidget {
 /// A single tappable task, with a soft shadow and colored left-edge
 /// accent for real visual depth instead of a flat bordered rectangle.
 class _TaskCard extends StatelessWidget {
-  const _TaskCard({required this.title, this.subtitle, required this.color, required this.isDone, required this.onDone});
+  const _TaskCard({required this.title, this.subtitle, required this.color, required this.isDone, required this.doneLabel, required this.onDone});
 
   final String title;
   final String? subtitle;
   final Color color;
   final bool isDone;
+  final String doneLabel;
   final VoidCallback onDone;
 
   @override
@@ -328,7 +339,7 @@ class _TaskCard extends StatelessWidget {
               FilledButton(
                 onPressed: onDone,
                 style: FilledButton.styleFrom(backgroundColor: color, minimumSize: const Size(90, 48)),
-                child: const Text('Done!'),
+                child: Text(doneLabel),
               ),
           ],
         ),

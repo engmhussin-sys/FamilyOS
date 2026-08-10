@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/localization/locale_controller.dart';
 import '../../../plugins/permissions/domain/permission_status.dart';
 import '../../../plugins/runtime/application/runtime_coordinator.dart';
 import '../../../plugins/telemetry/contracts/runtime_telemetry.dart';
@@ -107,9 +108,9 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
     });
     try {
       await ref.read(capabilityReportingServiceProvider).reportNow();
-      if (mounted) setState(() => _syncMessage = 'Synced ✅');
+      if (mounted) setState(() => _syncMessage = ref.read(localeControllerProvider.notifier).t('deviceStatus.syncSuccess'));
     } catch (_) {
-      if (mounted) setState(() => _syncMessage = 'Sync failed — will retry on next heartbeat.');
+      if (mounted) setState(() => _syncMessage = ref.read(localeControllerProvider.notifier).t('deviceStatus.syncFailed'));
     } finally {
       if (mounted) setState(() => _isSyncingCapabilities = false);
     }
@@ -117,75 +118,82 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Device Status')),
-      body: RefreshIndicator(
-        onRefresh: _refreshPermissions,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text(
-              '✅ Device paired. Heartbeat running.',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const MyGrowthScreen()),
+    ref.watch(localeControllerProvider);
+    final localeController = ref.watch(localeControllerProvider.notifier);
+    final t = localeController.t;
+
+    return Directionality(
+      textDirection: localeController.isRtl ? TextDirection.rtl : TextDirection.ltr,
+      child: Scaffold(
+        appBar: AppBar(title: Text(t('deviceStatus.title'))),
+        body: RefreshIndicator(
+          onRefresh: _refreshPermissions,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                t('deviceStatus.pairedHeartbeat'),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              icon: const Icon(Icons.emoji_events_outlined),
-              label: const Text('My Growth'),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const RewardsScreen()),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const MyGrowthScreen()),
+                ),
+                icon: const Icon(Icons.emoji_events_outlined),
+                label: Text(t('deviceStatus.myGrowth')),
               ),
-              icon: const Icon(Icons.card_giftcard_rounded),
-              label: const Text('My Rewards'),
-            ),
-            const SizedBox(height: 16),
-            const Text('Runtime Status', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            _buildEnforcementStatusTile(),
-            const SizedBox(height: 16),
-            const Text('Diagnostics', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            _buildDiagnosticsTile(),
-            const SizedBox(height: 16),
-            const Text('Permissions', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            if (_isLoadingPermissions)
-              const Center(child: CircularProgressIndicator())
-            else
-              ..._permissions.map(_buildPermissionTile),
-            const SizedBox(height: 24),
-            const Text('Capabilities', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: _isSyncingCapabilities ? null : _syncCapabilities,
-              child: _isSyncingCapabilities
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Sync Capabilities Now'),
-            ),
-            if (_syncMessage != null) ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const RewardsScreen()),
+                ),
+                icon: const Icon(Icons.card_giftcard_rounded),
+                label: Text(t('deviceStatus.myRewards')),
+              ),
+              const SizedBox(height: 16),
+              Text(t('deviceStatus.runtimeStatus'), style: const TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text(_syncMessage!),
+              _buildEnforcementStatusTile(t),
+              const SizedBox(height: 16),
+              Text(t('deviceStatus.diagnostics'), style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              _buildDiagnosticsTile(t),
+              const SizedBox(height: 16),
+              Text(t('deviceStatus.permissions'), style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (_isLoadingPermissions)
+                const Center(child: CircularProgressIndicator())
+              else
+                ..._permissions.map((p) => _buildPermissionTile(p, t)),
+              const SizedBox(height: 24),
+              Text(t('deviceStatus.capabilities'), style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: _isSyncingCapabilities ? null : _syncCapabilities,
+                child: _isSyncingCapabilities
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(t('deviceStatus.syncCapabilities')),
+              ),
+              if (_syncMessage != null) ...[
+                const SizedBox(height: 8),
+                Text(_syncMessage!),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildEnforcementStatusTile() {
+  Widget _buildEnforcementStatusTile(String Function(String, {int? count, Map<String, Object>? options}) t) {
     final status = _enforcementStatus;
     if (status == null) {
-      return const Text('Checking...', style: TextStyle(color: Colors.grey));
+      return Text(t('common.checking'), style: const TextStyle(color: Colors.grey));
     }
     final isActive = status.accessibilityServiceEnabled && status.hasEverSyncedPolicy;
     return ListTile(
@@ -193,28 +201,28 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
         isActive ? Icons.shield : Icons.shield_outlined,
         color: isActive ? Colors.green : Colors.orange,
       ),
-      title: Text(isActive ? 'Protection is active' : 'Protection is not fully active'),
+      title: Text(isActive ? t('deviceStatus.protectionActive') : t('deviceStatus.protectionNotActive')),
       subtitle: Text(
         !status.accessibilityServiceEnabled
-            ? 'Accessibility Service is turned off'
+            ? t('deviceStatus.accessibilityOff')
             : !status.hasEverSyncedPolicy
-                ? 'No policy has synced yet'
-                : 'Enforcing the current policy',
+                ? t('deviceStatus.noPolicySynced')
+                : t('deviceStatus.enforcingPolicy'),
       ),
     );
   }
 
-  Widget _buildDiagnosticsTile() {
+  Widget _buildDiagnosticsTile(String Function(String, {int? count, Map<String, Object>? options}) t) {
     final telemetry = _telemetry;
     if (telemetry == null) {
-      return const Text('Checking...', style: TextStyle(color: Colors.grey));
+      return Text(t('common.checking'), style: const TextStyle(color: Colors.grey));
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Memory usage: ${telemetry.memoryUsageMb} MB'),
-        Text('Battery: ${telemetry.batteryPercent ?? 'unknown'}%'),
-        Text('Health: ${telemetry.isHealthy ? 'Normal' : 'Attention needed'}'),
+        Text(t('deviceStatus.memoryUsage', options: {'mb': telemetry.memoryUsageMb})),
+        Text(t('deviceStatus.battery', options: {'percent': telemetry.batteryPercent ?? t('deviceStatus.batteryUnknown')})),
+        Text(t('deviceStatus.healthLabel', options: {'status': telemetry.isHealthy ? t('deviceStatus.healthNormal') : t('deviceStatus.healthAttention')})),
         if (telemetry.warnings.isNotEmpty)
           Text(
             telemetry.warnings.join(', '),
@@ -224,7 +232,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              '$_queuedEventCount update(s) waiting to sync (offline)',
+              t('deviceStatus.queuedUpdates', options: {'count': _queuedEventCount}),
               style: const TextStyle(color: Colors.orange),
             ),
           ),
@@ -232,7 +240,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
     );
   }
 
-  Widget _buildPermissionTile(PermissionStatus status) {
+  Widget _buildPermissionTile(PermissionStatus status, String Function(String, {int? count, Map<String, Object>? options}) t) {
     return ListTile(
       leading: Icon(
         status.isGranted ? Icons.check_circle : Icons.warning_amber_rounded,
@@ -245,7 +253,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
               onPressed: () async {
                 await ref.read(permissionStatusServiceProvider).requestPermission(status.kind);
               },
-              child: const Text('Fix'),
+              child: Text(t('deviceStatus.fix')),
             ),
     );
   }
