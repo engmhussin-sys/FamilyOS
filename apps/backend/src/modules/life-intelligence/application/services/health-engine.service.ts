@@ -220,8 +220,8 @@ export class HealthEngineService {
    * shared utility) — built ONCE, not duplicated per metric. */
   async getDailyProgress(childId: string, familyId: string): Promise<{
     date: string;
-    hydration: { actualMl: number; targetMl: number; ratio: number; streakDays: number };
-    activity: { totalMinutes: number; targetMinutes: number; ratio: number; streakDays: number };
+    hydration: { actualMl: number; targetMl: number; ratio: number; remaining: number; isAchieved: boolean; streakDays: number };
+    activity: { totalMinutes: number; targetMinutes: number; ratio: number; remaining: number; isAchieved: boolean; streakDays: number };
   }> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
     const child = await this.childrenService.getChildOrThrow(childId, familyId);
@@ -251,12 +251,16 @@ export class HealthEngineService {
         actualMl,
         targetMl: target,
         ratio: target > 0 ? Math.min(1, actualMl / target) : 0,
+        remaining: Math.max(0, target - actualMl),
+        isAchieved: actualMl >= target,
         streakDays: computeCurrentStreak(hydrationQualifyingDays, dateStr),
       },
       activity: {
         totalMinutes: activityMinutes,
         targetMinutes: activityTargetMinutes,
         ratio: Math.min(1, activityMinutes / activityTargetMinutes),
+        remaining: Math.max(0, activityTargetMinutes - activityMinutes),
+        isAchieved: activityMinutes >= activityTargetMinutes,
         streakDays: computeCurrentStreak(activityQualifyingDays, dateStr),
       },
     };
