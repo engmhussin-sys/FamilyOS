@@ -43,6 +43,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   Map<String, dynamic>? _learningProgress;
   Map<String, dynamic>? _rewardsAccount;
   List<dynamic>? _coachingTips;
+  List<dynamic>? _smartTasks;
   String _childName = 'there'; // honest default only until the real profile loads
   String? _errorMessage;
 
@@ -99,13 +100,14 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     // already-working Habits/Faith/Messages sections above.
     try {
       final api = ref.read(familyGrowthApiProvider);
-      final results = await Future.wait([api.getHealthProgress(), api.getLearningProgress(), api.getRewardsAccount(), api.getCoaching()]);
+      final results = await Future.wait([api.getHealthProgress(), api.getLearningProgress(), api.getRewardsAccount(), api.getCoaching(), api.generateSmartTasks()]);
       if (mounted) {
         setState(() {
           _healthProgress = results[0] as Map<String, dynamic>;
           _learningProgress = results[1] as Map<String, dynamic>;
           _rewardsAccount = results[2] as Map<String, dynamic>;
           _coachingTips = results[3] as List<dynamic>;
+          _smartTasks = results[4] as List<dynamic>;
         });
       }
     } catch (_) {
@@ -180,6 +182,21 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     await _loadAll();
   }
 
+  /// CLOSES A REAL GAP: the missing UI consumer for SmartTaskEngineService
+  /// (context-aware suggestions, now server-computed after fixing a
+  /// real backend design flaw). ACCEPTED is a real commitment
+  /// distinct from COMPLETED — the child says "yes I'll do this," not
+  /// "I already did." DISMISSED simply removes it from view; the
+  /// child is never forced to act on a suggestion.
+  Future<void> _decideSmartTask(String taskId, String status) async {
+    try {
+      await ref.read(familyGrowthApiProvider).decideSmartTask(taskId, status);
+    } catch (_) {
+      // Best-effort.
+    }
+    await _loadAll();
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
@@ -244,6 +261,22 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                           // placeholder message).
                           if (_coachingTips != null && _coachingTips!.isNotEmpty) ...[
                             ..._coachingTips!.map((tip) => _CoachingTipCard(tip: tip as Map<String, dynamic>)),
+                            const SizedBox(height: 20),
+                          ],
+                          // Sprint continuation — CLOSES A REAL GAP: SmartTaskEngineService
+                          // had zero UI consumer. Only SUGGESTED tasks shown — an
+                          // already-decided one (accepted/dismissed/completed)
+                          // has nothing left to ask the child about.
+                          if (_smartTasks != null && _smartTasks!.where((t) => (t as Map<String, dynamic>)['status'] == 'SUGGESTED').isNotEmpty) ...[
+                            ..._smartTasks!
+                                .where((t) => (t as Map<String, dynamic>)['status'] == 'SUGGESTED')
+                                .map((task) => _SmartTaskCard(
+                                      task: task as Map<String, dynamic>,
+                                      acceptLabel: t('myGrowth.smartTaskAccept'),
+                                      dismissLabel: t('myGrowth.smartTaskDismiss'),
+                                      onAccept: () => _decideSmartTask(task['id'] as String, 'ACCEPTED'),
+                                      onDismiss: () => _decideSmartTask(task['id'] as String, 'DISMISSED'),
+                                    )),
                             const SizedBox(height: 20),
                           ],
                           if (_messages!.isNotEmpty) ...[
@@ -414,6 +447,73 @@ class _CoachingTipCard extends StatelessWidget {
                 Text(tip['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyMedium),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// CLOSES A REAL GAP: displays a SmartTaskEngineService suggestion
+/// (server-computed context, e.g. missed sleep or low hydration —
+/// see generateForTodayAuto's own docstring for exactly what's
+/// used). Deterministic text — zero LLM per display.
+class _SmartTaskCard extends StatelessWidget {
+  const _SmartTaskCard({
+    required this.task,
+    required this.acceptLabel,
+    required this.dismissLabel,
+    required this.onAccept,
+    required this.onDismiss,
+  });
+
+  final Map<String, dynamic> task;
+  final String acceptLabel;
+  final String dismissLabel;
+  final VoidCallback onAccept;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [KidTheme.skyBlue.withOpacity(0.18), KidTheme.skyBlue.withOpacity(0.06)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('\u{1F4A1}', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(task['title'] as String? ?? '', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700))),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: onDismiss,
+                  child: Text(dismissLabel),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: onAccept,
+                  style: FilledButton.styleFrom(backgroundColor: KidTheme.skyBlue),
+                  child: Text(acceptLabel),
+                ),
+              ),
+            ],
           ),
         ],
       ),

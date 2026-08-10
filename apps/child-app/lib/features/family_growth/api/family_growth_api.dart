@@ -77,6 +77,22 @@ class FamilyGrowthApi {
     return _client.post('/life-intelligence/self/messages/$messageId/acknowledge', body: <String, dynamic>{});
   }
 
+  /// CLOSES A REAL GAP: SmartTaskEngineService (context-aware,
+  /// server-computed suggestions — e.g. "you missed sleep, try
+  /// winding down early tonight") had zero Child App consumer, and
+  /// until a real backend design flaw fix, no frontend could have
+  /// used it meaningfully anyway (see the backend's own
+  /// generateForTodayAuto docstring). Idempotent server-side — safe
+  /// to call every time the screen loads, never creates duplicates.
+  Future<List<dynamic>> generateSmartTasks() async {
+    final result = await _client.post('/life-intelligence/self/smart-tasks/generate', body: <String, dynamic>{});
+    return result['data'] as List<dynamic>;
+  }
+
+  Future<void> decideSmartTask(String taskId, String status) {
+    return _client.post('/life-intelligence/self/smart-tasks/$taskId/decide', body: {'status': status});
+  }
+
   Future<List<dynamic>> getFaithPractices() {
     return _client.getList('/life-intelligence/self/faith/practices');
   }

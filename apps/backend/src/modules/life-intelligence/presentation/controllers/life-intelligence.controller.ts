@@ -412,6 +412,52 @@ export class LifeIntelligenceController {
     return this.learningEngine.logSession(childId, familyId, dto);
   }
 
+  /** CLOSES A REAL GAP: Smart Tasks had zero /self/* endpoint,
+   * discovered right after fixing generateForTodayAuto's own real
+   * design flaw (the caller no longer needs to compute context
+   * manually — this is what makes a Child App consumer actually
+   * feasible for the first time).
+   *
+   * FIXES A REAL BUG found while wiring this: calling
+   * generateForTodayAuto unconditionally on every request (the
+   * natural pattern for a screen that refreshes on open) would have
+   * created duplicate suggestions every single call — zero
+   * protection existed in the repository layer. Now idempotent by
+   * design — only generates if nothing exists yet for today, checked
+   * server-side, never assuming the client calls things in the right
+   * order. KNOWN, LOW-SEVERITY RACE CONDITION (documented, not
+   * silently left): two near-simultaneous requests could both
+   * observe existing.length === 0 and both generate — same class of
+   * rare, cosmetic duplicate as several other documented races in
+   * this codebase (e.g. HabitEngineService's own first-completion
+   * Timeline write), not worth a DB-level constraint for this
+   * unlikely, low-impact case. */
+  @Post('self/smart-tasks/generate')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfGenerateSmartTasks(@CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    const existing = await this.smartTaskEngine.listForToday(childId, familyId);
+    if (existing.length === 0) {
+      await this.smartTaskEngine.generateForTodayAuto(childId, familyId);
+      return this.smartTaskEngine.listForToday(childId, familyId);
+    }
+    return existing;
+  }
+
+  @Get('self/smart-tasks')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfListSmartTasks(@CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.smartTaskEngine.listForToday(childId, familyId);
+  }
+
+  @Post('self/smart-tasks/:taskId/decide')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfDecideSmartTask(@Param('taskId') taskId: string, @Body() dto: DecideSmartTaskDto, @CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    await this.smartTaskEngine.decide(taskId, childId, familyId, dto.status);
+  }
+
   @Get('self/faith/practices')
   @UseGuards(DeviceJwtAuthGuard)
   async selfListFaithPractices(@CurrentUser() device: IJwtPayload) {
