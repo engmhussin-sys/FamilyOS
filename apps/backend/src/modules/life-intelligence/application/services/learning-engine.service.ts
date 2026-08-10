@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { PrismaLearningRepository } from '../../infrastructure/repositories/prisma-learning.repository';
 import { ICreateLearningGoalInput, ICreateLearningSessionInput, ILearningGoal, ILearningProgressSummary, ILearningSession } from '../../domain/learning.types';
+import { computeCurrentStreak } from './streak-calculator';
 
 const PROGRESS_WINDOW_DAYS = 30;
 
@@ -41,7 +42,9 @@ export class LearningEngineService {
   }
 
   /** Feeds the Learning Score sub-component of the Digital Twin
-   * (Architecture 1.0 \u00a76.2). */
+   * (Architecture 1.0). Sprint 16.1 Phase 5 -- CLOSES A REAL GAP:
+   * now also computes streakDays, reusing computeCurrentStreak
+   * exactly as already tested (Sprint 15/16) -- zero duplicated logic. */
   async getProgressSummary(childId: string, familyId: string): Promise<ILearningProgressSummary> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
@@ -50,7 +53,11 @@ export class LearningEngineService {
     const totalMinutes = await this.repository.sumSessionMinutesInWindow(childId, since);
     const averageAssessmentScore = await this.repository.averageAssessmentScoreInWindow(childId, since);
 
-    return { childId, windowDays: PROGRESS_WINDOW_DAYS, totalSessions, totalMinutes, averageAssessmentScore };
+    const sessionDates = await this.repository.findDistinctSessionDates(childId, since);
+    const todayStr = this.daysAgo(0).toISOString().slice(0, 10);
+    const streakDays = computeCurrentStreak(sessionDates, todayStr);
+
+    return { childId, windowDays: PROGRESS_WINDOW_DAYS, totalSessions, totalMinutes, averageAssessmentScore, streakDays };
   }
 
   private daysAgo(days: number): Date {

@@ -50,6 +50,19 @@ export class PrismaLearningRepository {
     return this.prisma.learningSession.count({ where: { childId, date: { gte: sinceDate } } });
   }
 
+  /** Sprint 16.1 Phase 5 — CLOSES A REAL GAP: zero streak concept
+   * existed for Learning, despite the brief's own explicit "streak"
+   * requirement. Same pattern as
+   * PrismaHabitRepository.findDistinctCompletionDates. */
+  async findDistinctSessionDates(childId: string, sinceDate: Date): Promise<string[]> {
+    const rows = await this.prisma.learningSession.findMany({
+      where: { childId, date: { gte: sinceDate } },
+      select: { date: true },
+      distinct: ['date'],
+    });
+    return rows.map((r: { date: Date }) => r.date.toISOString().slice(0, 10));
+  }
+
   async sumSessionMinutesInWindow(childId: string, sinceDate: Date): Promise<number> {
     const result = await this.prisma.learningSession.aggregate({
       where: { childId, date: { gte: sinceDate } },

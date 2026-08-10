@@ -50,4 +50,5 @@ export interface ILearningProgressSummary {
   totalSessions: number;
   totalMinutes: number;
   averageAssessmentScore: number | null;
+  streakDays: number;
 }
