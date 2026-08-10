@@ -75,6 +75,16 @@ export interface HealthScoreBreakdown {
   };
 }
 
+/** CLOSES A REAL GAP — mirrors the backend's ILearningProgressSummary exactly. */
+export interface LearningProgressSummary {
+  childId: string;
+  windowDays: number;
+  totalSessions: number;
+  totalMinutes: number;
+  averageAssessmentScore: number | null;
+  streakDays: number;
+}
+
 export interface RewardCatalogItem {
   id: string;
   familyId: string;
@@ -100,6 +110,7 @@ export const coachingQueryKey = (childId: string) => ['life-intelligence', 'coac
 export const rewardsAccountQueryKey = (childId: string) => ['life-intelligence', 'rewards-account', childId] as const;
 export const faithPracticesQueryKey = (childId: string) => ['life-intelligence', 'faith-practices', childId] as const;
 export const healthScoreQueryKey = (childId: string) => ['life-intelligence', 'health-score', childId] as const;
+export const learningProgressQueryKey = (childId: string) => ['life-intelligence', 'learning-progress', childId] as const;
 export const familyStoreQueryKey = (familyId: string) => ['life-intelligence', 'family-store', familyId] as const;
 
 export const lifeIntelligenceApi = {
@@ -138,6 +149,14 @@ export const lifeIntelligenceApi = {
 
   getHealthScore(childId: string): Promise<HealthScoreBreakdown> {
     return httpClient<HealthScoreBreakdown>(`/life-intelligence/health/${childId}/score`);
+  },
+
+  /** CLOSES A REAL GAP: LearningEngineService (Goals/Sessions/
+   * Assessments/Progress/Streak) had zero Admin Dashboard consumer —
+   * same gap already found and fixed in the Parent App (Flutter),
+   * independently missing here since these are separate apps. */
+  getLearningProgress(childId: string): Promise<LearningProgressSummary> {
+    return httpClient<LearningProgressSummary>(`/life-intelligence/learning/${childId}/progress`);
   },
 
   getFamilyStore(familyId: string): Promise<RewardCatalogItem[]> {

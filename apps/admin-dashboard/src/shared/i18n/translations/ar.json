@@ -338,5 +338,13 @@
     "title": "بانتظار الموافقة",
     "approve": "موافقة",
     "reject": "رفض"
+  },
+  "learningProgress": {
+    "title": "التعليم",
+    "sessions": "جلسات المذاكرة (30 يوم)",
+    "minutes": "إجمالي الدقائق (30 يوم)",
+    "avgScore": "متوسط الدرجات",
+    "notYetAvailable": "غير متاح بعد",
+    "streakDays": "تتابع {{count}} يوم"
   }
 }

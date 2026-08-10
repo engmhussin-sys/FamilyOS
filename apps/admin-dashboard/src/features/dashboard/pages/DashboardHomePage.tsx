@@ -12,6 +12,7 @@ import { DigitalTwinCard } from '../../life-intelligence/components/DigitalTwinC
 import { LifeTimelineCard } from '../../life-intelligence/components/LifeTimelineCard';
 import { HabitTrackerCard } from '../../life-intelligence/components/HabitTrackerCard';
 import { HealthTrendCard } from '../../life-intelligence/components/HealthTrendCard';
+import { LearningProgressCard } from '../../life-intelligence/components/LearningProgressCard';
 import { FaithProgressCard } from '../../life-intelligence/components/FaithProgressCard';
 import { FamilyStoreManagerCard } from '../../life-intelligence/components/FamilyStoreManagerCard';
 import { CoachingRecommendationsCard } from '../../life-intelligence/components/CoachingRecommendationsCard';
@@ -54,6 +55,7 @@ export function DashboardHomePage() {
       <WellbeingCard />
       <HabitTrackerCard />
       <HealthTrendCard />
+      <LearningProgressCard />
       <FaithProgressCard />
       <FamilyStoreManagerCard />
       <LifeTimelineCard />

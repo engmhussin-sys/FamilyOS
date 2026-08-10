@@ -338,5 +338,13 @@
     "title": "Pending Approvals",
     "approve": "Approve",
     "reject": "Decline"
+  },
+  "learningProgress": {
+    "title": "Learning",
+    "sessions": "Study sessions (30d)",
+    "minutes": "Total minutes (30d)",
+    "avgScore": "Average score",
+    "notYetAvailable": "Not yet available",
+    "streakDays": "{{count}}-day streak"
   }
 }
