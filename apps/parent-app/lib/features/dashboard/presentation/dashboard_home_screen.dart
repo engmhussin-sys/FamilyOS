@@ -11,6 +11,7 @@ import '../../life_intelligence/presentation/life_timeline_screen.dart';
 import '../../life_intelligence/presentation/habit_tracker_screen.dart';
 import '../../life_intelligence/presentation/health_trend_screen.dart';
 import '../../life_intelligence/presentation/learning_progress_screen.dart';
+import '../../life_intelligence/presentation/pending_approvals_screen.dart';
 import '../../life_intelligence/presentation/faith_progress_screen.dart';
 import '../../life_intelligence/presentation/family_store_screen.dart';
 import '../../life_intelligence/presentation/coaching_screen.dart';
@@ -355,6 +356,16 @@ class _ChildCard extends StatelessWidget {
                 Navigator.of(sheetContext).pop();
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => LearningProgressScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.mark_email_unread_outlined),
+              title: Text(t('pendingApprovals.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PendingApprovalsScreen()),
                 );
               },
             ),

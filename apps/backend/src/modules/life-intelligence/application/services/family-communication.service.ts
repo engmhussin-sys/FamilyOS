@@ -152,4 +152,14 @@ export class FamilyCommunicationService {
   async acknowledgeMessage(messageId: string): Promise<void> {
     await this.repository.acknowledge(messageId);
   }
+
+  /** CLOSES A CRITICAL REAL GAP: the read side of approve()/reject()
+   * that never existed — a parent had no way to discover which
+   * AI-drafted messages (every Smart Notification targeted at a
+   * child) were even awaiting their approval. Family-scoped (all
+   * children at once), matching a real parent's actual mental model
+   * ("show me everything waiting for my attention"). */
+  async getPendingMessages(familyId: string) {
+    return this.repository.listPendingForFamily(familyId);
+  }
 }

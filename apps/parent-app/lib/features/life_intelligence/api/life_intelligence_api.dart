@@ -102,4 +102,22 @@ class LifeIntelligenceApi {
   Future<Map<String, dynamic>> getLearningProgress(String childId) {
     return _client.get('/life-intelligence/learning/$childId/progress');
   }
+
+  /// CLOSES A CRITICAL REAL GAP: approve()/reject() existed in the
+  /// backend since an earlier sprint, but nothing ever surfaced WHAT
+  /// needed approving to a parent — every Smart Notification
+  /// targeted at a child (Sprint 16-16.2) was structurally
+  /// unreachable without this.
+  Future<List<dynamic>> getPendingMessages() async {
+    final result = await _client.get('/life-intelligence/communication/pending');
+    return result['data'] as List<dynamic>;
+  }
+
+  Future<void> approveMessage(String childId, String messageId) {
+    return _client.post('/life-intelligence/communication/$childId/$messageId/approve', data: <String, dynamic>{});
+  }
+
+  Future<void> rejectMessage(String childId, String messageId) {
+    return _client.post('/life-intelligence/communication/$childId/$messageId/reject', data: <String, dynamic>{});
+  }
 }

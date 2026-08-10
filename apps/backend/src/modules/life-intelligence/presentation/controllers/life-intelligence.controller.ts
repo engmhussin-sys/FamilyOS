@@ -252,6 +252,15 @@ export class LifeIntelligenceController {
     return this.communication.draftAiMessage(childId, user.familyId!, dto.category, dto.title, dto.body);
   }
 
+  /** CLOSES A CRITICAL REAL GAP: approve()/reject() below existed
+   * with zero way for a parent to discover what needed approving —
+   * every Smart Notification targeted at a child (Sprint 16-16.2)
+   * was structurally unreachable without this. */
+  @Get('communication/pending')
+  getPendingMessages(@CurrentUser() user: IJwtPayload) {
+    return this.communication.getPendingMessages(user.familyId!);
+  }
+
   @Post('communication/:childId/:messageId/approve')
   approveMessage(@Param('childId') childId: string, @Param('messageId') messageId: string, @CurrentUser() user: IJwtPayload) {
     return this.communication.approve(messageId, childId, user.familyId!);
