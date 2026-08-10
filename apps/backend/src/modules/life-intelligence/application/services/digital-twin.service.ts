@@ -65,7 +65,7 @@ export class DigitalTwinService {
 
     const habits: IExplainableSubScore = {
       score: Math.round(habitScore.completionRate * 100),
-      inputs: { completedHabitDays: habitScore.completedHabitDays, totalHabitDays: habitScore.totalHabitDays },
+      inputs: { completedHabitDays: habitScore.completedHabitDays, totalHabitDays: habitScore.totalHabitDays, streakDays: habitScore.streakDays },
       confidence: habitScore.totalHabitDays > 0 ? 'HIGH' : 'LOW',
     };
 
@@ -86,7 +86,7 @@ export class DigitalTwinService {
           score: learningProgress.averageAssessmentScore !== null
             ? Math.round(learningProgress.averageAssessmentScore)
             : Math.min(100, Math.round((learningProgress.totalMinutes / (SOCIAL_SCORE_WINDOW_DAYS * 20)) * 100)),
-          inputs: { totalSessions: learningProgress.totalSessions, totalMinutes: learningProgress.totalMinutes, averageAssessmentScore: learningProgress.averageAssessmentScore },
+          inputs: { totalSessions: learningProgress.totalSessions, totalMinutes: learningProgress.totalMinutes, averageAssessmentScore: learningProgress.averageAssessmentScore, streakDays: learningProgress.streakDays },
           confidence: learningProgress.averageAssessmentScore !== null ? 'HIGH' : 'MEDIUM',
         }
       : null;

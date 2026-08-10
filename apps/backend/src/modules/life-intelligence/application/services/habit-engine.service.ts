@@ -208,6 +208,14 @@ export class HabitEngineService {
     const sharedCompletions = await this.habitRepository.countCompletionsInWindow(childId, since, true);
     const totalSharedDays = sharedHabitCount * SCORE_WINDOW_DAYS;
 
+    // CLOSES A REAL GAP found in the Digital Twin audit — reuses the
+    // exact same computeCurrentStreak + qualifying-days pattern this
+    // service's own completeHabit already uses for STREAK_ACHIEVED,
+    // not a second implementation.
+    const completionDates = await this.habitRepository.findDistinctCompletionDates(childId, since);
+    const todayStr = this.today().toISOString().slice(0, 10);
+    const streakDays = computeCurrentStreak(completionDates, todayStr);
+
     return {
       childId,
       windowDays: SCORE_WINDOW_DAYS,
@@ -215,6 +223,7 @@ export class HabitEngineService {
       completedHabitDays,
       completionRate: totalHabitDays > 0 ? completedHabitDays / totalHabitDays : 0,
       sharedTaskCompletionRate: totalSharedDays > 0 ? sharedCompletions / totalSharedDays : 0,
+      streakDays,
     };
   }
 

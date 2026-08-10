@@ -65,4 +65,12 @@ export interface IHabitScoreBreakdown {
   completedHabitDays: number;
   completionRate: number;
   sharedTaskCompletionRate: number;
+  /** CLOSES A REAL GAP found in the Digital Twin audit: Habits was
+   * the FIRST streak feature built this session (Sprint 15/16), yet
+   * getScoreBreakdown — the exact method Digital Twin already calls
+   * — never exposed it. Reuses computeCurrentStreak exactly as
+   * tested, same "across ALL habits, at least one completed that
+   * day" definition HabitEngineService's own completeHabit already
+   * uses for its own STREAK_ACHIEVED reward trigger. */
+  streakDays: number;
 }

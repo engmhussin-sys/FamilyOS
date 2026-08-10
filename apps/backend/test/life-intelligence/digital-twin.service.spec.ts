@@ -29,10 +29,10 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
   const familyId = 'family-1';
 
   const defaultEngineOutputs = () => {
-    habitEngineMock.getScoreBreakdown.mockResolvedValue({ completionRate: 0.5, completedHabitDays: 5, totalHabitDays: 10 });
+    habitEngineMock.getScoreBreakdown.mockResolvedValue({ completionRate: 0.5, completedHabitDays: 5, totalHabitDays: 10, streakDays: 3 });
     healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ score: 60, breakdown: {} });
     faithEngineMock.getScoreBreakdown.mockResolvedValue({ completionRate: 0.5, completedLogs: 5, activePractices: 2 });
-    learningEngineMock.getProgressSummary.mockResolvedValue({ totalSessions: 0, totalMinutes: 0, averageAssessmentScore: null });
+    learningEngineMock.getProgressSummary.mockResolvedValue({ totalSessions: 0, totalMinutes: 0, averageAssessmentScore: null, streakDays: 0 });
     repositoryMock.getSocialScoreInputs.mockResolvedValue({ sharedHabitCompletions: 0, groupActivityCount: 0, groupBadgeCount: 0, challengeParticipations: 0 });
     digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue(null);
     digitalWellbeingMock.getWellbeingInsight.mockResolvedValue(null);

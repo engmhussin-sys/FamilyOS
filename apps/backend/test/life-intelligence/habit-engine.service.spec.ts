@@ -15,6 +15,7 @@ describe('HabitEngineService', () => {
     recordCompletion: jest.fn(),
     countCompletionsInWindow: jest.fn(),
     countActiveHabits: jest.fn(),
+    findDistinctCompletionDates: jest.fn(),
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
@@ -28,6 +29,7 @@ describe('HabitEngineService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    habitRepositoryMock.findDistinctCompletionDates.mockResolvedValue([]);
     const moduleRef = await Test.createTestingModule({
       providers: [
         HabitEngineService,
@@ -124,6 +126,28 @@ describe('HabitEngineService', () => {
       expect(result.completedHabitDays).toBe(20);
       expect(result.completionRate).toBeCloseTo(20 / 60);
       expect(result.sharedTaskCompletionRate).toBeCloseTo(10 / 30);
+    });
+
+    it('CLOSES A REAL GAP: computes a real streakDays via computeCurrentStreak, not a hardcoded/missing value', async () => {
+      habitRepositoryMock.countActiveHabits.mockResolvedValue(1);
+      habitRepositoryMock.countCompletionsInWindow.mockResolvedValue(1);
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const yesterday = new Date();
+      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+      habitRepositoryMock.findDistinctCompletionDates.mockResolvedValue([todayStr, yesterday.toISOString().slice(0, 10)]);
+
+      const result = await service.getScoreBreakdown(childId, familyId);
+
+      expect(result.streakDays).toBe(2);
+    });
+
+    it('BOUNDARY CASE: zero completion dates produces a real streakDays of 0, never undefined', async () => {
+      habitRepositoryMock.countActiveHabits.mockResolvedValue(0);
+      habitRepositoryMock.countCompletionsInWindow.mockResolvedValue(0);
+
+      const result = await service.getScoreBreakdown(childId, familyId);
+
+      expect(result.streakDays).toBe(0);
     });
 
     it('returns 0 rates (not NaN or a crash) when the child has zero active habits', async () => {
