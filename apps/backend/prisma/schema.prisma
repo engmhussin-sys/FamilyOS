@@ -297,6 +297,7 @@ model Family {
 
   members  FamilyMember[]
   children Child[]
+  devices  Device[]
   subscription Subscription?
   rewardCatalogItems RewardCatalogItem[]
   rewardRules        RewardRule[]
