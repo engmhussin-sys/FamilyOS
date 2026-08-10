@@ -12,11 +12,41 @@ import '../../authentication/application/auth_controller.dart';
 /// visually dimmed rather than looking identical to active ones
 /// until tapped (a real usability gap — previously a user couldn't
 /// tell "not built yet" from "just needs a tap" without trying).
-class SettingsScreen extends ConsumerWidget {
+///
+/// UX/UI REVIEW FIX: was a ConsumerWidget (stateless) — the logout
+/// button ran a real async network call (authControllerProvider's
+/// own logout) with ZERO loading indicator and ZERO double-tap
+/// protection, the one real gap this systematic review found across
+/// every screen in this app. Converted to ConsumerStatefulWidget
+/// specifically to support that loading state.
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  bool _isLoggingOut = false;
+
+  Future<void> _logout() async {
+    if (_isLoggingOut) return; // real double-tap protection, not just a visual nicety
+    setState(() => _isLoggingOut = true);
+    try {
+      await ref.read(authControllerProvider.notifier).logout();
+      if (mounted) {
+        Navigator.of(context).pushNamedAndRemoveUntil(AppRoutes.login, (route) => false);
+      }
+    } catch (_) {
+      // Best-effort — if logout's own network call fails, the user
+      // can simply tap again; re-enabling the button (below) rather
+      // than leaving it permanently disabled on a transient failure.
+      if (mounted) setState(() => _isLoggingOut = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
     final t = ref.watch(localeControllerProvider.notifier).t;
     final currentLocale = ref.watch(localeControllerProvider);
@@ -85,12 +115,8 @@ class SettingsScreen extends ConsumerWidget {
             icon: Icons.logout_rounded,
             color: AppTheme.brick500,
             title: t('settings.logout'),
-            onTap: () async {
-              await ref.read(authControllerProvider.notifier).logout();
-              if (context.mounted) {
-                Navigator.of(context).pushNamedAndRemoveUntil(AppRoutes.login, (route) => false);
-              }
-            },
+            trailing: _isLoggingOut ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+            onTap: _isLoggingOut ? null : _logout,
           ),
         ],
       ),

@@ -91,6 +91,7 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                   enabled: !_isSubmitting,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(letterSpacing: 4),
                   decoration: InputDecoration(
+                    labelText: t('pairing.codeLabel'),
                     hintText: t('pairing.codeHint'),
                     filled: true,
                     fillColor: Colors.white,

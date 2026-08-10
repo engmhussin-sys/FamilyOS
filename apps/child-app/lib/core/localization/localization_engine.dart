@@ -20,6 +20,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
 
     'pairing.title': "Let's get set up!",
     'pairing.instruction': 'Ask a grown-up for the code from their app, then type it in below.',
+    'pairing.codeLabel': 'Pairing code',
     'pairing.codeHint': 'XXXX-XXXX',
     'pairing.genericError': "Something went wrong. Let's try again!",
     'pairing.submit': "Let's Go!",
@@ -98,6 +99,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'pairing.title': 'يلا نبدأ!',
     'pairing.instruction': 'اطلب من حد كبير الكود من تطبيقه، وبعدين اكتبه تحت.',
     'pairing.codeHint': 'XXXX-XXXX',
+    'pairing.codeLabel': 'كود الاقتران',
     'pairing.genericError': 'حصل حاجة غلط. يلا نجرب تاني!',
     'pairing.submit': 'يلا بينا!',
 
