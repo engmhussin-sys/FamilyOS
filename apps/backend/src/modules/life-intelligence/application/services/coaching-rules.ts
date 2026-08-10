@@ -29,6 +29,17 @@ export function generateParentCoachRecommendations(signals: ICoachingSignals): I
     });
   }
 
+  // Sprint 16.1 Phase 6 -- CLOSES A REAL GAP: education progress was
+  // entirely invisible to coaching before this.
+  if (signals.educationSessionCount === 0) {
+    recs.push({
+      track: 'PARENT',
+      title: 'No learning sessions logged recently',
+      body: 'It might be worth checking in about study time this week.',
+      reasoningPath: [`educationSessionCount (${signals.educationSessionCount}) === 0`],
+    });
+  }
+
   return recs;
 }
 
@@ -41,6 +52,31 @@ export function generateChildCoachRecommendations(signals: ICoachingSignals): IC
       title: 'You\u2019re doing great!',
       body: 'You\u2019ve been keeping up with your habits really well \u2014 keep it going!',
       reasoningPath: [`habitCompletionRate (${signals.habitCompletionRate}) >= 0.8`],
+    });
+  }
+
+  // Sprint 16.1 Phase 6 -- CLOSES A REAL GAP: encouraging, non-judgmental
+  // education/streak/wellbeing feedback for the child, using the
+  // newly-available signals. Deliberately framed positively even for
+  // an achieved-goal case -- never a "you failed" message, per the
+  // brief's own explicit "non-judgmental" requirement. No rule here
+  // ever criticizes a missed goal directly to the child; that stays a
+  // PARENT-track concern (see generateParentCoachRecommendations).
+  if (signals.educationStreakDays >= 3) {
+    recs.push({
+      track: 'CHILD',
+      title: `${signals.educationStreakDays}-day learning streak!`,
+      body: 'Your consistency with studying is really paying off -- keep it up!',
+      reasoningPath: [`educationStreakDays (${signals.educationStreakDays}) >= 3`],
+    });
+  }
+
+  if (signals.hydrationAchievedToday && signals.activityAchievedToday) {
+    recs.push({
+      track: 'CHILD',
+      title: 'Great job today!',
+      body: 'You hit both your water and activity goals today -- awesome work!',
+      reasoningPath: ['hydrationAchievedToday === true', 'activityAchievedToday === true'],
     });
   }
 

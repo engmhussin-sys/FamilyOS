@@ -17,4 +17,15 @@ export interface ICoachingSignals {
   healthScore: number;
   faithCompletionRate: number;
   missedHabitsCount: number;
+  /** Sprint 16.1 Phase 6 — CLOSES A REAL GAP: Education was entirely
+   * absent from coaching signals despite LearningEngineService
+   * existing since an earlier sprint. */
+  educationSessionCount: number;
+  educationStreakDays: number;
+  /** Sprint 16.1 Phase 6 — CLOSES A REAL GAP: Hydration/Activity
+   * goal-achievement was entirely absent despite
+   * HealthEngineService.getDailyProgress (Sprint 15/16.1) already
+   * computing exactly this. */
+  hydrationAchievedToday: boolean;
+  activityAchievedToday: boolean;
 }

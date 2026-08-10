@@ -9,6 +9,13 @@ describe('Coaching rules (pure)', () => {
     healthScore: 70,
     faithCompletionRate: 0.6,
     missedHabitsCount: 0,
+    // Sprint 16.1 Phase 6 — new required fields, neutral defaults so
+    // existing tests below (which override specific fields via
+    // spread) keep testing exactly what they tested before.
+    educationSessionCount: 1,
+    educationStreakDays: 0,
+    hydrationAchievedToday: false,
+    activityAchievedToday: false,
   };
 
   it('Parent Coach fires only when a real threshold is crossed, and cites it in reasoningPath', () => {
