@@ -39,6 +39,18 @@ export interface Habit {
   isActive: boolean;
 }
 
+/** CLOSES A REAL GAP: mirrors the backend's own
+ * findMissedHabitsInWindow return shape — a real endpoint
+ * (GET habits/:childId/missed, built Sprint 16) that had zero
+ * consumer in any frontend until now. Used strictly as a Coaching
+ * SIGNAL for the parent, never a punishment display — the same
+ * discipline the backend itself was built with. */
+export interface MissedHabit {
+  habitId: string;
+  habitTitle: string;
+  date: string;
+}
+
 export interface CoachingRecommendation {
   track: 'PARENT' | 'CHILD' | 'FAMILY';
   title: string;
@@ -106,6 +118,7 @@ export const digitalTwinQueryKey = (childId: string) => ['life-intelligence', 'd
 export const wellbeingQueryKey = (childId: string) => ['life-intelligence', 'wellbeing', childId] as const;
 export const timelineQueryKey = (childId: string, category?: string) => ['life-intelligence', 'timeline', childId, category] as const;
 export const habitsQueryKey = (childId: string) => ['life-intelligence', 'habits', childId] as const;
+export const missedHabitsQueryKey = (childId: string) => ['life-intelligence', 'missed-habits', childId] as const;
 export const coachingQueryKey = (childId: string) => ['life-intelligence', 'coaching', childId] as const;
 export const rewardsAccountQueryKey = (childId: string) => ['life-intelligence', 'rewards-account', childId] as const;
 export const faithPracticesQueryKey = (childId: string) => ['life-intelligence', 'faith-practices', childId] as const;
@@ -129,6 +142,12 @@ export const lifeIntelligenceApi = {
 
   completeHabit(childId: string, habitId: string): Promise<void> {
     return httpClient<void>(`/life-intelligence/habits/${childId}/${habitId}/complete`, { method: 'POST', body: {} });
+  },
+
+  /** CLOSES A REAL GAP: this endpoint existed since Sprint 16 with
+   * zero frontend consumer anywhere. */
+  getMissedHabits(childId: string, windowDays = 7): Promise<MissedHabit[]> {
+    return httpClient<MissedHabit[]>(`/life-intelligence/habits/${childId}/missed?windowDays=${windowDays}`);
   },
 
   getCoachingRecommendations(childId: string): Promise<CoachingRecommendation[]> {

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { lifeIntelligenceApi, habitsQueryKey, Habit } from '../api/lifeIntelligenceApi';
+import { lifeIntelligenceApi, habitsQueryKey, missedHabitsQueryKey, Habit, MissedHabit } from '../api/lifeIntelligenceApi';
 import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi';
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
@@ -12,6 +12,14 @@ function ChildHabitPanel({ childId, childName }: { childId: string; childName: s
   const { data: habits, isLoading } = useQuery<Habit[]>({
     queryKey: habitsQueryKey(childId),
     queryFn: () => lifeIntelligenceApi.getHabits(childId),
+  });
+
+  // CLOSES A REAL GAP: this endpoint (built Sprint 16) had zero
+  // frontend consumer anywhere until now. Used strictly as a
+  // Coaching SIGNAL, never a punishment display.
+  const { data: missed } = useQuery<MissedHabit[]>({
+    queryKey: missedHabitsQueryKey(childId),
+    queryFn: () => lifeIntelligenceApi.getMissedHabits(childId, 7),
   });
 
   const handleComplete = async (habitId: string) => {
@@ -47,6 +55,12 @@ function ChildHabitPanel({ childId, childName }: { childId: string; childName: s
             </li>
           ))}
         </ul>
+      )}
+
+      {missed && missed.length > 0 && (
+        <div className="mt-3 rounded-card bg-amber-50 px-3 py-2">
+          <p className="text-xs font-semibold text-ink-soft">{t('habitTracker.missedSignal', { count: missed.length })}</p>
+        </div>
       )}
     </div>
   );

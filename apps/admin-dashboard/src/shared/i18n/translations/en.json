@@ -196,7 +196,8 @@
     "title": "Habits",
     "empty": "No habits yet.",
     "shared": "Shared",
-    "markDone": "Mark done"
+    "markDone": "Mark done",
+    "missedSignal": "{{count}} habit check-ins missed this week — a quick check-in together might help."
   },
   "healthTrend": {
     "title": "Health",
