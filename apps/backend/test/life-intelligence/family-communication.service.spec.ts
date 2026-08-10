@@ -202,4 +202,28 @@ describe('FamilyCommunicationService', () => {
       expect(result).toEqual([]);
     });
   });
+
+  describe('acknowledgeMessage (FIXES A REAL IDOR VULNERABILITY: this method previously had ZERO ownership check — any device could mark any child\u2019s message, across any family, as read)', () => {
+    it('SECURITY REGRESSION TEST: throws when the message belongs to a DIFFERENT child than the caller', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'm1', childId: 'a-different-child', approvalStatus: 'APPROVED' });
+
+      await expect(service.acknowledgeMessage('m1', childId)).rejects.toThrow(NotFoundException);
+      expect(repositoryMock.acknowledge).not.toHaveBeenCalled();
+    });
+
+    it('SECURITY REGRESSION TEST: throws (not silently no-ops) when the message does not exist at all', async () => {
+      repositoryMock.findById.mockResolvedValue(null);
+
+      await expect(service.acknowledgeMessage('nonexistent', childId)).rejects.toThrow(NotFoundException);
+      expect(repositoryMock.acknowledge).not.toHaveBeenCalled();
+    });
+
+    it('succeeds when the message genuinely belongs to the calling child', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'm1', childId, approvalStatus: 'APPROVED' });
+
+      await service.acknowledgeMessage('m1', childId);
+
+      expect(repositoryMock.acknowledge).toHaveBeenCalledWith('m1');
+    });
+  });
 });

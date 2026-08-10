@@ -418,6 +418,18 @@ export class LifeIntelligenceController {
     return this.communication.getChildInbox(device.sub, await this.pairingOrchestrator.getChildIdForDevice(device.sub));
   }
 
+  /** CLOSES A REAL GAP: acknowledgeMessage existed in the service
+   * layer but had zero endpoint — combined with the IDOR fix just
+   * made to that method, this is now safe to expose:
+   * getChildAndFamilyIdForDevice resolves the caller's REAL child
+   * server-side, never trusting a client-supplied id. */
+  @Post('self/messages/:messageId/acknowledge')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfAcknowledgeMessage(@Param('messageId') messageId: string, @CurrentUser() device: IJwtPayload) {
+    const { childId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    await this.communication.acknowledgeMessage(messageId, childId);
+  }
+
   // ---- Child self-service: Rewards (Sprint 3 — Parent/Child parity audit) ----
   // CLOSES A REAL GAP: RewardsEngineService has had a real, working
   // account/store/redemption system since Sprint 17 — but zero

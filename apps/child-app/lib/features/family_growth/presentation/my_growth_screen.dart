@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -73,6 +75,17 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
           _messages = results[2] as List<dynamic>;
           _childName = (results[3] as Map<String, dynamic>)['firstName'] as String? ?? 'there';
         });
+      }
+      // CLOSES A REAL GAP: acknowledgeMessage existed in the backend
+      // since an earlier sprint but had zero Child App caller —
+      // every delivered message stayed "new" forever from the
+      // backend's own perspective. Fire-and-forget (not awaited
+      // sequentially) — never worth delaying this screen's render on.
+      for (final m in _messages ?? []) {
+        final message = m as Map<String, dynamic>;
+        if (message['acknowledgedAt'] == null) {
+          unawaited(api.acknowledgeMessage(message['id'] as String));
+        }
       }
     } catch (e) {
       if (mounted) setState(() => _errorMessage = e.toString());
@@ -629,6 +642,7 @@ class _MessageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isNew = message['acknowledgedAt'] == null;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -638,6 +652,7 @@ class _MessageCard extends StatelessWidget {
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
+        border: isNew ? Border.all(color: KidTheme.messagesAccent, width: 1.5) : null,
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -650,7 +665,12 @@ class _MessageCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(message['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium),
+                  Row(
+                    children: [
+                      Expanded(child: Text(message['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium)),
+                      if (isNew) Container(width: 8, height: 8, margin: const EdgeInsets.only(left: 6), decoration: const BoxDecoration(color: KidTheme.messagesAccent, shape: BoxShape.circle)),
+                    ],
+                  ),
                   const SizedBox(height: 2),
                   Text(message['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyLarge),
                 ],

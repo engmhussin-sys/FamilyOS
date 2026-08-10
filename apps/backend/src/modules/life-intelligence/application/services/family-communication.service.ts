@@ -149,7 +149,19 @@ export class FamilyCommunicationService {
     return this.repository.listDeliveredForChild(requestedChildId);
   }
 
-  async acknowledgeMessage(messageId: string): Promise<void> {
+  /** FIXES A REAL IDOR VULNERABILITY found while adding a real
+   * consumer for this method: it previously accepted any messageId
+   * with zero ownership check — any device could mark ANY child's
+   * message (across any family) as acknowledged. Now requires the
+   * caller's own childId (resolved server-side from the device's own
+   * pairing, never client-suppliable) and verifies the message
+   * actually belongs to that child — same IDOR-protection pattern
+   * approve()/reject() already establish above. */
+  async acknowledgeMessage(messageId: string, ownerChildId: string): Promise<void> {
+    const message = await this.repository.findById(messageId);
+    if (!message || message.childId !== ownerChildId) {
+      throw new NotFoundException('Message not found');
+    }
     await this.repository.acknowledge(messageId);
   }
 

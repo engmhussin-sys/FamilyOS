@@ -67,6 +67,16 @@ class FamilyGrowthApi {
     return _client.getList('/life-intelligence/self/coaching');
   }
 
+  /// CLOSES A REAL GAP: acknowledgeMessage existed in the backend
+  /// service layer but had zero endpoint (and, until this same fix,
+  /// zero ownership check — a real IDOR vulnerability closed before
+  /// this endpoint was ever exposed). Best-effort from the caller's
+  /// perspective — a failed acknowledge is never worth interrupting
+  /// the child's experience over.
+  Future<void> acknowledgeMessage(String messageId) {
+    return _client.post('/life-intelligence/self/messages/$messageId/acknowledge', body: <String, dynamic>{});
+  }
+
   Future<List<dynamic>> getFaithPractices() {
     return _client.getList('/life-intelligence/self/faith/practices');
   }
