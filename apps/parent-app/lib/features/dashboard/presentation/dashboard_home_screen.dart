@@ -10,6 +10,7 @@ import '../../life_intelligence/presentation/digital_twin_screen.dart';
 import '../../life_intelligence/presentation/life_timeline_screen.dart';
 import '../../life_intelligence/presentation/habit_tracker_screen.dart';
 import '../../life_intelligence/presentation/health_trend_screen.dart';
+import '../../life_intelligence/presentation/learning_progress_screen.dart';
 import '../../life_intelligence/presentation/faith_progress_screen.dart';
 import '../../life_intelligence/presentation/family_store_screen.dart';
 import '../../life_intelligence/presentation/coaching_screen.dart';
@@ -344,6 +345,16 @@ class _ChildCard extends StatelessWidget {
                 Navigator.of(sheetContext).pop();
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => HealthTrendScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.menu_book_outlined),
+              title: Text(t('learningProgress.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => LearningProgressScreen(childId: childId, childName: childName)),
                 );
               },
             ),

@@ -94,4 +94,12 @@ class LifeIntelligenceApi {
     if (result.containsKey('data') && result['data'] == null && result.length == 1) return null;
     return result;
   }
+
+  /// Sprint 16.1 Phase 7 — CLOSES A REAL GAP: zero Parent App consumer
+  /// existed for the backend's own learning progress endpoint (built
+  /// since an earlier sprint, extended with streakDays in Phase 5) —
+  /// Education had no representation in the Parent App at all before this.
+  Future<Map<String, dynamic>> getLearningProgress(String childId) {
+    return _client.get('/life-intelligence/learning/$childId/progress');
+  }
 }
