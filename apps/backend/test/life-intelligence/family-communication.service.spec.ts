@@ -9,7 +9,7 @@ import { SafetyEngineService } from '../../src/modules/ai-core/application/servi
 import { AI_PROVIDER } from '../../src/modules/ai-core/domain/ai-provider.port';
 
 describe('FamilyCommunicationService', () => {
-  const repositoryMock = { create: jest.fn(), findById: jest.fn(), approveAndDeliver: jest.fn(), reject: jest.fn(), listDeliveredForChild: jest.fn(), acknowledge: jest.fn() };
+  const repositoryMock = { create: jest.fn(), findById: jest.fn(), approveAndDeliver: jest.fn(), reject: jest.fn(), listDeliveredForChild: jest.fn(), acknowledge: jest.fn(), listPendingForFamily: jest.fn() };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const pairingOrchestratorMock = { getChildIdForDevice: jest.fn() };
   const safetyEngineMock = { validate: jest.fn() };
@@ -182,6 +182,24 @@ describe('FamilyCommunicationService', () => {
       repositoryMock.listDeliveredForChild.mockResolvedValue([]);
       await service.getChildInbox('device-1', childId);
       expect(repositoryMock.listDeliveredForChild).toHaveBeenCalledWith(childId);
+    });
+  });
+
+  describe('getPendingMessages (CRITICAL FIX: closes the gap that made every child-targeted Smart Notification structurally unreachable — approve()/reject() existed but nothing surfaced what needed approving)', () => {
+    it('returns whatever the repository reports, scoped by the CALLING family (never a caller-suppliable childId)', async () => {
+      const pending = [{ id: 'm1', childId: 'c1', childName: 'Alice', title: 't', body: 'b', category: 'HABIT_COMPLETED', approvalStatus: 'PENDING' }];
+      repositoryMock.listPendingForFamily.mockResolvedValue(pending);
+
+      const result = await service.getPendingMessages(familyId);
+
+      expect(repositoryMock.listPendingForFamily).toHaveBeenCalledWith(familyId);
+      expect(result).toEqual(pending);
+    });
+
+    it('BOUNDARY CASE: an empty result (nothing pending) is returned as an empty array, never an error', async () => {
+      repositoryMock.listPendingForFamily.mockResolvedValue([]);
+      const result = await service.getPendingMessages(familyId);
+      expect(result).toEqual([]);
     });
   });
 });
