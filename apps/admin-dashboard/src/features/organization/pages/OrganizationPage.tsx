@@ -79,10 +79,10 @@ function MembersPanel({ organizationId }: { organizationId: string }) {
         <div className="mt-2 flex flex-col gap-2">
           <Input label={t('support.email')} type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
           <select className="rounded-card border border-sand-200 px-3 py-2 text-sm" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
-            <option value="ADMIN">ADMIN</option>
-            <option value="MANAGER">MANAGER</option>
-            <option value="MEMBER">MEMBER</option>
-            <option value="GUEST">GUEST</option>
+            <option value="ADMIN">{t('organization.role.ADMIN')}</option>
+            <option value="MANAGER">{t('organization.role.MANAGER')}</option>
+            <option value="MEMBER">{t('organization.role.MEMBER')}</option>
+            <option value="GUEST">{t('organization.role.GUEST')}</option>
           </select>
           <Button onClick={() => inviteMutation.mutate()} isLoading={inviteMutation.isPending} disabled={!inviteEmail} className="w-fit">
             {t('organization.sendInvite')}

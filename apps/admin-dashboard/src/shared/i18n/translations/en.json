@@ -326,6 +326,12 @@
     "copied": "Copied!",
     "acceptInvitationTitle": "Join Organization",
     "acceptInvitationBody": "You've been invited to join an organization. Click below to accept.",
-    "acceptInvitationButton": "Accept Invitation"
+    "acceptInvitationButton": "Accept Invitation",
+    "role": {
+      "ADMIN": "Admin",
+      "MANAGER": "Manager",
+      "MEMBER": "Member",
+      "GUEST": "Guest"
+    }
   }
 }

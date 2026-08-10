@@ -326,6 +326,12 @@
     "copied": "تم النسخ!",
     "acceptInvitationTitle": "انضمام للمنظمة",
     "acceptInvitationBody": "اتدعيت تنضم لمنظمة. اضغط تحت للموافقة.",
-    "acceptInvitationButton": "الموافقة على الدعوة"
+    "acceptInvitationButton": "الموافقة على الدعوة",
+    "role": {
+      "ADMIN": "مسؤول",
+      "MANAGER": "مدير",
+      "MEMBER": "عضو",
+      "GUEST": "زائر"
+    }
   }
 }
