@@ -20,7 +20,10 @@ import { LogNutritionDto, LogHydrationDto, LogSleepDto, LogActivityDto } from '.
 import { CreateFaithPracticeDto, LogFaithPracticeDto } from '../../application/dto/faith.dto';
 import { CreateLearningGoalDto, LogLearningSessionDto, GenerateSmartTasksDto, DecideSmartTaskDto } from '../../application/dto/learning-smart-task.dto';
 import { RequestRedemptionDto, TriggerRewardEventDto, SendParentMessageDto, DraftAiMessageDto } from '../../application/dto/rewards-communication.dto';
+import { RecordDailyUsageSummaryDto, RecordCriticalEventDto } from '../../application/dto/digital-wellbeing.dto';
+import { DigitalWellbeingEngineService } from '../../application/services/digital-wellbeing-engine.service';
 import { PairingOrchestratorService } from '../../../pairing/application/services/pairing-orchestrator.service';
+import { ChildrenService } from '../../../children/application/services/children.service';
 
 @Controller('life-intelligence')
 @UseGuards(JwtAuthGuard)
@@ -38,6 +41,8 @@ export class LifeIntelligenceController {
     private readonly digitalTwin: DigitalTwinService,
     private readonly familyInsight: FamilyInsightService,
     private readonly pairingOrchestrator: PairingOrchestratorService,
+    private readonly childrenService: ChildrenService,
+    private readonly digitalWellbeing: DigitalWellbeingEngineService,
   ) {}
 
   // ---- Habit Builder ----
@@ -269,6 +274,20 @@ export class LifeIntelligenceController {
   // child inbox route. A device can only ever act for its own paired
   // child, never an arbitrary childId.
 
+  /** CLOSES A REAL GAP (found while building the Child App's design):
+   * the Child App had no way to know its own child's first name at
+   * all, the same class of gap Sprint 29 already found for familyId —
+   * so a greeting like "Hi Ahmed!" had nothing to read. Minimal by
+   * design: returns only firstName, never the full Child record (no
+   * dateOfBirth, no other family data a device has no reason to hold). */
+  @Get('self/profile')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfGetProfile(@CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    const child = await this.childrenService.getChildOrThrow(childId, familyId);
+    return { firstName: child.firstName };
+  }
+
   @Post('self/habits/:habitId/complete')
   @UseGuards(DeviceJwtAuthGuard)
   async selfCompleteHabit(@Param('habitId') habitId: string, @Body() dto: CompleteHabitDto, @CurrentUser() device: IJwtPayload) {
@@ -308,6 +327,81 @@ export class LifeIntelligenceController {
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetMessages(@CurrentUser() device: IJwtPayload) {
     return this.communication.getChildInbox(device.sub, await this.pairingOrchestrator.getChildIdForDevice(device.sub));
+  }
+
+  // ---- Child self-service: Rewards (Sprint 3 — Parent/Child parity audit) ----
+  // CLOSES A REAL GAP: RewardsEngineService has had a real, working
+  // account/store/redemption system since Sprint 17 — but zero
+  // device-authenticated route ever let a child see their own
+  // balance or the family store. A parent could always see and
+  // manage it (life-intelligence/rewards/*); the child, who actually
+  // earns and would spend the balance, could not.
+
+  @Get('self/rewards/account')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfGetRewardsAccount(@CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.rewardsEngine.getAccount(childId, familyId);
+  }
+
+  @Get('self/rewards/store')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfGetRewardsStore(@CurrentUser() device: IJwtPayload) {
+    const { familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.rewardsEngine.listFamilyStore(familyId);
+  }
+
+  @Post('self/rewards/redeem/:catalogItemId')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfRequestRedemption(@Param('catalogItemId') catalogItemId: string, @CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.rewardsEngine.requestRedemption(childId, familyId, catalogItemId);
+  }
+
+  // ---- Digital Wellbeing (Edge-First Intelligence Architecture) ----
+  // Same device-authenticated, self/* discipline as everything above:
+  // the device uploads its OWN already-locally-aggregated summary,
+  // resolving childId/familyId server-side. Never accepts raw events
+  // — RecordDailyUsageSummaryDto is structurally incapable of carrying
+  // per-tap data, message content, keystrokes, or GPS.
+
+  @Post('self/wellbeing/daily-summary')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfRecordDailySummary(@Body() dto: RecordDailyUsageSummaryDto, @CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    return this.digitalWellbeing.recordDailySummary(childId, familyId, device.sub, dto);
+  }
+
+  /** The near-real-time critical-event channel — expected to be
+   * called within seconds of the triggering event on-device, not
+   * batched with the daily summary above. */
+  @Post('self/wellbeing/critical-event')
+  @UseGuards(DeviceJwtAuthGuard)
+  async selfRecordCriticalEvent(@Body() dto: RecordCriticalEventDto, @CurrentUser() device: IJwtPayload) {
+    const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
+    await this.digitalWellbeing.recordCriticalEvent(childId, familyId, dto);
+  }
+
+  @Get('wellbeing/:childId/snapshot')
+  getWellbeingSnapshot(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
+    return this.digitalWellbeing.getBehavioralSnapshotSummary(childId, user.familyId!);
+  }
+
+  @Get('wellbeing/:childId/top-apps/:deviceId')
+  getTopApps(@Param('childId') childId: string, @Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
+    return this.digitalWellbeing.getTopAppsToday(childId, user.familyId!, deviceId);
+  }
+
+  /** Sprint 14 (Behavioral Intelligence Engine) — Parent Insights.
+   * `date` defaults to today if omitted. */
+  @Get('wellbeing/:childId/insights')
+  getWellbeingInsight(
+    @Param('childId') childId: string,
+    @Query('date') date: string | undefined,
+    @CurrentUser() user: IJwtPayload,
+  ) {
+    const targetDate = date ?? new Date().toISOString().split('T')[0];
+    return this.digitalWellbeing.getWellbeingInsight(childId, user.familyId!, targetDate);
   }
 
   // ---- Timeline ----

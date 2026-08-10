@@ -4,7 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../core/theme/app_theme.dart';
 
+/// DESIGN PASS: the very first screen every parent ever sees was a
+/// bare form with a headline and two text fields — no brand identity
+/// at all. Now has a real hero section (a guardian-shield mark + a
+/// short trust-building tagline) above the form, establishing the
+/// "trustworthy, calm" tone the whole app's palette was designed
+/// around before the person even logs in.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -32,6 +39,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isSubmitting = false);
 
     if (success) {
+      // Best-effort, fire-and-forget — never blocks navigation on a
+      // push registration outcome (see PushRegistrationService's own
+      // docstring for why this can safely fail silently today).
+      ref.read(pushRegistrationServiceProvider).initializeAndRegister();
       Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
     } else {
       setState(() => _errorMessage = ref.read(authControllerProvider).errorMessage);
@@ -40,55 +51,87 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
+    ref.watch(localeControllerProvider);
     final t = ref.watch(localeControllerProvider.notifier).t;
 
     return Scaffold(
       body: SafeArea(
-        // PRODUCTION READINESS REVIEW FIX (UI/UX Review — Responsive Layout):
-        // this form had no scroll view. On a small device with the
-        // keyboard open, the fields + button could exceed the available
-        // height and throw a RenderFlex overflow error instead of
-        // scrolling — a real, common Flutter form bug.
         child: SingleChildScrollView(
           child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(t('auth.loginTitle'), style: Theme.of(context).textTheme.headlineMedium, textAlign: TextAlign.center),
-              const SizedBox(height: 32),
-              TextField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: InputDecoration(labelText: t('auth.email')),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                decoration: InputDecoration(labelText: t('auth.password')),
-              ),
-              if (_errorMessage != null) ...[
-                const SizedBox(height: 12),
-                Text(_errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 24),
+                Center(
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [AppTheme.guardian950, AppTheme.sage500],
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [BoxShadow(color: AppTheme.guardian950.withOpacity(0.25), blurRadius: 20, offset: const Offset(0, 8))],
+                    ),
+                    child: const Icon(Icons.shield_rounded, color: Colors.white, size: 36),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(t('auth.loginTitle'), style: Theme.of(context).textTheme.displaySmall, textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                Text(
+                  t('auth.loginTagline'),
+                  style: Theme.of(context).textTheme.bodyLarge,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 36),
+                TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(labelText: t('auth.email'), prefixIcon: const Icon(Icons.mail_outline_rounded)),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  decoration: InputDecoration(labelText: t('auth.password'), prefixIcon: const Icon(Icons.lock_outline_rounded)),
+                ),
+                if (_errorMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.brick500.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline_rounded, color: AppTheme.brick500, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(_errorMessage!, style: const TextStyle(color: AppTheme.brick500))),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: _isSubmitting ? null : _submit,
+                  child: _isSubmitting
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Text(t('auth.login')),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pushNamed(AppRoutes.register),
+                  child: Text('${t('auth.noAccount')} ${t('auth.createAccount')}'),
+                ),
               ],
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _isSubmitting ? null : _submit,
-                child: _isSubmitting
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                    : Text(t('auth.login')),
-              ),
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: () => Navigator.of(context).pushNamed(AppRoutes.register),
-                child: Text('${t('auth.noAccount')} ${t('auth.createAccount')}'),
-              ),
-            ],
+            ),
           ),
-        ),
         ),
       ),
     );

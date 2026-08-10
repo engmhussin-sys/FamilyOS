@@ -7,6 +7,12 @@ export interface IHabit {
   isShared: boolean;
   isActive: boolean;
   createdAt: Date;
+  /** CLOSES A REAL GAP found while building the Child App's design
+   * (a visual daily-progress ring needed real per-item completion
+   * state, which nothing exposed before this). True when a
+   * HabitCompletion exists for today's date \u2014 computed at read time,
+   * never stored redundantly on Habit itself. */
+  completedToday: boolean;
 }
 
 export interface IHabitCompletion {

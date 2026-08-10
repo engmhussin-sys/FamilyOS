@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/auth/session_expired_notifier.dart';
@@ -16,9 +17,20 @@ import 'features/family/presentation/create_family_screen.dart';
 import 'features/notifications/presentation/notifications_screen.dart';
 import 'features/pairing/presentation/add_child_screen.dart';
 import 'features/settings/presentation/settings_screen.dart';
+import 'features/billing/presentation/subscription_screen.dart';
+import 'features/billing/presentation/billing_history_screen.dart';
+import 'features/support/presentation/support_home_screen.dart';
+import 'features/support/presentation/contact_support_screen.dart';
+import 'features/family/presentation/create_child_screen.dart';
+import 'features/family/presentation/manage_consents_screen.dart';
+import 'features/settings/presentation/delete_account_screen.dart';
+import 'features/billing/presentation/redeem_code_screen.dart';
+import 'core/observability/crash_reporting.dart';
 
 void main() {
-  runApp(const ProviderScope(child: ParentApp()));
+  bootstrapWithCrashReporting(() async {
+    runApp(const ProviderScope(child: ParentApp()));
+  });
 }
 
 final _navigatorKey = GlobalKey<NavigatorState>();
@@ -67,11 +79,26 @@ class ParentApp extends ConsumerWidget {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,
-      // No Flutter-native localization delegate is wired here — this
-      // app's translation is `LocaleController`'s own mechanism (mirrors
-      // the Dashboard's LocaleProvider), not `flutter_localizations`.
-      // `Directionality` is set explicitly instead of relying on
-      // `MaterialApp.locale`, for the same reason.
+      // CLOSES A REAL GAP (Master Completeness Audit): this app's own
+      // translation still runs through LocaleController (unchanged,
+      // see below) — this addition is ONLY for native Material
+      // widgets (showDatePicker, default dialog button labels) that
+      // read Flutter's own Locale directly and never went through
+      // Directionality alone.
+      locale: ref.watch(localeControllerProvider.notifier).toLocale,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('en'), Locale('ar')],
+      // No Flutter-native localization delegate is wired here for THIS
+      // app's own text — that stays LocaleController's mechanism
+      // (mirrors the Dashboard's LocaleProvider), not
+      // flutter_localizations. `Directionality` is set explicitly
+      // below for the same reason — both of these remain correct and
+      // unchanged; flutter_localizations above is additive, for
+      // native widgets only.
       builder: (context, child) => Directionality(
         textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
         child: OfflineBanner(child: child!),
@@ -86,6 +113,14 @@ class ParentApp extends ConsumerWidget {
         AppRoutes.addChild: (_) => const AddChildScreen(),
         AppRoutes.notifications: (_) => const NotificationsScreen(),
         AppRoutes.settings: (_) => const SettingsScreen(),
+        AppRoutes.subscription: (_) => const SubscriptionScreen(),
+        AppRoutes.billingHistory: (_) => const BillingHistoryScreen(),
+        AppRoutes.support: (_) => const SupportHomeScreen(),
+        AppRoutes.contactSupport: (_) => const ContactSupportScreen(),
+        AppRoutes.createChild: (_) => const CreateChildScreen(),
+        AppRoutes.manageConsents: (_) => const ManageConsentsScreen(),
+        AppRoutes.deleteAccount: (_) => const DeleteAccountScreen(),
+        AppRoutes.redeemCode: (_) => const RedeemCodeScreen(),
       },
     );
   }

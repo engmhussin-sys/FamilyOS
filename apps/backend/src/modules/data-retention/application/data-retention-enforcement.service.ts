@@ -67,6 +67,34 @@ export class DataRetentionEnforcementService {
     return { category: 'Location Events', action: 'HARD_DELETE', affectedRows: result.count };
   }
 
+  /**
+   * CLOSES A REAL GAP found during the Edge-First Intelligence
+   * Architecture sprint's own security/privacy self-review \u2014 neither
+   * table had a registered retention policy despite both being
+   * genuinely sensitive, actively-written child behavioral data.
+   *
+   * UNLIKE enforceLocationEventRetention above, this is not
+   * theoretical: DigitalWellbeingEngineService.recordDailySummary()
+   * writes to both tables on every device sync, so rows exist from
+   * the moment that pipeline goes live. Uses a fixed lookback window
+   * (matching enforceNotificationRetention's own pattern) rather than
+   * a per-row expiresAt column, since neither table has one \u2014 that's
+   * a legitimate future refinement, not a gap this method needs to
+   * solve today.
+   */
+  async enforceDigitalWellbeingRetention(retentionDays = 90): Promise<IRetentionEnforcementResult> {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const [snapshotResult, usageLogResult] = await this.prisma.$transaction([
+      this.prisma.dailyBehavioralSnapshot.deleteMany({ where: { usageDate: { lt: cutoff } } }),
+      this.prisma.appUsageLog.deleteMany({ where: { usageDate: { lt: cutoff } } }),
+    ]);
+    const totalDeleted = snapshotResult.count + usageLogResult.count;
+    this.logger.log(
+      `Retention: deleted ${snapshotResult.count} daily behavioral snapshot(s) and ${usageLogResult.count} app usage log(s) older than ${retentionDays} days.`,
+    );
+    return { category: 'App Usage Data', action: 'HARD_DELETE', affectedRows: totalDeleted };
+  }
+
   /** Runs both \u2014 the method a future scheduler (once chosen) would
    * call. Not scheduled anywhere itself. */
   async enforceAll(): Promise<IRetentionEnforcementResult[]> {
@@ -74,6 +102,7 @@ export class DataRetentionEnforcementService {
       await this.enforceNotificationRetention(),
       await this.enforceAnalyticsRetention(),
       await this.enforceLocationEventRetention(),
+      await this.enforceDigitalWellbeingRetention(),
     ];
   }
 }

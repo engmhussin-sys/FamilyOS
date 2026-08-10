@@ -11,6 +11,10 @@ class FamilyGrowthApi {
 
   final ApiClient _client;
 
+  Future<Map<String, dynamic>> getProfile() {
+    return _client.get('/life-intelligence/self/profile');
+  }
+
   Future<List<dynamic>> getHabits() {
     return _client.getList('/life-intelligence/self/habits');
   }
@@ -36,5 +40,17 @@ class FamilyGrowthApi {
   /// regardless of caller.
   Future<List<dynamic>> getMessages() {
     return _client.getList('/life-intelligence/self/messages');
+  }
+
+  Future<Map<String, dynamic>> getRewardsAccount() {
+    return _client.get('/life-intelligence/self/rewards/account');
+  }
+
+  Future<List<dynamic>> getRewardsStore() {
+    return _client.getList('/life-intelligence/self/rewards/store');
+  }
+
+  Future<void> redeemReward(String catalogItemId) {
+    return _client.post('/life-intelligence/self/rewards/redeem/$catalogItemId', body: <String, dynamic>{});
   }
 }

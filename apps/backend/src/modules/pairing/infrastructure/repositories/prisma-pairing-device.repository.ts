@@ -80,6 +80,45 @@ export class PrismaPairingDeviceRepository implements IPairingDeviceRepository {
     });
   }
 
+  async upsertParentDevicePushToken(input: {
+    userId: string;
+    familyId: string;
+    platform: 'ANDROID' | 'IOS';
+    pushToken: string;
+  }): Promise<void> {
+    const existing = await this.prisma.device.findFirst({
+      where: { userId: input.userId, ownerType: 'PARENT', platform: input.platform },
+    });
+
+    if (existing) {
+      await this.prisma.device.update({
+        where: { id: existing.id },
+        data: { pushToken: input.pushToken, lastSeenAt: new Date() },
+      });
+    } else {
+      await this.prisma.device.create({
+        data: {
+          familyId: input.familyId,
+          userId: input.userId,
+          ownerType: 'PARENT',
+          platform: input.platform,
+          pushToken: input.pushToken,
+          status: 'ACTIVE',
+          pairedAt: new Date(),
+          lastSeenAt: new Date(),
+        },
+      });
+    }
+  }
+
+  async findPushTokensForUser(userId: string): Promise<string[]> {
+    const devices = await this.prisma.device.findMany({
+      where: { userId, pushToken: { not: null } },
+      select: { pushToken: true },
+    });
+    return devices.map((d: { pushToken: string | null }) => d.pushToken).filter((t: string | null): t is string => t !== null);
+  }
+
   private toRecord(device: {
     id: string;
     childId: string | null;

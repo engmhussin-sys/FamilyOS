@@ -13,10 +13,11 @@ class AuthApi {
     required String fullName,
     required String email,
     required String password,
+    required bool acceptedTerms,
   }) {
     return _client.post(
       '/auth/register',
-      data: {'fullName': fullName, 'email': email, 'password': password},
+      data: {'fullName': fullName, 'email': email, 'password': password, 'acceptedTerms': acceptedTerms},
       skipAuth: true,
     );
   }

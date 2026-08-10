@@ -4,8 +4,10 @@ import { ChildrenController } from './presentation/controllers/children.controll
 import { ChildrenService } from './application/services/children.service';
 import { PrismaChildRepository } from './infrastructure/repositories/prisma-child.repository';
 import { CHILD_REPOSITORY } from './application/ports/child.repository.port';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
+  imports: [BillingModule],
   controllers: [ChildrenController],
   providers: [
     ChildrenService,

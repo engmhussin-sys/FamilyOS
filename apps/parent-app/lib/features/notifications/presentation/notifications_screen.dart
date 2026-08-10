@@ -3,7 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../../core/theme/app_theme.dart';
 
+/// DESIGN PASS: unread notifications now get a colored accent bar and
+/// filled dot instead of a plain outline/filled circle icon that was
+/// easy to miss at a glance in a long list.
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -27,9 +31,6 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       final result = await ref.read(notificationsApiProvider).list();
       if (mounted) setState(() => _notifications = result);
     } catch (e) {
-      // PRODUCTION READINESS REVIEW FIX (UI/UX Review — Error State):
-      // previously unhandled — a failure here left `_notifications` null
-      // forever, showing an infinite loading spinner with no way out.
       if (mounted) setState(() => _errorMessage = e.toString());
     }
   }
@@ -38,15 +39,14 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     try {
       await ref.read(notificationsApiProvider).markAllAsRead();
     } catch (_) {
-      // Already enqueued by NotificationsApi — no error surfaced here;
-      // the OfflineBanner's pending-count badge is the feedback.
+      // Already enqueued by NotificationsApi.
     }
     await _load();
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
+    ref.watch(localeControllerProvider);
     final t = ref.watch(localeControllerProvider.notifier).t;
 
     return Scaffold(
@@ -73,32 +73,49 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           : _notifications == null
               ? const Center(child: CircularProgressIndicator())
               : _notifications!.isEmpty
-              ? Center(child: Text(t('notifications.empty')))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.builder(
-                    itemCount: _notifications!.length,
-                    itemBuilder: (context, index) {
-                      final n = _notifications![index] as Map<String, dynamic>;
-                      final isUnread = n['readAt'] == null;
-                      return ListTile(
-                        leading: Icon(isUnread ? Icons.circle : Icons.circle_outlined, size: 12),
-                        title: Text(n['title'] as String? ?? ''),
-                        subtitle: Text(n['body'] as String? ?? ''),
-                        onTap: isUnread
-                            ? () async {
-                                try {
-                                  await ref.read(notificationsApiProvider).markAsRead(n['id'] as String);
-                                } catch (_) {
-                                  // Already enqueued by NotificationsApi.
-                                }
-                                await _load();
-                              }
-                            : null,
-                      );
-                    },
-                  ),
-                ),
+                  ? Center(child: Text(t('notifications.empty')))
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: _notifications!.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final n = _notifications![index] as Map<String, dynamic>;
+                          final isUnread = n['readAt'] == null;
+                          return Container(
+                            color: isUnread ? AppTheme.sage500.withOpacity(0.04) : null,
+                            child: ListTile(
+                              leading: Container(
+                                width: 10,
+                                height: 10,
+                                margin: const EdgeInsets.only(top: 4),
+                                decoration: BoxDecoration(
+                                  color: isUnread ? AppTheme.sage500 : Colors.transparent,
+                                  shape: BoxShape.circle,
+                                  border: isUnread ? null : Border.all(color: Colors.grey.shade300),
+                                ),
+                              ),
+                              title: Text(
+                                n['title'] as String? ?? '',
+                                style: TextStyle(fontWeight: isUnread ? FontWeight.w600 : FontWeight.w400),
+                              ),
+                              subtitle: Text(n['body'] as String? ?? ''),
+                              onTap: isUnread
+                                  ? () async {
+                                      try {
+                                        await ref.read(notificationsApiProvider).markAsRead(n['id'] as String);
+                                      } catch (_) {
+                                        // Already enqueued by NotificationsApi.
+                                      }
+                                      await _load();
+                                    }
+                                  : null,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
     );
   }
 }

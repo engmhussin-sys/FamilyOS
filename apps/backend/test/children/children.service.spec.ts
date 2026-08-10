@@ -1,7 +1,9 @@
 import { Test } from '@nestjs/testing';
+import { ForbiddenException } from '@nestjs/common';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { CHILD_REPOSITORY } from '../../src/modules/children/application/ports/child.repository.port';
 import { ChildNotFoundException } from '../../src/modules/children/domain/child.errors';
+import { EntitlementsService } from '../../src/modules/billing/application/services/entitlements.service';
 
 describe('ChildrenService', () => {
   const childRepositoryMock = {
@@ -11,15 +13,54 @@ describe('ChildrenService', () => {
     update: jest.fn(),
     softDelete: jest.fn(),
   };
+  const entitlementsMock = { hasFeature: jest.fn() };
 
   let service: ChildrenService;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
-      providers: [ChildrenService, { provide: CHILD_REPOSITORY, useValue: childRepositoryMock }],
+      providers: [
+        ChildrenService,
+        { provide: CHILD_REPOSITORY, useValue: childRepositoryMock },
+        { provide: EntitlementsService, useValue: entitlementsMock },
+      ],
     }).compile();
     service = moduleRef.get(ChildrenService);
+  });
+
+  describe('createChild (proactive business/code audit — multiple_children enforcement)', () => {
+    it('allows creating the FIRST child on any tier, without even checking entitlements', async () => {
+      childRepositoryMock.findManyByFamily.mockResolvedValue([]);
+      childRepositoryMock.create.mockResolvedValue({ id: 'child-1' });
+
+      const result = await service.createChild('family-1', { firstName: 'Ahmed', dateOfBirth: '2015-01-01' });
+
+      expect(result).toEqual({ id: 'child-1' });
+      expect(entitlementsMock.hasFeature).not.toHaveBeenCalled();
+    });
+
+    it('blocks a SECOND child when multiple_children is not entitled', async () => {
+      childRepositoryMock.findManyByFamily.mockResolvedValue([{ id: 'child-1' }]);
+      entitlementsMock.hasFeature.mockResolvedValue(false);
+
+      await expect(
+        service.createChild('family-1', { firstName: 'Sara', dateOfBirth: '2017-01-01' }),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(entitlementsMock.hasFeature).toHaveBeenCalledWith('family-1', 'multiple_children');
+      expect(childRepositoryMock.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a SECOND child when multiple_children IS entitled', async () => {
+      childRepositoryMock.findManyByFamily.mockResolvedValue([{ id: 'child-1' }]);
+      entitlementsMock.hasFeature.mockResolvedValue(true);
+      childRepositoryMock.create.mockResolvedValue({ id: 'child-2' });
+
+      const result = await service.createChild('family-1', { firstName: 'Sara', dateOfBirth: '2017-01-01' });
+
+      expect(result).toEqual({ id: 'child-2' });
+    });
   });
 
   describe('getChildOrThrow', () => {

@@ -13,6 +13,12 @@ import '../../features/dashboard/api/dashboard_api.dart';
 import '../../features/notifications/api/notifications_api.dart';
 import '../../features/settings/api/settings_api.dart';
 import '../../features/life_intelligence/api/life_intelligence_api.dart';
+import '../../features/billing/api/billing_api.dart';
+import 'notifications/push_registration_service.dart';
+import '../../features/support/api/support_api.dart';
+import '../../features/family/api/consent_api.dart';
+import '../../features/settings/api/account_api.dart';
+import '../../features/billing/api/campaign_api.dart';
 
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) => const FlutterSecureStorage());
 
@@ -40,6 +46,12 @@ final notificationsApiProvider = Provider<NotificationsApi>(
 );
 final settingsApiProvider = Provider<SettingsApi>((ref) => SettingsApi(ref.watch(apiClientProvider)));
 final lifeIntelligenceApiProvider = Provider<LifeIntelligenceApi>((ref) => LifeIntelligenceApi(ref.watch(apiClientProvider)));
+final billingApiProvider = Provider<BillingApi>((ref) => BillingApi(ref.watch(apiClientProvider)));
+final pushRegistrationServiceProvider = Provider<PushRegistrationService>((ref) => PushRegistrationService(ref.watch(pairingApiProvider)));
+final supportApiProvider = Provider<SupportApi>((ref) => SupportApi(ref.watch(apiClientProvider)));
+final consentApiProvider = Provider<ConsentApi>((ref) => ConsentApi(ref.watch(apiClientProvider)));
+final accountApiProvider = Provider<AccountApi>((ref) => AccountApi(ref.watch(apiClientProvider)));
+final campaignApiProvider = Provider<CampaignApi>((ref) => CampaignApi(ref.watch(apiClientProvider)));
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
   (ref) => AuthController(ref.watch(authApiProvider), ref.watch(sessionStorageProvider)),

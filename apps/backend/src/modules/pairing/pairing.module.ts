@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { ChildrenModule } from '../children/children.module';
 import { AuthModule } from '../auth/auth.module';
 import { ScreenTimeModule } from '../screen-time/screen-time.module';
+import { BillingModule } from '../billing/billing.module';
 import { PairingController } from './presentation/controllers/pairing.controller';
 import { RegistrationTokenGuard } from './presentation/guards/registration-token.guard';
 import { PairingStateMachineService } from './application/services/pairing-state-machine.service';
@@ -12,6 +13,7 @@ import { TrustEvaluationService } from './application/services/trust-evaluation.
 import { RiskEvaluationService } from './application/services/risk-evaluation.service';
 import { PairingOrchestratorService } from './application/services/pairing-orchestrator.service';
 import { RuntimeAlertService } from './application/services/runtime-alert.service';
+import { PushNotificationService } from './application/services/push-notification.service';
 import { PrismaPairingEventRepository } from './infrastructure/repositories/prisma-pairing-event.repository';
 import { PrismaDeviceTrustRepository } from './infrastructure/repositories/prisma-device-trust.repository';
 import { PrismaDeviceRiskRepository } from './infrastructure/repositories/prisma-device-risk.repository';
@@ -31,7 +33,7 @@ import { RUNTIME_ALERT_REPOSITORY } from './application/ports/runtime-alert.repo
  * DeviceJwtAuthGuard available where the controller references them.
  */
 @Module({
-  imports: [ChildrenModule, AuthModule, ScreenTimeModule],
+  imports: [ChildrenModule, AuthModule, ScreenTimeModule, BillingModule],
   controllers: [PairingController],
   providers: [
     PairingStateMachineService,
@@ -41,6 +43,7 @@ import { RUNTIME_ALERT_REPOSITORY } from './application/ports/runtime-alert.repo
     RiskEvaluationService,
     PairingOrchestratorService,
     RuntimeAlertService,
+    PushNotificationService,
     RegistrationTokenGuard,
     { provide: PAIRING_EVENT_REPOSITORY, useClass: PrismaPairingEventRepository },
     { provide: DEVICE_TRUST_REPOSITORY, useClass: PrismaDeviceTrustRepository },
@@ -59,6 +62,7 @@ import { RUNTIME_ALERT_REPOSITORY } from './application/ports/runtime-alert.repo
     PairingOrchestratorService,
     TRUST_SIGNAL_PROVIDER,
     RISK_SIGNAL_PROVIDER,
+    RUNTIME_ALERT_REPOSITORY,
   ],
 })
 export class PairingModule {}

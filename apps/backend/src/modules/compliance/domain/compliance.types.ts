@@ -49,4 +49,19 @@ export interface IChildDataExport {
     focusModeEnabled: boolean;
   } | null;
   consents: IConsentRecord[];
+  /** CLOSES A REAL GAP found during a proactive compliance review:
+   * the Digital Wellbeing Engine's data (app usage, pickups, night
+   * usage, blocked attempts) had zero representation in a data
+   * subject's own export until this field \u2014 a genuine right-to-access
+   * gap for a Child Sensitive data category. `null` when the child has
+   * no wellbeing history yet (honest absence, not a fabricated empty
+   * object). */
+  digitalWellbeing: {
+    windowDays: number;
+    averageDailyScreenMinutes: number;
+    averagePickups: number;
+    averageNightUsageMinutes: number;
+    totalBlockedAttempts: number;
+    daysWithData: number;
+  } | null;
 }

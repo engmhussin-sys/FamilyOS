@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, ForbiddenException } from '@nestjs/common';
 import type { Child } from '@prisma/client';
 
 import type { ICreateChildInput, IUpdateChildInput } from '../../domain/child.types';
@@ -7,6 +7,7 @@ import {
   CHILD_REPOSITORY,
   type IChildRepository,
 } from '../ports/child.repository.port';
+import { EntitlementsService } from '../../../billing/application/services/entitlements.service';
 
 /**
  * `getChildOrThrow` is this module's most important export — it is the
@@ -22,9 +23,22 @@ import {
 export class ChildrenService {
   constructor(
     @Inject(CHILD_REPOSITORY) private readonly childRepository: IChildRepository,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
-  createChild(familyId: string, input: ICreateChildInput): Promise<Child> {
+  /** CLOSES A REAL GAP (proactive business/code audit): 'multiple_children'
+   * has existed as a plan feature since Sprint 8 with zero enforcement
+   * anywhere. The first child is always free on every tier — only the
+   * SECOND-and-beyond child requires the entitlement. Fails closed,
+   * matching every other authorization check in this codebase. */
+  async createChild(familyId: string, input: ICreateChildInput): Promise<Child> {
+    const existingChildren = await this.childRepository.findManyByFamily(familyId);
+    if (existingChildren.length >= 1) {
+      const entitled = await this.entitlements.hasFeature(familyId, 'multiple_children');
+      if (!entitled) {
+        throw new ForbiddenException('Adding more than one child requires a plan with the multiple_children feature.');
+      }
+    }
     return this.childRepository.create(familyId, input);
   }
 

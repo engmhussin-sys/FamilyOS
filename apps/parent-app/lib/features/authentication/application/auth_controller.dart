@@ -43,9 +43,9 @@ class AuthController extends StateNotifier<AuthState> {
     }
   }
 
-  Future<bool> register(String fullName, String email, String password) async {
+  Future<bool> register(String fullName, String email, String password, {required bool acceptedTerms}) async {
     try {
-      final result = await _authApi.register(fullName: fullName, email: email, password: password);
+      final result = await _authApi.register(fullName: fullName, email: email, password: password, acceptedTerms: acceptedTerms);
       await _sessionStorage.saveTokens(
         accessToken: result['accessToken'] as String,
         refreshToken: result['refreshToken'] as String,

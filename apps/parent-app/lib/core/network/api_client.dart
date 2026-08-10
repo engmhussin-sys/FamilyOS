@@ -106,6 +106,15 @@ class ApiClient {
     return _unwrap(() => _dio.patch(path, data: data));
   }
 
+  /// CLOSES A REAL GAP: ApiClient had no HTTP DELETE method at all
+  /// until AccountDeletionService needed one. A 204 response (this
+  /// codebase's own convention for a destructive-but-successful
+  /// action) has a null body — `_unwrap` already handles that safely,
+  /// wrapping it as `{'data': null}` rather than throwing.
+  Future<Map<String, dynamic>> delete(String path, {Object? data}) async {
+    return _unwrap(() => _dio.delete(path, data: data));
+  }
+
   Future<Map<String, dynamic>> _unwrap(Future<Response> Function() call) async {
     try {
       final response = await call();

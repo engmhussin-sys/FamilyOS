@@ -12,6 +12,14 @@ export interface IDashboardMetrics {
   totalDevices: number;
   activeDevicesLast7Days: number;
   trialConversionRate: number;
+  /** CLOSES A REAL GAP (proactive business review): the support
+   * module's read side was added, but nothing surfaced its queue
+   * depth alongside the other growth/health metrics an internal team
+   * would check in the same place. Named "last 7 days," not "open" —
+   * SupportRequest deliberately has no status/resolved concept (see
+   * its own schema docstring), so "open" would be a claim this data
+   * can't actually support. */
+  supportRequestCountLast7Days: number;
 }
 
 /** Optional external analytics adapter \u2014 mirrors the payment-provider

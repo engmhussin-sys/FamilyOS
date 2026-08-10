@@ -55,6 +55,13 @@ export class PrismaDigitalTwinRepository {
       behavior: (row.behaviorSlice as unknown as IExplainableSubScore | null) ?? null,
       habits: (row.habitsSlice as unknown as IExplainableSubScore | null) ?? null,
       social: (row.socialSlice as unknown as IExplainableSubScore | null) ?? null,
+      // Matches growthScore's own existing pattern below: this cached
+      // projection table was never extended to store wellbeing (a
+      // deliberate choice — it's always computed fresh from
+      // DigitalWellbeingEngineService in refreshAndGet(), never
+      // persisted redundantly here). A caller needing the current
+      // wellbeing value should call refreshAndGet(), not this cached read.
+      wellbeing: null,
       growthScore: null,
       updatedAt: row.updatedAt,
     };

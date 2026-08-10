@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator';
+import { Equals, IsEmail, IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator';
 
 export class RegisterDto {
   @IsEmail()
@@ -34,4 +34,13 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   locale?: string;
+
+  /** CLOSES A REAL GAP (proactive business/code audit): zero Terms of
+   * Service acceptance requirement existed anywhere in registration.
+   * @Equals(true) — not @IsBoolean() — deliberately: registration
+   * must genuinely fail if this isn't explicitly true, not merely
+   * present as any boolean value (a client sending `false` should be
+   * rejected exactly like a client sending nothing at all). */
+  @Equals(true, { message: 'You must accept the Terms of Service to create an account.' })
+  acceptedTerms!: boolean;
 }

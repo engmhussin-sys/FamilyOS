@@ -8,6 +8,51 @@ alerts, not raw surveillance data).
 
 ## Project Status
 
+> **⚠️ READ THIS FIRST — the detailed table below this section is a
+> historical log ending at "Release Architecture Freeze." Everything
+> after that point (an extensive session covering Consent
+> Enforcement, Billing/Support/Push UI, Account Deletion, Terms of
+> Service, Dashboard/Parent App parity, multiple security and
+> business audits, and a full B2B2C platform) is summarized here
+> instead of rewritten into the old table format, to avoid corrupting
+> that historical record.**
+
+### Current State (most recent session)
+
+**B2C track (parent-facing product) — CLOSED.** Consent Enforcement
+(Option C: implicit-grant + explicit opt-out), Billing/Subscription UI,
+Support (FAQ + contact form, admin read-side, priority_support
+entitlement), Push Notifications, Account Deletion (soft-delete +
+anonymization), Terms of Service acceptance tracking, and full
+Parent App ↔ Admin Dashboard feature parity are all built, tested, and
+verified (`tsc` clean, real test execution where the local Prisma
+client staleness — see `docs/release/SPRINT13_BLOCKED_BY_PRISMA.md` —
+doesn't block it, real `npm run build` + `vitest run` passes on the
+Dashboard).
+
+**B2B2C track (Organization Platform: schools, companies, banks) —
+CLOSED.** Sprint 9 left this as architecture-only contracts with an
+explicit "NOT implemented" note on every file. This session
+implemented it fully, in order:
+- **B1** — RBAC engine + Organization CRUD (real role hierarchy: OWNER > ADMIN > MANAGER > MEMBER > GUEST)
+- **B2** — Policy Engine with real hierarchical inheritance (School default → Family override, capped at 10 hops against circular chains)
+- **B3** — First real Dashboard UI (Company as the pilot org type — lower compliance sensitivity than Bank for a first pilot)
+- **B4** — Partner Campaigns: real TRIAL_EXTENSION redemption wired into `TrialManager` (which was read-only before this); `DISCOUNT` honestly fails "not yet supported" rather than faking a redemption
+- **B5** — White-Label branding (logo + 2 colors — the concrete shape Sprint 9 explicitly deferred to "whoever builds this UI")
+- **B6** — Audit trail for every Organization write (critical for the BANK org type specifically) via the existing `AuditService`
+- **Final review passes** found and closed: zero rate limiting on the whole controller (campaigns/redeem was a real brute-force target), and — most critically — invitations could be **created but never accepted** (no endpoint existed), and a partner code could be created on the admin side but the actual parent end-user (Parent App) had **no UI to redeem one at all**. Both closed end-to-end, Backend + Frontend.
+
+**Still blocked — needs external infrastructure, not code:** real
+Android device testing, iOS (needs macOS/Xcode), and app store
+submission (needs developer accounts + legal review). See
+`docs/roadmap/B2B2C_AND_LAUNCH_ROADMAP.md` for the full breakdown and
+the honestly-stated remaining gaps (placeholder SAR pricing, no
+Terms of Service legal text, `DISCOUNT` campaigns unimplemented,
+`RbacEngineService`'s per-resource permission matrix is a documented
+future extension, not yet built).
+
+---
+
 ## Project Execution Plan v1.0 — 10 Sprint Accelerated Plan
 
 | Sprint | Status |

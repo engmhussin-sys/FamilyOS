@@ -270,6 +270,16 @@ model User {
   mfaEnabled      Boolean    @default(false) @map("mfa_enabled")
   emailVerifiedAt DateTime?  @map("email_verified_at")
   lastLoginAt     DateTime?  @map("last_login_at")
+  /// CLOSES A REAL GAP (proactive business/code audit): zero Terms of
+  /// Service acceptance tracking existed anywhere. `termsVersion` is a
+  /// plain string (not a foreign key to a "legal documents" table —
+  /// that's a real future upgrade once more than one document/version
+  /// needs tracking) so a future re-acceptance flow can compare
+  /// against whatever version is currently in force. Both nullable:
+  /// every user created before this migration honestly has no
+  /// recorded acceptance — never backfilled with a fake timestamp.
+  termsAcceptedAt DateTime?  @map("terms_accepted_at")
+  termsVersion    String?    @map("terms_version")
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
   deletedAt       DateTime?  @map("deleted_at")
@@ -286,6 +296,7 @@ model User {
   createdRewardCatalogItems RewardCatalogItem[]
   authoredChildMessages ChildMessage[]
   authoredBroadcasts FamilyBroadcastMessage[]
+  supportRequests    SupportRequest[]
 
   @@index([status])
   @@map("users")
@@ -311,6 +322,7 @@ model Family {
   rewardRules        RewardRule[]
   broadcastMessages  FamilyBroadcastMessage[]
   challenges         FamilyChallenge[]
+  supportRequests    SupportRequest[]
 
   @@map("families")
 }
@@ -355,6 +367,7 @@ model Child {
   screenTimePolicies  ScreenTimePolicy[]
   appBlockRules       AppBlockRule[]
   appUsageLogs        AppUsageLog[]
+  dailyBehavioralSnapshots DailyBehavioralSnapshot[]
   safeZones           LocationSafeZone[]
   locationEvents      LocationEvent[]
   aiRiskScores        AiRiskScore[]
@@ -476,6 +489,7 @@ model Device {
   refreshTokens    RefreshToken[]
   appCatalog       AppCatalogEntry[]
   appUsageLogs     AppUsageLog[]
+  dailyBehavioralSnapshots DailyBehavioralSnapshot[]
   locationEvents   LocationEvent[]
   pairingEvents    DevicePairingEvent[]
   riskAssessments  DeviceRiskAssessment[]
@@ -613,6 +627,95 @@ model AppCatalogEntry {
   @@map("app_catalog_entries")
 }
 
+/// CLOSES A REAL, PREVIOUSLY-DOCUMENTED GAP (Edge-First Intelligence
+/// Architecture): the day-level counters (pickups, night usage,
+/// blocked attempts, total screen time) have no home in AppUsageLog's
+/// per-app design — this is that home. One row per child per day,
+/// uploaded once from the device's own local aggregation, never
+/// derived from raw per-event logging server-side.
+/// Sprint 6 (Support): CLOSES A REAL GAP — zero support feature
+/// existed anywhere in this product before this. Deliberately a
+/// simple queryable record, not a full ticketing system (status,
+/// SLA timers, agent assignment) — that's a real future upgrade once
+/// support volume justifies it, not invented ahead of need. A parent
+/// submits one, and the team can query/respond via email using the
+/// address captured here (no in-app reply thread yet — genuinely
+/// out of scope for a first pass).
+model SupportRequest {
+  id          String   @id @default(uuid()) @db.Uuid
+  familyId    String?  @map("family_id") @db.Uuid // nullable: a request may come from someone not yet logged in
+  userId      String?  @map("user_id") @db.Uuid
+  email       String // captured explicitly even for a logged-in user — the reply MUST go somewhere even if their account state changes later
+  subject     String
+  message     String   @db.Text
+  /// CLOSES A REAL GAP (proactive business/code audit): 'priority_support'
+  /// has existed as a plan feature since Sprint 8 with zero enforcement
+  /// anywhere. Computed at submission time from EntitlementsService,
+  /// never client-supplied — a support team's own queue view can sort
+  /// by this to serve paying customers faster, without needing a full
+  /// ticketing/SLA system (deliberately out of scope, see
+  /// SupportRequest's own original docstring below).
+  isPriority  Boolean  @default(false) @map("is_priority")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([familyId])
+  @@index([createdAt])
+  @@index([isPriority, createdAt])
+  @@map("support_requests")
+}
+
+model DailyBehavioralSnapshot {
+  id                  String   @id @default(uuid()) @db.Uuid
+  childId             String   @map("child_id") @db.Uuid
+  deviceId            String   @map("device_id") @db.Uuid
+  usageDate           DateTime @map("usage_date") @db.Date
+  totalScreenMinutes  Int      @map("total_screen_minutes")
+  pickupCount         Int      @map("pickup_count")
+  nightUsageMinutes   Int      @map("night_usage_minutes")
+  blockedAttemptCount Int      @map("blocked_attempt_count")
+  /// Sprint 14 (Behavioral Intelligence Engine) — CLOSES A REAL GAP:
+  /// zero session-level granularity existed (only total minutes).
+  /// All nullable — a device on an older app version that never
+  /// sends these must not break ingestion; absence is honestly
+  /// representable, never defaulted to a fake 0.
+  sessionCount            Int?    @map("session_count")
+  averageSessionMinutes   Int?    @map("average_session_minutes")
+  longestSessionMinutes   Int?    @map("longest_session_minutes")
+  /// Category-aggregated minutes — the raw per-package breakdown
+  /// already lives in AppUsageLog; these are the CLOUD-SIDE numbers
+  /// per the Sprint's own "raw package name stays local where
+  /// possible" principle. Category taxonomy: EDUCATION, GAMING,
+  /// SOCIAL, ENTERTAINMENT (others — COMMUNICATION, VIDEO,
+  /// PRODUCTIVITY, BROWSER, UTILITIES, OTHER — are tracked in
+  /// AppUsageLog.category but not separately summed here; these four
+  /// are the ones Sprint 14's own pattern detection actually reasons
+  /// about, per the brief's own worked examples).
+  educationMinutes    Int? @map("education_minutes")
+  gamingMinutes       Int? @map("gaming_minutes")
+  socialMinutes       Int? @map("social_minutes")
+  entertainmentMinutes Int? @map("entertainment_minutes")
+  /// Deterministic Pattern/Anomaly Detection output (Sprint 14) —
+  /// string arrays of pattern codes (e.g. "NIGHT_USAGE_INCREASE"),
+  /// computed server-side at ingestion time, never client-supplied.
+  patterns            Json? @map("patterns")
+  positivePatterns    Json? @map("positive_patterns")
+  /// Percentage deviation from this specific child's own rolling
+  /// baseline (never a fixed threshold) — null until enough history
+  /// exists to compute one (see BaselineCalculatorService).
+  baselineDeviationPercent Float? @map("baseline_deviation_percent")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, usageDate])
+  @@index([childId, usageDate])
+  @@map("daily_behavioral_snapshots")
+}
+
 /// Aggregated daily usage per app. Intentionally NOT event-level/raw
 /// (no per-tap or per-second logging) to minimize data collected about
 /// the child, per the project's privacy-first principle.
@@ -621,6 +724,16 @@ model AppUsageLog {
   childId      String   @map("child_id") @db.Uuid
   deviceId     String   @map("device_id") @db.Uuid
   packageName  String   @map("package_name")
+  /// Sprint 14 — CLOSES A REAL GAP: no categorization existed.
+  /// Computed on the DEVICE (see AppCategoryClassifier, Kotlin/Dart)
+  /// from a local package-name-to-category map, per the brief's own
+  /// "raw package name stays local where possible" principle —
+  /// uploaded already-classified, not re-derived server-side from a
+  /// package name this table also stores for the family's own
+  /// per-app breakdown UI (Parent App already shows package-level
+  /// detail today; this does not remove that, only adds category
+  /// for cloud-side analytics that don't need the raw name).
+  category     String?  @map("category")
   usageDate    DateTime @map("usage_date") @db.Date
   usageMinutes Int      @map("usage_minutes")
   createdAt    DateTime @default(now()) @map("created_at")
@@ -1054,6 +1167,14 @@ model Notification {
   title     String
   body      String
   data      Json?
+  /// CLOSES A REAL GAP (Master Completeness Audit): zero priority
+  /// concept existed anywhere in the notification system. String
+  /// (not enum) matching this schema's own established pattern for
+  /// open-ended classification fields (Child.type, etc.) — the real
+  /// priority vocabulary depends on which callers exist, a product
+  /// decision made at the call site (NotificationsService), not
+  /// hardcoded into the schema layer.
+  priority  String    @default("NORMAL")
   readAt    DateTime? @map("read_at")
   createdAt DateTime  @default(now()) @map("created_at")
 

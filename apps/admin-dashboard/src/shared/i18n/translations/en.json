@@ -16,7 +16,8 @@
     "navReports": "Reports",
     "navSettings": "Settings",
     "welcomeBack": "Welcome back",
-    "logout": "Log out"
+    "logout": "Log out",
+    "navOrganization": "Organization"
   },
   "dashboard": {
     "familyTitle": "Your Family",
@@ -126,7 +127,10 @@
     "phone": "Phone",
     "familyName": "Family Name",
     "timezone": "Timezone",
-    "saved": "Saved successfully."
+    "saved": "Saved successfully.",
+    "consentsTab": "Consents",
+    "accountTab": "Account",
+    "supportTab": "Support"
   },
   "billing": {
     "currentPlan": "Current Plan",
@@ -222,5 +226,106 @@
       "child": "For your child",
       "family": "For the family"
     }
+  },
+  "wellbeing": {
+    "title": "Digital Wellbeing",
+    "noData": "No wellbeing data yet.",
+    "avgScreenTime": "Average screen time",
+    "avgPickups": "Average pickups",
+    "nightUsage": "Average night usage",
+    "blockedAttempts": "Blocked attempts",
+    "minutesPerDay": "min/day",
+    "windowNote": "Based on {{daysWithData}} of the last {{days}} days"
+  },
+  "consents": {
+    "noChildren": "Add a child first to manage their consent settings.",
+    "explanation": "Control exactly what data is collected for each child. You can turn any of these off at any time.",
+    "type": {
+      "DATA_COLLECTION": {
+        "title": "Basic Data Collection",
+        "description": "Core account and usage data needed for the app to function."
+      },
+      "LOCATION_TRACKING": {
+        "title": "Location Tracking",
+        "description": "Track your child's device location."
+      },
+      "APP_USAGE_MONITORING": {
+        "title": "App Usage Monitoring",
+        "description": "Collect aggregated app usage summaries — never raw content."
+      },
+      "AI_BEHAVIOR_ANALYSIS": {
+        "title": "AI Behavior Analysis",
+        "description": "Let AI analyze behavioral patterns to provide insights and coaching."
+      },
+      "KEYBOARD_BEHAVIOR_ANALYSIS": {
+        "title": "Keyboard Behavior Analysis",
+        "description": "Not yet available — reserved for a future safety feature under separate review."
+      },
+      "HEALTH_DATA": {
+        "title": "Health Data",
+        "description": "Collect health-related data like hydration and activity logs."
+      }
+    }
+  },
+  "deleteAccount": {
+    "warningTitle": "This cannot be undone",
+    "warningBody": "Deleting your account will remove access for every child profile, cancel your subscription, and sign you out of all devices. Your data will be anonymized immediately.",
+    "confirmCheckbox": "I understand this action is permanent",
+    "currentPassword": "Enter your current password to confirm",
+    "submit": "Permanently Delete My Account"
+  },
+  "support": {
+    "faqTitle": "Frequently Asked Questions",
+    "faq": {
+      "q1": "How do I pair my child's device?",
+      "a1": "Go to Add Child, generate a pairing code, then enter that code in the Child App on your child's device within the time shown.",
+      "q2": "Why does my child's status show as offline?",
+      "a2": "This usually means the device hasn't sent a heartbeat recently — check that the Child App has Battery Optimization disabled and Accessibility Service still enabled.",
+      "q3": "How do screen time limits work?",
+      "a3": "Limits you set are synced to the device and enforced even without an internet connection, using the last successfully synced policy.",
+      "q4": "Can I change my subscription plan?",
+      "a4": "Yes — go to Settings > Billing to see available plans and switch at any time.",
+      "q5": "Is my child's data private?",
+      "a5": "We collect only aggregated usage summaries, never raw message content, photos, or keystrokes."
+    },
+    "contactTitle": "Contact Support",
+    "email": "Your Email",
+    "subject": "Subject",
+    "message": "Message",
+    "send": "Send Message",
+    "sentBody": "We've received your message and will reply by email soon."
+  },
+  "organization": {
+    "title": "Organization",
+    "noneYet": "You don't belong to any organization yet. Create one to get started (e.g. as a Company managing accounts for its employees).",
+    "name": "Organization Name",
+    "create": "Create Organization",
+    "type": {
+      "FAMILY": "Family",
+      "SCHOOL": "School",
+      "COMPANY": "Company",
+      "BANK": "Bank"
+    },
+    "members": "Members",
+    "noMembers": "No members yet.",
+    "inviteMember": "Invite a Member",
+    "sendInvite": "Send Invitation",
+    "inviteSent": "Invitation sent.",
+    "policies": "Policies",
+    "policiesExplanation": "Set a default policy that applies to every sub-organization (e.g. every enrolled Family) unless they override it.",
+    "policyKey": "Policy Key",
+    "policyValue": "Value",
+    "branding": "Branding",
+    "brandingExplanation": "Customize the logo and colors shown for your organization's branded experience.",
+    "logoUrl": "Logo URL",
+    "primaryColor": "Primary Color",
+    "secondaryColor": "Secondary Color",
+    "brandingInvalid": "Please check your logo URL and color values (colors must be a valid hex code like #1A2B3C).",
+    "inviteLinkExplanation": "Copy this link and send it to the person directly — no automatic email is sent yet.",
+    "copyLink": "Copy Link",
+    "copied": "Copied!",
+    "acceptInvitationTitle": "Join Organization",
+    "acceptInvitationBody": "You've been invited to join an organization. Click below to accept.",
+    "acceptInvitationButton": "Accept Invitation"
   }
 }

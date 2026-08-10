@@ -18,20 +18,43 @@ export class PrismaHabitRepository {
         createdByUserId: input.createdByUserId,
       },
     });
-    return this.toDomain(row);
+    // A just-created habit cannot have a completion yet — false is
+    // certain here, not a guess.
+    return this.toDomain(row, false);
   }
 
   async findById(habitId: string): Promise<IHabit | null> {
     const row = await this.prisma.habit.findUnique({ where: { id: habitId } });
-    return row ? this.toDomain(row) : null;
+    // Only used internally for ownership checks today (completeHabit's
+    // own childId comparison) — none of its callers read
+    // completedToday, so this default avoids an unnecessary extra
+    // query rather than computing a value nothing uses yet.
+    return row ? this.toDomain(row, false) : null;
   }
 
   async listActiveForChild(childId: string): Promise<IHabit[]> {
-    const rows = await this.prisma.habit.findMany({
-      where: { childId, isActive: true, deletedAt: null },
-      orderBy: { createdAt: 'asc' },
-    });
-    return rows.map((row) => this.toDomain(row));
+    const [rows, todaysCompletions] = await Promise.all([
+      this.prisma.habit.findMany({
+        where: { childId, isActive: true, deletedAt: null },
+        orderBy: { createdAt: 'asc' },
+      }),
+      // One query for ALL of today's completions for this child, not
+      // one query per habit — avoids the N+1 this could otherwise be.
+      this.prisma.habitCompletion.findMany({
+        where: { childId, date: this.todayDateOnly() },
+        select: { habitId: true },
+      }),
+    ]);
+    const completedHabitIds = new Set(todaysCompletions.map((c: { habitId: string }) => c.habitId));
+    return rows.map((row: { id: string }) => this.toDomain(row as any, completedHabitIds.has(row.id)));
+  }
+
+  /** Matches completeHabit's own date-normalization exactly (UTC
+   * midnight) — the same convention HabitEngineService.today() uses,
+   * so "today" here and "today" at write time always agree. */
+  private todayDateOnly(): Date {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   }
 
   /** Upsert-by-day semantics: completing an already-completed habit for
@@ -78,7 +101,7 @@ export class PrismaHabitRepository {
     isShared: boolean;
     isActive: boolean;
     createdAt: Date;
-  }): IHabit {
+  }, completedToday: boolean): IHabit {
     return {
       id: row.id,
       childId: row.childId,
@@ -88,6 +111,7 @@ export class PrismaHabitRepository {
       isShared: row.isShared,
       isActive: row.isActive,
       createdAt: row.createdAt,
+      completedToday,
     };
   }
 }

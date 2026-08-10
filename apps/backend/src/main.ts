@@ -2,10 +2,30 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
 import compression from 'compression';
+import * as Sentry from '@sentry/node';
 
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+
+/**
+ * Sprint 4 (Observability) — CLOSES A REAL GAP: before this, a real
+ * production 5xx error was invisible to the team except by manually
+ * tailing Railway's own logs. No structured error tracking existed.
+ *
+ * HONEST LIMITATION, STATED PLAINLY: without a real `SENTRY_DSN`
+ * environment variable set, `Sentry.init` runs in a safe no-op mode
+ * (Sentry's own documented behavior for a missing/empty DSN) — this
+ * backend behaves exactly as it did before this sprint, not broken,
+ * just not yet reporting. A real Sentry project (a real external
+ * account this environment cannot create) must be set up, and its
+ * DSN added as a Railway environment variable, to activate this.
+ */
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV ?? 'development',
+  tracesSampleRate: 1.0,
+});
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');

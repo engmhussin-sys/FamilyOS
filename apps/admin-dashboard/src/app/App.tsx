@@ -6,6 +6,8 @@ import { RegisterPage } from '../features/auth/pages/RegisterPage';
 import { DashboardHomePage } from '../features/dashboard/pages/DashboardHomePage';
 import { DashboardShell } from '../features/dashboard/components/DashboardShell';
 import { SettingsPage } from '../features/settings/components/SettingsPage';
+import { OrganizationPage } from '../features/organization/pages/OrganizationPage';
+import { AcceptInvitationPage } from '../features/organization/pages/AcceptInvitationPage';
 import { ProtectedRoute } from './ProtectedRoute';
 import { LocaleProvider } from '../shared/i18n/LocaleProvider';
 
@@ -40,6 +42,24 @@ export function App() {
                   <DashboardShell>
                     <SettingsPage />
                   </DashboardShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/organization"
+              element={
+                <ProtectedRoute>
+                  <DashboardShell>
+                    <OrganizationPage />
+                  </DashboardShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/invitations/:invitationId/accept"
+              element={
+                <ProtectedRoute>
+                  <AcceptInvitationPage />
                 </ProtectedRoute>
               }
             />

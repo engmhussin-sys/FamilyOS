@@ -22,6 +22,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <span className="cursor-not-allowed rounded-card px-3 py-2 text-sand-200/40">
             {t('shell.navChildren')} {t('common.comingSoon')}
           </span>
+          <Link to="/organization" className="rounded-card px-3 py-2 hover:bg-guardian-700/40">
+            {t('shell.navOrganization')}
+          </Link>
           <Link to="/settings" className="rounded-card px-3 py-2 hover:bg-guardian-700/40">
             {t('shell.navSettings')}
           </Link>

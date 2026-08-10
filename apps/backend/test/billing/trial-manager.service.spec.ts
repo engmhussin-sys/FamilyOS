@@ -3,7 +3,7 @@ import { TrialManager } from '../../src/modules/billing/application/services/tri
 import { BILLING_REPOSITORY } from '../../src/modules/billing/application/ports/billing.repository.port';
 
 describe('TrialManager', () => {
-  const repositoryMock = { findSubscriptionByFamily: jest.fn() };
+  const repositoryMock = { findSubscriptionByFamily: jest.fn(), updateSubscriptionStatus: jest.fn() };
   let manager: TrialManager;
 
   beforeEach(async () => {
@@ -65,5 +65,35 @@ describe('TrialManager', () => {
       trialEndsAt: new Date(Date.now() + 2.5 * 24 * 60 * 60 * 1000),
     });
     await expect(manager.trialDaysRemaining('family-1')).resolves.toBe(3);
+  });
+
+  describe('extendTrial (Sprint B4 — CLOSES A REAL GAP: TrialManager was previously read-only)', () => {
+    it('throws NotFoundException when there is no subscription to extend', async () => {
+      repositoryMock.findSubscriptionByFamily.mockResolvedValue(null);
+
+      await expect(manager.extendTrial('family-1', 30)).rejects.toThrow('No subscription found');
+    });
+
+    it('extends from the CURRENT trialEndsAt when still mid-trial, never shortening the real remaining time', async () => {
+      const currentEnd = new Date('2026-08-20T00:00:00Z');
+      repositoryMock.findSubscriptionByFamily.mockResolvedValue({ id: 'sub-1', trialEndsAt: currentEnd });
+
+      const result = await manager.extendTrial('family-1', 10);
+
+      expect(result.toISOString()).toBe('2026-08-30T00:00:00.000Z');
+      expect(repositoryMock.updateSubscriptionStatus).toHaveBeenCalledWith('sub-1', 'TRIALING', { trialEndsAt: result });
+    });
+
+    it('extends from TODAY (not a stale past date) when the trial already ended', async () => {
+      const staleEnd = new Date('2020-01-01T00:00:00Z');
+      repositoryMock.findSubscriptionByFamily.mockResolvedValue({ id: 'sub-1', trialEndsAt: staleEnd });
+
+      const result = await manager.extendTrial('family-1', 5);
+
+      const expectedEarliest = new Date();
+      expectedEarliest.setDate(expectedEarliest.getDate() + 5);
+      // Within a small tolerance of "5 days from now," not "5 days from 2020."
+      expect(Math.abs(result.getTime() - expectedEarliest.getTime())).toBeLessThan(5000);
+    });
   });
 });

@@ -47,7 +47,7 @@ export class PrismaBillingRepository implements IBillingRepository {
   async updateSubscriptionStatus(
     subscriptionId: string,
     status: SubscriptionStatusValue,
-    extra?: { canceledAt?: Date; currentPeriodStart?: Date; currentPeriodEnd?: Date },
+    extra?: { canceledAt?: Date; currentPeriodStart?: Date; currentPeriodEnd?: Date; trialEndsAt?: Date },
   ): Promise<void> {
     await this.prisma.subscription.update({
       where: { id: subscriptionId },

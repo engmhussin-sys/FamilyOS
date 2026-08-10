@@ -12,6 +12,7 @@ import { mapBehavioralTrendToScore, mapRiskToSafetyScore } from './safety-behavi
 import { PairingOrchestratorService } from '../../../pairing/application/services/pairing-orchestrator.service';
 import { RiskEvaluationService } from '../../../pairing/application/services/risk-evaluation.service';
 import { BehavioralIntelligenceEngineService } from '../../../ai-core/application/services/behavioral-intelligence-engine.service';
+import { DigitalWellbeingEngineService } from './digital-wellbeing-engine.service';
 
 const SOCIAL_SCORE_WINDOW_DAYS = 30;
 
@@ -29,6 +30,11 @@ const SOCIAL_SCORE_WINDOW_DAYS = 30;
  * respected: this is a new consumer of an existing public API, not a
  * modification). See safety-behavior-rules.ts for the explainable
  * score mapping.
+ *
+ * EDGE-FIRST INTELLIGENCE ARCHITECTURE SPRINT: `wellbeing` is a NEW,
+ * separate field (see digital-twin.types.ts's own docstring for the
+ * explicit PM decision on why it is NOT blended into `behavior` or
+ * `growthScore`).
  */
 @Injectable()
 export class DigitalTwinService {
@@ -42,6 +48,7 @@ export class DigitalTwinService {
     private readonly pairingOrchestrator: PairingOrchestratorService,
     private readonly riskEvaluation: RiskEvaluationService,
     private readonly behavioralEngine: BehavioralIntelligenceEngineService,
+    private readonly digitalWellbeing: DigitalWellbeingEngineService,
   ) {}
 
   async refreshAndGet(childId: string, familyId: string): Promise<IDigitalTwin> {
@@ -95,6 +102,7 @@ export class DigitalTwinService {
     };
 
     const { safety, behavior } = await this.computeSafetyAndBehavior(childId, familyId, primaryDeviceId);
+    const wellbeing = await this.computeWellbeing(childId, familyId);
 
     const growthScore = computeGrowthScore([safety, health, learning, faith, behavior, habits, social]);
 
@@ -108,7 +116,37 @@ export class DigitalTwinService {
       safetySlice: safety,
     });
 
-    return { childId, safety, health, learning, faith, behavior, habits, social, growthScore, updatedAt: new Date() };
+    return { childId, safety, health, learning, faith, behavior, habits, social, wellbeing, growthScore, updatedAt: new Date() };
+  }
+
+  /** EDGE-FIRST INTELLIGENCE ARCHITECTURE SPRINT: score is derived
+   * ONLY from `totalBlockedAttempts` \u2014 the one number in the
+   * behavioral snapshot with an objectively directional meaning
+   * (fewer circumvention attempts is unambiguously better; there is
+   * no equivalent clinical consensus for "how much screen time is
+   * too much," so that and pickups/night-usage are surfaced honestly
+   * as CONTEXT in `inputs`, never folded into `score` itself \u2014 the
+   * same discipline already applied to NOT blending this into
+   * `behavior`, applied consistently here too). */
+  private async computeWellbeing(childId: string, familyId: string): Promise<IExplainableSubScore | null> {
+    const summary = await this.digitalWellbeing.getBehavioralSnapshotSummary(childId, familyId);
+    if (!summary) return null;
+
+    // 0 violations = 100. Each violation costs 10 points, floor 0 —
+    // directional and simple, not a precision claim.
+    const score = Math.max(0, 100 - summary.totalBlockedAttempts * 10);
+
+    return {
+      score,
+      inputs: {
+        totalBlockedAttempts: summary.totalBlockedAttempts,
+        averageDailyScreenMinutes: summary.averageDailyScreenMinutes,
+        averagePickups: summary.averagePickups,
+        averageNightUsageMinutes: summary.averageNightUsageMinutes,
+        windowDays: summary.windowDays,
+      },
+      confidence: summary.daysWithData >= 7 ? 'HIGH' : summary.daysWithData >= 3 ? 'MEDIUM' : 'LOW',
+    };
   }
 
   /** A child with no paired device yet (early onboarding) genuinely

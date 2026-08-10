@@ -27,7 +27,7 @@ export interface IBillingRepository {
   updateSubscriptionStatus(
     subscriptionId: string,
     status: SubscriptionStatusValue,
-    extra?: { canceledAt?: Date; currentPeriodStart?: Date; currentPeriodEnd?: Date },
+    extra?: { canceledAt?: Date; currentPeriodStart?: Date; currentPeriodEnd?: Date; trialEndsAt?: Date },
   ): Promise<void>;
 
   createInvoice(input: {

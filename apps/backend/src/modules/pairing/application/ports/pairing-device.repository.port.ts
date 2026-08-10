@@ -65,4 +65,21 @@ export interface IPairingDeviceRepository {
   findAllByFamily(familyId: string): Promise<IPairingDeviceWithChild[]>;
   /** Sprint 4 — cached heartbeat telemetry (current state, not history). */
   updateTelemetry(deviceId: string, telemetry: Record<string, unknown>): Promise<void>;
+  /** Sprint 5 (Push Notifications) — CLOSES A REAL GAP: no path
+   * anywhere ever registered a PARENT-owned device (the Parent App
+   * instance itself, distinct from a CHILD device this repository's
+   * other methods already handle). Upserts by (userId, platform) —
+   * a parent may reasonably have more than one device (phone +
+   * tablet), each gets its own row; re-registering the same
+   * platform just refreshes its token rather than creating a
+   * duplicate. */
+  upsertParentDevicePushToken(input: {
+    userId: string;
+    familyId: string;
+    platform: 'ANDROID' | 'IOS';
+    pushToken: string;
+  }): Promise<void>;
+  /** Sprint 5 — the read side push-sending needs: every push token
+   * registered for a given user, across however many devices. */
+  findPushTokensForUser(userId: string): Promise<string[]>;
 }

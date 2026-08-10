@@ -22,6 +22,13 @@ dependencies:
   # token (Decision-012: Device Certificate + Refresh Token + Device UUID
   # must never sit in plain SharedPreferences).
   flutter_secure_storage: ^9.2.2
+  # Sprint 30 (design pass): a real, kid-friendly typeface for the
+  # Child App specifically — the standard, low-risk way to bundle
+  # Google Fonts in Flutter without vendoring font files by hand.
+  google_fonts: ^6.2.1
+  # Sprint 4 (Observability): same gap closure as apps/parent-app —
+  # see that pubspec's own comment for the full reasoning.
+  sentry_flutter: ^8.9.0
 
 dev_dependencies:
   flutter_test:

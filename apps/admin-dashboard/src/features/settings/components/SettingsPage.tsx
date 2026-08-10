@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/settingsApi';
+import { supportApi } from '../api/supportApi';
+import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi';
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { Input } from '../../../shared/components/Input';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
-type Tab = 'profile' | 'family' | 'billing';
+type Tab = 'profile' | 'family' | 'billing' | 'consents' | 'account' | 'support';
 
 function ProfileTab() {
   const { t } = useTranslation();
@@ -160,6 +162,177 @@ function BillingTab() {
   );
 }
 
+const CONSENT_TYPES = [
+  'DATA_COLLECTION',
+  'LOCATION_TRACKING',
+  'APP_USAGE_MONITORING',
+  'AI_BEHAVIOR_ANALYSIS',
+  'KEYBOARD_BEHAVIOR_ANALYSIS',
+  'HEALTH_DATA',
+];
+
+function ConsentsTab() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: children } = useQuery({ queryKey: CHILDREN_QUERY_KEY, queryFn: childrenApi.list });
+  const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
+  const activeChildId = selectedChildId ?? children?.[0]?.id ?? null;
+
+  const { data: consents } = useQuery({
+    queryKey: ['consents', activeChildId],
+    queryFn: () => settingsApi.listConsents(activeChildId!),
+    enabled: !!activeChildId,
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ consentType, granted }: { consentType: string; granted: boolean }) =>
+      settingsApi.setConsent(activeChildId!, consentType, granted),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['consents', activeChildId] }),
+  });
+
+  if (!children || children.length === 0) {
+    return <p className="text-xs text-ink-soft">{t('consents.noChildren')}</p>;
+  }
+
+  const grantedByType = new Map((consents ?? []).map((c) => [c.consentType, c.granted]));
+
+  return (
+    <div className="flex flex-col gap-4">
+      {children.length > 1 && (
+        <select
+          className="rounded-card border border-sand-200 px-3 py-2 text-sm"
+          value={activeChildId ?? ''}
+          onChange={(e) => setSelectedChildId(e.target.value)}
+        >
+          {children.map((child) => (
+            <option key={child.id} value={child.id}>
+              {child.firstName}
+            </option>
+          ))}
+        </select>
+      )}
+      <p className="text-xs text-ink-soft">{t('consents.explanation')}</p>
+      <div className="flex flex-col gap-2">
+        {CONSENT_TYPES.map((type) => (
+          <label key={type} className="flex items-center justify-between rounded-card border border-sand-200 p-3">
+            <div>
+              <p className="text-sm font-medium text-ink">{t(`consents.type.${type}.title`)}</p>
+              <p className="text-xs text-ink-soft">{t(`consents.type.${type}.description`)}</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={grantedByType.get(type) ?? false}
+              disabled={toggleMutation.isPending}
+              onChange={(e) => toggleMutation.mutate({ consentType: type, granted: e.target.checked })}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const FAQ_KEYS = ['q1', 'q2', 'q3', 'q4', 'q5'];
+
+function SupportTab() {
+  const { t } = useTranslation();
+  const [email, setEmail] = useState('');
+  const [subject, setSubject] = useState('');
+  const [message, setMessage] = useState('');
+  const [sent, setSent] = useState(false);
+
+  const submitMutation = useMutation({
+    mutationFn: () => supportApi.submitRequest({ email, subject, message }),
+    onSuccess: () => setSent(true),
+  });
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h3 className="text-sm font-medium text-ink">{t('support.faqTitle')}</h3>
+        <div className="mt-2 flex flex-col gap-2">
+          {FAQ_KEYS.map((key) => (
+            <details key={key} className="rounded-card border border-sand-200 p-3">
+              <summary className="cursor-pointer text-sm font-medium text-ink">{t(`support.faq.${key}`)}</summary>
+              <p className="mt-2 text-xs text-ink-soft">{t(`support.faq.a${key.slice(1)}`)}</p>
+            </details>
+          ))}
+        </div>
+      </div>
+
+      <div className="max-w-md">
+        <h3 className="text-sm font-medium text-ink">{t('support.contactTitle')}</h3>
+        {sent ? (
+          <p className="mt-2 text-xs text-sage-600">{t('support.sentBody')}</p>
+        ) : (
+          <div className="mt-2 flex flex-col gap-3">
+            <Input label={t('support.email')} type="email" onChange={(e) => setEmail(e.target.value)} />
+            <Input label={t('support.subject')} onChange={(e) => setSubject(e.target.value)} />
+            <textarea
+              className="rounded-card border border-sand-200 px-3 py-2 text-sm"
+              rows={4}
+              placeholder={t('support.message')}
+              onChange={(e) => setMessage(e.target.value)}
+            />
+            <Button
+              onClick={() => submitMutation.mutate()}
+              isLoading={submitMutation.isPending}
+              disabled={!email || !subject || !message}
+              className="w-fit"
+            >
+              {t('support.send')}
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccountTab() {
+  const { t } = useTranslation();
+  const [confirmed, setConfirmed] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: () => settingsApi.deleteAccount(password),
+    onSuccess: () => {
+      window.location.href = '/login';
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <div className="flex max-w-md flex-col gap-4">
+      <div className="rounded-card border border-brick-100 bg-brick-100/40 p-4">
+        <p className="text-sm font-medium text-brick-600">{t('deleteAccount.warningTitle')}</p>
+        <p className="mt-1 text-xs text-brick-500">{t('deleteAccount.warningBody')}</p>
+      </div>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+        {t('deleteAccount.confirmCheckbox')}
+      </label>
+      <Input
+        type="password"
+        label={t('deleteAccount.currentPassword')}
+        disabled={!confirmed}
+        onChange={(e) => setPassword(e.target.value)}
+      />
+      {error && <p className="text-xs text-brick-600">{error}</p>}
+      <Button
+        variant="danger"
+        disabled={!confirmed || !password}
+        isLoading={deleteMutation.isPending}
+        onClick={() => deleteMutation.mutate()}
+        className="w-fit"
+      >
+        {t('deleteAccount.submit')}
+      </Button>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('profile');
@@ -168,7 +341,7 @@ export function SettingsPage() {
     <Card>
       <h1 className="font-display text-xl text-ink">{t('settings.title')}</h1>
       <div className="mt-4 flex gap-2 border-b border-sand-200 pb-2">
-        {(['profile', 'family', 'billing'] as Tab[]).map((tabKey) => (
+        {(['profile', 'family', 'billing', 'consents', 'support', 'account'] as Tab[]).map((tabKey) => (
           <button
             key={tabKey}
             onClick={() => setTab(tabKey)}
@@ -184,6 +357,9 @@ export function SettingsPage() {
         {tab === 'profile' && <ProfileTab />}
         {tab === 'family' && <FamilyTab />}
         {tab === 'billing' && <BillingTab />}
+        {tab === 'consents' && <ConsentsTab />}
+        {tab === 'support' && <SupportTab />}
+        {tab === 'account' && <AccountTab />}
       </div>
     </Card>
   );

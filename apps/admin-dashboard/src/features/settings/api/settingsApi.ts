@@ -43,6 +43,13 @@ export interface Invoice {
   issuedAt: string;
 }
 
+export interface ConsentRecord {
+  consentType: string;
+  granted: boolean;
+  grantedAt: string;
+  revokedAt: string | null;
+}
+
 export const settingsApi = {
   getProfile(): Promise<UserProfile> {
     return httpClient<UserProfile>('/profile');
@@ -75,5 +82,19 @@ export const settingsApi = {
   },
   getBillingHistory(): Promise<Invoice[]> {
     return httpClient<Invoice[]>('/billing/history');
+  },
+
+  // CLOSES A REAL GAP (proactive business/code audit — parity review):
+  // the Parent App (Flutter) had consent management and account
+  // deletion; this Dashboard had neither, confirmed after a thorough
+  // search (unlike billing, which turned out to already exist here).
+  listConsents(childId: string): Promise<ConsentRecord[]> {
+    return httpClient<ConsentRecord[]>(`/children/${childId}/consents`);
+  },
+  setConsent(childId: string, consentType: string, granted: boolean) {
+    return httpClient(`/children/${childId}/consents`, { method: 'POST', body: { consentType, granted } });
+  },
+  deleteAccount(currentPassword: string) {
+    return httpClient('/account', { method: 'DELETE', body: { currentPassword } });
   },
 };

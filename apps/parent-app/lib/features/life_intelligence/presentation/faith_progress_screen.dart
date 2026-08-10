@@ -4,6 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 
+/// DESIGN PASS: same icon+completion-state treatment as
+/// HabitTrackerScreen, using a distinct purple accent for the Faith
+/// domain — matching the same color used for it on Digital Twin and
+/// Life Timeline, so a parent learns "purple = faith" consistently
+/// across every screen in this app.
 class FaithProgressScreen extends ConsumerStatefulWidget {
   const FaithProgressScreen({super.key, required this.childId, required this.childName});
 
@@ -15,6 +20,8 @@ class FaithProgressScreen extends ConsumerStatefulWidget {
 }
 
 class _FaithProgressScreenState extends ConsumerState<FaithProgressScreen> {
+  static const _faithAccent = Color(0xFF6B5B95);
+
   List<dynamic>? _practices;
   String? _errorMessage;
 
@@ -38,7 +45,7 @@ class _FaithProgressScreenState extends ConsumerState<FaithProgressScreen> {
     try {
       await ref.read(lifeIntelligenceApiProvider).logFaithPractice(widget.childId, practiceId);
     } catch (_) {
-      // Best-effort single action — same pattern as HabitTrackerScreen.
+      // Best-effort single action.
     }
     await _load();
   }
@@ -75,13 +82,44 @@ class _FaithProgressScreenState extends ConsumerState<FaithProgressScreen> {
                         itemCount: _practices!.length,
                         itemBuilder: (context, index) {
                           final practice = _practices![index] as Map<String, dynamic>;
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              title: Text(practice['title'] as String? ?? ''),
-                              trailing: FilledButton(
-                                onPressed: () => _log(practice['id'] as String),
-                                child: Text(t('faithProgress.logToday')),
+                          final isDone = practice['completedToday'] as bool? ?? false;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: isDone ? _faithAccent.withOpacity(0.06) : Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: isDone
+                                  ? null
+                                  : [BoxShadow(color: _faithAccent.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 4))],
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(color: _faithAccent.withOpacity(0.14), shape: BoxShape.circle),
+                                    child: const Icon(Icons.mosque_rounded, color: _faithAccent, size: 20),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      practice['title'] as String? ?? '',
+                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                            decoration: isDone ? TextDecoration.lineThrough : null,
+                                          ),
+                                    ),
+                                  ),
+                                  if (isDone)
+                                    const Icon(Icons.check_circle_rounded, color: _faithAccent, size: 28)
+                                  else
+                                    FilledButton(
+                                      onPressed: () => _log(practice['id'] as String),
+                                      style: FilledButton.styleFrom(backgroundColor: _faithAccent),
+                                      child: Text(t('faithProgress.logToday')),
+                                    ),
+                                ],
                               ),
                             ),
                           );

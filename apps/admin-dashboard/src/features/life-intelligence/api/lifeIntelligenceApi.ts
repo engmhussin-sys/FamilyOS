@@ -83,7 +83,17 @@ export interface RewardCatalogItem {
   isActive: boolean;
 }
 
+export interface WellbeingSnapshot {
+  windowDays: number;
+  averageDailyScreenMinutes: number;
+  averagePickups: number;
+  averageNightUsageMinutes: number;
+  totalBlockedAttempts: number;
+  daysWithData: number;
+}
+
 export const digitalTwinQueryKey = (childId: string) => ['life-intelligence', 'digital-twin', childId] as const;
+export const wellbeingQueryKey = (childId: string) => ['life-intelligence', 'wellbeing', childId] as const;
 export const timelineQueryKey = (childId: string, category?: string) => ['life-intelligence', 'timeline', childId, category] as const;
 export const habitsQueryKey = (childId: string) => ['life-intelligence', 'habits', childId] as const;
 export const coachingQueryKey = (childId: string) => ['life-intelligence', 'coaching', childId] as const;
@@ -140,5 +150,9 @@ export const lifeIntelligenceApi = {
 
   denyRedemption(redemptionId: string): Promise<void> {
     return httpClient<void>(`/life-intelligence/rewards/redemptions/${redemptionId}/deny`, { method: 'POST', body: {} });
+  },
+
+  getWellbeingSnapshot(childId: string): Promise<WellbeingSnapshot | null> {
+    return httpClient<WellbeingSnapshot | null>(`/life-intelligence/wellbeing/${childId}/snapshot`);
   },
 };

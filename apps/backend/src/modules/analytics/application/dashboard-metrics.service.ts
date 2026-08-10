@@ -20,12 +20,13 @@ export class DashboardMetricsService {
   async getMetrics(): Promise<IDashboardMetrics> {
     const sevenDaysAgo = new Date(Date.now() - SEVEN_DAYS_MS);
 
-    const [totalFamilies, totalDevices, activeDevices, trialCount, activeCount] = await Promise.all([
+    const [totalFamilies, totalDevices, activeDevices, trialCount, activeCount, supportRequestCountLast7Days] = await Promise.all([
       this.prisma.family.count({ where: { deletedAt: null } }),
       this.prisma.device.count({ where: { deletedAt: null } }),
       this.prisma.device.count({ where: { deletedAt: null, lastSeenAt: { gte: sevenDaysAgo } } }),
       this.prisma.subscription.count({ where: { status: 'TRIALING' } }),
       this.prisma.subscription.count({ where: { status: 'ACTIVE' } }),
+      this.prisma.supportRequest.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
     ]);
 
     const activeFamilyIds = await this.prisma.device.findMany({
@@ -49,6 +50,7 @@ export class DashboardMetricsService {
       totalDevices,
       activeDevicesLast7Days: activeDevices,
       trialConversionRate: Math.round(trialConversionRate * 1000) / 1000,
+      supportRequestCountLast7Days,
     };
   }
 }

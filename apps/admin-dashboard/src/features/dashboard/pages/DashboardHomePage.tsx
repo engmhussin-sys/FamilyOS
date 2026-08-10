@@ -14,6 +14,7 @@ import { HealthTrendCard } from '../../life-intelligence/components/HealthTrendC
 import { FaithProgressCard } from '../../life-intelligence/components/FaithProgressCard';
 import { FamilyStoreManagerCard } from '../../life-intelligence/components/FamilyStoreManagerCard';
 import { CoachingRecommendationsCard } from '../../life-intelligence/components/CoachingRecommendationsCard';
+import { WellbeingCard } from '../../life-intelligence/components/WellbeingCard';
 import { ReportsCard } from '../../reports/components/ReportsCard';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
@@ -48,6 +49,7 @@ export function DashboardHomePage() {
       <FamilyInsightsCard />
       <DigitalTwinCard />
       <CoachingRecommendationsCard />
+      <WellbeingCard />
       <HabitTrackerCard />
       <HealthTrendCard />
       <FaithProgressCard />

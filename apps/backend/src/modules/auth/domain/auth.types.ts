@@ -38,6 +38,7 @@ export interface IRegisterParentInput {
   familyName?: string;
   timezone?: string;
   locale?: string;
+  acceptedTerms: boolean;
 }
 
 export interface IAuthenticatedUser {

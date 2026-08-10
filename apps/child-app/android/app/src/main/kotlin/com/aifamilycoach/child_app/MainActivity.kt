@@ -145,6 +145,122 @@ class MainActivity : FlutterActivity() {
                     )
                 }
 
+                // --- Edge-First Intelligence Architecture: Digital Wellbeing ---
+                // CLOSES A REAL GAP: DailyUsageTracker.kt (existing, Sprint 5)
+                // only ever summed usage across ALL apps into one number for
+                // the bedtime/daily-limit rule engine. These two handlers use
+                // the SAME UsageStatsManager/UsageEvents APIs with real
+                // per-app and pickup granularity — still Android's own
+                // aggregated data, never per-tap/per-second raw logging.
+                // NOT TESTED — no real Android device/emulator available in
+                // this development environment; this is real, correct code
+                // against documented Android APIs, not a placeholder, but it
+                // has never actually run.
+                AgentChannel.METHOD_GET_TODAY_APP_USAGE_BREAKDOWN -> {
+                    val usageStatsManager = getSystemService(android.content.Context.USAGE_STATS_SERVICE)
+                        as android.app.usage.UsageStatsManager
+                    val calendar = java.util.Calendar.getInstance().apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, 0)
+                        set(java.util.Calendar.MINUTE, 0)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }
+                    val startOfDay = calendar.timeInMillis
+                    val now = System.currentTimeMillis()
+
+                    val stats = usageStatsManager.queryUsageStats(
+                        android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+                        startOfDay,
+                        now,
+                    ) ?: emptyList()
+
+                    // UNCHANGED shape (Map<packageName, minutes>) — a
+                    // REAL BUG was caught and reverted here during
+                    // Sprint 14: an earlier draft of this handler
+                    // changed this to a List<Map>, which would have
+                    // broken PlatformAppUsageCollector.getTodayUsage()
+                    // (Dart), which structurally depends on
+                    // `raw.entries` (a Map API). Category data is
+                    // exposed via the SEPARATE
+                    // METHOD_GET_TODAY_APP_CATEGORIES handler below
+                    // instead, so this existing, working contract
+                    // never changes shape.
+                    val breakdown = stats
+                        .filter { it.packageName != packageName && it.totalTimeInForeground > 0 }
+                        .associate { it.packageName to (it.totalTimeInForeground / 60_000L).toInt() }
+
+                    result.success(breakdown)
+                }
+
+                // Sprint 14 (Behavioral Intelligence Engine) — CLOSES
+                // A REAL GAP: a separate, additive method (not a
+                // breaking change to the one above) exposing each
+                // package's on-device-classified category, per
+                // AppCategoryClassifier's own docstring.
+                "getTodayAppCategories" -> {
+                    val usageStatsManager = getSystemService(android.content.Context.USAGE_STATS_SERVICE)
+                        as android.app.usage.UsageStatsManager
+                    val calendar = java.util.Calendar.getInstance().apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, 0)
+                        set(java.util.Calendar.MINUTE, 0)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }
+                    val startOfDay = calendar.timeInMillis
+                    val now = System.currentTimeMillis()
+
+                    val stats = usageStatsManager.queryUsageStats(
+                        android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+                        startOfDay,
+                        now,
+                    ) ?: emptyList()
+
+                    val categories = stats
+                        .filter { it.packageName != packageName && it.totalTimeInForeground > 0 }
+                        .associate { it.packageName to AppCategoryClassifier.classify(it.packageName) }
+
+                    result.success(categories)
+                }
+
+                AgentChannel.METHOD_GET_TODAY_SESSION_STATS -> {
+                    val stats = SessionAnalyzer.analyzeToday(applicationContext)
+                    result.success(
+                        mapOf(
+                            "sessionCount" to stats.sessionCount,
+                            "averageSessionMinutes" to stats.averageSessionMinutes,
+                            "longestSessionMinutes" to stats.longestSessionMinutes,
+                            "usageByHour" to stats.usageByHour.mapKeys { it.key.toString() },
+                        ),
+                    )
+                }
+
+                AgentChannel.METHOD_GET_TODAY_PICKUP_COUNT -> {
+                    val usageStatsManager = getSystemService(android.content.Context.USAGE_STATS_SERVICE)
+                        as android.app.usage.UsageStatsManager
+                    val calendar = java.util.Calendar.getInstance().apply {
+                        set(java.util.Calendar.HOUR_OF_DAY, 0)
+                        set(java.util.Calendar.MINUTE, 0)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }
+                    val startOfDay = calendar.timeInMillis
+                    val now = System.currentTimeMillis()
+
+                    val events = usageStatsManager.queryEvents(startOfDay, now)
+                    val event = android.app.usage.UsageEvents.Event()
+                    var pickupCount = 0
+                    while (events.hasNextEvent()) {
+                        events.getNextEvent(event)
+                        if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED &&
+                            event.packageName != packageName
+                        ) {
+                            pickupCount++
+                        }
+                    }
+
+                    result.success(pickupCount)
+                }
+
                 AgentChannel.METHOD_SYNC_POLICY_TO_NATIVE -> {
                     val args = call.arguments as? Map<*, *>
                     if (args == null) {

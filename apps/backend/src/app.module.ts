@@ -12,6 +12,9 @@ import { ChildrenModule } from './modules/children/children.module';
 import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
 import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
+import { SupportModule } from './modules/support/support.module';
+import { AccountDeletionModule } from './modules/account-deletion/account-deletion.module';
+import { OrganizationModule } from './modules/organization/organization.module';
 import { PairingModule } from './modules/pairing/pairing.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { BillingModule } from './modules/billing/billing.module';
@@ -44,6 +47,9 @@ import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelli
     ScreenTimeModule,
     AiAssistantModule,
     ComplianceModule,
+    SupportModule,
+    AccountDeletionModule,
+    OrganizationModule,
     PairingModule,
     NotificationsModule,
     BillingModule,

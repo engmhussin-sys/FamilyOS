@@ -19,6 +19,10 @@ import '../../plugins/offline_queue/application/offline_queue.dart';
 import '../../plugins/anti_tamper/contracts/i_anti_tamper.dart';
 import '../../plugins/anti_tamper/infrastructure/platform_anti_tamper.dart';
 import '../../features/family_growth/api/family_growth_api.dart';
+import '../../plugins/screen_time/contracts/i_app_usage_collector.dart';
+import '../../plugins/screen_time/infrastructure/platform_app_usage_collector.dart';
+import '../../plugins/screen_time/application/digital_wellbeing_service.dart';
+import '../../plugins/screen_time/application/critical_event_coordinator.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -134,4 +138,40 @@ final runtimeTelemetryCollectorProvider = Provider<RuntimeTelemetryCollector>((r
 
 final familyGrowthApiProvider = Provider<FamilyGrowthApi>((ref) {
   return FamilyGrowthApi(ref.watch(apiClientProvider));
+});
+
+// --- Edge-First Intelligence Architecture: Digital Wellbeing ---
+
+final appUsageCollectorProvider = Provider<IAppUsageCollector>((ref) {
+  return PlatformAppUsageCollector(ref.watch(agentPlatformChannelProvider));
+});
+
+/// A GENUINELY SEPARATE queue instance from `offlineQueueProvider`
+/// above (own storage key: 'wellbeing_offline_queue' vs Heartbeat's
+/// 'cre_offline_queue' default) — found and fixed during design:
+/// sharing the same instance would have caused HeartbeatService's own
+/// drain() to throw and stop prematurely the moment it encountered a
+/// wellbeing-typed event, and vice versa. Same OfflineQueue class/
+/// mechanism reused exactly as instructed, isolated by key rather
+/// than by a second implementation.
+final wellbeingOfflineQueueProvider = Provider<OfflineQueue>((ref) {
+  return OfflineQueue(ref.watch(secureStorageProvider), storageKey: 'wellbeing_offline_queue');
+});
+
+final digitalWellbeingServiceProvider = Provider<DigitalWellbeingService>((ref) {
+  return DigitalWellbeingService(
+    ref.watch(appUsageCollectorProvider),
+    ref.watch(apiClientProvider),
+    ref.watch(wellbeingOfflineQueueProvider),
+    ref.watch(agentPlatformChannelProvider),
+  );
+});
+
+final criticalEventCoordinatorProvider = Provider<CriticalEventCoordinator>((ref) {
+  final coordinator = CriticalEventCoordinator(
+    ref.watch(antiTamperProvider) as PlatformAntiTamper,
+    ref.watch(digitalWellbeingServiceProvider),
+  );
+  ref.onDispose(coordinator.dispose);
+  return coordinator;
 });

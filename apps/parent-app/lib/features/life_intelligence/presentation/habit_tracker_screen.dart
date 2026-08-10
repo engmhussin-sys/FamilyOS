@@ -3,7 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../../core/theme/app_theme.dart';
 
+/// DESIGN PASS: was a plain ListTile-per-row list — now has a colored
+/// left-edge accent and category icon, matching the same visual
+/// language established across the other elevated screens in this app.
 class HabitTrackerScreen extends ConsumerStatefulWidget {
   const HabitTrackerScreen({super.key, required this.childId, required this.childName});
 
@@ -38,9 +42,7 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
     try {
       await ref.read(lifeIntelligenceApiProvider).completeHabit(widget.childId, habitId);
     } catch (_) {
-      // Best-effort single action — the list refresh below is the
-      // only feedback; matches this app's own NotificationsScreen
-      // pattern for similarly low-stakes retry-safe actions.
+      // Best-effort single action.
     }
     await _load();
   }
@@ -78,18 +80,54 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
                         itemBuilder: (context, index) {
                           final habit = _habits![index] as Map<String, dynamic>;
                           final isShared = habit['isShared'] as bool? ?? false;
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              title: Text(habit['title'] as String? ?? ''),
-                              subtitle: Text(
-                                isShared
-                                    ? '${habit['category']} \u00b7 ${t('habitTracker.shared')}'
-                                    : '${habit['category']}',
-                              ),
-                              trailing: FilledButton(
-                                onPressed: () => _complete(habit['id'] as String),
-                                child: Text(t('habitTracker.markDone')),
+                          final isDone = habit['completedToday'] as bool? ?? false;
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: isDone ? AppTheme.sage500.withOpacity(0.06) : Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: isDone
+                                  ? null
+                                  : [BoxShadow(color: AppTheme.guardian950.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 4))],
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.14), shape: BoxShape.circle),
+                                    child: const Icon(Icons.checklist_rounded, color: AppTheme.sage500, size: 20),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          habit['title'] as String? ?? '',
+                                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                                decoration: isDone ? TextDecoration.lineThrough : null,
+                                              ),
+                                        ),
+                                        Text(
+                                          isShared
+                                              ? '${habit['category']} \u00b7 ${t('habitTracker.shared')}'
+                                              : '${habit['category']}',
+                                          style: Theme.of(context).textTheme.bodyMedium,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (isDone)
+                                    const Icon(Icons.check_circle_rounded, color: AppTheme.sage500, size: 28)
+                                  else
+                                    FilledButton(
+                                      onPressed: () => _complete(habit['id'] as String),
+                                      child: Text(t('habitTracker.markDone')),
+                                    ),
+                                ],
                               ),
                             ),
                           );

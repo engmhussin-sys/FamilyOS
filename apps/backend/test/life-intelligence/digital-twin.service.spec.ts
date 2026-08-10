@@ -10,6 +10,7 @@ import { LearningEngineService } from '../../src/modules/life-intelligence/appli
 import { PairingOrchestratorService } from '../../src/modules/pairing/application/services/pairing-orchestrator.service';
 import { RiskEvaluationService } from '../../src/modules/pairing/application/services/risk-evaluation.service';
 import { BehavioralIntelligenceEngineService } from '../../src/modules/ai-core/application/services/behavioral-intelligence-engine.service';
+import { DigitalWellbeingEngineService } from '../../src/modules/life-intelligence/application/services/digital-wellbeing-engine.service';
 
 describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
   const repositoryMock = { getSocialScoreInputs: jest.fn(), upsertProjection: jest.fn() };
@@ -21,6 +22,7 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
   const pairingOrchestratorMock = { listFamilyDevices: jest.fn() };
   const riskEvaluationMock = { getLatestRiskAssessment: jest.fn() };
   const behavioralEngineMock = { computeTrend: jest.fn() };
+  const digitalWellbeingMock = { getBehavioralSnapshotSummary: jest.fn() };
 
   let service: DigitalTwinService;
   const childId = 'child-1';
@@ -32,6 +34,7 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
     faithEngineMock.getScoreBreakdown.mockResolvedValue({ completionRate: 0.5, completedLogs: 5, activePractices: 2 });
     learningEngineMock.getProgressSummary.mockResolvedValue({ totalSessions: 0, totalMinutes: 0, averageAssessmentScore: null });
     repositoryMock.getSocialScoreInputs.mockResolvedValue({ sharedHabitCompletions: 0, groupActivityCount: 0, groupBadgeCount: 0, challengeParticipations: 0 });
+    digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue(null);
   };
 
   beforeEach(async () => {
@@ -49,6 +52,7 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
         { provide: PairingOrchestratorService, useValue: pairingOrchestratorMock },
         { provide: RiskEvaluationService, useValue: riskEvaluationMock },
         { provide: BehavioralIntelligenceEngineService, useValue: behavioralEngineMock },
+        { provide: DigitalWellbeingEngineService, useValue: digitalWellbeingMock },
       ],
     }).compile();
     service = moduleRef.get(DigitalTwinService);
@@ -147,5 +151,63 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
 
     expect(result.growthScore?.inputs.totalPossibleSubScores).toBe(7);
     expect(result.growthScore?.inputs.contributingSubScores).toBe(6);
+  });
+
+  describe('wellbeing (Edge-First Intelligence Architecture)', () => {
+    it('returns null (honest absence) when no wellbeing data exists yet', async () => {
+      digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue(null);
+      const result = await service.refreshAndGet(childId, familyId);
+      expect(result.wellbeing).toBeNull();
+    });
+
+    it('computes score from totalBlockedAttempts ONLY \u2014 zero violations scores 100', async () => {
+      digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+        windowDays: 30, averageDailyScreenMinutes: 90, averagePickups: 20, averageNightUsageMinutes: 5,
+        totalBlockedAttempts: 0, daysWithData: 10,
+      });
+      const result = await service.refreshAndGet(childId, familyId);
+      expect(result.wellbeing?.score).toBe(100);
+    });
+
+    it('deducts 10 points per blocked attempt, floored at 0', async () => {
+      digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+        windowDays: 30, averageDailyScreenMinutes: 90, averagePickups: 20, averageNightUsageMinutes: 5,
+        totalBlockedAttempts: 15, daysWithData: 10,
+      });
+      const result = await service.refreshAndGet(childId, familyId);
+      expect(result.wellbeing?.score).toBe(0); // 100 - 150, floored
+    });
+
+    it('surfaces screen time / pickups / night usage as CONTEXT in inputs, never affecting the score itself', async () => {
+      digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+        windowDays: 30, averageDailyScreenMinutes: 300, averagePickups: 200, averageNightUsageMinutes: 120,
+        totalBlockedAttempts: 1, daysWithData: 10,
+      });
+      const result = await service.refreshAndGet(childId, familyId);
+      // Extremely high screen time/pickups/night usage do NOT lower the
+      // score below what 1 blocked attempt alone would produce.
+      expect(result.wellbeing?.score).toBe(90);
+      expect(result.wellbeing?.inputs.averageDailyScreenMinutes).toBe(300);
+    });
+
+    it('is NEVER included in growthScore\u2019s own calculation \u2014 the explicit PM decision, verified not just asserted', async () => {
+      digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+        windowDays: 30, averageDailyScreenMinutes: 90, averagePickups: 20, averageNightUsageMinutes: 5,
+        totalBlockedAttempts: 0, daysWithData: 10,
+      });
+      const result = await service.refreshAndGet(childId, familyId);
+      // Same 7-slot count as before wellbeing existed \u2014 proves it was
+      // never added to computeGrowthScore's input array.
+      expect(result.growthScore?.inputs.totalPossibleSubScores).toBe(7);
+    });
+
+    it('confidence reflects days of real data \u2014 HIGH at 7+, MEDIUM at 3-6, LOW below 3', async () => {
+      digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+        windowDays: 30, averageDailyScreenMinutes: 90, averagePickups: 20, averageNightUsageMinutes: 5,
+        totalBlockedAttempts: 0, daysWithData: 2,
+      });
+      const result = await service.refreshAndGet(childId, familyId);
+      expect(result.wellbeing?.confidence).toBe('LOW');
+    });
   });
 });

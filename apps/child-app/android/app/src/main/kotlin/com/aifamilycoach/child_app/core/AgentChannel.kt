@@ -34,6 +34,12 @@ object AgentChannel {
     // --- Sprint 4: Runtime Telemetry ---
     const val METHOD_GET_RUNTIME_HEALTH = "getRuntimeHealth"
 
+    // --- Edge-First Intelligence Architecture: Digital Wellbeing ---
+    const val METHOD_GET_TODAY_APP_USAGE_BREAKDOWN = "getTodayAppUsageBreakdown"
+    const val METHOD_GET_TODAY_PICKUP_COUNT = "getTodayPickupCount"
+    // Sprint 14 (Behavioral Intelligence Engine)
+    const val METHOD_GET_TODAY_SESSION_STATS = "getTodaySessionStats"
+
     // --- Child Runtime Engine: Anti-Tamper ---
     const val METHOD_CHECK_TAMPER_SIGNALS = "checkTamperSignals"
 

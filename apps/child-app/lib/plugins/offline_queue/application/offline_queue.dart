@@ -30,10 +30,11 @@ class QueuedEvent {
 /// no new package. Deliberately caps queue size so a device offline for
 /// weeks doesn't grow this unbounded.
 class OfflineQueue {
-  OfflineQueue(this._storage);
+  OfflineQueue(this._storage, {String storageKey = _defaultStorageKey}) : _storageKey = storageKey;
 
   final FlutterSecureStorage _storage;
-  static const _storageKey = 'cre_offline_queue';
+  final String _storageKey;
+  static const _defaultStorageKey = 'cre_offline_queue';
   static const _maxQueueSize = 200;
 
   Future<void> enqueue(String type, Map<String, dynamic> payload) async {

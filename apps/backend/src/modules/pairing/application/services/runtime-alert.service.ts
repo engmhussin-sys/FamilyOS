@@ -39,6 +39,7 @@ export class RuntimeAlertService {
         title: 'Protection turned off',
         body: 'Device protection (Accessibility Service) was disabled.',
         data: { alertType: 'ACCESSIBILITY_DISABLED' },
+        priority: 'CRITICAL',
       });
     }
   }

@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'localization_engine.dart';
@@ -31,6 +32,16 @@ class LocaleController extends StateNotifier<AppLocale> {
   }
 
   bool get isRtl => rtlLocales.contains(state);
+
+  /// CLOSES A REAL GAP (Master Completeness Audit): bridges this
+  /// app's own AppLocale enum to Flutter's real `dart:ui` Locale —
+  /// needed so MaterialApp.locale can drive native Material widget
+  /// localization (showDatePicker, default dialog button text),
+  /// which Directionality alone (main.dart) never covered.
+  Locale get toLocale => switch (state) {
+        AppLocale.en => const Locale('en'),
+        AppLocale.ar => const Locale('ar'),
+      };
 }
 
 final localeControllerProvider = StateNotifierProvider<LocaleController, AppLocale>(

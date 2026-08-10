@@ -4,14 +4,17 @@ const VALID_AI_MODELS_PREFIX = 'claude-'; // this backend has exactly one AI pro
 
 /**
  * Sprint 9. Checks that configured values are well-formed and point at
- * something real \u2014 distinct from SecretsValidator's "is this strong
+ * something real — distinct from SecretsValidator's "is this strong
  * enough" concern. Every check here maps to a real dependency this
- * backend actually has (DATABASE_URL, REDIS_URL, the one AI provider) \u2014
- * no placeholder checks for providers that don't exist (no storage
- * provider, no push-notification provider are integrated in this
- * codebase yet, so there is nothing to validate for them; adding a
- * check for a provider with zero implementation would be a check that
- * can never meaningfully fail or pass).
+ * backend actually has.
+ *
+ * UPDATED (Sprints 4/5): the original version of this docstring said
+ * "no push-notification provider is integrated in this codebase yet"
+ * — that became stale the moment PushNotificationService/Sentry
+ * shipped; SENTRY_DSN and FIREBASE_SERVICE_ACCOUNT_JSON are now
+ * checked below with the exact same WARNING-not-FATAL pattern as
+ * ANTHROPIC_API_KEY, since both integrations already degrade
+ * gracefully to a safe no-op without their credentials.
  */
 export class EnvironmentValidator {
   validate(env: NodeJS.ProcessEnv): IConfigValidationIssue[] {
@@ -28,15 +31,10 @@ export class EnvironmentValidator {
       });
     }
     if (!env.ANTHROPIC_API_KEY) {
-      // Not FATAL \u2014 AnthropicAIProvider already degrades gracefully
-      // (AiCoreOrchestratorService throws a scoped exception only when
-      // an AI feature is actually called, not at boot) \u2014 matches
-      // Decision-069's "system must remain functional without any
-      // external provider" for the six non-LLM-dependent AI engines.
       issues.push({
         key: 'ANTHROPIC_API_KEY',
         severity: 'WARNING',
-        message: 'Missing \u2014 AI Assistant/Diagnostics/Recommendation phrasing will degrade to deterministic fallback text.',
+        message: 'Missing — AI Assistant/Diagnostics/Recommendation phrasing will degrade to deterministic fallback text.',
       });
     }
 
@@ -44,8 +42,34 @@ export class EnvironmentValidator {
       issues.push({
         key: 'CORS_ALLOWED_ORIGINS',
         severity: 'WARNING',
-        message: 'Missing \u2014 CORS will allow no origins at all (main.ts defaults to an empty array), not a security hole but likely unintended.',
+        message: 'Missing — CORS will allow no origins at all (main.ts defaults to an empty array), not a security hole but likely unintended.',
       });
+    }
+
+    if (!env.SENTRY_DSN) {
+      issues.push({
+        key: 'SENTRY_DSN',
+        severity: 'WARNING',
+        message: 'Missing — errors are still logged locally (GlobalExceptionFilter unchanged), just not reported to Sentry. See PRODUCTION_DEPLOYMENT_GUIDE.md.',
+      });
+    }
+
+    if (!env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      issues.push({
+        key: 'FIREBASE_SERVICE_ACCOUNT_JSON',
+        severity: 'WARNING',
+        message: 'Missing — PushNotificationService will log every send as a no-op rather than actually delivering it. See PRODUCTION_DEPLOYMENT_GUIDE.md.',
+      });
+    } else {
+      try {
+        JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      } catch {
+        issues.push({
+          key: 'FIREBASE_SERVICE_ACCOUNT_JSON',
+          severity: 'WARNING',
+          message: 'Set, but not valid JSON — push notifications will fail to initialize. Expected the full Firebase service-account key, collapsed to one line.',
+        });
+      }
     }
 
     return issues;

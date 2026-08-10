@@ -7,6 +7,9 @@ export interface IFaithPractice {
   title: string;
   config: Record<string, unknown> | null;
   isActive: boolean;
+  /** CLOSES A REAL GAP found while building the Child App's design —
+   * mirrors IHabit.completedToday exactly, same reasoning. */
+  completedToday: boolean;
 }
 
 export interface IFaithPracticeLog {

@@ -12,4 +12,16 @@ class PairingApi {
   Future<Map<String, dynamic>> generateInviteCode(String childId) {
     return _client.post('/pairing/invite', data: {'childId': childId});
   }
+
+  Future<void> registerPushToken(String platform, String pushToken) {
+    return _client.post('/pairing/parent-device/push-token', data: {'platform': platform, 'pushToken': pushToken});
+  }
+
+  /// Sprint 1 (Consent Enforcement, Option C) — called once right
+  /// after a new child is created, per that screen's own explicit
+  /// registration copy. See ConsentService.grantDefaults's own
+  /// docstring for exactly what this grants and why.
+  Future<void> grantDefaultConsents(String childId) {
+    return _client.post('/children/$childId/consents/grant-defaults');
+  }
 }

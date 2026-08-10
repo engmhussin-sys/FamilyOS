@@ -57,6 +57,7 @@ describe('AuthService', () => {
           email: 'taken@example.com',
           password: 'Sup3rSecret!',
           fullName: 'Existing Parent',
+          acceptedTerms: true,
         }),
       ).rejects.toBeInstanceOf(EmailAlreadyRegisteredException);
 
@@ -76,11 +77,19 @@ describe('AuthService', () => {
         email: 'New@Example.com',
         password: 'Sup3rSecret!',
         fullName: 'New Parent',
+        acceptedTerms: true,
       });
 
       expect(passwordServiceMock.hash).toHaveBeenCalledWith('Sup3rSecret!');
       // Email is normalized to lowercase before lookups and persistence.
       expect(userRepositoryMock.findByEmail).toHaveBeenCalledWith('new@example.com');
+      // CLOSES A REAL GAP (proactive business/code audit): acceptedTerms
+      // must actually reach the repository, not just be validated at
+      // the DTO boundary and then silently dropped.
+      expect(userRepositoryMock.createParentWithFamily).toHaveBeenCalledWith(
+        expect.objectContaining({ acceptedTerms: true }),
+        'hashed-password',
+      );
       expect(result).toEqual({
         id: 'user-1',
         email: 'new@example.com',

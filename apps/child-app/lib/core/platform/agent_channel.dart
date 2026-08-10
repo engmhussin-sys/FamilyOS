@@ -57,6 +57,39 @@ abstract class AgentPlatformChannel {
   // --- Child Runtime Engine: Runtime Telemetry ---
   Future<Map<Object?, Object?>> getRuntimeHealth();
 
+  // --- Edge-First Intelligence Architecture: Digital Wellbeing ---
+  // CLOSES THE GAP `DailyUsageTracker.kt` (existing) left open: that
+  // class only ever computed a single TOTAL minutes-used-today number
+  // for the bedtime/daily-limit rule engine. These two methods expose
+  // Android's OWN aggregate UsageStatsManager/UsageEvents APIs with
+  // real per-app and pickup granularity — still aggregated by Android
+  // itself, never per-tap/per-second raw logging on this app's part.
+
+  /// Per-app foreground minutes for today, using the same
+  /// `UsageStatsManager.queryUsageStats` API `DailyUsageTracker.kt`
+  /// already uses for its total — this is that same data, kept
+  /// per-package instead of summed. Keys are package names.
+  Future<Map<Object?, Object?>> getTodayAppUsageBreakdown();
+
+  /// Count of foreground-app-launch events today, via Android's
+  /// `UsageEvents.Event.ACTIVITY_RESUMED` — a standard, Android-provided
+  /// aggregate signal (how many times any app was brought to the
+  /// foreground), not a custom tap-tracking mechanism.
+  Future<int> getTodayPickupCount();
+
+  // --- Sprint 14 (Behavioral Intelligence Engine) ---
+  /// On-device category classification per package (AppCategoryClassifier.kt)
+  /// — a SEPARATE method from getTodayAppUsageBreakdown above (not a
+  /// breaking change to it) so existing callers of that method are
+  /// entirely unaffected. Keys are package names, values are category
+  /// strings (e.g. "EDUCATION", "GAMING", "OTHER").
+  Future<Map<Object?, Object?>> getTodayAppCategories();
+
+  /// Session-level stats (count, average, longest, usage-by-hour) —
+  /// computed from the same UsageEvents stream getTodayPickupCount
+  /// already reads, via SessionAnalyzer.kt.
+  Future<Map<Object?, Object?>> getTodaySessionStats();
+
   // --- Sprint 5: Runtime Enforcement Engine ---
   /// Pushes the currently-synced policy into native storage
   /// (NativePolicyStore.kt) so ChildGuardAccessibilityService can

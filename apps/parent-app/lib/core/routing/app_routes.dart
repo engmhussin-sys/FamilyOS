@@ -11,4 +11,12 @@ class AppRoutes {
   static const settings = '/settings';
   static const digitalTwin = '/digital-twin';
   static const lifeTimeline = '/life-timeline';
+  static const subscription = '/subscription';
+  static const billingHistory = '/billing-history';
+  static const support = '/support';
+  static const contactSupport = '/contact-support';
+  static const createChild = '/create-child';
+  static const manageConsents = '/manage-consents';
+  static const deleteAccount = '/delete-account';
+  static const redeemCode = '/redeem-code';
 }

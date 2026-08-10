@@ -26,6 +26,7 @@ import { TokenService } from '../../../auth/application/services/token.service';
 import type { ITokenPair } from '../../../auth/domain/auth.types';
 import { ScreenTimeService } from '../../../screen-time/application/services/screen-time.service';
 import { RuntimeAlertService } from './runtime-alert.service';
+import { EntitlementsService } from '../../../billing/application/services/entitlements.service';
 import {
   RUNTIME_ALERT_REPOSITORY,
   type IRuntimeAlertRepository,
@@ -84,6 +85,7 @@ export class PairingOrchestratorService {
     private readonly runtimeAlertService: RuntimeAlertService,
     @Inject(RUNTIME_ALERT_REPOSITORY)
     private readonly runtimeAlertRepository: IRuntimeAlertRepository,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   invite(childId: string, familyId: string, initiatedByUserId: string): Promise<IInvitationTicket> {
@@ -95,11 +97,25 @@ export class PairingOrchestratorService {
     return this.registrationTokenService.issue({ childId: ticket.childId, familyId: ticket.familyId });
   }
 
+  /** CLOSES A REAL GAP (proactive business/code audit): 'unlimited_devices_per_child'
+   * has existed as a plan feature since Sprint 8 with zero enforcement
+   * anywhere. The first device for any given child is always free —
+   * only a SECOND device for the SAME child requires the entitlement
+   * (a family with two phones for the same kid, not two different kids). */
   async registerDevice(
     childId: string,
     familyId: string,
     input: Omit<ICreatePairingDeviceInput, 'childId' | 'familyId'>,
   ): Promise<IDeviceRegistrationResult> {
+    const existingFamilyDevices = await this.pairingDeviceRepository.findAllByFamily(familyId);
+    const existingDevicesForThisChild = existingFamilyDevices.filter((d) => d.childId === childId);
+    if (existingDevicesForThisChild.length >= 1) {
+      const entitled = await this.entitlements.hasFeature(familyId, 'unlimited_devices_per_child');
+      if (!entitled) {
+        throw new ForbiddenException('Pairing a second device for the same child requires a plan with the unlimited_devices_per_child feature.');
+      }
+    }
+
     const device = await this.pairingDeviceRepository.createDevice({ ...input, childId, familyId });
 
     await this.pairingStateMachine.transition({
@@ -467,6 +483,21 @@ export class PairingOrchestratorService {
       throw new NotFoundException(`Device "${deviceId}" is not paired to a child.`);
     }
     return { childId: device.childId, familyId: device.familyId };
+  }
+
+  /** Sprint 5 (Push Notifications) — registers/refreshes the Parent
+   * App's own push token, closing the gap flagged in
+   * IPairingDeviceRepository.upsertParentDevicePushToken's own
+   * docstring. Called by an authenticated PARENT (JwtAuthGuard), not
+   * a device — there is no pairing flow for this, a logged-in parent
+   * simply registers their own app instance. */
+  async registerParentDevicePushToken(
+    userId: string,
+    familyId: string,
+    platform: 'ANDROID' | 'IOS',
+    pushToken: string,
+  ): Promise<void> {
+    await this.pairingDeviceRepository.upsertParentDevicePushToken({ userId, familyId, platform, pushToken });
   }
 
   async getChildIdForDevice(deviceId: string): Promise<string> {

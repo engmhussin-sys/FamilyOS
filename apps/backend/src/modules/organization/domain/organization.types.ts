@@ -40,6 +40,10 @@ export interface IOrganizationInvitation {
   role: OrganizationRoleValue;
   status: InvitationStatusValue;
   expiresAt: Date;
+  /** CLOSES A REAL GAP found while implementing this Sprint 9
+   * contract: the schema's OrganizationInvitation.invitedByUserId is
+   * a required column with no corresponding field here originally. */
+  invitedByUserId: string;
 }
 
 export interface IPartnerCampaign {
@@ -49,4 +53,24 @@ export interface IPartnerCampaign {
   type: PartnerCampaignTypeValue;
   config: Record<string, unknown>;
   isActive: boolean;
+  /** CLOSES A REAL GAP found while implementing Sprint B4: the
+   * schema column and findActiveCampaignByCode's own expiry check
+   * both already existed, but this domain type never had a field
+   * for it — making it impossible to actually SET an expiry at
+   * creation time. */
+  expiresAt: Date | null;
+}
+
+/** Sprint B5 — CLOSES A REAL GAP: Organization.settings (Json,
+ * intentionally loose per Sprint 9's own docstring: "concrete fields
+ * are a product decision for whoever builds the White Label config
+ * UI, not an architecture-layer concern") had zero concrete shape
+ * until this Sprint. Deliberately minimal for a first pass — logo +
+ * two colors, not a full theming system (fonts, layout variants,
+ * per-screen overrides are real future extensions once a partner
+ * actually asks for them). */
+export interface IBrandingSettings {
+  logoUrl?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
 }

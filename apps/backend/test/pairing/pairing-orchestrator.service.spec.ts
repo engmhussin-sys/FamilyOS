@@ -12,6 +12,7 @@ import { ScreenTimeService } from '../../src/modules/screen-time/application/ser
 import { PAIRING_EVENT_REPOSITORY } from '../../src/modules/pairing/application/ports/pairing-event.repository.port';
 import { RuntimeAlertService } from '../../src/modules/pairing/application/services/runtime-alert.service';
 import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
+import { EntitlementsService } from '../../src/modules/billing/application/services/entitlements.service';
 
 const NO_RISK_SIGNALS = {
   isEmulator: false,
@@ -38,7 +39,7 @@ describe('PairingOrchestratorService', () => {
     revokeDevice: jest.fn(),
     touchLastSeen: jest.fn(),
     updateCapabilityProfile: jest.fn(),
-    findAllByFamily: jest.fn(),
+    findAllByFamily: jest.fn().mockResolvedValue([]),
     updateTelemetry: jest.fn(),
   };
   const tokenServiceMock = { issueTokenPair: jest.fn(), revokeAllTokensForDevice: jest.fn() };
@@ -46,11 +47,13 @@ describe('PairingOrchestratorService', () => {
   const pairingEventRepositoryMock = { findAllByChild: jest.fn() };
   const runtimeAlertServiceMock = { evaluateTransition: jest.fn() };
   const runtimeAlertRepositoryMock = { listForUser: jest.fn() };
+  const entitlementsMock = { hasFeature: jest.fn() };
 
   let service: PairingOrchestratorService;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([]); // reset after clearAllMocks
     const moduleRef = await Test.createTestingModule({
       providers: [
         PairingOrchestratorService,
@@ -65,6 +68,7 @@ describe('PairingOrchestratorService', () => {
         { provide: PAIRING_EVENT_REPOSITORY, useValue: pairingEventRepositoryMock },
         { provide: RuntimeAlertService, useValue: runtimeAlertServiceMock },
         { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertRepositoryMock },
+        { provide: EntitlementsService, useValue: entitlementsMock },
       ],
     }).compile();
     service = moduleRef.get(PairingOrchestratorService);
@@ -128,6 +132,43 @@ describe('PairingOrchestratorService', () => {
         familyId: 'family-1',
       });
       expect(result.deviceId).toBe('device-1');
+    });
+
+    it('CLOSES A REAL GAP (proactive business/code audit): allows a FIRST device for a child without checking entitlements', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([]);
+      pairingDeviceRepositoryMock.createDevice.mockResolvedValue({ id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'PENDING_PAIRING', lastSeenAt: null });
+      tokenServiceMock.issueTokenPair.mockResolvedValue({ accessToken: 'a', refreshToken: 'r' });
+
+      await service.registerDevice('child-1', 'family-1', { publicKey: 'pub-key', platform: 'ANDROID' });
+
+      expect(entitlementsMock.hasFeature).not.toHaveBeenCalled();
+    });
+
+    it('blocks a SECOND device for the SAME child when unlimited_devices_per_child is not entitled', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
+        { id: 'existing-device', childId: 'child-1', familyId: 'family-1' },
+      ]);
+      entitlementsMock.hasFeature.mockResolvedValue(false);
+
+      await expect(
+        service.registerDevice('child-1', 'family-1', { publicKey: 'pub-key-2', platform: 'ANDROID' }),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(entitlementsMock.hasFeature).toHaveBeenCalledWith('family-1', 'unlimited_devices_per_child');
+      expect(pairingDeviceRepositoryMock.createDevice).not.toHaveBeenCalled();
+    });
+
+    it('does NOT block a device for a DIFFERENT child in the same family — the limit is per-child, not per-family', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
+        { id: 'existing-device', childId: 'some-other-child', familyId: 'family-1' },
+      ]);
+      pairingDeviceRepositoryMock.createDevice.mockResolvedValue({ id: 'device-2', childId: 'child-1', familyId: 'family-1', status: 'PENDING_PAIRING', lastSeenAt: null });
+      tokenServiceMock.issueTokenPair.mockResolvedValue({ accessToken: 'a', refreshToken: 'r' });
+
+      await service.registerDevice('child-1', 'family-1', { publicKey: 'pub-key', platform: 'ANDROID' });
+
+      expect(entitlementsMock.hasFeature).not.toHaveBeenCalled();
+      expect(pairingDeviceRepositoryMock.createDevice).toHaveBeenCalled();
     });
   });
 

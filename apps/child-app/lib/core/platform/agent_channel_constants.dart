@@ -35,6 +35,12 @@ class AgentChannelConstants {
 
   // --- Child Runtime Engine: Runtime Telemetry ---
   static const String methodGetRuntimeHealth = 'getRuntimeHealth';
+  static const String methodGetTodayAppUsageBreakdown = 'getTodayAppUsageBreakdown';
+  static const String methodGetTodayPickupCount = 'getTodayPickupCount';
+  // Sprint 14 (Behavioral Intelligence Engine) — must match the exact
+  // string literals used in MainActivity.kt's `when` block.
+  static const String methodGetTodayAppCategories = 'getTodayAppCategories';
+  static const String methodGetTodaySessionStats = 'getTodaySessionStats';
 
   // --- Sprint 5: Runtime Enforcement Engine ---
   static const String methodSyncPolicyToNative = 'syncPolicyToNative';

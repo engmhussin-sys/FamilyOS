@@ -1,7 +1,12 @@
 import { ArgumentsHost, ConflictException, NotFoundException } from '@nestjs/common';
+import * as Sentry from '@sentry/node';
 import { GlobalExceptionFilter } from '../../src/common/filters/global-exception.filter';
 
+jest.mock('@sentry/node', () => ({ captureException: jest.fn() }));
+
 describe('GlobalExceptionFilter', () => {
+  beforeEach(() => jest.clearAllMocks());
+
   function buildHost(correlationId = 'test-correlation-id') {
     const res: any = {};
     res.status = jest.fn().mockReturnValue(res);
@@ -73,5 +78,27 @@ describe('GlobalExceptionFilter', () => {
     filter.catch(new NotFoundException(), host);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ correlationId: 'unknown' }));
+  });
+
+  describe('Sentry reporting (Sprint 4 — Observability)', () => {
+    it('reports an unrecognized (500-class) error to Sentry, tagged with the correlationId', () => {
+      const filter = new GlobalExceptionFilter();
+      const { host } = buildHost('abc-123');
+      const error = new Error('Unexpected failure');
+
+      filter.catch(error, host);
+
+      expect(Sentry.captureException).toHaveBeenCalledWith(error, { tags: { correlationId: 'abc-123' } });
+    });
+
+    it('does NOT report an expected 4xx HttpException to Sentry \u2014 same condition as local error-level logging, not a broader one', () => {
+      const filter = new GlobalExceptionFilter();
+      const { host } = buildHost();
+
+      filter.catch(new NotFoundException('Child not found.'), host);
+      filter.catch(new ConflictException('Duplicate.'), host);
+
+      expect(Sentry.captureException).not.toHaveBeenCalled();
+    });
   });
 });

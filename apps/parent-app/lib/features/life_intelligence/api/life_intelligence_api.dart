@@ -60,4 +60,20 @@ class LifeIntelligenceApi {
     final result = await _client.get('/life-intelligence/rewards/store/$familyId');
     return result['data'] as List<dynamic>;
   }
+
+  Future<Map<String, dynamic>?> getWellbeingSnapshot(String childId) async {
+    final result = await _client.get('/life-intelligence/wellbeing/$childId/snapshot');
+    // ApiClient._unwrap() wraps a raw `null` JSON body as {'data': null}
+    // (its own fallback for any non-Map response) — the backend
+    // genuinely returns null when no snapshot data exists yet
+    // (an honest absence, not a fabricated zero-average), so this
+    // checks for that wrapped-null shape specifically.
+    if (result.containsKey('data') && result['data'] == null && result.length == 1) return null;
+    return result;
+  }
+
+  Future<List<dynamic>> getTopApps(String childId, String deviceId) async {
+    final result = await _client.get('/life-intelligence/wellbeing/$childId/top-apps/$deviceId');
+    return result['data'] as List<dynamic>;
+  }
 }

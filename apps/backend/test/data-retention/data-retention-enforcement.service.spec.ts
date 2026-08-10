@@ -8,6 +8,9 @@ describe('DataRetentionEnforcementService', () => {
     notification: { deleteMany: jest.fn() },
     analyticsEvent: { updateMany: jest.fn() },
     locationEvent: { deleteMany: jest.fn() },
+    dailyBehavioralSnapshot: { deleteMany: jest.fn() },
+    appUsageLog: { deleteMany: jest.fn() },
+    $transaction: jest.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
   };
 
   let service: DataRetentionEnforcementService;
@@ -41,16 +44,55 @@ describe('DataRetentionEnforcementService', () => {
     });
   });
 
+  describe('enforceDigitalWellbeingRetention', () => {
+    it('deletes rows from BOTH tables by a fixed lookback window, in one transaction', async () => {
+      prismaMock.dailyBehavioralSnapshot.deleteMany.mockResolvedValue({ count: 5 });
+      prismaMock.appUsageLog.deleteMany.mockResolvedValue({ count: 40 });
+
+      const result = await service.enforceDigitalWellbeingRetention();
+
+      expect(prismaMock.$transaction).toHaveBeenCalled();
+      expect(prismaMock.dailyBehavioralSnapshot.deleteMany).toHaveBeenCalledWith({
+        where: { usageDate: { lt: expect.any(Date) } },
+      });
+      expect(prismaMock.appUsageLog.deleteMany).toHaveBeenCalledWith({
+        where: { usageDate: { lt: expect.any(Date) } },
+      });
+      // Sums BOTH tables into one reported count — they're written
+      // together as one conceptual dataset (a day's usage summary).
+      expect(result).toEqual({ category: 'App Usage Data', action: 'HARD_DELETE', affectedRows: 45 });
+    });
+
+    it('respects a custom retentionDays argument', async () => {
+      prismaMock.dailyBehavioralSnapshot.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.appUsageLog.deleteMany.mockResolvedValue({ count: 0 });
+
+      await service.enforceDigitalWellbeingRetention(30);
+
+      const call = prismaMock.dailyBehavioralSnapshot.deleteMany.mock.calls[0][0];
+      const cutoff = call.where.usageDate.lt as Date;
+      const daysAgo = (Date.now() - cutoff.getTime()) / (1000 * 60 * 60 * 24);
+      expect(daysAgo).toBeCloseTo(30, 0);
+    });
+  });
+
   describe('enforceAll', () => {
-    it('runs all three enforcement methods, including the newly-added LocationEvent one', async () => {
+    it('runs all FOUR enforcement methods, including the newly-added Digital Wellbeing one', async () => {
       prismaMock.notification.deleteMany.mockResolvedValue({ count: 1 });
       prismaMock.analyticsEvent.updateMany.mockResolvedValue({ count: 2 });
       prismaMock.locationEvent.deleteMany.mockResolvedValue({ count: 3 });
+      prismaMock.dailyBehavioralSnapshot.deleteMany.mockResolvedValue({ count: 4 });
+      prismaMock.appUsageLog.deleteMany.mockResolvedValue({ count: 5 });
 
       const results = await service.enforceAll();
 
-      expect(results).toHaveLength(3);
-      expect(results.map((r) => r.category)).toEqual(['Notifications', 'Analytics Events', 'Location Events']);
+      expect(results).toHaveLength(4);
+      expect(results.map((r) => r.category)).toEqual([
+        'Notifications',
+        'Analytics Events',
+        'Location Events',
+        'App Usage Data',
+      ]);
     });
   });
 });

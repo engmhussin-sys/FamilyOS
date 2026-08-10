@@ -89,6 +89,28 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetRuntimeHealth);
   }
 
+  @override
+  Future<Map<Object?, Object?>> getTodayAppUsageBreakdown() async {
+    return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetTodayAppUsageBreakdown);
+  }
+
+  @override
+  Future<int> getTodayPickupCount() async {
+    return _invoke<int>(AgentChannelConstants.methodGetTodayPickupCount);
+  }
+
+  // --- Sprint 14 (Behavioral Intelligence Engine) ---
+
+  @override
+  Future<Map<Object?, Object?>> getTodayAppCategories() async {
+    return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetTodayAppCategories);
+  }
+
+  @override
+  Future<Map<Object?, Object?>> getTodaySessionStats() async {
+    return _invoke<Map<Object?, Object?>>(AgentChannelConstants.methodGetTodaySessionStats);
+  }
+
   // --- Sprint 5: Runtime Enforcement Engine ---
 
   @override

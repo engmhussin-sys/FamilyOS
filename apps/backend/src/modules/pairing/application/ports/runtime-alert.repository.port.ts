@@ -6,6 +6,11 @@ export interface ICreateRuntimeAlertInput {
   title: string;
   body: string;
   data?: Record<string, unknown>;
+  /** CLOSES A REAL GAP (Master Completeness Audit): every caller
+   * previously created notifications with zero priority distinction.
+   * Defaults to 'NORMAL' at the call site, not here, so each real
+   * alert type states its own priority explicitly. */
+  priority?: 'CRITICAL' | 'NORMAL';
 }
 
 export interface IRuntimeAlertRecord {

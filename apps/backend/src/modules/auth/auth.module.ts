@@ -50,6 +50,6 @@ import {
     { provide: REFRESH_TOKEN_REPOSITORY, useClass: PrismaRefreshTokenRepository },
     { provide: DEVICE_REPOSITORY, useClass: PrismaDeviceRepository },
   ],
-  exports: [AuthService, TokenService],
+  exports: [AuthService, TokenService, PasswordService, USER_REPOSITORY],
 })
 export class AuthModule {}

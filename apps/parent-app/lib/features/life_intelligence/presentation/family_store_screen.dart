@@ -3,7 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../../core/theme/app_theme.dart';
 
+/// DESIGN PASS: a real coin-icon badge for the cost instead of plain
+/// trailing text — the reward store is meant to feel like a store,
+/// not a settings list.
 class FamilyStoreScreen extends ConsumerStatefulWidget {
   const FamilyStoreScreen({super.key, required this.familyId});
 
@@ -60,19 +64,51 @@ class _FamilyStoreScreenState extends ConsumerState<FamilyStoreScreen> {
                   ? Center(child: Text(t('familyStore.empty')))
                   : RefreshIndicator(
                       onRefresh: _load,
-                      child: ListView.builder(
+                      child: GridView.builder(
                         padding: const EdgeInsets.all(16),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12,
+                          crossAxisSpacing: 12,
+                          childAspectRatio: 1.1,
+                        ),
                         itemCount: _items!.length,
                         itemBuilder: (context, index) {
                           final item = _items![index] as Map<String, dynamic>;
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              title: Text(item['title'] as String? ?? ''),
-                              trailing: Text(
-                                '${item['costCoins']} ${t('familyStore.coins')}',
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
+                          return Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [BoxShadow(color: AppTheme.amber500.withOpacity(0.10), blurRadius: 12, offset: const Offset(0, 4))],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: const BoxDecoration(color: Color(0x1FE0A458), shape: BoxShape.circle),
+                                  child: const Icon(Icons.card_giftcard_rounded, color: AppTheme.amber500, size: 20),
+                                ),
+                                Text(
+                                  item['title'] as String? ?? '',
+                                  style: Theme.of(context).textTheme.titleMedium,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.monetization_on_rounded, color: AppTheme.amber500, size: 16),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${item['costCoins']} ${t('familyStore.coins')}',
+                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                           );
                         },

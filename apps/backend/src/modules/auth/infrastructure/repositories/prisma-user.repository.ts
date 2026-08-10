@@ -32,6 +32,16 @@ export class PrismaUserRepository implements IUserRepository {
           fullName: input.fullName,
           locale: input.locale ?? 'en',
           timezone: input.timezone ?? 'UTC',
+          // CLOSES A REAL GAP: acceptedTerms was already enforced at
+          // the DTO level (registration fails without it) — this is
+          // where that acceptance actually gets recorded, which
+          // previously did not happen at all.
+          // PLACEHOLDER version string — needs a real legal document
+          // with a real version identifier before this is trusted in
+          // production, same reasoning as seed.ts's own priceCents
+          // placeholders.
+          termsAcceptedAt: new Date(),
+          termsVersion: 'v1-placeholder',
         },
       });
 

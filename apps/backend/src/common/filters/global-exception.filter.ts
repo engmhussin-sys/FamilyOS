@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import * as Sentry from '@sentry/node';
 
 /**
  * Sprint 9's Security Hardening + API Hardening, combined in one filter:
@@ -47,6 +48,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         }`,
         exception instanceof Error ? exception.stack : undefined,
       );
+      // Sprint 4 (Observability): same condition as the local log
+      // line above, deliberately — one rule for "this is a real
+      // error worth attention," not two that could silently diverge.
+      Sentry.captureException(exception, { tags: { correlationId } });
     }
 
     response.status(status).json({

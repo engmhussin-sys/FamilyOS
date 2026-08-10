@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 
 import { ConsentService } from '../../application/services/consent.service';
 import { SetConsentDto } from '../dto/set-consent.dto';
@@ -17,6 +18,7 @@ export class ConsentController {
   }
 
   @Post()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   set(
     @Param('childId') childId: string,
     @Body() dto: SetConsentDto,
@@ -29,5 +31,15 @@ export class ConsentController {
       dto.consentType,
       dto.granted,
     );
+  }
+
+  /** Sprint 1 (Consent Enforcement, Option C) — called once by the
+   * Parent App right after creating a child, per that flow's own
+   * registration-screen copy explaining what this means. Idempotent
+   * (upsert-based) — calling it again is harmless. */
+  @Post('grant-defaults')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  grantDefaults(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
+    return this.consentService.grantDefaults(childId, user.familyId!, user.sub);
   }
 }

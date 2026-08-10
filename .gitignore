@@ -1,5 +1,11 @@
 # Dependencies
 node_modules/
+# Compiled test artifacts (ts-jest/tsc occasionally emit these
+# alongside .spec.ts source files — never real source, never committed)
+apps/backend/test/**/*.js
+apps/backend/test/**/*.js.map
+apps/backend/prisma/seed.js
+apps/backend/prisma/seed.js.map
 .pnp
 .pnp.js
 

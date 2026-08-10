@@ -22,6 +22,7 @@ import { RegistrationTokenGuard } from '../guards/registration-token.guard';
 import { RegistrationContext } from '../decorators/registration-context.decorator';
 import { ReportCapabilitiesDto } from '../dto/report-capabilities.dto';
 import { HeartbeatDto } from '../dto/heartbeat.dto';
+import { RegisterParentDevicePushTokenDto } from '../dto/register-parent-device-push-token.dto';
 import { JwtAuthGuard, DeviceJwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
@@ -96,6 +97,21 @@ export class PairingController {
   @UseGuards(JwtAuthGuard)
   getStatus(@Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
     return this.pairingOrchestrator.getStatus(deviceId, user.familyId!);
+  }
+
+  /** Sprint 5 (Push Notifications) — CLOSES A REAL GAP: no path
+   * anywhere ever registered the Parent App's own device for push
+   * delivery. Called once after login and again whenever the FCM
+   * token rotates (the Parent App's own responsibility to detect and
+   * re-call this, standard FCM token-refresh handling). */
+  @Post('parent-device/push-token')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async registerParentDevicePushToken(
+    @Body() dto: RegisterParentDevicePushTokenDto,
+    @CurrentUser() user: IJwtPayload,
+  ): Promise<void> {
+    await this.pairingOrchestrator.registerParentDevicePushToken(user.sub, user.familyId!, dto.platform, dto.pushToken);
   }
 
   @Post('device/heartbeat')

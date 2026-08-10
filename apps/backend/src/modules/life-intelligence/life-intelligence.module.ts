@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { ChildrenModule } from '../children/children.module';
 import { PairingModule } from '../pairing/pairing.module';
 import { AiCoreModule } from '../ai-core/ai-core.module';
+import { ConsentCheckModule } from '../consent-check/consent-check.module';
+import { BillingModule } from '../billing/billing.module';
 import { HabitEngineService } from './application/services/habit-engine.service';
 import { LifeTimelineService } from './application/services/life-timeline.service';
 import { HealthEngineService } from './application/services/health-engine.service';
@@ -23,6 +25,11 @@ import { PrismaSmartTaskRepository } from './infrastructure/repositories/prisma-
 import { PrismaRewardsRepository } from './infrastructure/repositories/prisma-rewards.repository';
 import { PrismaCommunicationRepository } from './infrastructure/repositories/prisma-communication.repository';
 import { PrismaDigitalTwinRepository } from './infrastructure/repositories/prisma-digital-twin.repository';
+import { PrismaDigitalWellbeingRepository } from './infrastructure/repositories/prisma-digital-wellbeing.repository';
+import { DigitalWellbeingEngineService } from './application/services/digital-wellbeing-engine.service';
+import { BaselineCalculatorService } from './application/services/baseline-calculator.service';
+import { PatternDetectionService } from './application/services/pattern-detection.service';
+import { AnomalyDetectionService } from './application/services/anomaly-detection.service';
 import { LifeIntelligenceController } from './presentation/controllers/life-intelligence.controller';
 import { LIFE_TIMELINE_WRITER } from './domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
@@ -46,20 +53,32 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
  *   reads through Digital Safety's existing exported public methods
  *   (RiskEvaluationService, BehavioralIntelligenceEngineService),
  *   zero modification to ai-core or pairing (Code Freeze respected).
+ * - Edge-First Intelligence Architecture: Digital Wellbeing Engine
+ *   (11th engine, beyond Architecture 1.0's original 10) \u2014 completes
+ *   IAppUsageCollector/AppUsageLog/IBehaviorPatternDetector, all
+ *   previously declared-not-implemented across earlier sprints. See
+ *   docs/architecture/EDGE_FIRST_INTELLIGENCE_ARCHITECTURE.md.
+ *   Digital Twin gained an independent `wellbeing` sub-score
+ *   (deliberately excluded from growthScore's own average). Backend
+ *   fully verified; Child App (Dart) and native Android (Kotlin)
+ *   written but NOT TESTED \u2014 no real device/Flutter environment
+ *   available in the sandbox that built this.
  *
- * ALL 10 ARCHITECTURE 1.0 ENGINES HAVE A SERVICE LAYER, AND DIGITAL
- * TWIN NOW COMPUTES ALL 7 SUB-SCORES (previously 5 of 7). Remaining
- * work: cross-engine Reward Rule triggering (Habit/Faith/Health don't
- * yet call RewardsEngineService.processTriggerEvent automatically),
- * AI Provider wiring for Family Communication/Smart Tasks/Coaching,
- * and UI for the newer engines. See docs/roadmap/REMAINING_ROADMAP_SPRINTS_24_31.md.
+ * ALL 10 ARCHITECTURE 1.0 ENGINES HAVE A SERVICE LAYER (PLUS THE 11TH
+ * ABOVE), AND DIGITAL TWIN NOW COMPUTES ALL 7 ORIGINAL SUB-SCORES
+ * (previously 5 of 7) PLUS THE NEW INDEPENDENT wellbeing SLOT.
+ * Remaining work: cross-engine Reward Rule triggering (Habit/Faith/
+ * Health don't yet call RewardsEngineService.processTriggerEvent
+ * automatically), AI Provider wiring for Family Communication/Smart
+ * Tasks/Coaching, and UI for the newer engines. See
+ * docs/roadmap/REMAINING_ROADMAP_SPRINTS_24_31.md.
  *
  * STATUS: blocked by the same environment limitation documented in
  * docs/release/SPRINT13_BLOCKED_BY_PRISMA.md \u2014 remains fully
  * registered, unmasked.
  */
 @Module({
-  imports: [ChildrenModule, PairingModule, AiCoreModule],
+  imports: [ChildrenModule, PairingModule, AiCoreModule, ConsentCheckModule, BillingModule],
   controllers: [LifeIntelligenceController],
   providers: [
     HabitEngineService,
@@ -73,6 +92,10 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     CoachingEngineService,
     DigitalTwinService,
     FamilyInsightService,
+    DigitalWellbeingEngineService,
+    BaselineCalculatorService,
+    PatternDetectionService,
+    AnomalyDetectionService,
     PrismaHabitRepository,
     PrismaLifeTimelineRepository,
     PrismaHealthRepository,
@@ -82,6 +105,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     PrismaRewardsRepository,
     PrismaCommunicationRepository,
     PrismaDigitalTwinRepository,
+    PrismaDigitalWellbeingRepository,
     { provide: LIFE_TIMELINE_WRITER, useExisting: LifeTimelineService },
     { provide: REWARD_TRIGGER_WRITER, useExisting: RewardsEngineService },
   ],
@@ -97,6 +121,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     CoachingEngineService,
     DigitalTwinService,
     FamilyInsightService,
+    DigitalWellbeingEngineService,
     LIFE_TIMELINE_WRITER,
     REWARD_TRIGGER_WRITER,
   ],

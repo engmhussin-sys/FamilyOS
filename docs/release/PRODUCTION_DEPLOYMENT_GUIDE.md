@@ -51,6 +51,8 @@ enforced upstream.
 | Apple IAP | `APPLE_IAP_SHARED_SECRET` | Same |
 | Google Play | `GOOGLE_PLAY_SERVICE_ACCOUNT_KEY` | Same |
 | PostHog | `POSTHOG_API_KEY` | Silently no-ops; self-hosted analytics still works |
+| Sentry (Observability, Sprint 4) | `SENTRY_DSN` | Safe no-op — errors are still logged locally (existing `LoggingInterceptor`/`GlobalExceptionFilter` behavior unchanged), just not reported to Sentry. Same env var name expected by both Flutter apps' own crash reporting (passed via `--dart-define=SENTRY_DSN=...` at build time, a SEPARATE mechanism from this backend var — see each app's `core/observability/crash_reporting.dart`). |
+| Firebase Cloud Messaging (Push, Sprint 5) | `FIREBASE_SERVICE_ACCOUNT_JSON` | Safe no-op, logged once at boot — `PushNotificationService` skips every send silently. Must be the full JSON service-account key (not just an API key) as a single-line string; see that service's own docstring for exactly how to obtain it from a real Firebase project's console. |
 
 ## Scaling notes
 

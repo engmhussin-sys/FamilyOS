@@ -67,6 +67,14 @@ export class DataRetentionPolicyService {
         'CLOSES A REAL GAP (docs/release/DATA_CLASSIFICATION.md flagged this as the one Child Sensitive category with no defined policy). The schema already has an `expiresAt` column with its own index (Sprint 1\u2019s design) \u2014 this policy formalizes that mechanism rather than inventing a new one. 90 days matches Notifications\u2019 retention as a reasonable, privacy-minimizing default for the single most legally sensitive category in this schema (real-time child location history) \u2014 HARD_DELETE and non-archivable on purpose: unlike Analytics or AI Decisions, there is no legitimate downstream use for aged-out raw location data, so archiving it would be pure liability with no offsetting benefit. NOTE: 90 days is an engineering default, not a legal determination \u2014 real jurisdiction-specific requirements (COPPA, GDPR-K, and Saudi PDPL given this project\u2019s Gulf market target) should be confirmed with legal counsel before this default is trusted in production, the same way this project has never claimed technical authority over legal questions elsewhere. SEPARATELY, ALSO DISCOVERED while researching this policy: zero code anywhere in this backend actually creates a `LocationEvent` row \u2014 the location-tracking feature this table supports is schema-only, never implemented. This enforcement method is real and correct for when that write path is eventually built, not applicable to any live data today.',
     },
     {
+      category: 'App Usage Data (AppUsageLog, DailyBehavioralSnapshot)',
+      retentionDays: 90,
+      method: 'HARD_DELETE',
+      archivable: false,
+      rationale:
+        'CLOSES A REAL GAP (found during the Edge-First Intelligence Architecture sprint\u2019s own security/privacy self-review \u2014 neither table had a registered policy despite both being genuinely sensitive, actively-written child behavioral data, unlike LocationEvent which is schema-only). Same 90-day/HARD_DELETE/non-archivable reasoning as LocationEvent above \u2014 per-app usage minutes and daily pickup/screen-time counts are exactly the kind of granular behavioral history that should not accumulate indefinitely just because it CAN be stored. Grouped as one policy entry since both tables are written together by DigitalWellbeingEngineService.recordDailySummary() and conceptually form one dataset (a day\u2019s usage summary), not two independent categories. Same legal-counsel caveat as LocationEvent: 90 days is an engineering default, not a confirmed legal determination for this project\u2019s Gulf-market jurisdictions.',
+    },
+    {
       category: 'Notifications',
       retentionDays: 90,
       method: 'HARD_DELETE',

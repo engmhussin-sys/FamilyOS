@@ -27,4 +27,22 @@ class DashboardApi {
     // GET /notifications/unread-count returns a bare JSON number.
     return result['data'] as int;
   }
+
+  /// CLOSES A REAL GAP found while wiring Sprint 1's consent
+  /// enforcement: zero screen anywhere in this app ever called
+  /// `POST /children` — AddChildScreen only ever assumed a child
+  /// already existed (it generates a PAIRING code for an existing
+  /// one). A brand-new parent had no path to create their first
+  /// child's profile at all.
+  Future<Map<String, dynamic>> createChild({
+    required String firstName,
+    required String dateOfBirth,
+    String? lastName,
+  }) {
+    return _client.post('/children', data: {
+      'firstName': firstName,
+      'dateOfBirth': dateOfBirth,
+      if (lastName != null && lastName.isNotEmpty) 'lastName': lastName,
+    });
+  }
 }

@@ -1,0 +1,69 @@
+import { Test } from '@nestjs/testing';
+
+import { DashboardMetricsService } from '../../src/modules/analytics/application/dashboard-metrics.service';
+import { PrismaService } from '../../src/common/prisma/prisma.service';
+
+describe('DashboardMetricsService', () => {
+  const prismaMock = {
+    family: { count: jest.fn() },
+    device: { count: jest.fn(), findMany: jest.fn() },
+    subscription: { count: jest.fn() },
+    supportRequest: { count: jest.fn() },
+  };
+
+  let service: DashboardMetricsService;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const moduleRef = await Test.createTestingModule({
+      providers: [DashboardMetricsService, { provide: PrismaService, useValue: prismaMock }],
+    }).compile();
+    service = moduleRef.get(DashboardMetricsService);
+  });
+
+  it('computes all metrics from real counts, including the new support queue depth (proactive business review)', async () => {
+    prismaMock.family.count.mockResolvedValue(100);
+    prismaMock.device.count.mockResolvedValueOnce(150).mockResolvedValueOnce(80);
+    prismaMock.subscription.count.mockResolvedValueOnce(20).mockResolvedValueOnce(30);
+    prismaMock.supportRequest.count.mockResolvedValue(7);
+    prismaMock.device.findMany.mockResolvedValue([{ familyId: 'f1' }, { familyId: 'f2' }]);
+
+    const result = await service.getMetrics();
+
+    expect(result).toEqual({
+      totalFamilies: 100,
+      activeFamiliesLast7Days: 2,
+      totalDevices: 150,
+      activeDevicesLast7Days: 80,
+      trialConversionRate: 0.6, // 30 / (20 + 30)
+      supportRequestCountLast7Days: 7,
+    });
+  });
+
+  it('scopes the support request count to the last 7 days, using the same cutoff as the device-activity query', async () => {
+    prismaMock.family.count.mockResolvedValue(0);
+    prismaMock.device.count.mockResolvedValue(0);
+    prismaMock.subscription.count.mockResolvedValue(0);
+    prismaMock.device.findMany.mockResolvedValue([]);
+    prismaMock.supportRequest.count.mockResolvedValue(3);
+
+    await service.getMetrics();
+
+    expect(prismaMock.supportRequest.count).toHaveBeenCalledWith({
+      where: { createdAt: { gte: expect.any(Date) } },
+    });
+  });
+
+  it('returns 0 trial conversion rate (not NaN) when there have been zero trials or subscriptions ever', async () => {
+    prismaMock.family.count.mockResolvedValue(0);
+    prismaMock.device.count.mockResolvedValue(0);
+    prismaMock.subscription.count.mockResolvedValue(0);
+    prismaMock.device.findMany.mockResolvedValue([]);
+    prismaMock.supportRequest.count.mockResolvedValue(0);
+
+    const result = await service.getMetrics();
+
+    expect(result.trialConversionRate).toBe(0);
+    expect(Number.isNaN(result.trialConversionRate)).toBe(false);
+  });
+});

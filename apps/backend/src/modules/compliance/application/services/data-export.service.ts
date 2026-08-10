@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { ScreenTimeService } from '../../../screen-time/application/services/screen-time.service';
+import { DigitalWellbeingEngineService } from '../../../life-intelligence/application/services/digital-wellbeing-engine.service';
 import { ConsentService } from './consent.service';
 import type { IChildDataExport } from '../../domain/compliance.types';
 
@@ -21,13 +22,18 @@ export class DataExportService {
     private readonly childrenService: ChildrenService,
     private readonly screenTimeService: ScreenTimeService,
     private readonly consentService: ConsentService,
+    private readonly digitalWellbeing: DigitalWellbeingEngineService,
   ) {}
 
   async exportChildData(childId: string, familyId: string): Promise<IChildDataExport> {
     const child = await this.childrenService.getChildOrThrow(childId, familyId);
-    const [policy, consents] = await Promise.all([
+    const [policy, consents, wellbeing] = await Promise.all([
       this.screenTimeService.getPolicy(childId, familyId),
       this.consentService.listConsents(childId, familyId),
+      // CLOSES A REAL GAP (proactive compliance review): this data
+      // subject's Digital Wellbeing history had no representation in
+      // their own export until now.
+      this.digitalWellbeing.getBehavioralSnapshotSummary(childId, familyId),
     ]);
 
     return {
@@ -55,6 +61,7 @@ export class DataExportService {
         grantedAt: c.grantedAt,
         revokedAt: c.revokedAt,
       })),
+      digitalWellbeing: wellbeing,
     };
   }
 }
