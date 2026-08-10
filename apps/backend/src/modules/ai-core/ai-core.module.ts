@@ -16,6 +16,8 @@ import { BehavioralIntelligenceEngineService } from './application/services/beha
 import { AiCoreController } from './presentation/controllers/ai-core.controller';
 import { AiPlatformController } from './presentation/controllers/ai-platform.controller';
 import { AnthropicAIProvider } from './infrastructure/anthropic-ai-provider';
+import { AiCostCalculator } from './infrastructure/ai-cost-calculator';
+import { AiUsageTrackingService } from './infrastructure/ai-usage-tracking.service';
 import { PrismaAiMemoryRepository } from './infrastructure/prisma-ai-memory.repository';
 import { AI_PROVIDER } from './domain/ai-provider.port';
 import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
@@ -48,6 +50,8 @@ import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
     RecommendationEngineService,
     BehavioralIntelligenceEngineService,
     { provide: AI_PROVIDER, useClass: AnthropicAIProvider },
+    AiCostCalculator,
+    AiUsageTrackingService,
     { provide: AI_MEMORY_REPOSITORY, useClass: PrismaAiMemoryRepository },
   ],
   exports: [
@@ -65,6 +69,11 @@ import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
     // own liveness ping — exported now, wasn't needed by any consumer
     // before this.
     AI_PROVIDER,
+    // AUTHORIZED PARTIAL AI-CORE UNFREEZE (AI Cost Tracking): exported
+    // so an InternalAdminGuard-protected endpoint can surface real
+    // cost data — same protection discipline as
+    // GET /analytics/dashboard-metrics.
+    AiUsageTrackingService,
   ],
 })
 export class AiCoreModule {}

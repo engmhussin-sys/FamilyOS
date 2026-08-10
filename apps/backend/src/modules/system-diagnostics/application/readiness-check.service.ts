@@ -93,7 +93,7 @@ export class ReadinessCheckService {
       return { component: 'LLM Provider', status: 'NOT_READY', detail: 'ANTHROPIC_API_KEY not set \u2014 AI phrasing/assistant features will use deterministic fallback text.' };
     }
     try {
-      await this.aiProvider.complete({ systemPrompt: 'Reply with the single word: ready.', userMessage: 'ping' });
+      await this.aiProvider.complete({ systemPrompt: 'Reply with the single word: ready.', userMessage: 'ping', sourceFeature: 'readiness-check' });
       return { component: 'LLM Provider', status: 'READY', detail: 'Anthropic API reachable.' };
     } catch (err) {
       return { component: 'LLM Provider', status: 'NOT_READY', detail: err instanceof Error ? err.message : 'Unreachable.' };

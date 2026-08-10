@@ -4,8 +4,10 @@ import { Throttle } from '@nestjs/throttler';
 import { RecommendationEngineService } from '../../application/services/recommendation-engine.service';
 import { BehavioralIntelligenceEngineService } from '../../application/services/behavioral-intelligence-engine.service';
 import { MemoryEngineService } from '../../application/services/memory-engine.service';
+import { AiUsageTrackingService } from '../../infrastructure/ai-usage-tracking.service';
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
+import { InternalAdminGuard } from '../../../../common/guards/internal-admin.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
 
@@ -15,6 +17,7 @@ export class AiPlatformController {
     private readonly recommendationEngine: RecommendationEngineService,
     private readonly behavioralEngine: BehavioralIntelligenceEngineService,
     private readonly memoryEngine: MemoryEngineService,
+    private readonly usageTracking: AiUsageTrackingService,
     private readonly childrenService: ChildrenService,
   ) {}
 
@@ -66,5 +69,21 @@ export class AiPlatformController {
       this.behavioralEngine.computeTrend(deviceId, childId, user.familyId!),
     ]);
     return { recommendation, behavioralTrend };
+  }
+
+  /** AUTHORIZED PARTIAL AI-CORE UNFREEZE (AI Cost Tracking) —
+   * operational cost data, never a per-family concern. Protected by
+   * InternalAdminGuard, NOT JwtAuthGuard — this is the exact same
+   * protection discipline `GET /analytics/dashboard-metrics` needed
+   * after a real exposure was found and fixed earlier in this
+   * project's history; the same class of gap here would let any
+   * logged-in user see the whole business's AI spend. `windowDays`
+   * defaults to 30 if not provided. */
+  @Get('usage-summary')
+  @UseGuards(InternalAdminGuard)
+  getUsageSummary(@Query('windowDays') windowDays?: string) {
+    const parsed = windowDays ? parseInt(windowDays, 10) : 30;
+    const safeWindow = Number.isFinite(parsed) && parsed > 0 && parsed <= 365 ? parsed : 30;
+    return this.usageTracking.getSummary(safeWindow);
   }
 }

@@ -824,6 +824,44 @@ model LocationEvent {
 /// Daily aggregated safety/behavior score per child, produced by the AI
 /// engine from signals (not raw conversation content). categoryBreakdown
 /// holds a JSON map like {"cyberbullying": 12, "predatorRisk": 3, ...}.
+/// AUTHORIZED PARTIAL AI-CORE UNFREEZE (explicit user permission,
+/// scoped to AI Cost Tracking only, granted after the standing
+/// architecture freeze this project maintained throughout its
+/// history). CLOSES A REAL GAP: AnthropicAIProvider's own docstring
+/// already logged real token usage per-call but only to structured
+/// logs, not queryable storage — its own comment flagged this
+/// exact gap as "a real follow-up if per-family AI cost attribution
+/// is ever needed." This is that follow-up. Additive only — zero
+/// change to any existing model, zero change to any AI
+/// decision-making logic (Rule/Decision/Safety/Behavioral engines
+/// remain completely untouched).
+model AiUsageLog {
+  id                 String   @id @default(uuid()) @db.Uuid
+  model              String
+  inputTokens        Int      @map("input_tokens")
+  outputTokens       Int      @map("output_tokens")
+  /// Computed at write-time from a fixed, reviewable per-model price
+  /// table (see AiCostCalculator) — stored, not recomputed later, so
+  /// historical costs remain accurate even if prices change going
+  /// forward. Stored in MICRO-CENTS (1/1,000,000 of a cent), not
+  /// cents — a single AI call typically costs a small fraction of one
+  /// cent, and storing whole cents would round nearly every real call
+  /// down to 0, silently destroying the data this table exists to
+  /// capture. Aggregate (SUM) and divide by 1,000,000 for a real
+  /// dollar total.
+  estimatedCostMicroCents Int      @map("estimated_cost_micro_cents")
+  /// Optional, honest-absence-by-default: which calling feature made
+  /// this request (e.g. "ai-assistant", "recommendation-engine").
+  /// Null for any caller that doesn't pass one — never a fabricated
+  /// guess at which feature it was.
+  sourceFeature      String?  @map("source_feature")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([sourceFeature, createdAt])
+  @@map("ai_usage_logs")
+}
+
 model AiRiskScore {
   id                String   @id @default(uuid()) @db.Uuid
   childId           String   @map("child_id") @db.Uuid

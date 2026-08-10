@@ -91,6 +91,7 @@ export class AiDiagnosticsService {
       const summary = await this.aiProvider.complete({
         systemPrompt: DIAGNOSTICS_SYSTEM_PROMPT,
         userMessage,
+        sourceFeature: 'ai-diagnostics',
       });
       return summary.trim() || this.fallbackSummary();
     } catch (err) {

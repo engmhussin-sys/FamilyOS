@@ -13,6 +13,12 @@ export const AI_PROVIDER = Symbol('AI_PROVIDER');
 export interface IAIProviderRequest {
   systemPrompt: string;
   userMessage: string;
+  /** AUTHORIZED PARTIAL AI-CORE UNFREEZE (AI Cost Tracking): optional,
+   * honest-absence-by-default — which calling feature is making this
+   * request (e.g. "ai-assistant"). Existing callers that don't pass
+   * this continue to work unchanged; the usage log simply records no
+   * attribution for them, never a guessed one. */
+  sourceFeature?: string;
 }
 
 export interface IAIProvider {

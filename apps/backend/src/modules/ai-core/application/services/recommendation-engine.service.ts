@@ -125,6 +125,7 @@ export class RecommendationEngineService {
       const rephrased = await this.aiProvider.complete({
         systemPrompt: PHRASING_SYSTEM_PROMPT,
         userMessage: `Title: ${copy.title}\nBody: ${copy.body}`,
+        sourceFeature: 'recommendation-engine',
       });
 
       const trimmed = rephrased.trim();

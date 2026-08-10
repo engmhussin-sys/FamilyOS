@@ -66,6 +66,7 @@ export class AiCoreOrchestratorService {
       const answer = await this.aiProvider.complete({
         systemPrompt: PARENTING_ASSISTANT_SYSTEM_PROMPT,
         userMessage,
+        sourceFeature: 'ai-assistant',
       });
 
       if (!answer.trim()) {

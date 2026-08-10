@@ -31,6 +31,43 @@ grep matches (`stripe.adapter.ts`, `environment-validator.ts`) were
 checked line-by-line and are comments/config-key-name references only,
 not actual coupling.
 
+### Authorized, scoped exception (post-freeze, explicit user permission)
+
+The user explicitly authorized a **partial, scoped unfreeze for AI
+Cost Tracking only** — not a general reopening of `ai-core`. Changes
+made under this exception, exhaustively listed:
+
+- `domain/ai-provider.port.ts`: added one OPTIONAL field
+  (`sourceFeature`) to `IAIProviderRequest` — backward-compatible,
+  no existing caller broke.
+- `infrastructure/ai-cost-calculator.ts` (NEW): pure cost-calculation
+  function, real Anthropic pricing (sourced via web search, August
+  2026 — see the file's own docstring for the exact figures and their
+  expiry date).
+- `infrastructure/ai-usage-tracking.service.ts` (NEW): writes to a
+  new `AiUsageLog` table (additive schema change, zero modification
+  to any existing table).
+- `infrastructure/anthropic-ai-provider.ts`: `trackCost()` now ALSO
+  writes to real storage via the above (previously log-line only —
+  that gap was explicitly flagged in this same file's own prior
+  docstring as "a real follow-up if per-family AI cost attribution is
+  ever needed").
+- Four call sites (`recommendation-engine.service.ts`,
+  `ai-core-orchestrator.service.ts`, `ai-diagnostics.service.ts`,
+  `readiness-check.service.ts`) each gained one line passing
+  `sourceFeature` — no logic change.
+- One new `InternalAdminGuard`-protected endpoint
+  (`GET /ai-core/usage-summary`) — same protection discipline as
+  `GET /analytics/dashboard-metrics`, since AI spend is operational
+  business data, never a per-family concern.
+
+**What did NOT change, explicitly:** every Rule/Decision/Safety/
+Behavioral/Knowledge/Memory engine, the AI Freeze audit's own PASS
+result above (re-verifiable — none of those six engines gained an
+AI_PROVIDER dependency), the Circuit Breaker, request timeout/retry
+behavior, and the actual `complete()` request/response contract with
+Anthropic itself.
+
 ## Stable Public Contracts — frozen as of this document, changes require a v2 ADR
 
 | Interface | Status | Real implementations today |
