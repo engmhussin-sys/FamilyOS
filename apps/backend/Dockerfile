@@ -7,6 +7,14 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# FIXING A REAL, PERSISTENT DEPLOY FAILURE: specifying binaryTargets in
+# schema.prisma alone did not resolve "Error loading shared library
+# libssl.so.1.1: No such file or directory" — installing the actual
+# missing shared library directly is the more direct, reliable fix.
+# Tries the exact compat package first; falls back to whatever openssl
+# this Alpine version's own repo provides.
+RUN apk add --no-cache openssl1.1-compat || apk add --no-cache openssl
+
 COPY package*.json ./
 COPY prisma ./prisma
 RUN npm ci
@@ -25,6 +33,11 @@ RUN echo "--- dist/ contents ---" && find dist -maxdepth 2 -type f
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+
+# Same direct fix as the builder stage — this is the stage that
+# actually runs the app, so this is the one that matters most for the
+# runtime error itself.
+RUN apk add --no-cache openssl1.1-compat || apk add --no-cache openssl
 
 COPY package*.json ./
 COPY prisma ./prisma
