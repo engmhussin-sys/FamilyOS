@@ -39,4 +39,9 @@ export interface IBillingRepository {
   }): Promise<IInvoiceRecord>;
   markInvoicePaid(invoiceId: string, paidAt: Date): Promise<void>;
   listInvoicesForSubscription(subscriptionId: string): Promise<IInvoiceRecord[]>;
+
+  /** CLOSES A REAL GAP (previously explicitly flagged: "DISCOUNT
+   * codes are not yet supported"). */
+  setPendingDiscount(subscriptionId: string, discountPercent: number): Promise<void>;
+  clearPendingDiscount(subscriptionId: string): Promise<void>;
 }

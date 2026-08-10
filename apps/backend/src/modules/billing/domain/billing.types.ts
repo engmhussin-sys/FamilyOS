@@ -25,6 +25,10 @@ export interface ISubscriptionRecord {
   currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
   canceledAt: Date | null;
+  /** CLOSES A REAL GAP (previously explicitly flagged: "DISCOUNT
+   * codes are not yet supported"). See Subscription's own schema
+   * docstring for the exact, deliberately narrow semantic. */
+  pendingDiscountPercent: number | null;
 }
 
 export interface IInvoiceRecord {

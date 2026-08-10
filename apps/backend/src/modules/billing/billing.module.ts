@@ -47,6 +47,6 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
     { provide: BILLING_REPOSITORY, useClass: PrismaBillingRepository },
     { provide: PAYMENT_PROVIDER_REGISTRY, useClass: PaymentProviderRegistry },
   ],
-  exports: [EntitlementsService, SubscriptionService, PlanService, TrialManager],
+  exports: [EntitlementsService, SubscriptionService, PlanService, TrialManager, BILLING_REPOSITORY],
 })
 export class BillingModule {}

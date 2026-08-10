@@ -78,4 +78,18 @@ export class PrismaBillingRepository implements IBillingRepository {
       orderBy: { issuedAt: 'desc' },
     });
   }
+
+  async setPendingDiscount(subscriptionId: string, discountPercent: number): Promise<void> {
+    await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { pendingDiscountPercent: discountPercent },
+    });
+  }
+
+  async clearPendingDiscount(subscriptionId: string): Promise<void> {
+    await this.prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { pendingDiscountPercent: null },
+    });
+  }
 }

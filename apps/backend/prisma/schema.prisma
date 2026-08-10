@@ -941,6 +941,15 @@ model Subscription {
   currentPeriodStart     DateTime?          @map("current_period_start")
   currentPeriodEnd       DateTime?          @map("current_period_end")
   canceledAt             DateTime?          @map("canceled_at")
+  /// CLOSES A REAL GAP (previously explicitly flagged: "DISCOUNT
+  /// codes are not yet supported"). DELIBERATE SCOPE: a percentage
+  /// discount (0-100), applied ONCE to the next invoice
+  /// createDraftInvoice generates, then cleared to null — the
+  /// simplest coherent semantic. NOT a recurring discount, NOT
+  /// stackable with another code (redeeming a second DISCOUNT code
+  /// simply overwrites this value) — those are real, separate
+  /// product decisions this migration does not make.
+  pendingDiscountPercent Int?               @map("pending_discount_percent")
   createdAt              DateTime           @default(now()) @map("created_at")
   updatedAt              DateTime           @updatedAt @map("updated_at")
 

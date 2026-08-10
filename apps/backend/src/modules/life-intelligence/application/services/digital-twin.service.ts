@@ -136,6 +136,27 @@ export class DigitalTwinService {
     // directional and simple, not a precision claim.
     const score = Math.max(0, 100 - summary.totalBlockedAttempts * 10);
 
+    // CLOSES A REAL GAP found in a follow-up review: Sprint 14's own
+    // explicit requirement ("a parent should be able to see... What
+    // patterns are emerging?" via Digital Twin) was never wired —
+    // this only ever surfaced pre-Sprint-14 averages. Best-effort:
+    // today's insight may not exist yet (e.g. the device hasn't
+    // synced today), in which case this stays undefined rather than
+    // failing the whole Digital Twin refresh over one optional field.
+    let todaysPatterns: string[] | undefined;
+    let baselineDeviationPercent: number | null | undefined;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const insight = await this.digitalWellbeing.getWellbeingInsight(childId, familyId, today);
+      if (insight) {
+        todaysPatterns = insight.patterns.map((p) => p.code);
+        baselineDeviationPercent = insight.baselineDeviationPercent;
+      }
+    } catch {
+      // Best-effort, see comment above — score/other inputs still
+      // return normally.
+    }
+
     return {
       score,
       inputs: {
@@ -144,6 +165,8 @@ export class DigitalTwinService {
         averagePickups: summary.averagePickups,
         averageNightUsageMinutes: summary.averageNightUsageMinutes,
         windowDays: summary.windowDays,
+        ...(todaysPatterns !== undefined && { todaysPatterns }),
+        ...(baselineDeviationPercent !== undefined && { baselineDeviationPercent }),
       },
       confidence: summary.daysWithData >= 7 ? 'HIGH' : summary.daysWithData >= 3 ? 'MEDIUM' : 'LOW',
     };

@@ -65,8 +65,26 @@ export class SubscriptionService {
       });
     }
 
-    const invoice = await this.invoiceService.createDraftInvoice(subscription.id, plan.priceCents, plan.currency);
-    const chargeResult = await this.paymentService.charge(provider, subscription.id, plan.priceCents, plan.currency);
+    // CLOSES A REAL GAP (previously explicitly flagged: "DISCOUNT
+    // codes are not yet supported"). Computed ONCE and used for BOTH
+    // the invoice and the actual charge below — they must never
+    // diverge (a real bug risk avoided by not computing this twice
+    // separately).
+    const discountPercent = subscription.pendingDiscountPercent;
+    const finalAmountCents = discountPercent
+      ? Math.round(plan.priceCents * (1 - discountPercent / 100))
+      : plan.priceCents;
+
+    const invoice = await this.invoiceService.createDraftInvoice(subscription.id, finalAmountCents, plan.currency);
+    const chargeResult = await this.paymentService.charge(provider, subscription.id, finalAmountCents, plan.currency);
+
+    // One-time use: clear immediately after being applied, regardless
+    // of charge success/failure — a failed charge should require
+    // redeeming a fresh code, not silently retry the same discount
+    // indefinitely on every subsequent attempt.
+    if (discountPercent) {
+      await this.repository.clearPendingDiscount(subscription.id);
+    }
 
     if (chargeResult.success) {
       await this.invoiceService.markPaid(invoice.id);
