@@ -81,6 +81,9 @@ class _FakeAgentChannel implements AgentPlatformChannel {
   Future<Map<Object?, Object?>> getTodaySessionStats() async => const {};
 
   @override
+  Future<int> getTodayPickupCount() async => 0;
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -96,7 +99,15 @@ class _EnrichedFakeAgentChannel implements AgentPlatformChannel {
         'sessionCount': 12,
         'averageSessionMinutes': 8,
         'longestSessionMinutes': 25,
+        // Real night-hour data (23:00 and 2:00 — both in _nightHours)
+        // plus a daytime hour (14:00, NOT in _nightHours) — proves
+        // buildAndQueueDailySummary correctly sums only the night
+        // hours, not the whole day.
+        'usageByHour': {'23': 15, '2': 10, '14': 30},
       };
+
+  @override
+  Future<int> getTodayPickupCount() async => 42;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -111,6 +122,9 @@ class _ThrowingFakeAgentChannel implements AgentPlatformChannel {
 
   @override
   Future<Map<Object?, Object?>> getTodaySessionStats() async => throw Exception('channel unavailable');
+
+  @override
+  Future<int> getTodayPickupCount() async => throw Exception('channel unavailable');
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -173,7 +187,7 @@ void main() {
       final channel = _EnrichedFakeAgentChannel();
       final service = DigitalWellbeingService(collector, apiClient, queue, channel);
 
-      await service.buildAndQueueDailySummary(pickupCount: 10, nightUsageMinutes: 5, blockedAttemptCount: 0);
+      await service.buildAndQueueDailySummary(blockedAttemptCount: 0);
 
       expect(await queue.length(), 1);
       // Peek at the queue's own persisted raw payload via a fresh
@@ -185,7 +199,7 @@ void main() {
       expect(raw, contains('"sessionCount":12'));
     });
 
-    test('BOUNDARY CASE: still queues the summary successfully even when category/session lookups fail (best-effort)', () async {
+    test('BOUNDARY CASE: still queues the summary successfully even when category/session/pickup lookups fail (best-effort)', () async {
       final storage = _FakeSecureStorage();
       final queue = OfflineQueue(storage, storageKey: 'wellbeing_offline_queue');
       final collector = _FakeAppUsageCollector()..usage = {'com.example.app': const Duration(minutes: 20)};
@@ -193,10 +207,30 @@ void main() {
 
       final service = DigitalWellbeingService(collector, apiClient, queue, _ThrowingFakeAgentChannel());
 
-      await service.buildAndQueueDailySummary(pickupCount: 5, nightUsageMinutes: 0, blockedAttemptCount: 0);
+      await service.buildAndQueueDailySummary(blockedAttemptCount: 0);
 
       // Did not throw, and the summary's core fields still queued.
       expect(await queue.length(), 1);
+    });
+
+    test('FIXES A REAL BUG (Sprint 14.1 integration audit): pickupCount and nightUsageMinutes are now real device data, not hardcoded 0', () async {
+      final storage = _FakeSecureStorage();
+      final queue = OfflineQueue(storage, storageKey: 'wellbeing_offline_queue');
+      final collector = _FakeAppUsageCollector()..usage = {'com.duolingo': const Duration(minutes: 30)};
+      final apiClient = ApiClient(SecureTokenStorage(storage));
+
+      // _EnrichedFakeAgentChannel: pickupCount=42, usageByHour has
+      // 15min at hour 23 + 10min at hour 2 (both night hours) + 30min
+      // at hour 14 (daytime — must NOT be counted).
+      final service = DigitalWellbeingService(collector, apiClient, queue, _EnrichedFakeAgentChannel());
+
+      await service.buildAndQueueDailySummary(blockedAttemptCount: 0);
+
+      final raw = await storage.read(key: 'wellbeing_offline_queue');
+      expect(raw, contains('"pickupCount":42'));
+      // 15 (hour 23) + 10 (hour 2) = 25 — the daytime hour 14 (30min)
+      // must be excluded from this sum.
+      expect(raw, contains('"nightUsageMinutes":25'));
     });
   });
 }

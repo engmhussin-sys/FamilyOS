@@ -76,4 +76,22 @@ class LifeIntelligenceApi {
     final result = await _client.get('/life-intelligence/wellbeing/$childId/top-apps/$deviceId');
     return result['data'] as List<dynamic>;
   }
+
+  /// FIXES A REAL BUG (Sprint 14.1 integration audit): the backend's
+  /// GET /life-intelligence/wellbeing/:childId/insights endpoint —
+  /// Sprint 14's own headline capability (detected patterns, baseline
+  /// deviation, a human-readable summary, and a recommendation) — had
+  /// zero Parent App consumer before this fix. `date` defaults to
+  /// today server-side if omitted.
+  Future<Map<String, dynamic>?> getWellbeingInsight(String childId, {String? date}) async {
+    final result = await _client.get(
+      '/life-intelligence/wellbeing/$childId/insights',
+      queryParameters: date != null ? {'date': date} : null,
+    );
+    // Same honest-null shape as getWellbeingSnapshot above — the
+    // backend returns null when no snapshot exists yet for the
+    // requested date.
+    if (result.containsKey('data') && result['data'] == null && result.length == 1) return null;
+    return result;
+  }
 }

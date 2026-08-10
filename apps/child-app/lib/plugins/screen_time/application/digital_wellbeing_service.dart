@@ -32,9 +32,24 @@ class DigitalWellbeingService {
   static const _dailySummaryType = 'wellbeing_daily_summary';
   static const _criticalEventType = 'wellbeing_critical_event';
 
+  // Hours (0-23, device local time) treated as "night" for the
+  // nightUsageMinutes aggregate below — matches the bedtime-adjacent
+  // window this product's own runtime enforcement (bedtime policy)
+  // already reasons about, not an arbitrary new definition.
+  static const _nightHours = {22, 23, 0, 1, 2, 3, 4, 5};
+
+  /// FIXES A REAL BUG (Sprint 14.1 integration audit): pickupCount and
+  /// nightUsageMinutes are now computed HERE, from real device data
+  /// that already existed but was never wired to this call — the
+  /// previous version silently received 0 for both from every caller
+  /// (app.dart's own periodic sync), which meant NIGHT_USAGE_INCREASE
+  /// could never fire (baseline and today's value were always both
+  /// 0) and every uploaded snapshot's pickup count was permanently
+  /// wrong. blockedAttemptCount remains a caller-supplied parameter —
+  /// it genuinely needs the Policy Enforcement Engine (Track B),
+  /// which does not exist yet; that is a real, separate architectural
+  /// gap, not something this fix can close.
   Future<void> buildAndQueueDailySummary({
-    required int pickupCount,
-    required int nightUsageMinutes,
     required int blockedAttemptCount,
   }) async {
     final usage = await _usageCollector.getTodayUsage();
@@ -62,20 +77,47 @@ class DigitalWellbeingService {
       };
     }).toList();
 
-    // Sprint 14 — session-level stats, same best-effort discipline as
-    // categories above: the daily summary must still upload with its
-    // existing fields even if this new data can't be collected for
-    // some reason.
+    // FIXES A REAL BUG (see this method's own docstring): pickup
+    // count now reads AgentChannel's real value (built Sprint 5,
+    // never called from here before this fix) instead of always
+    // being 0. Best-effort — a failure here must not block the rest
+    // of the summary from uploading.
+    int pickupCount = 0;
+    try {
+      pickupCount = await _channel.getTodayPickupCount();
+    } catch (_) {
+      // Best-effort — pickupCount stays 0 (honest "couldn't collect
+      // today", same discipline as every other best-effort field
+      // here), not a fabricated non-zero guess.
+    }
+
+    // Sprint 14 — session-level stats AND (FIXES A REAL BUG) now also
+    // the source for nightUsageMinutes, computed from the SAME
+    // usageByHour data this call already fetches — no second native
+    // call needed.
     int? sessionCount;
     int? averageSessionMinutes;
     int? longestSessionMinutes;
+    int nightUsageMinutes = 0;
     try {
       final sessionStats = await _channel.getTodaySessionStats();
       sessionCount = sessionStats['sessionCount'] as int?;
       averageSessionMinutes = sessionStats['averageSessionMinutes'] as int?;
       longestSessionMinutes = sessionStats['longestSessionMinutes'] as int?;
+
+      final usageByHour = sessionStats['usageByHour'] as Map<Object?, Object?>?;
+      if (usageByHour != null) {
+        for (final entry in usageByHour.entries) {
+          final hour = int.tryParse(entry.key.toString());
+          final minutes = entry.value as int?;
+          if (hour != null && minutes != null && _nightHours.contains(hour)) {
+            nightUsageMinutes += minutes;
+          }
+        }
+      }
     } catch (_) {
-      // Best-effort, see comment above.
+      // Best-effort, see comment above — nightUsageMinutes stays 0
+      // (honest absence), sessionCount/etc. stay null.
     }
 
     final today = DateTime.now();

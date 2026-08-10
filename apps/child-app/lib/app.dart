@@ -34,20 +34,48 @@ class _AppRoot extends ConsumerStatefulWidget {
   ConsumerState<_AppRoot> createState() => _AppRootState();
 }
 
-class _AppRootState extends ConsumerState<_AppRoot> {
+class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver {
   bool? _isPaired;
-  Timer? _wellbeingSyncTimer;
+  Timer? _wellbeingSafetyTimer;
+
+  // FIXES A REAL COST GAP (Sprint 14.2): threshold state, checked
+  // locally (zero network cost) before deciding whether a real sync
+  // (which uploads) is actually warranted.
+  int? _lastSyncedScreenMinutes;
+  DateTime? _lastSyncDate;
+
+  // 15 minutes of NEW screen time since the last successful sync is
+  // the threshold — meaningful enough to be worth a fresh snapshot
+  // (roughly one real usage session, per SessionAnalyzer's own
+  // fragmentation-detection assumptions), not so tight that ordinary
+  // fluctuation triggers constant syncing.
+  static const _screenMinutesThreshold = 15;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkSession();
   }
 
   @override
   void dispose() {
-    _wellbeingSyncTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _wellbeingSafetyTimer?.cancel();
     super.dispose();
+  }
+
+  /// FIXES A REAL COST GAP (Sprint 14.2): the app backgrounding is a
+  /// REAL EVENT (the child locked the screen, switched apps, or the
+  /// OS is reclaiming resources) — the single most meaningful moment
+  /// to persist the day's latest usage, since there's no guarantee
+  /// the app will be foregrounded again soon. Threshold-checked like
+  /// every other trigger here, not an unconditional sync.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused && _isPaired == true) {
+      _syncWellbeingSummaryIfThresholdMet();
+    }
   }
 
   Future<void> _checkSession() async {
@@ -68,43 +96,86 @@ class _AppRootState extends ConsumerState<_AppRoot> {
     _startDigitalWellbeing();
   }
 
-  /// Edge-First Intelligence Architecture: starts the near-real-time
-  /// critical-event coordinator (which also finally activates
-  /// anti-tamper polling — previously built but never started, see
-  /// CriticalEventCoordinator's own docstring) and a periodic timer
-  /// that builds+queues today's local usage summary and drains
-  /// whatever is queued. Every 30 minutes is a deliberate balance:
-  /// frequent enough that a day's summary is never far from
-  /// up-to-date if the app happens to be foregrounded near a natural
-  /// checkpoint, infrequent enough not to matter for battery — this
-  /// entire mechanism reads already-aggregated OS data, never
-  /// polls anything expensive.
+  /// FIXES A REAL COST GAP (Sprint 14.2 — previously found in Sprint
+  /// 14.1's own integration audit): the fixed 30-minute
+  /// Timer.periodic could produce up to ~48 uploads/device/day even
+  /// though the underlying data barely changed between most of them
+  /// (upsert-idempotent, but still a real, unnecessary request each
+  /// time). Replaced with:
+  ///   1. THRESHOLD-DRIVEN checks (real usage must have grown by
+  ///      _screenMinutesThreshold minutes since the last successful
+  ///      sync) — checked via a LOCAL-ONLY call (IAppUsageCollector,
+  ///      already-aggregated by Android, zero network cost to check).
+  ///   2. A real EVENT trigger — app backgrounding
+  ///      (didChangeAppLifecycleState above).
+  ///   3. A much-longer PERIODIC SAFETY NET (4 hours, not 30 minutes)
+  ///      — guarantees data is never more than 4 hours stale even on
+  ///      a device that's foregrounded continuously without crossing
+  ///      the threshold (e.g. idle in a single long-running app) or
+  ///      never backgrounded.
+  /// Anomaly detection is unaffected: the backend's own detection
+  /// pipeline runs once per day's upload (see
+  /// DigitalWellbeingEngineService.recordDailySummary), not per sync
+  /// call — fewer, well-timed uploads of the SAME eventual daily
+  /// total change nothing about what patterns get detected.
   void _startDigitalWellbeing() {
     ref.read(criticalEventCoordinatorProvider).start();
 
-    _wellbeingSyncTimer?.cancel();
-    _wellbeingSyncTimer = Timer.periodic(const Duration(minutes: 30), (_) => _syncWellbeingSummary());
-    _syncWellbeingSummary(); // also run once immediately, not just after the first 30-minute tick
+    _wellbeingSafetyTimer?.cancel();
+    _wellbeingSafetyTimer = Timer.periodic(const Duration(hours: 4), (_) => _syncWellbeingSummary(force: true));
+    _syncWellbeingSummary(force: true); // always sync once on startup — establishes the baseline for future threshold checks
   }
 
-  Future<void> _syncWellbeingSummary() async {
+  /// Cheap, LOCAL-ONLY check (no network call) — reads Android's
+  /// already-aggregated usage stats, compares against the last
+  /// successfully synced value, and only proceeds to the real
+  /// (network-touching) sync if the threshold is met OR the local
+  /// calendar day has changed since the last sync (a day boundary
+  /// crossing must always sync the outgoing day's final totals,
+  /// regardless of how small the last delta was — otherwise a few
+  /// minutes of end-of-day usage could be silently lost from that
+  /// day's snapshot).
+  Future<void> _syncWellbeingSummaryIfThresholdMet() async {
+    try {
+      final usage = await ref.read(appUsageCollectorProvider).getTodayUsage();
+      final currentMinutes = usage.values.fold<int>(0, (sum, d) => sum + d.inMinutes);
+      final today = DateTime.now();
+      final dayChanged = _lastSyncDate == null ||
+          _lastSyncDate!.year != today.year ||
+          _lastSyncDate!.month != today.month ||
+          _lastSyncDate!.day != today.day;
+
+      final delta = _lastSyncedScreenMinutes == null ? _screenMinutesThreshold : currentMinutes - _lastSyncedScreenMinutes!;
+      if (dayChanged || delta >= _screenMinutesThreshold) {
+        await _syncWellbeingSummary(force: false);
+      }
+    } catch (_) {
+      // Best-effort — the periodic safety net (4h) or the next
+      // real event still covers this device if this particular
+      // threshold check fails for any reason.
+    }
+  }
+
+  Future<void> _syncWellbeingSummary({required bool force}) async {
     try {
       final service = ref.read(digitalWellbeingServiceProvider);
-      // HONEST LIMITATION: pickupCount/nightUsageMinutes/
-      // blockedAttemptCount are 0 here — the native pickup-count and
-      // night-usage-window computations are NOT yet wired end-to-end
-      // (see agent_channel.dart's getTodayPickupCount, implemented
-      // natively but not yet cross-referenced against the child's
-      // bedtime window here; blockedAttemptCount needs the Policy
-      // Enforcement Engine, Track B, not yet built). totalScreenMinutes
-      // and the per-app breakdown ARE real. Zero is the honest value
-      // for what isn't wired yet, not a fabricated placeholder.
-      await service.buildAndQueueDailySummary(
-        pickupCount: 0,
-        nightUsageMinutes: 0,
-        blockedAttemptCount: 0,
-      );
+      // FIXED (Sprint 14.1 integration audit): pickupCount and
+      // nightUsageMinutes are now computed inside
+      // DigitalWellbeingService itself from real device data — see
+      // that method's own docstring for the bug this closes.
+      // blockedAttemptCount still needs the Policy Enforcement Engine
+      // (Track B, not yet built) — that remains a real, separate,
+      // documented architectural gap, not something this fix touches.
+      await service.buildAndQueueDailySummary(blockedAttemptCount: 0);
       await service.drainOwnEvents();
+
+      // Update threshold-tracking state only after a successful
+      // upload attempt (queue+drain) — an exception above skips this,
+      // so a failed sync correctly leaves the OLD baseline in place
+      // for the next threshold check, not a falsely-advanced one.
+      final usage = await ref.read(appUsageCollectorProvider).getTodayUsage();
+      _lastSyncedScreenMinutes = usage.values.fold<int>(0, (sum, d) => sum + d.inMinutes);
+      _lastSyncDate = DateTime.now();
     } catch (_) {
       // Best-effort — matches every other background sync in this app.
       // Not fatal to the app's core protection function either way.

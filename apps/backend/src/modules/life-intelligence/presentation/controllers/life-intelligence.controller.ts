@@ -97,6 +97,15 @@ export class LifeIntelligenceController {
     return this.healthEngine.computeAndStoreHealthScore(childId, user.familyId!, date);
   }
 
+  /** Sprint 15 (Health & Daily Habits Engine) — CLOSES A REAL GAP:
+   * the unified "how am I doing today" view (Hydration/Activity
+   * progress + streaks) previously never existed as a single,
+   * directly-consumable endpoint. */
+  @Get('health/:childId/progress')
+  getDailyProgress(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
+    return this.healthEngine.getDailyProgress(childId, user.familyId!);
+  }
+
   // ---- Faith ----
   @Post('faith/:childId/practices')
   createFaithPractice(@Param('childId') childId: string, @Body() dto: CreateFaithPracticeDto, @CurrentUser() user: IJwtPayload) {

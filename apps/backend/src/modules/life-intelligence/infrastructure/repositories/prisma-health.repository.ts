@@ -62,6 +62,26 @@ export class PrismaHealthRepository {
     return result._sum.amountMl ?? 0;
   }
 
+  /** Sprint 15 — CLOSES A REAL GAP: feeds streak calculation, which
+   * needs to know EVERY day's total over a window, not just one
+   * day's. Grouped in application code (not a raw SQL GROUP BY) —
+   * this project's own established pattern for aggregations over a
+   * bounded, small window (30 days max), matching
+   * findSnapshotsInWindow's own style in the digital-wellbeing
+   * repository. */
+  async getDailyHydrationTotals(childId: string, since: Date): Promise<Map<string, number>> {
+    const rows = await this.prisma.hydrationLog.findMany({
+      where: { childId, loggedAt: { gte: since } },
+      select: { loggedAt: true, amountMl: true },
+    });
+    const totals = new Map<string, number>();
+    for (const row of rows) {
+      const dateStr = row.loggedAt.toISOString().slice(0, 10);
+      totals.set(dateStr, (totals.get(dateStr) ?? 0) + row.amountMl);
+    }
+    return totals;
+  }
+
   async createSleepLog(input: ICreateSleepLogInput): Promise<ISleepLog> {
     const row = await this.prisma.sleepLog.create({
       data: {
@@ -121,6 +141,21 @@ export class PrismaHealthRepository {
       _sum: { durationMinutes: true },
     });
     return result._sum.durationMinutes ?? 0;
+  }
+
+  /** Sprint 15 — CLOSES A REAL GAP: same reasoning as
+   * getDailyHydrationTotals above, for Activity streak calculation. */
+  async getDailyActivityTotals(childId: string, since: Date): Promise<Map<string, number>> {
+    const rows = await this.prisma.activityLog.findMany({
+      where: { childId, date: { gte: since } },
+      select: { date: true, durationMinutes: true },
+    });
+    const totals = new Map<string, number>();
+    for (const row of rows) {
+      const dateStr = row.date.toISOString().slice(0, 10);
+      totals.set(dateStr, (totals.get(dateStr) ?? 0) + row.durationMinutes);
+    }
+    return totals;
   }
 
   async countGroupActivitiesInWindow(childId: string, sinceDate: Date): Promise<number> {

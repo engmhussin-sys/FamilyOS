@@ -16,6 +16,7 @@ import {
   ISleepLog,
 } from '../../domain/health.types';
 import { computeHydrationTargetMl } from './health-rules';
+import { computeCurrentStreak } from './streak-calculator';
 
 /**
  * Architecture 1.0 \u00a73/\u00a75: merges what were three separate engines
@@ -87,6 +88,36 @@ export class HealthEngineService {
           type: 'hydration_event',
           payload: { metric: 'hydration_target_reached' },
         });
+
+        // Sprint 15 — CLOSES A REAL GAP: the brief's own explicit
+        // contract event name (DAILY_GOAL_COMPLETED), fired
+        // ADDITIVELY alongside the pre-existing 'hydration_event'
+        // type above — a future Rewards Engine consumer can listen
+        // for this specific name without this project guessing at
+        // that engine's own internal rule structure.
+        await this.rewardTrigger.trigger(childId, familyId, {
+          engine: 'health',
+          type: 'DAILY_GOAL_COMPLETED',
+          payload: { metric: 'hydration', targetMl: target, totalMl: totalToday },
+        });
+
+        // Streak milestone — only fires a SEPARATE event on real
+        // milestone streak lengths (not every single day), matching
+        // this codebase's own "Timeline gets curated moments, not
+        // every daily tick" discipline (see this file's Timeline
+        // writes elsewhere).
+        const since = this.daysAgo(30);
+        const dailyTotals = await this.repository.getDailyHydrationTotals(childId, since);
+        const qualifyingDays = [...dailyTotals.entries()].filter(([, ml]) => ml >= target).map(([d]) => d);
+        const todayStr = this.today().toISOString().slice(0, 10);
+        const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
+        if ([3, 7, 14, 30].includes(streakDays)) {
+          await this.rewardTrigger.trigger(childId, familyId, {
+            engine: 'health',
+            type: 'STREAK_ACHIEVED',
+            payload: { metric: 'hydration', streakDays },
+          });
+        }
       } catch {
         // Intentionally swallowed — see comment above.
       }
@@ -170,6 +201,57 @@ export class HealthEngineService {
     await this.repository.upsertHealthScore(childId, date, score, breakdown as unknown as Record<string, unknown>);
 
     return { childId, date: date.toISOString().slice(0, 10), score, breakdown };
+  }
+
+  /** Sprint 15 (Health & Daily Habits Engine) — CLOSES A REAL GAP:
+   * no unified "how am I doing today, and what's my streak" view
+   * existed — Hydration/Activity data existed (via logHydration/
+   * logActivity) but was never surfaced together with streak
+   * information in one place a Parent/Child App screen could
+   * display directly. Reuses StreakCalculator (Sprint 15's own new
+   * shared utility) — built ONCE, not duplicated per metric. */
+  async getDailyProgress(childId: string, familyId: string): Promise<{
+    date: string;
+    hydration: { actualMl: number; targetMl: number; ratio: number; streakDays: number };
+    activity: { totalMinutes: number; targetMinutes: number; ratio: number; streakDays: number };
+  }> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    const child = await this.childrenService.getChildOrThrow(childId, familyId);
+
+    const date = this.today();
+    const dateStr = date.toISOString().slice(0, 10);
+    const { dayStart, dayEnd } = this.dayBounds(date);
+    const target = computeHydrationTargetMl(this.ageYears(child.dateOfBirth));
+    const activityTargetMinutes = 60; // same pediatric-guideline baseline as computeAndStoreHealthScore's own activityRatio
+
+    const STREAK_WINDOW_DAYS = 30; // enough real history for a meaningful streak without an unbounded query
+    const since = this.daysAgo(STREAK_WINDOW_DAYS);
+
+    const [actualMl, activityMinutes, hydrationDailyTotals, activityDailyTotals] = await Promise.all([
+      this.repository.sumHydrationMlOnDate(childId, dayStart, dayEnd),
+      this.repository.sumActivityMinutesOnDate(childId, date),
+      this.repository.getDailyHydrationTotals(childId, since),
+      this.repository.getDailyActivityTotals(childId, since),
+    ]);
+
+    const hydrationQualifyingDays = [...hydrationDailyTotals.entries()].filter(([, ml]) => ml >= target).map(([d]) => d);
+    const activityQualifyingDays = [...activityDailyTotals.entries()].filter(([, min]) => min >= activityTargetMinutes).map(([d]) => d);
+
+    return {
+      date: dateStr,
+      hydration: {
+        actualMl,
+        targetMl: target,
+        ratio: target > 0 ? Math.min(1, actualMl / target) : 0,
+        streakDays: computeCurrentStreak(hydrationQualifyingDays, dateStr),
+      },
+      activity: {
+        totalMinutes: activityMinutes,
+        targetMinutes: activityTargetMinutes,
+        ratio: Math.min(1, activityMinutes / activityTargetMinutes),
+        streakDays: computeCurrentStreak(activityQualifyingDays, dateStr),
+      },
+    };
   }
 
   private today(): Date {
