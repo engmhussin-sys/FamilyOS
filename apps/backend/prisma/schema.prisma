@@ -17,7 +17,15 @@
 // ============================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // FIXING A REAL DEPLOY-TIME BUG: node:20-alpine ships OpenSSL 3.x,
+  // but without an explicit binaryTarget Prisma downloaded an engine
+  // built for the older openssl-1.1.x, causing "Error loading shared
+  // library libssl.so.1.1: No such file or directory" at container
+  // startup. linux-musl-openssl-3.0.x is the correct target for this
+  // exact base image; "native" is kept so local/non-Alpine
+  // development environments are unaffected.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
