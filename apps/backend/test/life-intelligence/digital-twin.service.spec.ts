@@ -22,7 +22,7 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
   const pairingOrchestratorMock = { listFamilyDevices: jest.fn() };
   const riskEvaluationMock = { getLatestRiskAssessment: jest.fn() };
   const behavioralEngineMock = { computeTrend: jest.fn() };
-  const digitalWellbeingMock = { getBehavioralSnapshotSummary: jest.fn() };
+  const digitalWellbeingMock = { getBehavioralSnapshotSummary: jest.fn(), getWellbeingInsight: jest.fn() };
 
   let service: DigitalTwinService;
   const childId = 'child-1';
@@ -35,6 +35,7 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
     learningEngineMock.getProgressSummary.mockResolvedValue({ totalSessions: 0, totalMinutes: 0, averageAssessmentScore: null });
     repositoryMock.getSocialScoreInputs.mockResolvedValue({ sharedHabitCompletions: 0, groupActivityCount: 0, groupBadgeCount: 0, challengeParticipations: 0 });
     digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue(null);
+    digitalWellbeingMock.getWellbeingInsight.mockResolvedValue(null);
   };
 
   beforeEach(async () => {
@@ -208,6 +209,53 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
       });
       const result = await service.refreshAndGet(childId, familyId);
       expect(result.wellbeing?.confidence).toBe('LOW');
+    });
+
+    describe("pattern enrichment (CLOSES A REAL GAP: Sprint 14's own requirement -- 'What patterns are emerging?' -- was never wired into Digital Twin before this)", () => {
+      it("includes today's detected patterns and baseline deviation in inputs when an insight exists", async () => {
+        digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+          windowDays: 30, averageDailyScreenMinutes: 90, averagePickups: 20, averageNightUsageMinutes: 5,
+          totalBlockedAttempts: 0, daysWithData: 10,
+        });
+        digitalWellbeingMock.getWellbeingInsight.mockResolvedValue({
+          childId, date: '2026-08-10', humanSummary: 'Screen time was 40% higher than usual.',
+          baselineDeviationPercent: 40,
+          patterns: [{ code: 'EXCESSIVE_USAGE', confidence: 0.8, explanation: 'x', isPositive: false }],
+          recommendation: 'Consider a short conversation.',
+        });
+
+        const result = await service.refreshAndGet(childId, familyId);
+
+        expect(result.wellbeing?.inputs.todaysPatterns).toEqual(['EXCESSIVE_USAGE']);
+        expect(result.wellbeing?.inputs.baselineDeviationPercent).toBe(40);
+        expect(result.wellbeing?.score).toBe(100);
+      });
+
+      it('BOUNDARY CASE: when getWellbeingInsight throws (best-effort), wellbeing still returns normally with the OTHER fields intact', async () => {
+        digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+          windowDays: 30, averageDailyScreenMinutes: 90, averagePickups: 20, averageNightUsageMinutes: 5,
+          totalBlockedAttempts: 0, daysWithData: 10,
+        });
+        digitalWellbeingMock.getWellbeingInsight.mockRejectedValue(new Error('transient failure'));
+
+        const result = await service.refreshAndGet(childId, familyId);
+
+        expect(result.wellbeing?.score).toBe(100);
+        expect(result.wellbeing?.inputs.todaysPatterns).toBeUndefined();
+      });
+
+      it('BOUNDARY CASE: when no insight exists yet for today (null), inputs simply omit the pattern fields', async () => {
+        digitalWellbeingMock.getBehavioralSnapshotSummary.mockResolvedValue({
+          windowDays: 30, averageDailyScreenMinutes: 90, averagePickups: 20, averageNightUsageMinutes: 5,
+          totalBlockedAttempts: 0, daysWithData: 10,
+        });
+        digitalWellbeingMock.getWellbeingInsight.mockResolvedValue(null);
+
+        const result = await service.refreshAndGet(childId, familyId);
+
+        expect(result.wellbeing?.inputs.todaysPatterns).toBeUndefined();
+        expect(result.wellbeing?.inputs.baselineDeviationPercent).toBeUndefined();
+      });
     });
   });
 });
