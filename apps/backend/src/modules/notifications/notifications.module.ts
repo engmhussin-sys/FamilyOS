@@ -21,6 +21,6 @@ import { NOTIFICATION_REPOSITORY } from './application/ports/notification.reposi
     NotificationsService,
     { provide: NOTIFICATION_REPOSITORY, useClass: PrismaNotificationRepository },
   ],
-  exports: [NotificationsService],
+  exports: [NotificationsService, NOTIFICATION_REPOSITORY],
 })
 export class NotificationsModule {}

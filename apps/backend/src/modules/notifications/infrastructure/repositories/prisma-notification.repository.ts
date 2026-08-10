@@ -43,4 +43,13 @@ export class PrismaNotificationRepository implements INotificationRepository {
   async countUnread(userId: string): Promise<number> {
     return this.prisma.notification.count({ where: { userId, readAt: null } });
   }
+
+  async findRecentForChild(childId: string, since: Date): Promise<Array<{ type: string; priority: string; createdAt: Date }>> {
+    const rows = await this.prisma.notification.findMany({
+      where: { childId, createdAt: { gte: since } },
+      select: { type: true, priority: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows;
+  }
 }

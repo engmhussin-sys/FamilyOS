@@ -2,7 +2,7 @@ import { evaluateFatigue, DEFAULT_FATIGUE_POLICY, type IRecentNotification } fro
 
 describe('evaluateFatigue (Sprint 16 — CLOSES A REAL GAP: zero fatigue protection existed anywhere before this)', () => {
   const now = new Date('2026-08-10T12:00:00.000Z');
-  const candidate = { type: 'HYDRATION_REMINDER', priority: 'NORMAL' as const, title: 't', body: 'b' };
+  const candidate = { type: 'HYDRATION_REMINDER', priority: 'NORMAL' as const, title: 't', body: 'b', targetAudience: 'CHILD' as const };
 
   it('allows a candidate with no history at all', () => {
     const result = evaluateFatigue(candidate, [], now, '12:00');
@@ -37,7 +37,7 @@ describe('evaluateFatigue (Sprint 16 — CLOSES A REAL GAP: zero fatigue protect
 
   describe('duplicate prevention', () => {
     it('CRITICAL: blocks a near-duplicate (same type within 5 minutes), even for a type with no configured cooldown', () => {
-      const noCooldownCandidate = { type: 'SOME_UNCONFIGURED_TYPE', priority: 'NORMAL' as const, title: 't', body: 'b' };
+      const noCooldownCandidate = { type: 'SOME_UNCONFIGURED_TYPE', priority: 'NORMAL' as const, title: 't', body: 'b', targetAudience: 'CHILD' as const };
       const history: IRecentNotification[] = [
         { type: 'SOME_UNCONFIGURED_TYPE', priority: 'NORMAL', createdAt: new Date('2026-08-10T11:58:00.000Z') },
       ];
@@ -46,7 +46,7 @@ describe('evaluateFatigue (Sprint 16 — CLOSES A REAL GAP: zero fatigue protect
     });
 
     it('does NOT treat a 10-minute-old notification as a duplicate (outside the 5-minute window)', () => {
-      const noCooldownCandidate = { type: 'SOME_UNCONFIGURED_TYPE', priority: 'NORMAL' as const, title: 't', body: 'b' };
+      const noCooldownCandidate = { type: 'SOME_UNCONFIGURED_TYPE', priority: 'NORMAL' as const, title: 't', body: 'b', targetAudience: 'CHILD' as const };
       const history: IRecentNotification[] = [
         { type: 'SOME_UNCONFIGURED_TYPE', priority: 'NORMAL', createdAt: new Date('2026-08-10T11:50:00.000Z') },
       ];
@@ -72,13 +72,13 @@ describe('evaluateFatigue (Sprint 16 — CLOSES A REAL GAP: zero fatigue protect
     });
 
     it('CRITICAL: escalation policy — a CRITICAL priority candidate bypasses quiet hours', () => {
-      const criticalCandidate = { type: 'PROTECTION_ALERT', priority: 'CRITICAL' as const, title: 't', body: 'b' };
+      const criticalCandidate = { type: 'PROTECTION_ALERT', priority: 'CRITICAL' as const, title: 't', body: 'b', targetAudience: 'PARENT' as const };
       const result = evaluateFatigue(criticalCandidate, [], now, '23:00');
       expect(result.allowed).toBe(true);
     });
 
     it('CRITICAL still respects duplicate prevention even during quiet hours', () => {
-      const criticalCandidate = { type: 'PROTECTION_ALERT', priority: 'CRITICAL' as const, title: 't', body: 'b' };
+      const criticalCandidate = { type: 'PROTECTION_ALERT', priority: 'CRITICAL' as const, title: 't', body: 'b', targetAudience: 'PARENT' as const };
       const history: IRecentNotification[] = [
         { type: 'PROTECTION_ALERT', priority: 'CRITICAL', createdAt: new Date('2026-08-10T22:58:00.000Z') },
       ];

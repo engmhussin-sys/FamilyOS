@@ -25,6 +25,15 @@ export interface ICandidateNotification {
   priority: 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
   title: string;
   body: string;
+  /** Sprint 16.1 Phase 3 (Smart Notification Integration) — CLOSES A
+   * REAL GAP: without this, there was no way to route a candidate to
+   * the correct recipient per the brief's own explicit "Parent vs
+   * Child" separation — a child must NEVER receive an unsupervised
+   * system message (this field alone doesn't enforce that; the
+   * integration layer routes CHILD-targeted candidates through
+   * FamilyCommunicationService.draftAiMessage, which enforces the
+   * real approval gate). */
+  targetAudience: 'PARENT' | 'CHILD';
 }
 
 export interface IFatiguePolicy {

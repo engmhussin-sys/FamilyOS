@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { ChildrenModule } from '../children/children.module';
 import { PairingModule } from '../pairing/pairing.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { AiCoreModule } from '../ai-core/ai-core.module';
 import { ConsentCheckModule } from '../consent-check/consent-check.module';
 import { BillingModule } from '../billing/billing.module';
@@ -27,6 +28,7 @@ import { PrismaCommunicationRepository } from './infrastructure/repositories/pri
 import { PrismaDigitalTwinRepository } from './infrastructure/repositories/prisma-digital-twin.repository';
 import { PrismaDigitalWellbeingRepository } from './infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { DigitalWellbeingEngineService } from './application/services/digital-wellbeing-engine.service';
+import { SmartNotificationIntegrationService } from './application/services/smart-notification-integration.service';
 import { BaselineCalculatorService } from './application/services/baseline-calculator.service';
 import { PatternDetectionService } from './application/services/pattern-detection.service';
 import { AnomalyDetectionService } from './application/services/anomaly-detection.service';
@@ -78,7 +80,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
  * registered, unmasked.
  */
 @Module({
-  imports: [ChildrenModule, PairingModule, AiCoreModule, ConsentCheckModule, BillingModule],
+  imports: [ChildrenModule, PairingModule, NotificationsModule, AiCoreModule, ConsentCheckModule, BillingModule],
   controllers: [LifeIntelligenceController],
   providers: [
     HabitEngineService,
@@ -93,6 +95,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     DigitalTwinService,
     FamilyInsightService,
     DigitalWellbeingEngineService,
+    SmartNotificationIntegrationService,
     BaselineCalculatorService,
     PatternDetectionService,
     AnomalyDetectionService,
@@ -122,6 +125,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     DigitalTwinService,
     FamilyInsightService,
     DigitalWellbeingEngineService,
+    SmartNotificationIntegrationService,
     LIFE_TIMELINE_WRITER,
     REWARD_TRIGGER_WRITER,
   ],

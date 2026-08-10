@@ -17,6 +17,8 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
   ) {}
 
   async createForFamilyOwner(input: ICreateRuntimeAlertInput): Promise<void> {
+    const notificationType = input.type ?? 'RUNTIME_ALERT';
+
     const owner = await this.prisma.familyMember.findFirst({
       where: { familyId: input.familyId, role: 'OWNER', deletedAt: null },
     });
@@ -35,12 +37,20 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
     // single time. A 5-minute window matching the exact same
     // recipient/type/childId/title is treated as the same real-world
     // event, not a new one worth re-alerting about.
+    //
+    // FIXES A REAL BUG (Sprint 16.1 Phase 3): this query was
+    // hardcoded to type: 'RUNTIME_ALERT' — deduplication would have
+    // silently never matched for any of the new Smart Notification
+    // types this Phase introduces (HYDRATION_REMINDER, etc.), since
+    // every one of THOSE rows also has type='RUNTIME_ALERT' baked in
+    // by the OLD version of this same query, comparing the wrong
+    // field entirely. Now compares the REAL type.
     const DEDUP_WINDOW_MS = 5 * 60 * 1000;
     const recentDuplicate = await this.prisma.notification.findFirst({
       where: {
         userId: recipient.userId,
         childId: input.childId,
-        type: 'RUNTIME_ALERT',
+        type: notificationType,
         title: input.title,
         createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
       },
@@ -51,7 +61,7 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
       data: {
         userId: recipient.userId,
         childId: input.childId,
-        type: 'RUNTIME_ALERT',
+        type: notificationType,
         title: input.title,
         body: input.body,
         // CLOSES A REAL GAP (Master Completeness Audit): every

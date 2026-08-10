@@ -49,6 +49,7 @@ export function evaluateSmartNotificationCandidates(signals: ISmartNotificationS
       priority: 'NORMAL',
       title: 'Water break?',
       body: "You've been on your device a while — maybe grab some water?",
+      targetAudience: 'CHILD',
     });
   }
 
@@ -58,6 +59,7 @@ export function evaluateSmartNotificationCandidates(signals: ISmartNotificationS
       priority: 'NORMAL',
       title: 'Study time',
       body: "It's around your usual study time — ready to get started?",
+      targetAudience: 'CHILD',
     });
   }
 
@@ -67,6 +69,7 @@ export function evaluateSmartNotificationCandidates(signals: ISmartNotificationS
       priority: 'LOW',
       title: `Keep your ${signals.exerciseStreak.streakDays}-day streak going!`,
       body: "You haven't logged activity today yet — even a little keeps the streak alive.",
+      targetAudience: 'CHILD',
     });
   }
 
