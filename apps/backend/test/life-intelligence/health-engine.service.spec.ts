@@ -28,10 +28,12 @@ describe('HealthEngineService', () => {
     countNutritionLogsOnDate: jest.fn(),
     createHydrationLog: jest.fn(),
     sumHydrationMlOnDate: jest.fn(),
+    getDailyHydrationTotals: jest.fn(),
     createSleepLog: jest.fn(),
     findSleepLogForDate: jest.fn(),
     createActivityLog: jest.fn(),
     sumActivityMinutesOnDate: jest.fn(),
+    getDailyActivityTotals: jest.fn(),
     countGroupActivitiesInWindow: jest.fn(),
     upsertHealthScore: jest.fn(),
   };
@@ -175,17 +177,38 @@ describe('HealthEngineService', () => {
   });
 
   // --- Sprint 25: Reward Rules wiring ---
-  describe('logHydration — reward trigger wiring', () => {
-    it('triggers Reward Rules exactly when the target is crossed, with the payload shape a real rule can match', async () => {
+  describe('logHydration — reward trigger wiring (FIXED Sprint 16.3: this section was broken since Sprint 16.1 Phase 4 extended the real behavior to 3 events + a repository call this mock never had — would have thrown a runtime error if ever actually executed)', () => {
+    it('triggers Reward Rules exactly when the target is crossed — real current behavior: hydration_event + DAILY_GOAL_COMPLETED', async () => {
       repositoryMock.createHydrationLog.mockResolvedValue({ id: 'h4', childId, amountMl: 400, loggedAt: new Date() });
       repositoryMock.sumHydrationMlOnDate.mockResolvedValue(2200);
+      repositoryMock.getDailyHydrationTotals.mockResolvedValue(new Map());
 
       await service.logHydration(childId, familyId, { amountMl: 400 });
 
       expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
-        childId,
-        familyId,
-        { engine: 'health', type: 'hydration_event', payload: { metric: 'hydration_target_reached' } },
+        childId, familyId,
+        expect.objectContaining({ engine: 'health', type: 'hydration_event' }),
+      );
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'hydration' }) }),
+      );
+    });
+
+    it('additionally fires STREAK_ACHIEVED at a real milestone', async () => {
+      repositoryMock.createHydrationLog.mockResolvedValue({ id: 'h4b', childId, amountMl: 400, loggedAt: new Date() });
+      repositoryMock.sumHydrationMlOnDate.mockResolvedValue(2200);
+      const sevenDays = new Map(Array.from({ length: 7 }, (_, i) => {
+        const d = new Date('2026-08-10'); d.setUTCDate(d.getUTCDate() - i);
+        return [d.toISOString().slice(0, 10), 2200];
+      }));
+      repositoryMock.getDailyHydrationTotals.mockResolvedValue(sevenDays);
+
+      await service.logHydration(childId, familyId, { amountMl: 400 });
+
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({ type: 'STREAK_ACHIEVED', payload: expect.objectContaining({ metric: 'hydration' }) }),
       );
     });
 
@@ -201,9 +224,66 @@ describe('HealthEngineService', () => {
     it('a Reward Rules failure never blocks the hydration log itself from succeeding', async () => {
       repositoryMock.createHydrationLog.mockResolvedValue({ id: 'h6', childId, amountMl: 400, loggedAt: new Date() });
       repositoryMock.sumHydrationMlOnDate.mockResolvedValue(2200);
+      repositoryMock.getDailyHydrationTotals.mockResolvedValue(new Map());
       rewardTriggerMock.trigger.mockRejectedValue(new Error('simulated rewards failure'));
 
       await expect(service.logHydration(childId, familyId, { amountMl: 400 })).resolves.toBeDefined();
+    });
+  });
+
+  describe('logActivity — reward trigger wiring (Sprint 16.3 Priority 3, CLOSES A REAL GAP flagged in Sprint 16.2\'s own report: Hydration had this, Activity did not)', () => {
+    it('triggers Reward Rules exactly when the daily activity target (60 min) is crossed', async () => {
+      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a1', childId, activityType: 'running', durationMinutes: 30, socialContext: 'SOLO', date: new Date('2026-08-10') });
+      repositoryMock.sumActivityMinutesOnDate.mockResolvedValue(70); // crossed 60
+      repositoryMock.getDailyActivityTotals.mockResolvedValue(new Map());
+      repositoryMock.countGroupActivitiesInWindow.mockResolvedValue(0);
+
+      await service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 30, socialContext: 'SOLO' });
+
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'activity' }) }),
+      );
+    });
+
+    it('does NOT trigger Reward Rules when the daily target is not crossed by this log', async () => {
+      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a2', childId, activityType: 'running', durationMinutes: 10, socialContext: 'SOLO', date: new Date('2026-08-10') });
+      repositoryMock.sumActivityMinutesOnDate.mockResolvedValue(20); // still under 60
+      repositoryMock.countGroupActivitiesInWindow.mockResolvedValue(0);
+
+      await service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 10, socialContext: 'SOLO' });
+
+      expect(rewardTriggerMock.trigger).not.toHaveBeenCalled();
+    });
+
+    it('additionally fires STREAK_ACHIEVED for activity at a real milestone', async () => {
+      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a3', childId, activityType: 'running', durationMinutes: 30, socialContext: 'SOLO', date: new Date('2026-08-10') });
+      repositoryMock.sumActivityMinutesOnDate.mockResolvedValue(70);
+      repositoryMock.countGroupActivitiesInWindow.mockResolvedValue(0);
+      const sevenDays = new Map(Array.from({ length: 7 }, (_, i) => {
+        const d = new Date('2026-08-10'); d.setUTCDate(d.getUTCDate() - i);
+        return [d.toISOString().slice(0, 10), 70];
+      }));
+      repositoryMock.getDailyActivityTotals.mockResolvedValue(sevenDays);
+
+      await service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 30, socialContext: 'SOLO' });
+
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({ type: 'STREAK_ACHIEVED', payload: expect.objectContaining({ metric: 'activity' }) }),
+      );
+    });
+
+    it('a Reward Rules failure never blocks the activity log itself from succeeding', async () => {
+      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a4', childId, activityType: 'running', durationMinutes: 30, socialContext: 'SOLO', date: new Date('2026-08-10') });
+      repositoryMock.sumActivityMinutesOnDate.mockResolvedValue(70);
+      repositoryMock.getDailyActivityTotals.mockResolvedValue(new Map());
+      repositoryMock.countGroupActivitiesInWindow.mockResolvedValue(0);
+      rewardTriggerMock.trigger.mockRejectedValue(new Error('simulated rewards failure'));
+
+      await expect(
+        service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 30, socialContext: 'SOLO' }),
+      ).resolves.toBeDefined();
     });
   });
 });

@@ -161,6 +161,50 @@ export class HealthEngineService {
       }
     }
 
+    // Sprint 16.3 Priority 3 — CLOSES A REAL GAP: mirrors
+    // logHydration's own exact milestone-crossing pattern, same
+    // target (60 min/day) getDailyProgress already uses for its own
+    // isAchieved field — same source of truth, not a second one.
+    const today = this.today();
+    const todayMinutes = await this.repository.sumActivityMinutesOnDate(childId, today);
+    const activityTargetMinutes = 60;
+    if (todayMinutes >= activityTargetMinutes && todayMinutes - input.durationMinutes < activityTargetMinutes) {
+      await this.timeline.record({
+        childId,
+        sourceEngine: 'health',
+        category: 'HEALTH',
+        eventType: 'activity_target_reached',
+        title: 'Reached today’s activity goal',
+        metadata: { targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes },
+      });
+
+      try {
+        await this.rewardTrigger.trigger(childId, familyId, {
+          engine: 'health',
+          type: 'DAILY_GOAL_COMPLETED',
+          payload: { metric: 'activity', targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes },
+          idempotencyKey: `daily-goal:activity:${childId}:${today.toISOString().slice(0, 10)}`,
+        });
+
+        const since = this.daysAgo(30);
+        const dailyTotals = await this.repository.getDailyActivityTotals(childId, since);
+        const qualifyingDays = [...dailyTotals.entries()].filter(([, min]) => min >= activityTargetMinutes).map(([d]) => d);
+        const todayStr = today.toISOString().slice(0, 10);
+        const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
+        if ([3, 7, 14, 30].includes(streakDays)) {
+          await this.rewardTrigger.trigger(childId, familyId, {
+            engine: 'health',
+            type: 'STREAK_ACHIEVED',
+            payload: { metric: 'activity', streakDays },
+            idempotencyKey: `streak:${childId}:activity:${streakDays}`,
+          });
+        }
+      } catch {
+        // Intentionally swallowed — same best-effort discipline as
+        // logHydration's own identical try/catch above.
+      }
+    }
+
     return log;
   }
 
