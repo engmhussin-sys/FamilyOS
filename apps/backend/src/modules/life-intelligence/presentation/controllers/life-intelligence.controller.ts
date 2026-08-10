@@ -176,6 +176,20 @@ export class LifeIntelligenceController {
     return this.smartTaskEngine.generateForToday(childId, user.familyId!, dto);
   }
 
+  /** CLOSES A REAL DESIGN FLAW found in a systematic frontend/backend
+   * audit: the endpoint above required the CALLER to manually
+   * compute the context — no real frontend anywhere could use it
+   * without duplicating server-side analytical logic. This is the
+   * endpoint a real frontend should actually call — zero body
+   * needed, real context computed server-side from already-built
+   * engines (see SmartTaskEngineService.generateForTodayAuto's own
+   * docstring for exactly what's computed and the one honest
+   * limitation — screenTimeOverLimit — left false). */
+  @Post('smart-tasks/:childId/generate-auto')
+  generateSmartTasksAuto(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
+    return this.smartTaskEngine.generateForTodayAuto(childId, user.familyId!);
+  }
+
   @Get('smart-tasks/:childId')
   listSmartTasksToday(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.smartTaskEngine.listForToday(childId, user.familyId!);

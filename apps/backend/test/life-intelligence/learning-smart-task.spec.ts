@@ -6,10 +6,14 @@ import { PrismaSmartTaskRepository } from '../../src/modules/life-intelligence/i
 import { LearningEngineService } from '../../src/modules/life-intelligence/application/services/learning-engine.service';
 import { PrismaLearningRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-learning.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
+import { HealthEngineService } from '../../src/modules/life-intelligence/application/services/health-engine.service';
+import { HabitEngineService } from '../../src/modules/life-intelligence/application/services/habit-engine.service';
 
 describe('SmartTaskEngineService', () => {
   const repositoryMock = { createMany: jest.fn(), listForChildOnDate: jest.fn(), findById: jest.fn(), updateStatus: jest.fn() };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
+  const healthEngineMock = { computeAndStoreHealthScore: jest.fn(), getDailyProgress: jest.fn() };
+  const habitEngineMock = { getMissedHabitsSignal: jest.fn() };
   let service: SmartTaskEngineService;
   const childId = 'child-1';
   const familyId = 'family-1';
@@ -21,6 +25,8 @@ describe('SmartTaskEngineService', () => {
         SmartTaskEngineService,
         { provide: PrismaSmartTaskRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
+        { provide: HealthEngineService, useValue: healthEngineMock },
+        { provide: HabitEngineService, useValue: habitEngineMock },
       ],
     }).compile();
     service = moduleRef.get(SmartTaskEngineService);
@@ -52,6 +58,86 @@ describe('SmartTaskEngineService', () => {
 
     it('verifies ownership before generating anything', async () => {
       await service.generateForToday(childId, familyId, { lateSleepLastNight: false, lowHydrationToday: false, missedHabitsYesterday: [], screenTimeOverLimit: false });
+      expect(childrenServiceMock.assertChildBelongsToFamily).toHaveBeenCalledWith(childId, familyId);
+    });
+  });
+
+  describe('generateForTodayAuto (FIXES A REAL DESIGN FLAW: generateForToday required the caller to manually compute context — no real frontend anywhere could use it without duplicating server-side analytical logic)', () => {
+    it('computes lateSleepLastNight from real sleepHours data (< 7h counted as insufficient)', async () => {
+      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: 5 } });
+      healthEngineMock.getDailyProgress.mockResolvedValue({ hydration: { isAchieved: true } });
+      habitEngineMock.getMissedHabitsSignal.mockResolvedValue([]);
+      repositoryMock.createMany.mockResolvedValue(1);
+
+      await service.generateForTodayAuto(childId, familyId);
+
+      expect(repositoryMock.createMany).toHaveBeenCalledWith(
+        childId, expect.any(Array), expect.any(Date),
+        expect.objectContaining({ lateSleepLastNight: true }),
+      );
+    });
+
+    it('computes lowHydrationToday as the inverse of real isAchieved data', async () => {
+      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: 9 } });
+      healthEngineMock.getDailyProgress.mockResolvedValue({ hydration: { isAchieved: false } });
+      habitEngineMock.getMissedHabitsSignal.mockResolvedValue([]);
+      repositoryMock.createMany.mockResolvedValue(1);
+
+      await service.generateForTodayAuto(childId, familyId);
+
+      expect(repositoryMock.createMany).toHaveBeenCalledWith(
+        childId, expect.any(Array), expect.any(Date),
+        expect.objectContaining({ lowHydrationToday: true }),
+      );
+    });
+
+    it('maps real missed-habit titles from getMissedHabitsSignal, windowed to yesterday (1 day)', async () => {
+      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: 9 } });
+      healthEngineMock.getDailyProgress.mockResolvedValue({ hydration: { isAchieved: true } });
+      habitEngineMock.getMissedHabitsSignal.mockResolvedValue([{ habitId: 'h1', habitTitle: 'Brush teeth', date: new Date() }]);
+      repositoryMock.createMany.mockResolvedValue(1);
+
+      await service.generateForTodayAuto(childId, familyId);
+
+      expect(habitEngineMock.getMissedHabitsSignal).toHaveBeenCalledWith(childId, familyId, 1);
+      expect(repositoryMock.createMany).toHaveBeenCalledWith(
+        childId, expect.any(Array), expect.any(Date),
+        expect.objectContaining({ missedHabitsYesterday: ['Brush teeth'] }),
+      );
+    });
+
+    it('HONEST LIMITATION: screenTimeOverLimit is always false — documented, not an unfounded guess', async () => {
+      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: 9 } });
+      healthEngineMock.getDailyProgress.mockResolvedValue({ hydration: { isAchieved: true } });
+      habitEngineMock.getMissedHabitsSignal.mockResolvedValue([]);
+      repositoryMock.createMany.mockResolvedValue(1);
+
+      await service.generateForTodayAuto(childId, familyId);
+
+      expect(repositoryMock.createMany).toHaveBeenCalledWith(
+        childId, expect.any(Array), expect.any(Date),
+        expect.objectContaining({ screenTimeOverLimit: false }),
+      );
+    });
+
+    it('BOUNDARY CASE: null sleepHours (unlogged) does not crash and does not count as "late"', async () => {
+      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: null } });
+      healthEngineMock.getDailyProgress.mockResolvedValue({ hydration: { isAchieved: true } });
+      habitEngineMock.getMissedHabitsSignal.mockResolvedValue([]);
+
+      const count = await service.generateForTodayAuto(childId, familyId);
+
+      expect(count).toBe(0); // zero signals triggered -> zero rows, matching generateForToday's own existing behavior
+      expect(repositoryMock.createMany).not.toHaveBeenCalled();
+    });
+
+    it('verifies ownership before computing anything', async () => {
+      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: 9 } });
+      healthEngineMock.getDailyProgress.mockResolvedValue({ hydration: { isAchieved: true } });
+      habitEngineMock.getMissedHabitsSignal.mockResolvedValue([]);
+
+      await service.generateForTodayAuto(childId, familyId);
+
       expect(childrenServiceMock.assertChildBelongsToFamily).toHaveBeenCalledWith(childId, familyId);
     });
   });
