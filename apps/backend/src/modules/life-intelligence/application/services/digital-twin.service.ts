@@ -1,0 +1,173 @@
+import { Injectable } from '@nestjs/common';
+
+import { ChildrenService } from '../../../children/application/services/children.service';
+import { PrismaDigitalTwinRepository } from '../../infrastructure/repositories/prisma-digital-twin.repository';
+import { HabitEngineService } from './habit-engine.service';
+import { HealthEngineService } from './health-engine.service';
+import { FaithEngineService } from './faith-engine.service';
+import { LearningEngineService } from './learning-engine.service';
+import { IDigitalTwin, IExplainableSubScore } from '../../domain/digital-twin.types';
+import { computeGrowthScore } from './digital-twin-rules';
+import { mapBehavioralTrendToScore, mapRiskToSafetyScore } from './safety-behavior-rules';
+import { PairingOrchestratorService } from '../../../pairing/application/services/pairing-orchestrator.service';
+import { RiskEvaluationService } from '../../../pairing/application/services/risk-evaluation.service';
+import { BehavioralIntelligenceEngineService } from '../../../ai-core/application/services/behavioral-intelligence-engine.service';
+
+const SOCIAL_SCORE_WINDOW_DAYS = 30;
+
+/**
+ * Architecture 1.0 \u00a76: an aggregated READ PROJECTION, NOT a second
+ * source of truth. Every slice is recomputed from the real engines'
+ * own data on each refresh \u2014 upsertProjection caches the result for
+ * fast reads elsewhere, but this service always trusts the source
+ * tables, never the cache, when computing.
+ *
+ * SPRINT 25: Safety Score and Behavior Score are now wired \u2014 both
+ * read through Digital Safety's ALREADY-BUILT, already-exported
+ * public methods (`RiskEvaluationService`, `BehavioralIntelligenceEngineService`),
+ * never touching ai-core or pairing's own files (Code Freeze fully
+ * respected: this is a new consumer of an existing public API, not a
+ * modification). See safety-behavior-rules.ts for the explainable
+ * score mapping.
+ */
+@Injectable()
+export class DigitalTwinService {
+  constructor(
+    private readonly repository: PrismaDigitalTwinRepository,
+    private readonly childrenService: ChildrenService,
+    private readonly habitEngine: HabitEngineService,
+    private readonly healthEngine: HealthEngineService,
+    private readonly faithEngine: FaithEngineService,
+    private readonly learningEngine: LearningEngineService,
+    private readonly pairingOrchestrator: PairingOrchestratorService,
+    private readonly riskEvaluation: RiskEvaluationService,
+    private readonly behavioralEngine: BehavioralIntelligenceEngineService,
+  ) {}
+
+  async refreshAndGet(childId: string, familyId: string): Promise<IDigitalTwin> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+
+    const [habitScore, healthScore, faithScore, learningProgress, socialInputs, primaryDeviceId] = await Promise.all([
+      this.habitEngine.getScoreBreakdown(childId, familyId),
+      this.healthEngine.computeAndStoreHealthScore(childId, familyId),
+      this.faithEngine.getScoreBreakdown(childId, familyId),
+      this.learningEngine.getProgressSummary(childId, familyId),
+      this.repository.getSocialScoreInputs(childId, this.daysAgo(SOCIAL_SCORE_WINDOW_DAYS)),
+      this.findPrimaryDeviceId(childId, familyId),
+    ]);
+
+    const habits: IExplainableSubScore = {
+      score: Math.round(habitScore.completionRate * 100),
+      inputs: { completedHabitDays: habitScore.completedHabitDays, totalHabitDays: habitScore.totalHabitDays },
+      confidence: habitScore.totalHabitDays > 0 ? 'HIGH' : 'LOW',
+    };
+
+    const health: IExplainableSubScore = {
+      score: healthScore.score,
+      inputs: healthScore.breakdown as unknown as Record<string, unknown>,
+      confidence: 'HIGH',
+    };
+
+    const faith: IExplainableSubScore = {
+      score: Math.round(faithScore.completionRate * 100),
+      inputs: { completedLogs: faithScore.completedLogs, activePractices: faithScore.activePractices },
+      confidence: faithScore.activePractices > 0 ? 'HIGH' : 'LOW',
+    };
+
+    const learning: IExplainableSubScore | null = learningProgress.totalSessions > 0
+      ? {
+          score: learningProgress.averageAssessmentScore !== null
+            ? Math.round(learningProgress.averageAssessmentScore)
+            : Math.min(100, Math.round((learningProgress.totalMinutes / (SOCIAL_SCORE_WINDOW_DAYS * 20)) * 100)),
+          inputs: { totalSessions: learningProgress.totalSessions, totalMinutes: learningProgress.totalMinutes, averageAssessmentScore: learningProgress.averageAssessmentScore },
+          confidence: learningProgress.averageAssessmentScore !== null ? 'HIGH' : 'MEDIUM',
+        }
+      : null;
+
+    // Social Score: purely legitimate in-platform participation
+    // signals (Architecture 1.0 Decision 1) — zero surveillance, zero
+    // conversation/contact data.
+    const socialRawTotal = socialInputs.sharedHabitCompletions + socialInputs.groupActivityCount + socialInputs.groupBadgeCount * 5 + socialInputs.challengeParticipations * 10;
+    const social: IExplainableSubScore = {
+      score: Math.min(100, socialRawTotal * 2),
+      inputs: { ...socialInputs },
+      confidence: 'MEDIUM',
+    };
+
+    const { safety, behavior } = await this.computeSafetyAndBehavior(childId, familyId, primaryDeviceId);
+
+    const growthScore = computeGrowthScore([safety, health, learning, faith, behavior, habits, social]);
+
+    await this.repository.upsertProjection(childId, {
+      healthSlice: health,
+      learningSlice: learning,
+      faithSlice: faith,
+      behaviorSlice: behavior,
+      habitsSlice: habits,
+      socialSlice: social,
+      safetySlice: safety,
+    });
+
+    return { childId, safety, health, learning, faith, behavior, habits, social, growthScore, updatedAt: new Date() };
+  }
+
+  /** A child with no paired device yet (early onboarding) genuinely
+   * has no Safety/Behavior data — `null` is the honest answer, not a
+   * fallback score. If a child ever has more than one device, the
+   * most recently active one is used; averaging risk across a
+   * retired and an active device has no clear real meaning, so this
+   * doesn't attempt it. */
+  private async findPrimaryDeviceId(childId: string, familyId: string): Promise<string | null> {
+    const devices = await this.pairingOrchestrator.listFamilyDevices(familyId);
+    const childDevices = devices.filter((d) => d.childId === childId);
+    if (childDevices.length === 0) return null;
+
+    const mostRecent = childDevices.reduce((latest, d) => {
+      if (!latest.lastSeenAt) return d;
+      if (!d.lastSeenAt) return latest;
+      return d.lastSeenAt > latest.lastSeenAt ? d : latest;
+    });
+    return mostRecent.id;
+  }
+
+  private async computeSafetyAndBehavior(
+    childId: string,
+    familyId: string,
+    deviceId: string | null,
+  ): Promise<{ safety: IExplainableSubScore | null; behavior: IExplainableSubScore | null }> {
+    if (!deviceId) {
+      return { safety: null, behavior: null };
+    }
+
+    const [riskAssessment, behavioralTrend] = await Promise.all([
+      this.riskEvaluation.getLatestRiskAssessment(deviceId),
+      this.behavioralEngine.computeTrend(deviceId, childId, familyId),
+    ]);
+
+    const safety: IExplainableSubScore | null = riskAssessment
+      ? {
+          score: mapRiskToSafetyScore(riskAssessment.overallRisk),
+          inputs: { overallRisk: riskAssessment.overallRisk, overallLevel: riskAssessment.overallLevel, reasons: riskAssessment.reasons },
+          confidence: 'HIGH', // RiskEvaluationService's own getSignals() reasoning: an exact, deterministic calculation, not an inference
+        }
+      : null; // no assessment has ever run for this device — honest null, not a fabricated "safe" default
+
+    const behaviorScore = mapBehavioralTrendToScore(behavioralTrend.riskTrend);
+    const behavior: IExplainableSubScore | null = behaviorScore !== null
+      ? {
+          score: behaviorScore,
+          inputs: { riskTrend: behavioralTrend.riskTrend, riskAssessmentCount: behavioralTrend.riskAssessmentCount, trustChangeCount: behavioralTrend.trustChangeCount, summary: behavioralTrend.summary },
+          confidence: behavioralTrend.riskAssessmentCount >= 5 ? 'HIGH' : 'MEDIUM',
+        }
+      : null;
+
+    return { safety, behavior };
+  }
+
+  private daysAgo(days: number): Date {
+    const now = new Date();
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    d.setUTCDate(d.getUTCDate() - days);
+    return d;
+  }
+}

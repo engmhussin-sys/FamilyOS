@@ -12,6 +12,7 @@ import '../../features/pairing/api/pairing_api.dart';
 import '../../features/dashboard/api/dashboard_api.dart';
 import '../../features/notifications/api/notifications_api.dart';
 import '../../features/settings/api/settings_api.dart';
+import '../../features/life_intelligence/api/life_intelligence_api.dart';
 
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) => const FlutterSecureStorage());
 
@@ -38,6 +39,7 @@ final notificationsApiProvider = Provider<NotificationsApi>(
   (ref) => NotificationsApi(ref.watch(apiClientProvider), ref.watch(pendingOperationsQueueProvider)),
 );
 final settingsApiProvider = Provider<SettingsApi>((ref) => SettingsApi(ref.watch(apiClientProvider)));
+final lifeIntelligenceApiProvider = Provider<LifeIntelligenceApi>((ref) => LifeIntelligenceApi(ref.watch(apiClientProvider)));
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
   (ref) => AuthController(ref.watch(authApiProvider), ref.watch(sessionStorageProvider)),

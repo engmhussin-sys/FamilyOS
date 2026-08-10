@@ -9,4 +9,6 @@ class AppRoutes {
   static const addChild = '/add-child';
   static const notifications = '/notifications';
   static const settings = '/settings';
+  static const digitalTwin = '/digital-twin';
+  static const lifeTimeline = '/life-timeline';
 }

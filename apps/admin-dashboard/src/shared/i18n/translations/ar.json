@@ -154,5 +154,73 @@
     "haveAccount": "لديك حساب بالفعل؟",
     "passwordTooShort": "كلمة المرور يجب أن تكون 10 أحرف على الأقل.",
     "passwordNeedsLetterAndDigit": "يجب أن تحتوي كلمة المرور على حرف ورقم واحد على الأقل."
+  },
+  "digitalTwin": {
+    "title": "التوأم الرقمي",
+    "notARankingTool": "صورة لتقدّم طفلك الحالي عبر عدة مجالات — وليست درجة لتصنيف الأطفال أو مقارنتهم.",
+    "growthScore": "مؤشر النمو",
+    "basedOnSubScores": "بناءً على {{count}} من أصل {{total}} مؤشرات متاحة",
+    "health": "الصحة",
+    "learning": "التعلّم",
+    "faith": "الإيمان",
+    "habits": "العادات",
+    "social": "الاجتماعي",
+    "behavior": "السلوك",
+    "safety": "الأمان",
+    "notYetAvailable": "غير متاح بعد",
+    "confidence": {
+      "low": "ثقة منخفضة",
+      "medium": "ثقة متوسطة",
+      "high": "ثقة عالية"
+    }
+  },
+  "lifeTimeline": {
+    "title": "الخط الزمني للحياة",
+    "all": "الكل",
+    "empty": "لا توجد أحداث بعد.",
+    "category": {
+      "health": "الصحة",
+      "learning": "التعلّم",
+      "faith": "الإيمان",
+      "rewards": "المكافآت",
+      "safety": "الأمان",
+      "habits": "العادات",
+      "family": "الأسرة"
+    }
+  },
+  "habitTracker": {
+    "title": "العادات",
+    "empty": "لا توجد عادات بعد.",
+    "shared": "مشتركة",
+    "markDone": "تم الإنجاز"
+  },
+  "healthTrend": {
+    "title": "الصحة",
+    "hydration": "الترطيب",
+    "activity": "النشاط",
+    "sleep": "النوم",
+    "meals": "الوجبات المسجَّلة",
+    "minutes": "دقيقة",
+    "hours": "ساعة",
+    "notLogged": "غير مُسجَّل"
+  },
+  "faithProgress": {
+    "title": "الإيمان",
+    "empty": "لا توجد ممارسات بعد.",
+    "logToday": "سجّل اليوم"
+  },
+  "familyStore": {
+    "title": "متجر الأسرة",
+    "empty": "لا توجد مكافآت بالمتجر بعد.",
+    "coins": "عملة"
+  },
+  "coaching": {
+    "title": "التوجيه",
+    "empty": "لا توجد توصيات حاليًا.",
+    "track": {
+      "parent": "لك",
+      "child": "لطفلك",
+      "family": "للأسرة"
+    }
   }
 }

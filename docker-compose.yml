@@ -1,8 +1,15 @@
 version: "3.9"
 
-# Local development infrastructure only. Production deployment
-# (Railway initially, per the project's technology decisions) uses
-# managed Postgres/Redis — this file is not used in production.
+# Local development infrastructure. Production deployment (Railway
+# initially, per the project's technology decisions) uses managed
+# Postgres/Redis — this file is not used in production.
+#
+# `docker-compose up` alone starts Postgres + Redis only (the original
+# scope of this file). `docker-compose --profile full up` also builds
+# and runs the backend itself — see the `backend` service's `profiles`
+# key below. Split this way so a developer running the backend directly
+# via `npm run start:dev` (for hot-reload) isn't forced into a
+# container rebuild loop just to get Postgres/Redis.
 
 services:
   postgres:
@@ -34,6 +41,36 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  backend:
+    profiles: ["full"]
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: afdc-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://afdc:afdc_dev_password@postgres:5432/afdc_dev?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      JWT_ACCESS_SECRET: "docker-compose-dev-only-access-secret-not-for-production-use"
+      JWT_REFRESH_SECRET: "docker-compose-dev-only-refresh-secret-not-for-production-use"
+      LOCATION_ENCRYPTION_KEY: "docker-compose-dev-only-key"
+      CORS_ALLOWED_ORIGINS: "http://localhost:5173"
+      NODE_ENV: "development"
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health/live', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   afdc_postgres_data:

@@ -1,21 +1,24 @@
 import { Module } from '@nestjs/common';
 
 import { ChildrenModule } from '../children/children.module';
-import { ScreenTimeController } from './presentation/controllers/screen-time.controller';
+import { ScreenTimeController, AppBlockRuleController } from './presentation/controllers/screen-time.controller';
 import { ScreenTimeService } from './application/services/screen-time.service';
 import { PrismaScreenTimePolicyRepository } from './infrastructure/repositories/prisma-screen-time-policy.repository';
-import { SCREEN_TIME_POLICY_REPOSITORY } from './application/ports/screen-time.repository.port';
+import { PrismaAppBlockRuleRepository } from './infrastructure/repositories/prisma-app-block-rule.repository';
+import { SCREEN_TIME_POLICY_REPOSITORY, APP_BLOCK_RULE_REPOSITORY } from './application/ports/screen-time.repository.port';
 
 @Module({
   imports: [ChildrenModule],
-  controllers: [ScreenTimeController],
+  controllers: [ScreenTimeController, AppBlockRuleController],
   providers: [
     ScreenTimeService,
     { provide: SCREEN_TIME_POLICY_REPOSITORY, useClass: PrismaScreenTimePolicyRepository },
+    { provide: APP_BLOCK_RULE_REPOSITORY, useClass: PrismaAppBlockRuleRepository },
   ],
-  // Exported so other modules — starting with AiAssistantModule, which
-  // needs the child's current policy to ground its prompts — can read
-  // screen time data without duplicating this module's logic.
+  // Exported so other modules — AiAssistantModule (needs the child's
+  // current policy) and PairingModule (needs getBlockedPackageNames
+  // for getPolicySync, closing that module's own documented gap) —
+  // can read screen time data without duplicating this module's logic.
   exports: [ScreenTimeService],
 })
 export class ScreenTimeModule {}

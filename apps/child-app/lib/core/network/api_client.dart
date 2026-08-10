@@ -110,6 +110,20 @@ class ApiClient {
     }
   }
 
+  /// ADDITIVE (Sprint 29): [get] above strictly casts the response as
+  /// a Map, which throws at runtime for any endpoint that returns a
+  /// JSON array (e.g. `/life-intelligence/self/habits`). This is that
+  /// missing case \u2014 same auth/refresh/retry interceptor path, just a
+  /// different response shape.
+  Future<List<dynamic>> getList(String path) async {
+    try {
+      final response = await _dio.get(path);
+      return response.data as List<dynamic>;
+    } on DioException catch (e) {
+      throw _toApiException(e);
+    }
+  }
+
   Future<Map<String, dynamic>> post(
     String path, {
     Map<String, dynamic>? body,

@@ -45,7 +45,7 @@ pattern (contracts/ + application/ + infrastructure/, as
 | Heartbeat Scheduler | ✅ `HeartbeatService` (Sprint 3) |
 | Policy Cache | ✅ Built this session (§5) |
 | Offline Queue | ⏳ Not built — genuinely needs its own design pass (queued writes, conflict resolution on reconnect); flagged, not faked |
-| Telemetry Collector | ✅ Contracts + Kotlin collector built this session (§7) |
+| Telemetry Collector | ✅ Contracts + Dart collector + native `getRuntimeHealth` built this session (§9) — corrected from an earlier draft's inaccurate claim |
 | Runtime Watchdog | ⏳ Track B — depends on the Foreground Runtime existing first |
 
 ## 3. Event flow, extended
@@ -113,22 +113,57 @@ honestly, not silently.
 `plugins/keyboard/contracts/`. Zero native implementation, per the
 explicit "design now, do not implement" instruction.
 
-## 9. Runtime Telemetry
+## 9. Runtime Telemetry — corrected
 
-`RuntimeTelemetryCollector.kt` (native) + mirrored Dart type — collects
-runtime version, policy version (from the Policy Cache), capability
-snapshot (reuses `DeviceCapabilityEngine`), memory usage, battery state,
-last policy sync timestamp, last heartbeat timestamp. **Not yet wired
-into the heartbeat call** — `HeartbeatService`'s existing
-`batteryPercent`/`isConnected` fields (Sprint 4 Track A) are a subset;
-fully wiring the richer payload is a small follow-up, not done
-speculatively in the same pass as designing the collector itself.
+**Correction to this document's own earlier draft:** an earlier version
+of this ADR claimed `RuntimeTelemetryCollector.kt` + a mirrored Dart type
+were "built this session." That was inaccurate — `lib/plugins/telemetry/`
+existed only as an empty `contracts/` folder with no files in it at all.
+Caught during this session's verification pass and built for real:
 
-## 10. Verification performed in this session
+- `MainActivity.kt`'s new `getRuntimeHealth` handler (memory usage via
+  `ActivityManager.MemoryInfo`, battery percent via `BatteryManager`,
+  `isLowMemory` flag) — the only genuinely native piece; everything else
+  in the snapshot is Dart-side composition.
+- `plugins/telemetry/contracts/runtime_telemetry.dart` —
+  `RuntimeTelemetrySnapshot` (the exact field list requested) +
+  `IRuntimeTelemetryCollector`.
+- `plugins/telemetry/application/runtime_telemetry_collector.dart` — the
+  real implementation, composing the native call with
+  `PolicyCacheService.getCurrentPolicy().syncedAt` (for
+  `lastPolicySyncAt`) and a new `HeartbeatService.lastSentAt` getter
+  (small addition, same pass) for `lastHeartbeatAt`.
+- **Also found and fixed in the same pass:** `PolicyCacheService` had
+  been implemented in an earlier session but was never actually
+  registered in `providers.dart` — no code anywhere could have obtained
+  an instance of it via DI. Added `policyCacheServiceProvider` alongside
+  `runtimeTelemetryCollectorProvider`.
+- **Honestly still missing, stated in code comments, not silently
+  glossed over:** `policyVersion` and `capabilityProfileHash` are `null`
+  in every snapshot — no local cache currently stores either value
+  (`CachedPolicy` only has `syncedAt`; capability hash is computed
+  native-side per-call, not persisted). Real follow-ups, not fabricated
+  placeholder data.
+- 6 new tests (`runtime_telemetry_collector_test.dart`) covering the
+  healthy/low-memory branches, the honest `enforcementActive: false`,
+  and both timestamp sources.
 
-Manual brace/paren balance check across every new Dart/Kotlin file (see
-this session's transcript for the exact command output) — all matched.
-No compiler available in this sandbox (standing limitation since Step 1).
-Dart tests written for `DeterministicRuleEngine` and `PolicyCacheService`
-(pure logic, no platform channel involved — the same category of test
-this project has consistently been able to write with real confidence).
+This correction matters beyond telemetry itself: it's a reminder that
+this document's own claims need the same verification discipline as any
+other artifact in this project — a prior draft asserting something was
+"built" doesn't make it so.
+
+## 10. Verification performed across both sessions
+
+Manual brace/paren balance check across every Dart/Kotlin file this ADR
+touches, including a full-codebase sweep (`find lib test -name "*.dart"`)
+in the correction pass — one flagged mismatch
+(`policy_cache_service_test.dart`) investigated and confirmed to be a
+false positive from a literal `'{{{'` malformed-JSON test string, not a
+real defect (verified independently via a Python character count, since
+no Dart SDK is available to check directly). No compiler available in
+this sandbox (standing limitation since Step 1). Dart tests written for
+`DeterministicRuleEngine`, `PolicyCacheService`, and
+`RuntimeTelemetryCollector` — all pure-logic tests using manual fakes,
+the same category this project has consistently been able to write with
+real confidence without a compiler.

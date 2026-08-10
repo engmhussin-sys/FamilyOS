@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PairingOrchestratorService } from '../../src/modules/pairing/application/services/pairing-orchestrator.service';
 import { InvitationService } from '../../src/modules/pairing/application/services/invitation.service';
@@ -42,7 +42,7 @@ describe('PairingOrchestratorService', () => {
     updateTelemetry: jest.fn(),
   };
   const tokenServiceMock = { issueTokenPair: jest.fn(), revokeAllTokensForDevice: jest.fn() };
-  const screenTimeServiceMock = { getPolicy: jest.fn() };
+  const screenTimeServiceMock = { getPolicy: jest.fn(), getBlockedPackageNames: jest.fn().mockResolvedValue([]) };
   const pairingEventRepositoryMock = { findAllByChild: jest.fn() };
   const runtimeAlertServiceMock = { evaluateTransition: jest.fn() };
   const runtimeAlertRepositoryMock = { listForUser: jest.fn() };
@@ -552,6 +552,45 @@ describe('PairingOrchestratorService', () => {
         accessibilityServiceEnabled: null,
         enforcementActive: null,
       });
+    });
+  });
+
+  // --- Sprint 29: device-authenticated self-service resolution, plus
+  // the REVOKED-device security fix found in this session's own audit ---
+  describe('getChildIdForDevice / getChildAndFamilyIdForDevice', () => {
+    it('SECURITY REGRESSION TEST: throws ForbiddenException for a REVOKED device even with a structurally valid deviceId — a still-unexpired token must not act for a revoked device', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'REVOKED',
+        lastSeenAt: null, capabilityProfile: null, capabilityProfileHash: null, lastTelemetry: null,
+      });
+
+      await expect(service.getChildIdForDevice('device-1')).rejects.toThrow(ForbiddenException);
+      await expect(service.getChildAndFamilyIdForDevice('device-1')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('throws ForbiddenException for a LOST device', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'LOST',
+        lastSeenAt: null, capabilityProfile: null, capabilityProfileHash: null, lastTelemetry: null,
+      });
+
+      await expect(service.getChildIdForDevice('device-1')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('resolves childId and familyId for a genuinely ACTIVE device', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE',
+        lastSeenAt: null, capabilityProfile: null, capabilityProfileHash: null, lastTelemetry: null,
+      });
+
+      const result = await service.getChildAndFamilyIdForDevice('device-1');
+
+      expect(result).toEqual({ childId: 'child-1', familyId: 'family-1' });
+    });
+
+    it('throws NotFoundException for a device that does not exist', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue(null);
+      await expect(service.getChildIdForDevice('missing-device')).rejects.toThrow(NotFoundException);
     });
   });
 });

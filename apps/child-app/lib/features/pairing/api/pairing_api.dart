@@ -89,4 +89,22 @@ class PairingApi {
   Future<Map<String, dynamic>> getPolicy() async {
     return _apiClient.get('/pairing/device/policy');
   }
+
+  /// CLOSING A REAL GAP found during Sprint 23's hardening pass: the
+  /// backend's `RiskEvaluationService`/`VerifyDto`/`RiskSignalsDto`
+  /// have been fully built and tested since Sprint 2\u20133 \u2014 but this
+  /// class had NO method that ever called `/pairing/verify` at all.
+  /// `PlatformAntiTamper.checkForTampering()` (the anti_tamper plugin)
+  /// has been correctly detecting real signals the whole time; they
+  /// simply had no transport to the backend. This is that transport.
+  ///
+  /// `attestationChain` is intentionally optional and omitted here \u2014
+  /// hardware attestation chain retrieval is a separate, unbuilt
+  /// capability (the backend already documents, in its own service,
+  /// that it only checks for the chain's *presence*, not cryptographic
+  /// validity, as an honest limitation \u2014 sending `null` here is
+  /// consistent with that same honesty, not a regression).
+  Future<void> verify({required Map<String, bool> riskSignals}) async {
+    await _apiClient.post('/pairing/verify', body: {'riskSignals': riskSignals});
+  }
 }

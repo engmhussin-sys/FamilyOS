@@ -274,6 +274,10 @@ model User {
   organizationMemberships OrganizationMember[] @relation("OrganizationMemberships")
   notifications     Notification[]
   auditLogEntries   AuditLog[]        @relation("AuditActorUser")
+  createdHabits     Habit[]
+  createdRewardCatalogItems RewardCatalogItem[]
+  authoredChildMessages ChildMessage[]
+  authoredBroadcasts FamilyBroadcastMessage[]
 
   @@index([status])
   @@map("users")
@@ -294,6 +298,10 @@ model Family {
   members  FamilyMember[]
   children Child[]
   subscription Subscription?
+  rewardCatalogItems RewardCatalogItem[]
+  rewardRules        RewardRule[]
+  broadcastMessages  FamilyBroadcastMessage[]
+  challenges         FamilyChallenge[]
 
   @@map("families")
 }
@@ -344,6 +352,28 @@ model Child {
   aiAlerts            AiAlert[]
   notifications       Notification[]
   aiMemoryEntries     AiMemoryEntry[]
+  habits              Habit[]
+  habitCompletions    HabitCompletion[]
+  rewardsAccount      RewardsAccount?
+  rewardsLedgerEntries RewardsLedgerEntry[]
+  badgeAwards         ChildBadgeAward[]
+  rewardRedemptions   RewardRedemption[]
+  messages            ChildMessage[]
+  timelineEvents      LifeTimelineEvent[]
+  digitalTwinProjection ChildDigitalTwinProjection?
+  nutritionLogs       NutritionLog[]
+  hydrationLogs       HydrationLog[]
+  sleepLogs           SleepLog[]
+  activityLogs        ActivityLog[]
+  physicalMeasurementLogs PhysicalMeasurementLog[]
+  healthScoreDaily    HealthScoreDaily[]
+  faithPractices      FaithPractice[]
+  faithPracticeLogs   FaithPracticeLog[]
+  learningGoals       LearningGoal[]
+  learningSessions    LearningSession[]
+  learningAssessments LearningAssessment[]
+  smartTasks          SmartTask[]
+  challengeParticipations FamilyChallengeParticipation[]
 
   @@index([familyId])
   @@map("children")
@@ -1023,4 +1053,539 @@ model Notification {
 
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+// ============================================================
+// Life Intelligence Platform — Architecture 1.0 (Sprint 13)
+// Every model below is ADDITIVE. Zero existing model touched.
+// ============================================================
+
+enum SmartTaskStatus {
+  SUGGESTED
+  ACCEPTED
+  COMPLETED
+  DISMISSED
+}
+
+enum RewardType {
+  XP
+  COINS
+  BADGE
+}
+
+enum RedemptionStatus {
+  REQUESTED
+  APPROVED
+  DENIED
+  FULFILLED
+}
+
+enum MessageAuthorType {
+  PARENT
+  AI
+}
+
+enum MessageApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ActivitySocialContext {
+  SOLO
+  GROUP
+  TEAM
+}
+
+enum TimelineCategory {
+  HEALTH
+  LEARNING
+  FAITH
+  REWARDS
+  SAFETY
+  HABITS
+  FAMILY
+}
+
+/// Habit Builder — a parent-defined (or built-in) recurring daily task.
+/// Deliberately STATIC — AI-generated dynamic suggestions are a
+/// separate, later concern (Smart Tasks Engine, not built this sprint).
+model Habit {
+  id          String   @id @default(uuid()) @db.Uuid
+  childId     String   @map("child_id") @db.Uuid
+  title       String
+  category    String
+  /// Whether a parent authored this (custom) or it's a built-in
+  /// default — mirrors AiMemoryEntry.category's "plain string, grows
+  /// without migration" reasoning: category is a string, not an enum.
+  isCustom    Boolean  @default(true) @map("is_custom")
+  isShared    Boolean  @default(false) @map("is_shared") // family/shared task — Social Score input
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  child       Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+  createdBy   User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  completions HabitCompletion[]
+
+  @@index([childId, isActive])
+  @@map("habits")
+}
+
+model HabitCompletion {
+  id          String   @id @default(uuid()) @db.Uuid
+  habitId     String   @map("habit_id") @db.Uuid
+  childId     String   @map("child_id") @db.Uuid
+  date        DateTime @db.Date
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, date])
+  @@index([childId, date])
+  @@map("habit_completions")
+}
+
+/// Rewards Engine — Family Economy
+model RewardsAccount {
+  id        String   @id @default(uuid()) @db.Uuid
+  childId   String   @unique @map("child_id") @db.Uuid
+  xp        Int      @default(0)
+  coins     Int      @default(0)
+  stars     Int      @default(0)
+  level     Int      @default(1)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@map("rewards_accounts")
+}
+
+/// Append-only ledger — mirrors AuditLog's own append-only discipline.
+model RewardsLedgerEntry {
+  id        String     @id @default(uuid()) @db.Uuid
+  childId   String     @map("child_id") @db.Uuid
+  type      String     // 'EARN' | 'REDEEM'
+  rewardType RewardType @map("reward_type")
+  amount    Int
+  source    String     // e.g. 'habit_streak', 'reward_rule:<id>', 'manual:<userId>', 'redemption:<id>'
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, createdAt])
+  @@map("rewards_ledger_entries")
+}
+
+model BadgeDefinition {
+  id                 String   @id @default(uuid()) @db.Uuid
+  key                String   @unique
+  title              String
+  description        String
+  criteria           Json
+  isGroupAchievement Boolean  @default(false) @map("is_group_achievement")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  awards ChildBadgeAward[]
+
+  @@map("badge_definitions")
+}
+
+model ChildBadgeAward {
+  id        String   @id @default(uuid()) @db.Uuid
+  childId   String   @map("child_id") @db.Uuid
+  badgeId   String   @map("badge_id") @db.Uuid
+  awardedAt DateTime @default(now()) @map("awarded_at")
+
+  child Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
+  badge BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, badgeId])
+  @@map("child_badge_awards")
+}
+
+model RewardCatalogItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  familyId        String   @map("family_id") @db.Uuid
+  title           String
+  costCoins       Int      @map("cost_coins")
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  family      Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  createdBy   User   @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  redemptions RewardRedemption[]
+
+  @@index([familyId, isActive])
+  @@map("reward_catalog_items")
+}
+
+model RewardRedemption {
+  id                  String            @id @default(uuid()) @db.Uuid
+  childId             String            @map("child_id") @db.Uuid
+  rewardCatalogItemId String            @map("reward_catalog_item_id") @db.Uuid
+  status              RedemptionStatus  @default(REQUESTED)
+  requestedAt         DateTime          @default(now()) @map("requested_at")
+  decidedAt           DateTime?         @map("decided_at")
+  decidedByUserId     String?           @map("decided_by_user_id") @db.Uuid
+
+  child     Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
+  rewardItem RewardCatalogItem @relation(fields: [rewardCatalogItemId], references: [id], onDelete: Cascade)
+
+  @@index([childId, status])
+  @@map("reward_redemptions")
+}
+
+/// Reward Rules — automatic, rule-based grants (Architecture 1.0 Decision 7).
+/// familyId null = built-in default rule; set = a family-specific override.
+model RewardRule {
+  id                  String     @id @default(uuid()) @db.Uuid
+  familyId            String?    @map("family_id") @db.Uuid
+  triggerEngine       String     @map("trigger_engine")
+  triggerCondition     Json      @map("trigger_condition")
+  rewardType           RewardType @map("reward_type")
+  rewardAmountOrBadgeId String   @map("reward_amount_or_badge_id")
+  isActive            Boolean    @default(true) @map("is_active")
+  createdAt           DateTime   @default(now()) @map("created_at")
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId, isActive])
+  @@map("reward_rules")
+}
+
+/// Family Communication — AI Conversation with mandatory parent approval
+/// enforced at the schema level (Architecture 1.0 Decision 8).
+model ChildMessage {
+  id             String                 @id @default(uuid()) @db.Uuid
+  childId        String                 @map("child_id") @db.Uuid
+  fromUserId     String?                @map("from_user_id") @db.Uuid
+  authorType     MessageAuthorType      @map("author_type")
+  approvalStatus MessageApprovalStatus  @default(NOT_REQUIRED) @map("approval_status")
+  category       String
+  title          String
+  body           String
+  deliveredAt    DateTime?              @map("delivered_at")
+  acknowledgedAt DateTime?              @map("acknowledged_at")
+  createdAt      DateTime               @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+  fromUser User? @relation(fields: [fromUserId], references: [id], onDelete: SetNull)
+
+  @@index([childId, deliveredAt])
+  @@index([approvalStatus])
+  @@map("child_messages")
+}
+
+model FamilyBroadcastMessage {
+  id         String   @id @default(uuid()) @db.Uuid
+  familyId   String   @map("family_id") @db.Uuid
+  authoredByUserId String @map("authored_by_user_id") @db.Uuid
+  title      String
+  body       String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  authoredBy User @relation(fields: [authoredByUserId], references: [id], onDelete: Cascade)
+
+  @@map("family_broadcast_messages")
+}
+
+/// Unified Life Timeline — append-only, single table for every engine
+/// (Architecture 1.0 Decision 10). No engine writes into another
+/// engine's table; every engine writes here through the same one service.
+model LifeTimelineEvent {
+  id           String            @id @default(uuid()) @db.Uuid
+  childId      String            @map("child_id") @db.Uuid
+  sourceEngine String            @map("source_engine")
+  category     TimelineCategory
+  eventType    String            @map("event_type")
+  title        String
+  occurredAt   DateTime          @default(now()) @map("occurred_at")
+  metadata     Json?
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, occurredAt])
+  @@index([childId, category])
+  @@map("life_timeline_events")
+}
+
+/// Digital Twin — an aggregated READ PROJECTION, not a source of truth.
+/// Rebuildable from source tables at any time; if it and the source
+/// tables ever disagree, the source tables win (Architecture 1.0 §6.1).
+model ChildDigitalTwinProjection {
+  childId       String   @id @map("child_id") @db.Uuid
+  healthSlice   Json?    @map("health_slice")
+  learningSlice Json?    @map("learning_slice")
+  faithSlice    Json?    @map("faith_slice")
+  behaviorSlice Json?    @map("behavior_slice")
+  habitsSlice   Json?    @map("habits_slice")
+  socialSlice   Json?    @map("social_slice")
+  safetySlice   Json?    @map("safety_slice")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@map("child_digital_twin_projections")
+}
+
+// ============================================================
+// Life Intelligence Platform — Sprint 15 (Health Engine + Faith Engine)
+// Every model below is ADDITIVE. Zero existing model touched.
+// ============================================================
+
+enum ActivitySocialContextV2 {
+  SOLO
+  GROUP
+  TEAM
+}
+
+enum FaithPracticeType {
+  QURAN_MEMORIZATION
+  QURAN_REVIEW
+  AZKAR
+  SALAH
+  ISLAMIC_VALUE
+  OCCASION
+}
+
+model NutritionLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  childId   String   @map("child_id") @db.Uuid
+  date      DateTime @db.Date
+  mealType  String   @map("meal_type")
+  items     Json
+  calories  Int?
+  proteinG  Float?   @map("protein_g")
+  calciumMg Float?   @map("calcium_mg")
+  ironMg    Float?   @map("iron_mg")
+  sugarG    Float?   @map("sugar_g")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, date])
+  @@map("nutrition_logs")
+}
+
+model HydrationLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  childId   String   @map("child_id") @db.Uuid
+  amountMl  Int      @map("amount_ml")
+  loggedAt  DateTime @default(now()) @map("logged_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, loggedAt])
+  @@map("hydration_logs")
+}
+
+model SleepLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  childId    String    @map("child_id") @db.Uuid
+  date       DateTime  @db.Date
+  sleepStart DateTime  @map("sleep_start")
+  sleepEnd   DateTime  @map("sleep_end")
+  quality    Int?      // 1-5, parent-reported, optional
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, date])
+  @@map("sleep_logs")
+}
+
+model ActivityLog {
+  id            String                  @id @default(uuid()) @db.Uuid
+  childId       String                  @map("child_id") @db.Uuid
+  date          DateTime                @db.Date
+  activityType  String                  @map("activity_type")
+  durationMinutes Int                   @map("duration_minutes")
+  socialContext ActivitySocialContextV2 @default(SOLO) @map("social_context")
+  createdAt     DateTime                @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, date])
+  @@index([childId, socialContext])
+  @@map("activity_logs")
+}
+
+/// Explicitly optional (Architecture 1.0 \u00a75) \u2014 deliberately NOT named
+/// anything containing "Growth" to avoid colliding with the Growth
+/// Score composite AI indicator.
+model PhysicalMeasurementLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  childId   String   @map("child_id") @db.Uuid
+  date      DateTime @db.Date
+  heightCm  Float?   @map("height_cm")
+  weightKg  Float?   @map("weight_kg")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, date])
+  @@map("physical_measurement_logs")
+}
+
+model HealthScoreDaily {
+  id        String   @id @default(uuid()) @db.Uuid
+  childId   String   @map("child_id") @db.Uuid
+  date      DateTime @db.Date
+  score     Float
+  breakdown Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, date])
+  @@map("health_score_daily")
+}
+
+model FaithPractice {
+  id       String            @id @default(uuid()) @db.Uuid
+  childId  String            @map("child_id") @db.Uuid
+  type     FaithPracticeType
+  title    String
+  config   Json?
+  isActive Boolean           @default(true) @map("is_active")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+  logs  FaithPracticeLog[]
+
+  @@index([childId, isActive])
+  @@map("faith_practices")
+}
+
+model FaithPracticeLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  practiceId String   @map("practice_id") @db.Uuid
+  childId    String   @map("child_id") @db.Uuid
+  date       DateTime @db.Date
+  progress   Json?    // e.g. { "surah": "Al-Baqarah", "ayahFrom": 1, "ayahTo": 5 }
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  practice FaithPractice @relation(fields: [practiceId], references: [id], onDelete: Cascade)
+  child    Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([practiceId, date])
+  @@index([childId, date])
+  @@map("faith_practice_logs")
+}
+
+// ============================================================
+// Life Intelligence Platform — Sprint 16 (Learning & Education + Smart Tasks)
+// Every model below is ADDITIVE. Zero existing model touched.
+// ============================================================
+
+enum LearningGoalStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+model LearningGoal {
+  id         String             @id @default(uuid()) @db.Uuid
+  childId    String             @map("child_id") @db.Uuid
+  subject    String             // 'school' | 'language' | 'reading' | 'custom'
+  title      String
+  targetDate DateTime?          @map("target_date") @db.Date
+  status     LearningGoalStatus @default(ACTIVE)
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+  sessions LearningSession[]
+
+  @@index([childId, status])
+  @@map("learning_goals")
+}
+
+model LearningSession {
+  id              String   @id @default(uuid()) @db.Uuid
+  childId         String   @map("child_id") @db.Uuid
+  goalId          String?  @map("goal_id") @db.Uuid
+  subject         String
+  durationMinutes Int      @map("duration_minutes")
+  progressNote    String?  @map("progress_note")
+  date            DateTime @db.Date
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  child Child          @relation(fields: [childId], references: [id], onDelete: Cascade)
+  goal  LearningGoal?  @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  @@index([childId, date])
+  @@map("learning_sessions")
+}
+
+model LearningAssessment {
+  id         String   @id @default(uuid()) @db.Uuid
+  childId    String   @map("child_id") @db.Uuid
+  subject    String
+  scorePercent Float  @map("score_percent")
+  source     String   @default("self-reported") // 'self-reported' | 'school-linked' (not built)
+  takenAt    DateTime @default(now()) @map("taken_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, takenAt])
+  @@map("learning_assessments")
+}
+
+model SmartTask {
+  id             String          @id @default(uuid()) @db.Uuid
+  childId        String          @map("child_id") @db.Uuid
+  title          String
+  category       String
+  generatedReason String         @map("generated_reason")
+  sourceSignals  Json            @map("source_signals")
+  suggestedDate  DateTime        @map("suggested_date") @db.Date
+  status         SmartTaskStatus @default(SUGGESTED)
+  createdAt      DateTime        @default(now()) @map("created_at")
+  decidedAt      DateTime?       @map("decided_at")
+
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@index([childId, status])
+  @@index([childId, suggestedDate])
+  @@map("smart_tasks")
+}
+
+// ============================================================
+// Life Intelligence Platform — Sprint 18 (Coaching + Family Insight + Digital Twin)
+// Every model below is ADDITIVE. Zero existing model touched.
+// ============================================================
+
+model FamilyChallenge {
+  id        String   @id @default(uuid()) @db.Uuid
+  familyId  String   @map("family_id") @db.Uuid
+  title     String
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  criteria  Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  participations FamilyChallengeParticipation[]
+
+  @@index([familyId])
+  @@map("family_challenges")
+}
+
+model FamilyChallengeParticipation {
+  id          String    @id @default(uuid()) @db.Uuid
+  challengeId String    @map("challenge_id") @db.Uuid
+  childId     String    @map("child_id") @db.Uuid
+  completedAt DateTime? @map("completed_at")
+
+  challenge FamilyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  child     Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([challengeId, childId])
+  @@index([childId])
+  @@map("family_challenge_participations")
 }

@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment files — NEVER commit real secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Prisma
+apps/backend/prisma/migrations/**/migration.sql.bak
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Testing / coverage
+coverage/
+.nyc_output/
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# Flutter / Dart
+apps/*/.dart_tool/
+apps/*/.flutter-plugins
+apps/*/.flutter-plugins-dependencies
+apps/*/.packages
+apps/*/build/
+apps/*/android/.gradle/
+apps/*/android/local.properties
+apps/*/ios/Pods/
+apps/*/ios/.symlinks/
+apps/*/ios/Flutter/Flutter.framework
+apps/*/ios/Flutter/Flutter.podspec
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Misc
+*.pem
+.turbo/

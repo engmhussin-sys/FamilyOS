@@ -154,5 +154,73 @@
     "haveAccount": "Already have an account?",
     "passwordTooShort": "Password must be at least 10 characters long.",
     "passwordNeedsLetterAndDigit": "Password must contain at least one letter and one number."
+  },
+  "digitalTwin": {
+    "title": "Digital Twin",
+    "notARankingTool": "A picture of your child's current progress across areas — not a score for ranking or comparing children.",
+    "growthScore": "Growth Score",
+    "basedOnSubScores": "Based on {{count}} of {{total}} available indicators",
+    "health": "Health",
+    "learning": "Learning",
+    "faith": "Faith",
+    "habits": "Habits",
+    "social": "Social",
+    "behavior": "Behavior",
+    "safety": "Safety",
+    "notYetAvailable": "Not yet available",
+    "confidence": {
+      "low": "Low confidence",
+      "medium": "Medium confidence",
+      "high": "High confidence"
+    }
+  },
+  "lifeTimeline": {
+    "title": "Life Timeline",
+    "all": "All",
+    "empty": "No milestones yet.",
+    "category": {
+      "health": "Health",
+      "learning": "Learning",
+      "faith": "Faith",
+      "rewards": "Rewards",
+      "safety": "Safety",
+      "habits": "Habits",
+      "family": "Family"
+    }
+  },
+  "habitTracker": {
+    "title": "Habits",
+    "empty": "No habits yet.",
+    "shared": "Shared",
+    "markDone": "Mark done"
+  },
+  "healthTrend": {
+    "title": "Health",
+    "hydration": "Hydration",
+    "activity": "Activity",
+    "sleep": "Sleep",
+    "meals": "Meals logged",
+    "minutes": "min",
+    "hours": "hrs",
+    "notLogged": "Not logged"
+  },
+  "faithProgress": {
+    "title": "Faith",
+    "empty": "No practices yet.",
+    "logToday": "Log today"
+  },
+  "familyStore": {
+    "title": "Family Store",
+    "empty": "No rewards in the store yet.",
+    "coins": "coins"
+  },
+  "coaching": {
+    "title": "Coaching",
+    "empty": "No recommendations right now.",
+    "track": {
+      "parent": "For you",
+      "child": "For your child",
+      "family": "For the family"
+    }
   }
 }

@@ -43,9 +43,37 @@ export class DataRetentionEnforcementService {
     return { category: 'Analytics Events', action: 'ANONYMIZE', affectedRows: result.count };
   }
 
+  /**
+   * CLOSES A REAL GAP (docs/release/DATA_CLASSIFICATION.md flagged
+   * LocationEvent as having no defined retention/deletion policy).
+   * Uses `expiresAt` \u2014 a column the schema already had, with its own
+   * index, since Sprint 1 \u2014 rather than a fixed lookback window like
+   * the other two methods above, since `expiresAt` is meant to be set
+   * per-row at write time (e.g. a parent-configurable retention
+   * preference per family, a real future decision this method doesn't
+   * need to make itself).
+   *
+   * HONEST NOTE: as of this writing, no code anywhere in this backend
+   * actually creates a `LocationEvent` row \\u2014 this method has nothing
+   * to delete today. It exists so the retention mechanism is correct
+   * and ready the moment that write path is built, rather than being
+   * retrofitted later under time pressure.
+   */
+  async enforceLocationEventRetention(): Promise<IRetentionEnforcementResult> {
+    const result = await this.prisma.locationEvent.deleteMany({
+      where: { expiresAt: { lt: new Date() } },
+    });
+    this.logger.log(`Retention: deleted ${result.count} location event(s) past their expiresAt.`);
+    return { category: 'Location Events', action: 'HARD_DELETE', affectedRows: result.count };
+  }
+
   /** Runs both \u2014 the method a future scheduler (once chosen) would
    * call. Not scheduled anywhere itself. */
   async enforceAll(): Promise<IRetentionEnforcementResult[]> {
-    return [await this.enforceNotificationRetention(), await this.enforceAnalyticsRetention()];
+    return [
+      await this.enforceNotificationRetention(),
+      await this.enforceAnalyticsRetention(),
+      await this.enforceLocationEventRetention(),
+    ];
   }
 }

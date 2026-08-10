@@ -7,6 +7,13 @@ import { ScreenTimePolicyCard } from '../../screen-time/components/ScreenTimePol
 import { RuntimeTimelineCard } from '../../runtime/components/RuntimeTimelineCard';
 import { NotificationCenterCard } from '../../notifications/components/NotificationCenterCard';
 import { FamilyInsightsCard } from '../../insights/components/FamilyInsightsCard';
+import { DigitalTwinCard } from '../../life-intelligence/components/DigitalTwinCard';
+import { LifeTimelineCard } from '../../life-intelligence/components/LifeTimelineCard';
+import { HabitTrackerCard } from '../../life-intelligence/components/HabitTrackerCard';
+import { HealthTrendCard } from '../../life-intelligence/components/HealthTrendCard';
+import { FaithProgressCard } from '../../life-intelligence/components/FaithProgressCard';
+import { FamilyStoreManagerCard } from '../../life-intelligence/components/FamilyStoreManagerCard';
+import { CoachingRecommendationsCard } from '../../life-intelligence/components/CoachingRecommendationsCard';
 import { ReportsCard } from '../../reports/components/ReportsCard';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 
@@ -39,6 +46,13 @@ export function DashboardHomePage() {
       <ScreenTimePolicyCard />
       <RuntimeTimelineCard />
       <FamilyInsightsCard />
+      <DigitalTwinCard />
+      <CoachingRecommendationsCard />
+      <HabitTrackerCard />
+      <HealthTrendCard />
+      <FaithProgressCard />
+      <FamilyStoreManagerCard />
+      <LifeTimelineCard />
       <ReportsCard />
     </div>
   );

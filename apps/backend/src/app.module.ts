@@ -26,6 +26,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { SystemDiagnosticsModule } from './modules/system-diagnostics/system-diagnostics.module';
 import { DataRetentionModule } from './modules/data-retention/data-retention.module';
 import { ConfigurationModule } from './config/configuration.module';
+import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelligence.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { ConfigurationModule } from './config/configuration.module';
     HealthModule,
     SystemDiagnosticsModule,
     DataRetentionModule,
+    LifeIntelligenceModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

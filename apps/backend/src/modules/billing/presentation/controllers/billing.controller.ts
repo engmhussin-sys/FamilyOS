@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 
 import { PlanService } from '../../application/services/plan.service';
 import { SubscriptionService } from '../../application/services/subscription.service';
@@ -37,7 +38,17 @@ export class BillingController {
     return this.subscriptionService.startTrial(user.familyId!);
   }
 
+  /**
+   * CLOSING A KNOWN GAP (documented since Sprint 10's SECURITY_REVIEW.md
+   * and repeated in every subsequent readiness report): this endpoint
+   * had no endpoint-specific rate limit, unlike auth's login/register.
+   * The `MANUAL` payment adapter always succeeds, so an unthrottled
+   * loop here could churn subscription state indefinitely. Same
+   * @Throttle pattern already used for auth \u2014 5/min is generous for a
+   * real user retrying a failed card, tight enough to block scripted abuse.
+   */
   @Post('subscribe')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   subscribe(@Body() dto: SubscribeDto, @CurrentUser() user: IJwtPayload) {
     return this.subscriptionService.subscribe(user.familyId!, dto.planTier, dto.provider, user.sub);
   }

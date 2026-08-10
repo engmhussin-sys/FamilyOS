@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 
 import { InvitationService } from './invitation.service';
 import { RegistrationTokenService } from './registration-token.service';
@@ -345,16 +345,18 @@ export class PairingOrchestratorService {
    * own its logic" rule, now exercised for a read instead of the
    * write-trigger it was originally described for.
    *
-   * NOTE (honest limitation, flagged not hidden): `blockedPackages` is
-   * always `[]` today. `AppBlockRule` exists in the schema but has no
-   * service/API built for it yet — returning fabricated data here would
-   * be worse than an honestly empty list. Tracked as a required
-   * follow-up (Sprint 5's "Parental Control Engine," per the reviewer's
-   * own sprint plan), not silently faked.
+   * GAP CLOSED (was: "NOTE (honest limitation, flagged not hidden):
+   * blockedPackages is always [] today... no service/API built for it
+   * yet"): AppBlockRuleService now exists in screen-time.service.ts —
+   * this calls its real, ownership-checked query instead of hardcoding
+   * an empty array.
    */
   async getPolicySync(deviceId: string): Promise<IPolicySyncResponse> {
     const device = await this.getDeviceOrThrow(deviceId);
-    const policy = await this.screenTimeService.getPolicy(device.childId, device.familyId);
+    const [policy, blockedPackages] = await Promise.all([
+      this.screenTimeService.getPolicy(device.childId, device.familyId),
+      this.screenTimeService.getBlockedPackageNames(device.childId),
+    ]);
 
     return {
       childId: device.childId,
@@ -363,7 +365,7 @@ export class PairingOrchestratorService {
       bedtimeStart: policy?.bedtimeStart ?? null,
       bedtimeEnd: policy?.bedtimeEnd ?? null,
       focusModeEnabled: policy?.focusModeEnabled ?? false,
-      blockedPackages: [],
+      blockedPackages,
     };
   }
 
@@ -425,6 +427,57 @@ export class PairingOrchestratorService {
         (device.lastTelemetry?.['accessibilityServiceEnabled'] as boolean) ?? null,
       enforcementActive: (device.lastTelemetry?.['enforcementActive'] as boolean) ?? null,
     };
+  }
+
+  /**
+   * ADDITIVE (Sprint 23 hardening pass): for device-authenticated
+   * callers that have a deviceId but no familyId context — DEVICE
+   * JWTs don't carry one (see auth.types.ts's own comment: familyId is
+   * "present for USER actors," not device ones). Distinct from
+   * `assertDeviceBelongsToFamily` above, which requires a familyId a
+   * device-authenticated caller structurally cannot supply. Zero
+   * change to any existing method \u2014 this closes the specific,
+   * previously-documented gap in the Life Intelligence Platform's
+   * child-message-inbox route (see LifeIntelligenceController's own
+   * comment, now resolved by this method existing).
+   */
+  /**
+   * ADDITIVE (Sprint 29): sibling to getChildIdForDevice above, for
+   * device-authenticated callers that ALSO need familyId to call
+   * existing childId+familyId-scoped service methods.
+   *
+   * SECURITY FIX (found in this session's own audit of the new
+   * self/* write endpoints): `DeviceJwtStrategy.validate()` only
+   * checks the JWT's own claims (tokenKind, actorType) \u2014 it never
+   * re-checks the device's LIVE status against the database. A
+   * REVOKED or LOST device with a still-unexpired access token could
+   * otherwise continue writing child data through the new self/*
+   * endpoints until that token naturally expires. Not fixed in
+   * DeviceJwtStrategy itself (frozen, shared by every device route,
+   * including low-stakes ones like heartbeat) \u2014 fixed here, since
+   * this is the first device-facing surface where a stale token could
+   * WRITE meaningful child data rather than just report telemetry.
+   */
+  async getChildAndFamilyIdForDevice(deviceId: string): Promise<{ childId: string; familyId: string }> {
+    const device = await this.getDeviceOrThrow(deviceId);
+    if (device.status !== 'ACTIVE') {
+      throw new ForbiddenException(`Device is ${device.status.toLowerCase()}, not active.`);
+    }
+    if (!device.childId) {
+      throw new NotFoundException(`Device "${deviceId}" is not paired to a child.`);
+    }
+    return { childId: device.childId, familyId: device.familyId };
+  }
+
+  async getChildIdForDevice(deviceId: string): Promise<string> {
+    const device = await this.getDeviceOrThrow(deviceId);
+    if (device.status !== 'ACTIVE') {
+      throw new ForbiddenException(`Device is ${device.status.toLowerCase()}, not active.`);
+    }
+    if (!device.childId) {
+      throw new NotFoundException(`Device "${deviceId}" is not paired to a child.`);
+    }
+    return device.childId;
   }
 
   private async getDeviceOrThrow(deviceId: string) {

@@ -5,6 +5,7 @@ import '../../../core/di/providers.dart';
 import '../../../plugins/permissions/domain/permission_status.dart';
 import '../../../plugins/runtime/application/runtime_coordinator.dart';
 import '../../../plugins/telemetry/contracts/runtime_telemetry.dart';
+import '../../family_growth/presentation/my_growth_screen.dart';
 
 /// Combines Sprint 4's three Flutter requirements ("Permission
 /// onboarding," "Child status," "Device health") into ONE screen rather
@@ -125,6 +126,14 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
             const Text(
               '✅ Device paired. Heartbeat running.',
               style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const MyGrowthScreen()),
+              ),
+              icon: const Icon(Icons.emoji_events_outlined),
+              label: const Text('My Growth'),
             ),
             const SizedBox(height: 16),
             const Text('Runtime Status', style: TextStyle(fontWeight: FontWeight.bold)),

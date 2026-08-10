@@ -16,6 +16,9 @@ import '../../plugins/telemetry/application/runtime_telemetry_collector.dart';
 import '../../plugins/runtime/application/runtime_coordinator.dart';
 import '../../plugins/runtime/application/recovery_coordinator.dart';
 import '../../plugins/offline_queue/application/offline_queue.dart';
+import '../../plugins/anti_tamper/contracts/i_anti_tamper.dart';
+import '../../plugins/anti_tamper/infrastructure/platform_anti_tamper.dart';
+import '../../features/family_growth/api/family_growth_api.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -57,11 +60,16 @@ final pairingApiProvider = Provider<PairingApi>((ref) {
   return PairingApi(ref.watch(apiClientProvider));
 });
 
+final antiTamperProvider = Provider<IAntiTamper>((ref) {
+  return PlatformAntiTamper(ref.watch(agentPlatformChannelProvider));
+});
+
 final deviceRegistrationServiceProvider = Provider<DeviceRegistrationService>((ref) {
   return DeviceRegistrationService(
     ref.watch(pairingApiProvider),
     ref.watch(agentPlatformChannelProvider),
     ref.watch(tokenStorageProvider),
+    ref.watch(antiTamperProvider),
   );
 });
 
@@ -120,4 +128,10 @@ final runtimeTelemetryCollectorProvider = Provider<RuntimeTelemetryCollector>((r
     ref.watch(policyCacheServiceProvider),
     ref.watch(heartbeatServiceProvider),
   );
+});
+
+// --- Sprint 29: Life Intelligence Platform, child-facing self-service ---
+
+final familyGrowthApiProvider = Provider<FamilyGrowthApi>((ref) {
+  return FamilyGrowthApi(ref.watch(apiClientProvider));
 });

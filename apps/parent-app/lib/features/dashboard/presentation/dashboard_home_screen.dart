@@ -5,6 +5,13 @@ import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../authentication/application/auth_controller.dart';
+import '../../life_intelligence/presentation/digital_twin_screen.dart';
+import '../../life_intelligence/presentation/life_timeline_screen.dart';
+import '../../life_intelligence/presentation/habit_tracker_screen.dart';
+import '../../life_intelligence/presentation/health_trend_screen.dart';
+import '../../life_intelligence/presentation/faith_progress_screen.dart';
+import '../../life_intelligence/presentation/family_store_screen.dart';
+import '../../life_intelligence/presentation/coaching_screen.dart';
 
 class DashboardHomeScreen extends ConsumerStatefulWidget {
   const DashboardHomeScreen({super.key});
@@ -186,6 +193,94 @@ class _ChildCard extends StatelessWidget {
         trailing: childDevice != null
             ? Chip(label: Text('${childDevice['riskLevel'] ?? 'UNKNOWN'}'))
             : null,
+        onTap: () => _showChildActions(context, child, t),
+      ),
+    );
+  }
+
+  void _showChildActions(BuildContext context, dynamic child, String Function(String, {int? count, Map<String, Object>? options}) t) {
+    final childId = child['id'] as String;
+    final childName = child['firstName'] as String? ?? '';
+    final familyId = child['familyId'] as String?;
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_outlined),
+              title: Text(t('digitalTwin.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => DigitalTwinScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.timeline_outlined),
+              title: Text(t('lifeTimeline.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => LifeTimelineScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_outlined),
+              title: Text(t('habitTracker.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => HabitTrackerScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.favorite_outline),
+              title: Text(t('healthTrend.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => HealthTrendScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.mosque_outlined),
+              title: Text(t('faithProgress.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => FaithProgressScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.psychology_outlined),
+              title: Text(t('coaching.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => CoachingScreen(childId: childId, childName: childName)),
+                );
+              },
+            ),
+            if (familyId != null)
+              ListTile(
+                leading: const Icon(Icons.storefront_outlined),
+                title: Text(t('familyStore.title')),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => FamilyStoreScreen(familyId: familyId)),
+                  );
+                },
+              ),
+          ],
+        ),
       ),
     );
   }
