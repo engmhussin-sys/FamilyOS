@@ -4,6 +4,7 @@ import { RewardsEngineService } from '../../src/modules/life-intelligence/applic
 import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-rewards.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
+import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
 
 describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4, CLOSES A REAL GAP: zero idempotency existed before this)', () => {
   const repositoryMock = {
@@ -15,6 +16,7 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
+  const notificationIntegrationMock = { notifyEvent: jest.fn() };
 
   let service: RewardsEngineService;
 
@@ -33,6 +35,7 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    notificationIntegrationMock.notifyEvent.mockResolvedValue({ type: 'x', targetAudience: 'CHILD', decision: 'SEND' });
     repositoryMock.listActiveRewardRules.mockResolvedValue([xpRule]);
     repositoryMock.getOrCreateAccount.mockResolvedValue({ childId, xp: 0, coins: 0, stars: 0, level: 1 });
 
@@ -42,6 +45,7 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
         { provide: PrismaRewardsRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
+        { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
       ],
     }).compile();
     service = moduleRef.get(RewardsEngineService);
@@ -161,6 +165,83 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
       expect(count).toBe(1);
       expect(repositoryMock.applyEarn).toHaveBeenNthCalledWith(1, childId, 'XP', 50, undefined, 'reward_rule:rule-1', 'multi-grant-key:XP:reward_rule:rule-1');
       expect(repositoryMock.applyEarn).toHaveBeenNthCalledWith(2, childId, 'COINS', 20, undefined, 'reward_rule:rule-2', 'multi-grant-key:COINS:reward_rule:rule-2');
+    });
+  });
+
+  describe('Sprint 16.2 Phase 2 — Reward -> Notification (CLOSES A REAL GAP: reward grants never triggered any notification before this)', () => {
+    it('a real BADGE grant notifies BOTH the child and the parent', async () => {
+      const badgeRule = { ...xpRule, rewardType: 'BADGE' as const, rewardAmountOrBadgeId: 'first-habit' };
+      repositoryMock.listActiveRewardRules.mockResolvedValue([badgeRule]);
+      repositoryMock.findBadgeByKey.mockResolvedValue({ id: 'badge-1', title: 'First Habit' });
+      repositoryMock.awardBadgeIfNotAlready.mockResolvedValue(true);
+      repositoryMock.applyEarn.mockResolvedValue(true);
+
+      await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
+
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(childId, familyId, expect.objectContaining({ targetAudience: 'CHILD', type: 'BADGE_EARNED' }));
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(childId, familyId, expect.objectContaining({ targetAudience: 'PARENT', type: 'BADGE_EARNED' }));
+    });
+
+    it('a level-up notifies the CHILD', async () => {
+      const bigXpRule = { ...xpRule, rewardAmountOrBadgeId: '10000' };
+      repositoryMock.listActiveRewardRules.mockResolvedValue([bigXpRule]);
+      repositoryMock.applyEarn.mockResolvedValue(true);
+
+      await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
+
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(childId, familyId, expect.objectContaining({ type: 'LEVEL_UP', targetAudience: 'CHILD' }));
+    });
+
+    it('a routine (non-level-up) XP grant does NOT notify — not every event should produce a notification', async () => {
+      repositoryMock.applyEarn.mockResolvedValue(true); // small xpRule amount (50), no level threshold crossed
+
+      await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
+
+      expect(notificationIntegrationMock.notifyEvent).not.toHaveBeenCalled();
+    });
+
+    it('CRITICAL: a duplicate/idempotency-rejected grant (granted === false) does NOT notify', async () => {
+      const bigXpRule = { ...xpRule, rewardAmountOrBadgeId: '10000' };
+      repositoryMock.listActiveRewardRules.mockResolvedValue([bigXpRule]);
+      repositoryMock.applyEarn.mockResolvedValue(false); // simulated duplicate — the exact P2002 case
+
+      await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'dup-key' });
+
+      expect(notificationIntegrationMock.notifyEvent).not.toHaveBeenCalled();
+    });
+
+    it('CRITICAL: a retry (same idempotencyKey, second call) does NOT notify a second time', async () => {
+      const bigXpRule = { ...xpRule, rewardAmountOrBadgeId: '10000' };
+      repositoryMock.listActiveRewardRules.mockResolvedValue([bigXpRule]);
+
+      repositoryMock.applyEarn.mockResolvedValueOnce(true);
+      await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'retry-key' });
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(1);
+
+      repositoryMock.applyEarn.mockResolvedValueOnce(false); // the retry — correctly rejected as a duplicate
+      await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'retry-key' });
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(1); // still 1, not 2
+    });
+
+    it('CRITICAL: a FAILED reward (real error, not a duplicate) does NOT notify — the error propagates before notification code is ever reached', async () => {
+      repositoryMock.applyEarn.mockRejectedValueOnce(new Error('transient DB error'));
+
+      await expect(
+        service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} }),
+      ).rejects.toThrow('transient DB error');
+
+      expect(notificationIntegrationMock.notifyEvent).not.toHaveBeenCalled();
+    });
+
+    it('a notification delivery failure never blocks the reward grant itself — best-effort, matching every other side-effect in this file', async () => {
+      const bigXpRule = { ...xpRule, rewardAmountOrBadgeId: '10000' };
+      repositoryMock.listActiveRewardRules.mockResolvedValue([bigXpRule]);
+      repositoryMock.applyEarn.mockResolvedValue(true);
+      notificationIntegrationMock.notifyEvent.mockRejectedValueOnce(new Error('notification service down'));
+
+      const count = await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
+
+      expect(count).toBe(1); // the grant itself still succeeded and was counted
     });
   });
 });
