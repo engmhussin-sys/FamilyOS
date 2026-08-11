@@ -1229,6 +1229,7 @@ model Notification {
   child Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
+  @@index([childId, createdAt])
   @@map("notifications")
 }
 
