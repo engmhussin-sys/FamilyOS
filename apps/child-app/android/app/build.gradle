@@ -1,0 +1,99 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader("UTF-8") { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
+if (flutterVersionCode == null) {
+    flutterVersionCode = "1"
+}
+
+def flutterVersionName = localProperties.getProperty("flutter.versionName")
+if (flutterVersionName == null) {
+    flutterVersionName = "1.0"
+}
+
+android {
+    // RECOVERY NOTE (Sprint 17.3): namespace replaces the source
+    // AndroidManifest.xml's own `package` attribute — confirmed absent
+    // from the existing Manifest (modern AGP 8.x convention, matching
+    // what this project's own MainActivity.kt package declaration
+    // already uses: com.aifamilycoach.child_app).
+    namespace "com.aifamilycoach.child_app"
+    compileSdk flutter.compileSdkVersion
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+    }
+
+    defaultConfig {
+        applicationId "com.aifamilycoach.child_app"
+        // RECOVERY NOTE (Sprint 17.3): deliberately using Flutter's own
+        // standard flutter.minSdkVersion rather than guessing a specific
+        // number. The existing Manifest declares
+        // android:foregroundServiceType="specialUse" on
+        // ChildGuardForegroundService — a real Android 14 (API 34)
+        // concept — while MainActivity.kt's own Build.VERSION.SDK_INT
+        // checks suggest the app is meant to run on a wider range of
+        // OS versions with graceful degradation. Choosing the exact
+        // right minSdk here without being able to run a real build in
+        // this environment risks a wrong guess that's harder to debug
+        // than Flutter's own build-time warning would be — left as the
+        // one deliberate, low-risk default, flagged here for the first
+        // real `flutter build apk` run to confirm or correct.
+        minSdk flutter.minSdkVersion
+        targetSdk flutter.targetSdkVersion
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+    }
+
+    buildTypes {
+        release {
+            // RECOVERY NOTE: signing with the debug config so `flutter
+            // build apk --release` doesn't immediately fail with no
+            // signing config configured — matches Flutter's own
+            // default template comment ("TODO: Add your own signing
+            // config for the release build"). A real release signing
+            // key is a deployment-time decision, not something to
+            // invent here.
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source "../.."
+}
+
+dependencies {
+    // RECOVERY NOTE: both confirmed as ACTUALLY imported by this app's
+    // existing Kotlin source (grep-confirmed, not assumed) —
+    // RuntimeWatchdogWorker.kt imports androidx.work.* (CoroutineWorker,
+    // WorkManager, PeriodicWorkRequestBuilder, ExistingPeriodicWorkPolicy),
+    // and RuntimeAlertNotifier.kt/ChildGuardForegroundService.kt import
+    // androidx.core.app.* (NotificationCompat, NotificationManagerCompat,
+    // PendingIntentCompat). Without these two dependencies, the existing
+    // native code would fail to compile — this is a required recovery
+    // addition, not a new feature.
+    implementation "androidx.work:work-runtime-ktx:2.9.0"
+    implementation "androidx.core:core-ktx:1.13.1"
+}

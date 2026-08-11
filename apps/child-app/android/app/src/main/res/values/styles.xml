@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RECOVERY NOTE (Sprint 17.3): standard Flutter template themes,
+     required by AndroidManifest.xml's own existing references to
+     @style/LaunchTheme and @style/NormalTheme — without this file the
+     build fails with "resource style/LaunchTheme not found". Matches
+     Flutter's official template exactly, not a custom design choice. -->
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

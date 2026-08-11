@@ -1,0 +1,13 @@
+# RECOVERY NOTE (Sprint 17.3): local.properties is intentionally NOT
+# committed to git (it's machine-specific — every Flutter developer's
+# copy has a different SDK path) and this file was correctly absent
+# before this recovery too. This .example file exists only as a
+# documented template for the exact next step: copy this to
+# local.properties (no .example suffix) in the same folder, and
+# replace the paths below with your own real local paths before
+# running any flutter/gradle command.
+
+sdk.dir=/path/to/your/Android/sdk
+flutter.sdk=/path/to/your/flutter
+flutter.versionName=0.1.0
+flutter.versionCode=1
