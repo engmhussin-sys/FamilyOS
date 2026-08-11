@@ -23,7 +23,7 @@ describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2,
   const sessionInput = { subject: 'math', durationMinutes: 30, date: '2026-08-10' };
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
     repositoryMock.createSession.mockResolvedValue({ id: 's1', childId, subject: 'math', durationMinutes: 30, date: new Date('2026-08-10'), goalId: null, progressNote: null });
     repositoryMock.findDistinctSessionDates.mockResolvedValue([]);
     rewardTriggerMock.trigger.mockResolvedValue(1);
@@ -79,7 +79,7 @@ describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2,
   describe('streak milestone', () => {
     it('fires STREAK_ACHIEVED at a real milestone (7 days)', async () => {
       const sevenDays = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date('2026-08-10');
+        const d = new Date(); // the REAL current date, matching the service's own this.daysAgo(0)
         d.setUTCDate(d.getUTCDate() - i);
         return d.toISOString().slice(0, 10);
       });

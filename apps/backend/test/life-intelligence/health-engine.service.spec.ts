@@ -49,7 +49,7 @@ describe('HealthEngineService', () => {
   const familyId = 'family-1';
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     childrenServiceMock.getChildOrThrow.mockResolvedValue({ id: childId, dateOfBirth: '2016-01-01' });
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -61,6 +61,15 @@ describe('HealthEngineService', () => {
       ],
     }).compile();
     service = moduleRef.get(HealthEngineService);
+  });
+
+  afterEach(() => {
+    // FIXES A REAL ROOT CAUSE: jest.useRealTimers() at the end of an
+    // individual test only runs if that test's own assertions pass —
+    // a failing expect() throws BEFORE reaching that line, leaving
+    // fake timers active for the NEXT test in this file. This
+    // unconditional cleanup runs regardless of pass/fail/throw.
+    jest.useRealTimers();
   });
 
   describe('logNutrition', () => {
@@ -196,10 +205,11 @@ describe('HealthEngineService', () => {
     });
 
     it('additionally fires STREAK_ACHIEVED at a real milestone', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-11T12:00:00.000Z'));
       repositoryMock.createHydrationLog.mockResolvedValue({ id: 'h4b', childId, amountMl: 400, loggedAt: new Date() });
       repositoryMock.sumHydrationMlOnDate.mockResolvedValue(2200);
       const sevenDays = new Map(Array.from({ length: 7 }, (_, i) => {
-        const d = new Date('2026-08-10'); d.setUTCDate(d.getUTCDate() - i);
+        const d = new Date('2026-08-11T12:00:00.000Z'); d.setUTCDate(d.getUTCDate() - i); // pinned to the SAME fixed clock the service itself now reads
         return [d.toISOString().slice(0, 10), 2200];
       }));
       repositoryMock.getDailyHydrationTotals.mockResolvedValue(sevenDays);
@@ -257,16 +267,16 @@ describe('HealthEngineService', () => {
     });
 
     it('additionally fires STREAK_ACHIEVED for activity at a real milestone', async () => {
-      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a3', childId, activityType: 'running', durationMinutes: 30, socialContext: 'SOLO', date: new Date('2026-08-10') });
+      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a3', childId, activityType: 'running', durationMinutes: 30, socialContext: 'SOLO', date: new Date() });
       repositoryMock.sumActivityMinutesOnDate.mockResolvedValue(70);
       repositoryMock.countGroupActivitiesInWindow.mockResolvedValue(0);
       const sevenDays = new Map(Array.from({ length: 7 }, (_, i) => {
-        const d = new Date('2026-08-10'); d.setUTCDate(d.getUTCDate() - i);
+        const d = new Date(); d.setUTCDate(d.getUTCDate() - i);
         return [d.toISOString().slice(0, 10), 70];
       }));
       repositoryMock.getDailyActivityTotals.mockResolvedValue(sevenDays);
 
-      await service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 30, socialContext: 'SOLO' });
+      await service.logActivity(childId, familyId, { date: new Date().toISOString().slice(0, 10), activityType: 'running', durationMinutes: 30, socialContext: 'SOLO' });
 
       expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
         childId, familyId,

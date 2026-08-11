@@ -28,7 +28,7 @@ describe('HabitEngineService', () => {
   const habit = { id: 'habit-1', childId, title: 'Drink water', category: 'health', isCustom: true, isShared: false, isActive: true, createdAt: new Date() };
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
     habitRepositoryMock.findDistinctCompletionDates.mockResolvedValue([]);
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -104,8 +104,8 @@ describe('HabitEngineService', () => {
       await service.completeHabit('habit-1', childId, familyId, '2026-01-01');
 
       expect(habitRepositoryMock.recordCompletion).toHaveBeenCalledTimes(2);
-      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(1, 'habit-1', childId, new Date('2026-01-01'));
-      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(2, 'habit-1', childId, new Date('2026-01-01'));
+      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(1, 'habit-1', childId, new Date('2026-01-01'), 'COMPLETED');
+      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(2, 'habit-1', childId, new Date('2026-01-01'), 'COMPLETED');
     });
   });
 

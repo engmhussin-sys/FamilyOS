@@ -6,17 +6,25 @@ import { ChildrenService } from '../../src/modules/children/application/services
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
 import { ConsentCheckService } from '../../src/modules/consent-check/application/consent-check.service';
+import { BaselineCalculatorService } from '../../src/modules/life-intelligence/application/services/baseline-calculator.service';
+import { PatternDetectionService } from '../../src/modules/life-intelligence/application/services/pattern-detection.service';
+import { AnomalyDetectionService } from '../../src/modules/life-intelligence/application/services/anomaly-detection.service';
 
 describe('DigitalWellbeingEngineService', () => {
   const repositoryMock = {
     upsertDailySummary: jest.fn(),
     findSnapshotsInWindow: jest.fn(),
     getTopAppsToday: jest.fn(),
+    updateDetectionResults: jest.fn(),
+    findRecentPatterns: jest.fn(),
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
   const runtimeAlertsMock = { createForFamilyOwner: jest.fn(), listForUser: jest.fn() };
   const consentCheckMock = { hasConsent: jest.fn() };
+  const baselineCalculatorMock = { compute: jest.fn() };
+  const patternDetectionMock = { detect: jest.fn() };
+  const anomalyDetectionMock = { detectRecurrence: jest.fn() };
 
   let service: DigitalWellbeingEngineService;
   const childId = 'child-1';
@@ -33,12 +41,22 @@ describe('DigitalWellbeingEngineService', () => {
   };
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
     // Default: consented — matches Option C's own design intent
     // (baseline consent types are granted by default at child
     // creation). The dedicated 'consent enforcement' block below
     // overrides this per-test to verify the FALSE path explicitly.
     consentCheckMock.hasConsent.mockResolvedValue(true);
+    // Sensible, honest defaults for Sprint 14's Behavioral Intelligence
+    // pipeline — "nothing notable detected" is the correct default for
+    // most tests in this file, which focus on ownership/consent/Timeline
+    // behavior, not pattern-detection specifics (covered by their own
+    // dedicated pattern-detection.service.spec.ts).
+    baselineCalculatorMock.compute.mockResolvedValue(null);
+    patternDetectionMock.detect.mockReturnValue([]);
+    anomalyDetectionMock.detectRecurrence.mockReturnValue([]);
+    repositoryMock.updateDetectionResults.mockResolvedValue(undefined);
+    repositoryMock.findRecentPatterns.mockResolvedValue([]);
     const moduleRef = await Test.createTestingModule({
       providers: [
         DigitalWellbeingEngineService,
@@ -47,6 +65,9 @@ describe('DigitalWellbeingEngineService', () => {
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertsMock },
         { provide: ConsentCheckService, useValue: consentCheckMock },
+        { provide: BaselineCalculatorService, useValue: baselineCalculatorMock },
+        { provide: PatternDetectionService, useValue: patternDetectionMock },
+        { provide: AnomalyDetectionService, useValue: anomalyDetectionMock },
       ],
     }).compile();
     service = moduleRef.get(DigitalWellbeingEngineService);

@@ -5,6 +5,7 @@ import { RewardsEngineService } from '../../src/modules/life-intelligence/applic
 import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-rewards.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
+import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
 
 describe('RewardsEngineService', () => {
   const repositoryMock = {
@@ -22,18 +23,21 @@ describe('RewardsEngineService', () => {
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
+  const notificationIntegrationMock = { notifyEvent: jest.fn() };
   let service: RewardsEngineService;
   const childId = 'child-1';
   const familyId = 'family-1';
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    notificationIntegrationMock.notifyEvent.mockResolvedValue({ type: 'x', targetAudience: 'CHILD', decision: 'SEND' });
     const moduleRef = await Test.createTestingModule({
       providers: [
         RewardsEngineService,
         { provide: PrismaRewardsRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
+        { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
       ],
     }).compile();
     service = moduleRef.get(RewardsEngineService);
@@ -81,10 +85,11 @@ describe('RewardsEngineService', () => {
       ]);
       repositoryMock.findBadgeByKey.mockResolvedValue({ id: 'b1', key: 'badge-key', title: 'Test Badge', description: '', criteria: {}, isGroupAchievement: false });
       repositoryMock.awardBadgeIfNotAlready.mockResolvedValue(true);
+      repositoryMock.applyEarn.mockResolvedValue(true);
 
       await service.processTriggerEvent(childId, familyId, { engine: 'faith', type: 't', payload: { x: 1 } });
 
-      expect(repositoryMock.applyEarn).toHaveBeenCalledWith(childId, 'BADGE', 1, undefined, 'reward_rule:r1');
+      expect(repositoryMock.applyEarn).toHaveBeenCalledWith(childId, 'BADGE', 1, undefined, 'reward_rule:r1', undefined);
       expect(timelineMock.record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'badge_awarded' }));
     });
 
@@ -94,7 +99,7 @@ describe('RewardsEngineService', () => {
       ]);
       repositoryMock.findBadgeByKey.mockResolvedValue(null);
 
-      await expect(service.processTriggerEvent(childId, familyId, { engine: 'faith', type: 't', payload: {} })).resolves.toBe(1);
+      await expect(service.processTriggerEvent(childId, familyId, { engine: 'faith', type: 't', payload: {} })).resolves.toBe(0);
       expect(repositoryMock.applyEarn).not.toHaveBeenCalled();
     });
 
@@ -103,6 +108,7 @@ describe('RewardsEngineService', () => {
         { id: 'r2', familyId: null, triggerEngine: 'health', triggerCondition: {}, rewardType: 'XP', rewardAmountOrBadgeId: '100', isActive: true },
       ]);
       repositoryMock.getOrCreateAccount.mockResolvedValue({ id: 'a1', childId, xp: 50, coins: 0, stars: 0, level: 1 });
+      repositoryMock.applyEarn.mockResolvedValue(true);
 
       await service.processTriggerEvent(childId, familyId, { engine: 'health', type: 't', payload: {} });
 
