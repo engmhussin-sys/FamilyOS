@@ -33,12 +33,13 @@ export interface IPairingDeviceWithChild extends IPairingDeviceRecord {
  * Scoped narrowly to what the Pairing flow itself needs to do to a
  * `Device` row — NOT a general-purpose device CRUD repository (that
  * doesn't exist as a concept anywhere in this project; devices are
- * managed exclusively through the pairing lifecycle). Distinct from
- * Auth's own `PrismaDeviceRepository` (used only by the now-Deprecated
- * `/auth/devices/pairing/*` endpoints, per pairing-module-boundary.md §5)
- * since this one sets the Sprint-2/2.2.1 fields
- * (publicKey/pairingProtocolVersion/trustLevel-default) that endpoint
- * never needed to know about.
+ * managed exclusively through the pairing lifecycle). This is now the
+ * ONLY device repository in the codebase: Auth's own
+ * `PrismaDeviceRepository` and the deprecated one-step pairing endpoints
+ * it backed were deleted (SA-003), so there is no longer a second path
+ * that can create a child device — and this one always creates it as
+ * PENDING_PAIRING with the Sprint-2/2.2.1 fields
+ * (publicKey/pairingProtocolVersion/trustLevel-default) set.
  */
 export interface IPairingDeviceRepository {
   createDevice(input: ICreatePairingDeviceInput): Promise<IPairingDeviceRecord>;

@@ -574,11 +574,23 @@ model RefreshToken {
   revokedAt DateTime? @map("revoked_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
+  /// SA-002 (Refresh Token Reuse Detection, RFC 6819 §5.2.2.3 / OAuth 2.0
+  /// Security BCP §4.13.2). Every rotation chain shares one lineage id:
+  /// the very first token of a session sets it to its own id, and each
+  /// rotated successor inherits it. Presenting an already-rotated token
+  /// therefore identifies the whole compromised chain in a single
+  /// indexed query, and the entire family is revoked at once.
+  familyTokenId String  @map("family_token_id") @db.Uuid
+  /// Set on the token that was consumed, pointing at the token issued in
+  /// its place. Makes the rotation chain reconstructable for forensics.
+  replacedById  String? @map("replaced_by_id") @db.Uuid
+
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
   device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([deviceId])
+  @@index([familyTokenId])
   @@map("refresh_tokens")
 }
 
@@ -1377,23 +1389,32 @@ model RewardsLedgerEntry {
   childId   String     @map("child_id") @db.Uuid
   type      String     // 'EARN' | 'REDEEM'
   rewardType RewardType @map("reward_type")
+  /// UNSIGNED magnitude, kept for backward compatibility with every
+  /// existing reader. Direction lives in `type`, which is exactly why
+  /// `SUM(amount)` could never reconstruct a balance (A2 §7.4: ledger
+  /// SUM = 600 while the account column said −500). Use `delta`.
   amount    Int
+  /// DA-002. SIGNED movement: +amount for EARN, −amount for REDEEM.
+  /// This is what makes the ledger an actual ledger — the balance of
+  /// any reward type is `SUM(delta)` filtered by `reward_type`, and
+  /// `RewardsAccount` becomes a reconcilable cache of that sum rather
+  /// than an unverifiable source of truth (CONTEXT §3.6 / DP-5
+  /// deterministic recomputation).
+  delta     Int
   source    String     // e.g. 'habit_streak', 'reward_rule:<id>', 'manual:<userId>', 'redemption:<id>'
-  /// Sprint 16.1 (Double Reward Protection) — CLOSES A REAL GAP:
-  /// zero idempotency mechanism existed anywhere in the reward
-  /// pipeline before this — a retried request, a duplicate event, or
-  /// two concurrent requests for the SAME real-world event (e.g. one
-  /// habit completion) could each grant a full reward independently.
-  /// Nullable BY DESIGN, not by oversight: manual grants and any
-  /// caller with no natural idempotency key (e.g. an admin action)
-  /// simply pass none — PostgreSQL's own unique index treats every
-  /// NULL as distinct from every other NULL, so this never blocks
-  /// those. The REAL defense is the unique constraint below, not an
-  /// application-level "check then insert" (which would itself be a
-  /// real race condition under concurrent requests) — this column
-  /// exists specifically so the DATABASE rejects a true duplicate
-  /// insert atomically.
-  idempotencyKey String? @map("idempotency_key")
+  /// Sprint 16.1 (Double Reward Protection), hardened in DA-002.
+  /// The ONLY defense against double-granting is this column's unique
+  /// constraint below, enforced by PostgreSQL — never an application
+  /// "check then insert", which is itself a race.
+  ///
+  /// NOW MANDATORY (was nullable). A2 §7.3 scenario C proved the
+  /// nullable design left every keyless path completely unprotected:
+  /// PostgreSQL treats each NULL as distinct, so 8 concurrent keyless
+  /// grants produced 8 rows. Callers that have no natural key no
+  /// longer pass nothing — the repository synthesises a unique
+  /// per-call key instead, which keeps manual/admin grants working
+  /// while making the unique index total over the table.
+  idempotencyKey String @map("idempotency_key")
   createdAt DateTime   @default(now()) @map("created_at")
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)

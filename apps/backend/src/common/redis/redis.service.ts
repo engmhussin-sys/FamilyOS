@@ -60,6 +60,15 @@ export class RedisService implements OnModuleDestroy {
     return result as string | null;
   }
 
+  /** SA-004. The one deliberate exception to this class's "don't expose
+   * the raw client" rule: `RedisThrottlerStorage` implements Nest's
+   * `ThrottlerStorage` interface with a Lua script, which needs the
+   * client itself. Kept as an explicit, greppable accessor rather than
+   * making the field public. */
+  getRawClient(): Redis {
+    return this.client;
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.client.quit();
   }

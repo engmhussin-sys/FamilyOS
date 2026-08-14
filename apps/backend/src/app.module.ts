@@ -1,6 +1,8 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { RedisService } from './common/redis/redis.service';
+import { RedisThrottlerStorage } from './common/throttler/redis-throttler.storage';
 import { APP_GUARD } from '@nestjs/core';
 
 import { validateEnv } from './config/env.validation';
@@ -37,9 +39,29 @@ import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelli
     ConfigurationModule,
     AuditModule,
     // Application-wide default rate limit. Individual endpoints (login,
-    // register, pairing/confirm) override this with a stricter @Throttle()
-    // — see AuthController / DevicePairingController.
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // register, pairing/accept) override this with a stricter @Throttle()
+    // — see AuthController / PairingController.
+    //
+    // SA-004: counters live in Redis, not in an in-process Map. With the
+    // default storage every limit silently multiplies by the replica
+    // count and resets on every deploy. RedisModule is @Global, so
+    // RedisService resolves here without importing it.
+    //
+    // Graceful degradation is deliberate and load-bearing for the test
+    // suite: unit tests (and test/app.module.spec.ts) replace
+    // RedisService with a stub that has no `getRawClient`, and the
+    // throttler then falls back to the in-memory storage rather than
+    // opening a socket. Production always has the real service.
+    ThrottlerModule.forRootAsync({
+      inject: [RedisService],
+      useFactory: (redisService: RedisService) => ({
+        throttlers: [{ ttl: 60_000, limit: 100 }],
+        storage:
+          typeof redisService?.getRawClient === 'function'
+            ? new RedisThrottlerStorage(redisService.getRawClient())
+            : undefined,
+      }),
+    }),
     PrismaModule,
     RedisModule,
     AuthModule,

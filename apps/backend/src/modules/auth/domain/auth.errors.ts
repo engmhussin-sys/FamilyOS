@@ -33,6 +33,23 @@ export class InvalidOrExpiredTokenException extends UnauthorizedException {
   }
 }
 
+/**
+ * SA-002. Thrown when a refresh token that was already rotated out is
+ * presented again — the classic signature of a stolen refresh token
+ * (the legitimate client and the attacker are both holding a copy of the
+ * same chain). Extends InvalidOrExpiredTokenException so the HTTP
+ * response is byte-identical to the generic failure: the caller must not
+ * be able to tell "forged" from "already used", or an attacker could
+ * probe for valid-but-consumed tokens. The difference is entirely
+ * server-side: the whole token family is revoked and a security event is
+ * written to the audit log.
+ */
+export class RefreshTokenReuseDetectedException extends InvalidOrExpiredTokenException {
+  constructor() {
+    super();
+  }
+}
+
 export class InvalidOrExpiredPairingCodeException extends UnauthorizedException {
   constructor() {
     super('Pairing code is invalid or has expired. Please generate a new one.');

@@ -26,7 +26,6 @@ import { PairingOrchestratorService } from '../../../pairing/application/service
 import { ChildrenService } from '../../../children/application/services/children.service';
 
 @Controller('life-intelligence')
-@UseGuards(JwtAuthGuard)
 export class LifeIntelligenceController {
   constructor(
     private readonly habitEngine: HabitEngineService,
@@ -47,16 +46,19 @@ export class LifeIntelligenceController {
 
   // ---- Habit Builder ----
   @Post('habits/:childId')
+  @UseGuards(JwtAuthGuard)
   createHabit(@Param('childId') childId: string, @Body() dto: CreateHabitDto, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.createHabit(childId, user.familyId!, { ...dto, createdByUserId: user.sub });
   }
 
   @Get('habits/:childId')
+  @UseGuards(JwtAuthGuard)
   listHabits(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.listHabits(childId, user.familyId!);
   }
 
   @Post('habits/:childId/:habitId/complete')
+  @UseGuards(JwtAuthGuard)
   completeHabit(
     @Param('childId') childId: string,
     @Param('habitId') habitId: string,
@@ -67,6 +69,7 @@ export class LifeIntelligenceController {
   }
 
   @Get('habits/:childId/score')
+  @UseGuards(JwtAuthGuard)
   getHabitScore(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.getScoreBreakdown(childId, user.familyId!);
   }
@@ -77,11 +80,13 @@ export class LifeIntelligenceController {
    * this is callable directly rather than silently assuming a cron
    * that doesn't exist. `date` defaults to yesterday server-side. */
   @Post('habits/:childId/mark-missed')
+  @UseGuards(JwtAuthGuard)
   markMissedHabits(@Param('childId') childId: string, @Body() dto: { date?: string }, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.markMissedHabits(childId, user.familyId!, dto?.date);
   }
 
   @Get('habits/:childId/missed')
+  @UseGuards(JwtAuthGuard)
   getMissedHabits(@Param('childId') childId: string, @Query('windowDays') windowDays: string | undefined, @CurrentUser() user: IJwtPayload) {
     const parsed = windowDays ? parseInt(windowDays, 10) : 7;
     const safeWindow = Number.isFinite(parsed) && parsed > 0 && parsed <= 90 ? parsed : 7;
@@ -90,26 +95,31 @@ export class LifeIntelligenceController {
 
   // ---- Health ----
   @Post('health/:childId/nutrition-logs')
+  @UseGuards(JwtAuthGuard)
   logNutrition(@Param('childId') childId: string, @Body() dto: LogNutritionDto, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.logNutrition(childId, user.familyId!, dto);
   }
 
   @Post('health/:childId/hydration-logs')
+  @UseGuards(JwtAuthGuard)
   logHydration(@Param('childId') childId: string, @Body() dto: LogHydrationDto, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.logHydration(childId, user.familyId!, dto);
   }
 
   @Post('health/:childId/sleep-logs')
+  @UseGuards(JwtAuthGuard)
   logSleep(@Param('childId') childId: string, @Body() dto: LogSleepDto, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.logSleep(childId, user.familyId!, dto);
   }
 
   @Post('health/:childId/activity-logs')
+  @UseGuards(JwtAuthGuard)
   logActivity(@Param('childId') childId: string, @Body() dto: LogActivityDto, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.logActivity(childId, user.familyId!, dto);
   }
 
   @Get('health/:childId/score')
+  @UseGuards(JwtAuthGuard)
   getHealthScore(@Param('childId') childId: string, @Query('date') date: string | undefined, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.computeAndStoreHealthScore(childId, user.familyId!, date);
   }
@@ -119,22 +129,26 @@ export class LifeIntelligenceController {
    * progress + streaks) previously never existed as a single,
    * directly-consumable endpoint. */
   @Get('health/:childId/progress')
+  @UseGuards(JwtAuthGuard)
   getDailyProgress(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.getDailyProgress(childId, user.familyId!);
   }
 
   // ---- Faith ----
   @Post('faith/:childId/practices')
+  @UseGuards(JwtAuthGuard)
   createFaithPractice(@Param('childId') childId: string, @Body() dto: CreateFaithPracticeDto, @CurrentUser() user: IJwtPayload) {
     return this.faithEngine.createPractice(childId, user.familyId!, dto);
   }
 
   @Get('faith/:childId/practices')
+  @UseGuards(JwtAuthGuard)
   listFaithPractices(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.faithEngine.listPractices(childId, user.familyId!);
   }
 
   @Post('faith/:childId/:practiceId/log')
+  @UseGuards(JwtAuthGuard)
   logFaithPractice(
     @Param('childId') childId: string,
     @Param('practiceId') practiceId: string,
@@ -145,33 +159,39 @@ export class LifeIntelligenceController {
   }
 
   @Get('faith/:childId/score')
+  @UseGuards(JwtAuthGuard)
   getFaithScore(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.faithEngine.getScoreBreakdown(childId, user.familyId!);
   }
 
   // ---- Learning & Education ----
   @Post('learning/:childId/goals')
+  @UseGuards(JwtAuthGuard)
   createLearningGoal(@Param('childId') childId: string, @Body() dto: CreateLearningGoalDto, @CurrentUser() user: IJwtPayload) {
     return this.learningEngine.createGoal(childId, user.familyId!, dto);
   }
 
   @Get('learning/:childId/goals')
+  @UseGuards(JwtAuthGuard)
   listLearningGoals(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.learningEngine.listGoals(childId, user.familyId!);
   }
 
   @Post('learning/:childId/sessions')
+  @UseGuards(JwtAuthGuard)
   logLearningSession(@Param('childId') childId: string, @Body() dto: LogLearningSessionDto, @CurrentUser() user: IJwtPayload) {
     return this.learningEngine.logSession(childId, user.familyId!, dto);
   }
 
   @Get('learning/:childId/progress')
+  @UseGuards(JwtAuthGuard)
   getLearningProgress(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.learningEngine.getProgressSummary(childId, user.familyId!);
   }
 
   // ---- Smart Tasks ----
   @Post('smart-tasks/:childId/generate')
+  @UseGuards(JwtAuthGuard)
   generateSmartTasks(@Param('childId') childId: string, @Body() dto: GenerateSmartTasksDto, @CurrentUser() user: IJwtPayload) {
     return this.smartTaskEngine.generateForToday(childId, user.familyId!, dto);
   }
@@ -186,16 +206,19 @@ export class LifeIntelligenceController {
    * docstring for exactly what's computed and the one honest
    * limitation — screenTimeOverLimit — left false). */
   @Post('smart-tasks/:childId/generate-auto')
+  @UseGuards(JwtAuthGuard)
   generateSmartTasksAuto(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.smartTaskEngine.generateForTodayAuto(childId, user.familyId!);
   }
 
   @Get('smart-tasks/:childId')
+  @UseGuards(JwtAuthGuard)
   listSmartTasksToday(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.smartTaskEngine.listForToday(childId, user.familyId!);
   }
 
   @Post('smart-tasks/:childId/:taskId/decide')
+  @UseGuards(JwtAuthGuard)
   decideSmartTask(
     @Param('childId') childId: string,
     @Param('taskId') taskId: string,
@@ -207,6 +230,7 @@ export class LifeIntelligenceController {
 
   // ---- Rewards ----
   @Get('rewards/:childId/account')
+  @UseGuards(JwtAuthGuard)
   getRewardsAccount(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.getAccount(childId, user.familyId!);
   }
@@ -220,12 +244,14 @@ export class LifeIntelligenceController {
    * tightening, not a fix \u2014 the endpoint was never unprotected.
    */
   @Post('rewards/:childId/trigger')
+  @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   triggerRewardEvent(@Param('childId') childId: string, @Body() dto: TriggerRewardEventDto, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.processTriggerEvent(childId, user.familyId!, dto);
   }
 
   @Get('rewards/store/:familyId')
+  @UseGuards(JwtAuthGuard)
   getFamilyStore(@Param('familyId') familyId: string, @CurrentUser() user: IJwtPayload) {
     // FIXING A REAL IDOR (found during Sprint 23's audit of every
     // life-intelligence endpoint): this route previously had no
@@ -241,27 +267,32 @@ export class LifeIntelligenceController {
   }
 
   @Post('rewards/:childId/redemptions')
+  @UseGuards(JwtAuthGuard)
   requestRedemption(@Param('childId') childId: string, @Body() dto: RequestRedemptionDto, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.requestRedemption(childId, user.familyId!, dto.catalogItemId);
   }
 
   @Post('rewards/redemptions/:redemptionId/approve')
+  @UseGuards(JwtAuthGuard)
   approveRedemption(@Param('redemptionId') redemptionId: string, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.approveRedemption(redemptionId, user.familyId!, user.sub);
   }
 
   @Post('rewards/redemptions/:redemptionId/deny')
+  @UseGuards(JwtAuthGuard)
   denyRedemption(@Param('redemptionId') redemptionId: string, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.denyRedemption(redemptionId, user.familyId!, user.sub);
   }
 
   // ---- Family Communication ----
   @Post('communication/:childId/parent-message')
+  @UseGuards(JwtAuthGuard)
   sendParentMessage(@Param('childId') childId: string, @Body() dto: SendParentMessageDto, @CurrentUser() user: IJwtPayload) {
     return this.communication.sendParentMessage(childId, user.familyId!, user.sub, dto.category, dto.title, dto.body);
   }
 
   @Post('communication/:childId/ai-draft')
+  @UseGuards(JwtAuthGuard)
   draftAiMessage(@Param('childId') childId: string, @Body() dto: DraftAiMessageDto, @CurrentUser() user: IJwtPayload) {
     return this.communication.draftAiMessage(childId, user.familyId!, dto.category, dto.title, dto.body);
   }
@@ -271,16 +302,19 @@ export class LifeIntelligenceController {
    * every Smart Notification targeted at a child (Sprint 16-16.2)
    * was structurally unreachable without this. */
   @Get('communication/pending')
+  @UseGuards(JwtAuthGuard)
   getPendingMessages(@CurrentUser() user: IJwtPayload) {
     return this.communication.getPendingMessages(user.familyId!);
   }
 
   @Post('communication/:childId/:messageId/approve')
+  @UseGuards(JwtAuthGuard)
   approveMessage(@Param('childId') childId: string, @Param('messageId') messageId: string, @CurrentUser() user: IJwtPayload) {
     return this.communication.approve(messageId, childId, user.familyId!);
   }
 
   @Post('communication/:childId/:messageId/reject')
+  @UseGuards(JwtAuthGuard)
   rejectMessage(@Param('childId') childId: string, @Param('messageId') messageId: string, @CurrentUser() user: IJwtPayload) {
     return this.communication.reject(messageId, childId, user.familyId!);
   }
@@ -298,6 +332,7 @@ export class LifeIntelligenceController {
 
   // ---- Coaching ----
   @Get('coaching/:childId')
+  @UseGuards(JwtAuthGuard)
   getCoachingRecommendations(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.coachingEngine.getRecommendations(childId, user.familyId!);
   }
@@ -322,12 +357,14 @@ export class LifeIntelligenceController {
 
   // ---- Digital Twin ----
   @Get('digital-twin/:childId')
+  @UseGuards(JwtAuthGuard)
   getDigitalTwin(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.digitalTwin.refreshAndGet(childId, user.familyId!);
   }
 
   // ---- Family Insight ----
   @Get('insights/:childId/weekly')
+  @UseGuards(JwtAuthGuard)
   getWeeklyInsight(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.familyInsight.getWeeklySummary(childId, user.familyId!);
   }
@@ -544,11 +581,13 @@ export class LifeIntelligenceController {
   }
 
   @Get('wellbeing/:childId/snapshot')
+  @UseGuards(JwtAuthGuard)
   getWellbeingSnapshot(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.digitalWellbeing.getBehavioralSnapshotSummary(childId, user.familyId!);
   }
 
   @Get('wellbeing/:childId/top-apps/:deviceId')
+  @UseGuards(JwtAuthGuard)
   getTopApps(@Param('childId') childId: string, @Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
     return this.digitalWellbeing.getTopAppsToday(childId, user.familyId!, deviceId);
   }
@@ -556,6 +595,7 @@ export class LifeIntelligenceController {
   /** Sprint 14 (Behavioral Intelligence Engine) — Parent Insights.
    * `date` defaults to today if omitted. */
   @Get('wellbeing/:childId/insights')
+  @UseGuards(JwtAuthGuard)
   getWellbeingInsight(
     @Param('childId') childId: string,
     @Query('date') date: string | undefined,
@@ -567,6 +607,7 @@ export class LifeIntelligenceController {
 
   // ---- Timeline ----
   @Get('timeline/:childId')
+  @UseGuards(JwtAuthGuard)
   getTimeline(@Param('childId') childId: string, @Query('category') category: string | undefined, @CurrentUser() user: IJwtPayload) {
     return this.timeline.getTimeline(childId, user.familyId!, category);
   }

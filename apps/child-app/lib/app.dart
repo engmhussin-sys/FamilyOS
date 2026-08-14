@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 
 import 'core/di/providers.dart';
+import 'core/localization/locale_controller.dart';
 import 'core/theme/kid_theme.dart';
 import 'features/pairing/presentation/pairing_screen.dart';
 import 'features/device_status/presentation/device_home_screen.dart';
@@ -18,10 +20,37 @@ class ChildAgentApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Watch the STATE (not just `.notifier`) so a language change actually
+    // rebuilds — see LocaleController's docstring for why this line is
+    // load-bearing despite its return value being unused.
+    ref.watch(localeControllerProvider);
+    final localeController = ref.watch(localeControllerProvider.notifier);
+
     return MaterialApp(
       title: 'AI Family Digital Coach — Agent',
       debugShowCheckedModeBanner: false,
       theme: KidTheme.theme,
+      // CLOSES audit MA-017: this app previously set no locale at all, so
+      // every native Material widget (date pickers, dialog button labels,
+      // text-selection handles) stayed English/LTR even when the child's
+      // own screens were Arabic. Copied verbatim from parent-app's
+      // main.dart, which already had this right.
+      locale: localeController.toLocale,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ar'), Locale('en')],
+      // Directionality belongs HERE, on MaterialApp's builder, not on each
+      // screen individually (audit §6 gap 6): anything rendered into the
+      // root Overlay — showDialog, SnackBar, CelebrationOverlay — is built
+      // OUTSIDE the per-screen widget tree and so escaped the per-screen
+      // Directionality wrappers, rendering LTR in an Arabic app.
+      builder: (context, child) => Directionality(
+        textDirection: localeController.isRtl ? TextDirection.rtl : TextDirection.ltr,
+        child: child!,
+      ),
       home: const _AppRoot(),
     );
   }

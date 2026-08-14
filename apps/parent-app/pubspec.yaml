@@ -18,6 +18,11 @@ dependencies:
   # mechanism this SDK package provides.
   flutter_localizations:
     sdk: flutter
+  # CLOSES audit MA-016 (language choice was lost on every restart).
+  # Deliberately NOT flutter_secure_storage: the selected language is a
+  # UI preference, not a secret, and the secure store is reserved for
+  # the user's session tokens.
+  shared_preferences: ^2.2.3
   # Same choice as apps/child-app, for the same reason: explicit ports,
   # explicit providers, no hidden service locator.
   flutter_riverpod: ^2.5.1

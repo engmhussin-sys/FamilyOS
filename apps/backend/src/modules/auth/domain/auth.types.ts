@@ -54,17 +54,4 @@ export interface IDeviceSessionContext {
   ipAddress?: string;
 }
 
-export interface IPairingTicket {
-  familyId: string;
-  childId: string;
-  initiatedByUserId: string;
-}
 
-export interface IConfirmPairingInput {
-  code: string;
-  platform: 'ANDROID' | 'IOS';
-  deviceModel?: string;
-  osVersion?: string;
-  appVersion?: string;
-  pushToken?: string;
-}

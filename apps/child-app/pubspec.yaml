@@ -10,6 +10,18 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # CLOSES audit MA-017. Without this the app can declare a locale but
+  # native Material widgets (date pickers, dialog button labels,
+  # text-selection handles) have no Arabic strings to render and stay
+  # English/LTR. parent-app already depended on this; child-app did not,
+  # which is exactly why its Arabic screens still had English chrome.
+  flutter_localizations:
+    sdk: flutter
+  # CLOSES audit MA-016 (language choice was lost on every restart).
+  # Deliberately NOT flutter_secure_storage: the selected language is a
+  # UI preference, not a secret, and the secure store is Keystore-backed
+  # and reserved for the device-bound refresh token (Decision-012).
+  shared_preferences: ^2.2.3
   # State management + DI. Chosen for the same "explicit ports, explicit
   # providers" instinct used throughout the backend/dashboard — no hidden
   # service locators.

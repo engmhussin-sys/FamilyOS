@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../auth/session_expired_notifier.dart';
 import '../network/api_client.dart';
+import '../notifications/push_registration_service.dart';
 import '../offline/pending_operations_queue.dart';
 import '../storage/secure_session_storage.dart';
 import '../../features/authentication/api/auth_api.dart';
@@ -14,7 +15,6 @@ import '../../features/notifications/api/notifications_api.dart';
 import '../../features/settings/api/settings_api.dart';
 import '../../features/life_intelligence/api/life_intelligence_api.dart';
 import '../../features/billing/api/billing_api.dart';
-import 'notifications/push_registration_service.dart';
 import '../../features/support/api/support_api.dart';
 import '../../features/family/api/consent_api.dart';
 import '../../features/settings/api/account_api.dart';

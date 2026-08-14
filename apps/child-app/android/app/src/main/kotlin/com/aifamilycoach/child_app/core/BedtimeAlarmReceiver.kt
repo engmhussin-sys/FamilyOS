@@ -28,7 +28,7 @@ class BedtimeAlarmReceiver : BroadcastReceiver() {
         )
 
         if (result.decision == EnforcementDecision.BLOCK) {
-            OverlayManager(context).show(result.reason) {
+            OverlayManager(context).show(result.reasonRes) {
                 val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_HOME)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK

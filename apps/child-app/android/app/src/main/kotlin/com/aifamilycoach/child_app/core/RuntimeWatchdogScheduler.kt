@@ -57,15 +57,32 @@ object RuntimeWatchdogScheduler {
             set(Calendar.HOUR_OF_DAY, parts[0])
             set(Calendar.MINUTE, parts[1])
             set(Calendar.SECOND, 0)
+            // Zeroing MILLISECOND matters: without it the `before()` check
+            // below compares against a `now` that is up to 999ms newer, so
+            // an alarm scheduled exactly at the bedtime minute could be
+            // pushed a full day into the future. (audit MA-026)
+            set(Calendar.MILLISECOND, 0)
             if (before(Calendar.getInstance())) add(Calendar.DAY_OF_MONTH, 1) // if already past today, schedule tomorrow
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-            // Android 12+ requires the user to explicitly grant exact-alarm
-            // scheduling. Falls back to an inexact alarm rather than
-            // throwing — bedtime enforcement degrades to "approximately on
-            // time" instead of failing outright.
-            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime.timeInMillis, pendingIntent)
+            // Android 12+ requires an explicit exact-alarm grant, and on
+            // Android 14+ SCHEDULE_EXACT_ALARM is denied by default for an
+            // app in this category (USE_EXACT_ALARM, which would bypass
+            // that, is banned for parental-control apps — see the manifest
+            // comment). So this fallback is the NORMAL path on modern
+            // devices, not an edge case.
+            //
+            // setAndAllowWhileIdle, not set(): plain set() is deferred
+            // indefinitely while the device is in Doze, which is precisely
+            // the state a phone is in at bedtime. This keeps bedtime
+            // "approximately on time" instead of "not at all", and needs no
+            // permission at all.
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerTime.timeInMillis,
+                pendingIntent,
+            )
             return
         }
 

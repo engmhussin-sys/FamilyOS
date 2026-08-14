@@ -91,7 +91,11 @@ class ParentApp extends ConsumerWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [Locale('en'), Locale('ar')],
+      // Arabic FIRST: `supportedLocales` order is also the resolution
+      // preference order Flutter falls back through when the device
+      // locale matches none of them. For an Arabic-first product that
+      // fallback must be Arabic, not English (audit MA-016).
+      supportedLocales: const [Locale('ar'), Locale('en')],
       // No Flutter-native localization delegate is wired here for THIS
       // app's own text — that stays LocaleController's mechanism
       // (mirrors the Dashboard's LocaleProvider), not

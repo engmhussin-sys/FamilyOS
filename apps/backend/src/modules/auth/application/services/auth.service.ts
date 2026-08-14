@@ -145,16 +145,21 @@ export class AuthService {
     refreshToken: string,
     context: IDeviceSessionContext,
   ): Promise<ITokenPair> {
-    const { payload } = await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
+    const { payload, record } = await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
 
-    // Rotation: the old token is already revoked (inside verifyAndConsume);
-    // issue a fresh pair bound to the same subject/actor/family.
+    // Rotation: the old token is already revoked (inside verifyAndConsume,
+    // which also detects and punishes reuse of an already-rotated token —
+    // SA-002). The successor stays in the SAME rotation family as the
+    // token it replaces, so a later reuse anywhere in this chain can
+    // still revoke the whole chain in one query.
     return this.tokenService.issueTokenPair({
       subjectId: payload.sub,
       actorType: payload.actorType,
       familyId: payload.familyId,
       userAgent: context.userAgent,
       ipAddress: context.ipAddress,
+      familyTokenId: record.familyTokenId,
+      replacesTokenId: record.id,
     });
   }
 

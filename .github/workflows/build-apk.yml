@@ -1,0 +1,310 @@
+name: Build APK
+
+# ---------------------------------------------------------------------------
+# PURPOSE
+#
+# Produce a REAL, INSTALLABLE APK. Nothing in this repository has ever been
+# compiled: audit A3 records zero successful `flutter pub get`, zero
+# `flutter analyze`, zero `flutter build apk` in the project's history. This
+# workflow exists to convert that permanent "BLOCKED" into evidence, because
+# CONTEXT §3.9 is explicit that BLOCKED ≠ PASS.
+#
+# It is therefore deliberately TOLERANT of analyzer and test failures on the
+# first runs (see the comments on those steps) and INTOLERANT of build
+# failures. Getting an artifact into someone's hands is the whole point; a
+# green tick on a build that did not happen would be worse than useless.
+#
+# See .github/workflows/ci.yml for the strict, per-commit quality gate.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "Which app to build"
+        type: choice
+        required: true
+        default: child-app
+        options:
+          - child-app
+          - parent-app
+          - both
+  push:
+    branches:
+      - abny/sprint-f1-unblock
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # --- Flutter 3.24.5 — PINNED, and the pin is load-bearing -----------------
+  # 1. pubspec.yaml (both apps) requires Dart sdk ">=3.3.0 <4.0.0" and
+  #    flutter ">=3.19.0". Flutter 3.24.5 ships Dart 3.5.4 — inside the range.
+  # 2. android/settings.gradle pins Android Gradle Plugin 8.1.1, which refuses
+  #    compileSdk > 34. Flutter 3.24.5's flutter.compileSdkVersion is 34.
+  #    Flutter 3.27+ moves that default to 35 and the build then dies with
+  #    "compileSdk 35 requires Android Gradle Plugin 8.6.0 or higher".
+  #    This is exactly why `channel: stable` (unpinned) is a time bomb: the
+  #    build breaks on a date, not on a commit.
+  # 3. Flutter 3.24.5's flutter.minSdkVersion is 21, which satisfies
+  #    firebase_messaging 15.x's minSdk 21 floor — so the parent app's
+  #    manifest merger has a chance of succeeding.
+  FLUTTER_VERSION: "3.24.5"
+
+  # --- Java 17 — also load-bearing -----------------------------------------
+  # android/gradle/wrapper/gradle-wrapper.properties pins Gradle 8.3 in BOTH
+  # apps (verified). Gradle only gained the ability to RUN on JDK 21 in 8.5,
+  # so on a runner that defaults to JDK 21 the build fails with
+  # "Unsupported class file major version 65". AGP 8.1.1 independently wants
+  # JDK 17, and app/build.gradle already sets source/targetCompatibility 17.
+  # 17 is the only version that satisfies all three.
+  JAVA_VERSION: "17"
+
+jobs:
+  # ==========================================================================
+  # CHILD APP — the primary deliverable of sprint F1.
+  # ==========================================================================
+  child-app:
+    name: Child Agent APK
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.app == 'child-app' ||
+      inputs.app == 'both'
+    defaults:
+      run:
+        working-directory: apps/child-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        name: Compute short SHA
+        run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # setup-java MUST come before flutter-action: the Flutter tool caches
+      # the JDK it sees when it first configures Gradle.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Toolchain versions (diagnostic)
+        run: |
+          flutter --version
+          java -version
+        continue-on-error: true
+
+      # pub get is a HARD gate. If dependency resolution fails there is
+      # nothing further to learn from this run.
+      - name: flutter pub get
+        run: flutter pub get
+
+      # NON-BLOCKING FOR NOW — on purpose.
+      # This tree has never been through a Dart analyzer. Audit A3 R1
+      # estimates 70–100 findings on first contact and can only prove the 4
+      # import errors that a filesystem check could reach. Blocking here on
+      # run #1 would mean never seeing an APK.
+      # TODO(F2): delete `continue-on-error` and drop `--no-fatal-infos` once
+      # the analyzer output is at zero. That is the flip that makes this a
+      # real gate; ci.yml is where it will live permanently.
+      - name: flutter analyze (non-blocking — see comment)
+        id: analyze
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
+
+      # NON-BLOCKING FOR NOW — same reasoning.
+      # 58 test cases exist and could not previously compile at all, because
+      # two of them imported the files with the broken imports (audit §8).
+      # They should now at least resolve; whether they PASS is unknown until
+      # this runs for the first time.
+      # TODO(F2): make blocking once the suite is green.
+      - name: flutter test (non-blocking — see comment)
+        id: test
+        run: flutter test
+        continue-on-error: true
+
+      # HARD GATE. This is the deliverable. No continue-on-error here: if the
+      # debug APK does not build, this job is red and says so.
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      # Release is a BONUS, not the deliverable, so it may fail without
+      # sinking the run. It is attempted because android/app/build.gradle
+      # already points the release buildType at signingConfigs.debug, so no
+      # upload keystore is required to produce an installable artifact.
+      # It can still fail on R8/shrinker issues that debug never exercises —
+      # which is itself useful information to surface early.
+      - name: Build release APK (best-effort — debug-signed)
+        id: release
+        run: flutter build apk --release
+        continue-on-error: true
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: child-app-debug-${{ steps.vars.outputs.sha_short }}
+          path: apps/child-app/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload release APK
+        if: steps.release.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: child-app-release-${{ steps.vars.outputs.sha_short }}
+          path: apps/child-app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Child Agent APK — \`${{ steps.vars.outputs.sha_short }}\`"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| flutter analyze | ${{ steps.analyze.outcome }} (non-blocking) |"
+            echo "| flutter test | ${{ steps.test.outcome }} (non-blocking) |"
+            echo "| release build | ${{ steps.release.outcome }} (best-effort) |"
+            echo ""
+            echo "| Artifact | Path | Size |"
+            echo "|---|---|---|"
+            for variant in debug release; do
+              apk="build/app/outputs/flutter-apk/app-$variant.apk"
+              if [ -f "$apk" ]; then
+                size=$(du -h "$apk" | cut -f1)
+                echo "| app-$variant.apk | \`apps/child-app/$apk\` | $size |"
+              else
+                echo "| app-$variant.apk | — | NOT BUILT |"
+              fi
+            done
+            echo ""
+            echo "> Analyzer and tests are intentionally non-blocking on this"
+            echo "> branch so a first APK can exist. They become blocking in"
+            echo "> ci.yml once the tree is clean — see the step comments."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # PARENT APP
+  #
+  # Blocked on an EXTERNAL dependency, not on code: audit MA-015. The
+  # com.google.gms.google-services Gradle plugin is applied in
+  # apps/parent-app/android/app/build.gradle and hard-fails the build with
+  # "File google-services.json is missing" unless a real Firebase project
+  # exists. We do NOT invent a placeholder — a fake google-services.json
+  # produces an APK whose push notifications silently never work, which is
+  # precisely the kind of false green CONTEXT §3.9 forbids.
+  #
+  # So: if the secret is absent this job FAILS, loudly, with instructions.
+  # It does not skip quietly and it does not fabricate config. The child-app
+  # job above is independent and still publishes its APK either way.
+  # ==========================================================================
+  parent-app:
+    name: Parent App APK
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.app == 'parent-app' ||
+      inputs.app == 'both'
+    defaults:
+      run:
+        working-directory: apps/parent-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        name: Compute short SHA
+        run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Require Firebase config (audit MA-015)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            {
+              echo "## Parent App APK — NOT BUILT"
+              echo ""
+              echo "Repository secret \`GOOGLE_SERVICES_JSON\` is not set."
+              echo ""
+              echo "\`firebase_messaging\` is a real dependency of this app and"
+              echo "the \`com.google.gms.google-services\` plugin refuses to build"
+              echo "without \`android/app/google-services.json\`."
+              echo ""
+              echo "**To fix:** create the Firebase Android app for"
+              echo "\`com.aifamilycoach.parent_app\`, then paste the whole"
+              echo "\`google-services.json\` into the repository secret"
+              echo "\`GOOGLE_SERVICES_JSON\`."
+              echo ""
+              echo "A placeholder file is deliberately NOT generated: it would"
+              echo "produce an APK whose push notifications fail silently."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::GOOGLE_SERVICES_JSON secret is missing — cannot build the parent app (audit MA-015)."
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+          echo "Wrote android/app/google-services.json ($(wc -c < android/app/google-services.json) bytes)"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # Non-blocking for the same reason as the child app — this app has
+      # 6,388 lines that have never met an analyzer, and ZERO tests
+      # (audit §8), so there is no test step here to make blocking yet.
+      # TODO(F2): make blocking; add a test job once tests exist (MA-011).
+      - name: flutter analyze (non-blocking — see comment)
+        id: analyze
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
+
+      # HARD GATE.
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: parent-app-debug-${{ steps.vars.outputs.sha_short }}
+          path: apps/parent-app/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Parent App APK — \`${{ steps.vars.outputs.sha_short }}\`"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| flutter analyze | ${{ steps.analyze.outcome }} (non-blocking) |"
+            echo ""
+            apk="build/app/outputs/flutter-apk/app-debug.apk"
+            echo "| Artifact | Path | Size |"
+            echo "|---|---|---|"
+            if [ -f "$apk" ]; then
+              echo "| app-debug.apk | \`apps/parent-app/$apk\` | $(du -h "$apk" | cut -f1) |"
+            else
+              echo "| app-debug.apk | — | NOT BUILT |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

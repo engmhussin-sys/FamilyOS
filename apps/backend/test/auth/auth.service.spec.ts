@@ -159,7 +159,7 @@ describe('AuthService', () => {
     it('rotates the refresh token: old one is consumed, a new pair is issued', async () => {
       tokenServiceMock.verifyAndConsumeRefreshToken.mockResolvedValue({
         payload: { sub: 'user-1', actorType: 'USER', familyId: 'family-1' },
-        record: { id: 'old-token-id' },
+        record: { id: 'old-token-id', familyTokenId: 'family-token-1' },
       });
       tokenServiceMock.issueTokenPair.mockResolvedValue({
         accessToken: 'new-access',
@@ -174,6 +174,34 @@ describe('AuthService', () => {
         'old-refresh-token',
       );
       expect(result.accessToken).toBe('new-access');
+    });
+
+    /** SA-002: without this the rotation chain would be broken into
+     * unrelated single tokens and family-wide revocation could never
+     * reach the attacker's descendant token. */
+    it('carries the rotation lineage forward to the successor token', async () => {
+      tokenServiceMock.verifyAndConsumeRefreshToken.mockResolvedValue({
+        payload: { sub: 'user-1', actorType: 'USER', familyId: 'family-1' },
+        record: { id: 'old-token-id', familyTokenId: 'family-token-1' },
+      });
+      tokenServiceMock.issueTokenPair.mockResolvedValue({
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        accessTokenExpiresInSeconds: 900,
+        refreshTokenExpiresInSeconds: 2_592_000,
+      });
+
+      await authService.refresh('old-refresh-token', {});
+
+      expect(tokenServiceMock.issueTokenPair).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subjectId: 'user-1',
+          actorType: 'USER',
+          familyId: 'family-1',
+          familyTokenId: 'family-token-1',
+          replacesTokenId: 'old-token-id',
+        }),
+      );
     });
   });
 

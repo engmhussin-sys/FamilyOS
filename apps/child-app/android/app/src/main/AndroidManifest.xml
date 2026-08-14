@@ -20,13 +20,36 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+
+    <!-- F1 (audit MA-003): REQUIRED by PermissionManager.kt, which fires
+         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. Without this
+         declaration that Intent throws / is ignored, meaning the battery
+         exemption — the single thing keeping the agent alive overnight —
+         could never actually be requested. Used, therefore declared. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- F1 (audit MA-002/P3): USE_EXACT_ALARM was REMOVED.
+         Google Play restricts it to alarm-clock and calendar apps; a
+         parental-control app declaring it is rejected outright.
+         SCHEDULE_EXACT_ALARM is kept because the runtime path that needs
+         it already degrades safely: RuntimeWatchdogScheduler.kt checks
+         alarmManager.canScheduleExactAlarms() and, when the grant is
+         absent (the default on Android 14+ for this app category), falls
+         back to an inexact but Doze-tolerant alarm. Behaviour is
+         therefore preserved on every API level without the banned
+         permission. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- F1 (audit MA-021): WAKE_LOCK was REMOVED — grep-confirmed zero
+         usage (no newWakeLock / PowerManager.WakeLock anywhere in the
+         Kotlin or Dart source). Every unused sensitive permission is
+         review surface bought for nothing. -->
 
     <application
-        android:label="AI Family Digital Coach — Agent"
-        android:icon="@mipmap/ic_launcher">
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:localeConfig="@xml/locales_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -48,9 +71,16 @@
             android:value="2" />
 
         <!-- Sprint 5: the actual enforcement loop. -->
+        <!-- android:label and android:description are what the child and
+             the parent actually read in Settings > Accessibility, and what
+             the Play reviewer screenshots. Previously the service
+             inherited the app label and had no description at this level,
+             so the list entry said nothing about what it does. -->
         <service
             android:name=".core.ChildGuardAccessibilityService"
             android:exported="false"
+            android:label="@string/accessibility_service_label"
+            android:description="@string/accessibility_service_description"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -60,13 +90,28 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Foreground service.
+
+             foregroundServiceType="specialUse" is the correct and only
+             workable type here: the service exists to keep a parent-set
+             screen-time plan being evaluated on the child's device. It
+             maps to none of the predefined Android 14 types — it is not
+             mediaPlayback, not location, not dataSync (it is not moving
+             a bounded set of data and then stopping), not health. Play
+             requires specialUse to be justified in writing, hence the
+             PROPERTY_SPECIAL_USE_FGS_SUBTYPE element below, which is
+             mandatory on API 34+ and is what the reviewer reads.
+
+             The subtype value deliberately names the user benefit and the
+             continuous nature of the work, because "why can this not be
+             a periodic job?" is the exact question the reviewer asks. -->
         <service
             android:name=".core.ChildGuardForegroundService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Parental control enforcement — keeps device protection active." />
+                android:value="Parental control: continuously evaluates the parent-configured screen-time plan on this child device and shows an on-device break reminder when a limit or bedtime is reached. Must run continuously because enforcement has to react at the moment the child opens an app, which periodic background work cannot guarantee." />
         </service>
 
         <receiver

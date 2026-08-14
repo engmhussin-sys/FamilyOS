@@ -1,4 +1,4 @@
-import type { User, Family, FamilyMember, Device, RefreshToken } from '@prisma/client';
+import type { User, Family, FamilyMember, RefreshToken } from '@prisma/client';
 import type { IRegisterParentInput } from '../../domain/auth.types';
 
 /**
@@ -7,7 +7,6 @@ import type { IRegisterParentInput } from '../../domain/auth.types';
  */
 export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
 export const REFRESH_TOKEN_REPOSITORY = Symbol('REFRESH_TOKEN_REPOSITORY');
-export const DEVICE_REPOSITORY = Symbol('DEVICE_REPOSITORY');
 
 export interface IUserRepository {
   findByEmail(email: string): Promise<User | null>;
@@ -34,12 +33,25 @@ export interface ICreateRefreshTokenInput {
   expiresAt: Date;
   userAgent?: string;
   ipAddress?: string;
+  /** SA-002 rotation lineage. Defaults to `jti` for the first token of a
+   * session; a rotated successor inherits its predecessor's value. */
+  familyTokenId: string;
 }
 
 export interface IRefreshTokenRepository {
   create(input: ICreateRefreshTokenInput): Promise<RefreshToken>;
   findActiveByTokenHash(tokenHash: string): Promise<RefreshToken | null>;
+  /** SA-002: unlike findActiveByTokenHash this returns the row whatever
+   * its state, so an already-revoked token can be told apart from a
+   * token that never existed. Those are very different events. */
+  findAnyByTokenHash(tokenHash: string): Promise<RefreshToken | null>;
   revokeById(id: string, revokedAt: Date): Promise<void>;
+  /** SA-002: revokes every still-active token in one rotation lineage.
+   * Returns how many rows it actually revoked, which is what the audit
+   * record reports. */
+  revokeFamily(familyTokenId: string, revokedAt: Date): Promise<number>;
+  /** SA-002 forensics: links a consumed token to its replacement. */
+  markReplacedBy(id: string, replacedById: string): Promise<void>;
   revokeAllForUser(userId: string, revokedAt: Date): Promise<void>;
   /** Sprint 3 addition — needed by PairingModule's /pairing/revoke to
    * kill a specific device's session without touching any USER's other
@@ -48,18 +60,4 @@ export interface IRefreshTokenRepository {
   revokeAllForDevice(deviceId: string, revokedAt: Date): Promise<void>;
 }
 
-export interface ICreateChildDeviceInput {
-  familyId: string;
-  childId: string;
-  platform: 'ANDROID' | 'IOS';
-  deviceModel?: string;
-  osVersion?: string;
-  appVersion?: string;
-  pushToken?: string;
-}
 
-export interface IDeviceRepository {
-  createPairedChildDevice(input: ICreateChildDeviceInput): Promise<Device>;
-  findById(id: string): Promise<Device | null>;
-  revoke(id: string): Promise<void>;
-}

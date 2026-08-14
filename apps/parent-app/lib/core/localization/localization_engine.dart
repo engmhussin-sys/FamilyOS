@@ -420,10 +420,41 @@ const Map<AppLocale, Map<String, String>> _resources = {
   },
 };
 
-const AppLocale defaultLocale = AppLocale.en;
+/// ARABIC IS THE DEFAULT, not English (audit MA-016).
+///
+/// CONTEXT §1 makes Arabic the product's FIRST language for the first two
+/// markets (Egypt, then Saudi Arabia) — "RTL حقيقي، لا ترجمة". Shipping
+/// `AppLocale.en` here meant every child and every parent in those markets
+/// opened the app in English and had to go find a language switch, which
+/// is the exact opposite of the stated positioning.
+///
+/// This constant is also the FALLBACK used by `translate()` when a key is
+/// missing from the requested locale. Both apps currently have full ar/en
+/// key parity, so the flip does not change any resolved string today; if
+/// parity ever breaks, an untranslated key now falls back to Arabic rather
+/// than surfacing English inside an otherwise-Arabic screen.
+const AppLocale defaultLocale = AppLocale.ar;
 const List<AppLocale> rtlLocales = [AppLocale.ar];
 
 bool isRtl(AppLocale locale) => rtlLocales.contains(locale);
+
+/// Stable, persistable code for an [AppLocale]. Deliberately the plain
+/// ISO-639-1 code so what is written to storage matches what
+/// `Locale.languageCode` and Android's `values-<code>` resource
+/// qualifiers use — one vocabulary across the whole stack.
+String appLocaleCode(AppLocale locale) => switch (locale) {
+      AppLocale.en => 'en',
+      AppLocale.ar => 'ar',
+    };
+
+/// Inverse of [appLocaleCode]. Returns `null` for anything unsupported so
+/// callers can decide their own fallback, rather than silently pretending
+/// an unknown language is the default.
+AppLocale? appLocaleFromCode(String? code) => switch (code) {
+      'en' => AppLocale.en,
+      'ar' => AppLocale.ar,
+      _ => null,
+    };
 
 String _resolvePluralKey(String key, int? count, Map<String, String> resources) {
   if (count == null) return key;

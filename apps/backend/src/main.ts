@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import compression from 'compression';
 import * as Sentry from '@sentry/node';
@@ -7,6 +8,7 @@ import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { configureTrustProxy } from './common/http/trust-proxy';
 
 /**
  * Sprint 4 (Observability) — CLOSES A REAL GAP: before this, a real
@@ -29,7 +31,11 @@ Sentry.init({
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
+
+  // SA-004: must run before anything reads req.ip — see trust-proxy.ts for
+  // why this is a hop count and not `true`.
+  configureTrustProxy(app);
 
   // Sprint 9: stricter helmet config than the bare default \u2014 a real CSP
   // for a JSON API (no inline scripts/styles ever served from here) plus
