@@ -65,6 +65,6 @@
          read (the current app name) and what is NOT read (screen content).
          ================================================================== -->
     <string name="accessibility_service_label">ABNY screen-time plan</string>
-    <string name="accessibility_service_description">Lets ABNY know which app is currently open, so it can apply the screen time plan a parent has set. It does not read anything on the screen.</string>
+    <string name="accessibility_service_description">ABNY uses this service for one thing: to know the name of the app that is open right now, so it can apply the screen-time plan a parent set up for this device. It cannot read what is shown on the screen, what is typed, messages, or passwords — the service is declared with canRetrieveWindowContent=false, so the system does not give it that data at all. You can turn it off from this same screen at any time.</string>
 
 </resources>

@@ -16,13 +16,20 @@
  * in any order and in parallel-safe isolation within a single test DB.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { createTestPrisma } from '../tenancy/prisma-test-client';
 
-const prisma = new PrismaClient();
+// F2: built through the shared test factory rather than `new PrismaClient()`.
+// Same client, same assertions — but the factory also knows how to open a real
+// connection in the environment where the native Prisma engine binary cannot be
+// downloaded (binaries.prisma.sh answers 403), so these four tests stop being
+// permanently red there. `.raw` is the UN-extended client: this suite is about
+// referential integrity, not tenancy, and must not be scoped.
+const handle = createTestPrisma();
+const prisma = handle.raw;
 
 describe('Database schema integrity', () => {
   afterAll(async () => {
-    await prisma.$disconnect();
+    await handle.disconnect();
   });
 
   describe('Family → User → Child cascade chain', () => {
@@ -127,6 +134,7 @@ describe('Database schema integrity', () => {
 
       await prisma.parentalConsent.create({
         data: {
+          familyId: family.id,
           childId: child.id,
           consentType: 'LOCATION_TRACKING',
           grantedByUserId: user.id,
@@ -136,6 +144,7 @@ describe('Database schema integrity', () => {
       await expect(
         prisma.parentalConsent.create({
           data: {
+            familyId: family.id,
             childId: child.id,
             consentType: 'LOCATION_TRACKING',
             grantedByUserId: user.id,
@@ -172,6 +181,7 @@ describe('Database schema integrity', () => {
 
       await prisma.appUsageLog.create({
         data: {
+          familyId: family.id,
           childId: child.id,
           deviceId: device.id,
           packageName: 'com.example.game',
@@ -183,6 +193,7 @@ describe('Database schema integrity', () => {
       await expect(
         prisma.appUsageLog.create({
           data: {
+            familyId: family.id,
             childId: child.id,
             deviceId: device.id,
             packageName: 'com.example.game',

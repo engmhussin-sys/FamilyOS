@@ -62,6 +62,7 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
         delta,
         params.source,
         params.idempotencyKey,
+        familyId,
       ]);
       if (inserted.rowCount === 0) {
         await client.query('COMMIT');
@@ -73,6 +74,7 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
         params.rewardType === 'COINS' ? delta : 0,
         params.rewardType === 'BADGE' ? delta : 0,
         params.newLevel ?? null,
+        familyId,
       ]);
       await client.query('COMMIT');
       return true;
@@ -97,6 +99,7 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
       const claimed = await client.query(SQL_CLAIM_REDEMPTION, [
         params.redemptionId,
         params.decidedByUserId,
+        familyId,
       ]);
       if (claimed.rowCount === 0) {
         await client.query('ROLLBACK');
@@ -105,6 +108,7 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
       const deducted = await client.query(SQL_DEDUCT_COINS_IF_SUFFICIENT, [
         params.childId,
         params.costCoins,
+        familyId,
       ]);
       if (deducted.rowCount === 0) {
         await client.query('ROLLBACK');
@@ -114,6 +118,7 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
         params.childId,
         params.costCoins,
         params.redemptionId,
+        familyId,
       ]);
       await client.query('COMMIT');
       return 'APPROVED';
@@ -134,7 +139,7 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
   }
 
   async function ledgerBalance(): Promise<Record<string, number>> {
-    const { rows } = await pool.query(SQL_BALANCE_FROM_LEDGER, [childId]);
+    const { rows } = await pool.query(SQL_BALANCE_FROM_LEDGER, [childId, familyId]);
     return Object.fromEntries(rows.map((r) => [r.reward_type, Number(r.balance)]));
   }
 
@@ -170,9 +175,9 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
     childId = child.rows[0].id;
 
     await pool.query(
-      `INSERT INTO rewards_accounts (id, child_id, xp, coins, stars, level, updated_at)
-       VALUES (gen_random_uuid(), $1, 0, 0, 0, 1, now())`,
-      [childId],
+      `INSERT INTO rewards_accounts (id, family_id, child_id, xp, coins, stars, level, updated_at)
+       VALUES (gen_random_uuid(), $2, $1, 0, 0, 0, 1, now())`,
+      [childId, familyId],
     );
   });
 
@@ -234,9 +239,9 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
       );
       const siblingId = sibling.rows[0].id;
       await pool.query(
-        `INSERT INTO rewards_accounts (id, child_id, xp, coins, stars, level, updated_at)
-         VALUES (gen_random_uuid(), $1, 0, 0, 0, 1, now())`,
-        [siblingId],
+        `INSERT INTO rewards_accounts (id, family_id, child_id, xp, coins, stars, level, updated_at)
+         VALUES (gen_random_uuid(), $2, $1, 0, 0, 0, 1, now())`,
+        [siblingId, familyId],
       );
 
       const key = 'shared-family-event-key';
@@ -260,9 +265,9 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
         [familyId, costCoins, userId],
       );
       const redemption = await pool.query(
-        `INSERT INTO reward_redemptions (id, child_id, reward_catalog_item_id, status, requested_at)
-         VALUES (gen_random_uuid(), $1, $2, 'REQUESTED', now()) RETURNING id`,
-        [childId, item.rows[0].id],
+        `INSERT INTO reward_redemptions (id, family_id, child_id, reward_catalog_item_id, status, requested_at)
+         VALUES (gen_random_uuid(), $3, $1, $2, 'REQUESTED', now()) RETURNING id`,
+        [childId, item.rows[0].id, familyId],
       );
       return redemption.rows[0].id;
     }
@@ -308,9 +313,9 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
       const redemptionIds: string[] = [];
       for (let i = 0; i < 12; i++) {
         const r = await pool.query(
-          `INSERT INTO reward_redemptions (id, child_id, reward_catalog_item_id, status, requested_at)
-           VALUES (gen_random_uuid(), $1, $2, 'REQUESTED', now()) RETURNING id`,
-          [childId, item.rows[0].id],
+          `INSERT INTO reward_redemptions (id, family_id, child_id, reward_catalog_item_id, status, requested_at)
+           VALUES (gen_random_uuid(), $3, $1, $2, 'REQUESTED', now()) RETURNING id`,
+          [childId, item.rows[0].id, familyId],
         );
         redemptionIds.push(r.rows[0].id);
       }
@@ -359,9 +364,9 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
         [familyId, userId],
       );
       const redemption = await pool.query(
-        `INSERT INTO reward_redemptions (id, child_id, reward_catalog_item_id, status, requested_at)
-         VALUES (gen_random_uuid(), $1, $2, 'REQUESTED', now()) RETURNING id`,
-        [childId, item.rows[0].id],
+        `INSERT INTO reward_redemptions (id, family_id, child_id, reward_catalog_item_id, status, requested_at)
+         VALUES (gen_random_uuid(), $3, $1, $2, 'REQUESTED', now()) RETURNING id`,
+        [childId, item.rows[0].id, familyId],
       );
       await approveRedemption({
         redemptionId: redemption.rows[0].id,
@@ -391,7 +396,7 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
       await pool.query('UPDATE rewards_accounts SET coins = 999 WHERE child_id = $1', [childId]);
       expect((await account()).coins).toBe(999);
 
-      await pool.query(SQL_RECONCILE_ACCOUNT_FROM_LEDGER, [childId]);
+      await pool.query(SQL_RECONCILE_ACCOUNT_FROM_LEDGER, [childId, familyId]);
 
       expect((await account()).coins).toBe(120);
       expect((await ledgerBalance()).COINS).toBe(120);
@@ -409,9 +414,9 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
       await expect(
         pool.query(
           `INSERT INTO rewards_ledger_entries
-             (id, child_id, type, reward_type, amount, delta, source, idempotency_key, created_at)
-           VALUES (gen_random_uuid(), $1, 'EARN', 'COINS', 10, -10, 'bogus', 'bogus-key', now())`,
-          [childId],
+             (id, family_id, child_id, type, reward_type, amount, delta, source, idempotency_key, created_at)
+           VALUES (gen_random_uuid(), $2, $1, 'EARN', 'COINS', 10, -10, 'bogus', 'bogus-key', now())`,
+          [childId, familyId],
         ),
       ).rejects.toThrow(/rewards_ledger_entries_delta_matches_type/);
     });

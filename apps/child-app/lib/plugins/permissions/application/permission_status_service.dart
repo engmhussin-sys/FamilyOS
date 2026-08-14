@@ -26,26 +26,31 @@ class PermissionStatusService {
         kind: AgentPermissionKind.usageAccess,
         isGranted: results[0],
         label: 'Usage Access',
+        labelKey: 'permissions.usageAccess',
       ),
       PermissionStatus(
         kind: AgentPermissionKind.accessibilityService,
         isGranted: results[1],
         label: 'Accessibility Service',
+        labelKey: 'permissions.accessibilityService',
       ),
       PermissionStatus(
         kind: AgentPermissionKind.overlay,
         isGranted: results[2],
         label: 'Display Over Other Apps',
+        labelKey: 'permissions.overlay',
       ),
       PermissionStatus(
         kind: AgentPermissionKind.batteryOptimization,
         isGranted: results[3],
         label: 'Battery Optimization Exemption',
+        labelKey: 'permissions.batteryOptimization',
       ),
       PermissionStatus(
         kind: AgentPermissionKind.notifications,
         isGranted: results[4],
         label: 'Notifications',
+        labelKey: 'permissions.notifications',
       ),
     ];
   }

@@ -15,28 +15,28 @@ export class SupportService {
     private readonly entitlements: EntitlementsService,
   ) {}
 
-  /** HONEST NOTE: `familyId`/`userId` in the DTO are client-supplied,
-   * NOT verified against a JWT here (this endpoint is deliberately
-   * public/unauthenticated — see the DTO's own docstring for why).
-   * They are metadata on an internal support record a human reads
-   * later, never used to authorize any read/write elsewhere — a
-   * mismatched value here has no security consequence beyond
-   * slightly-wrong context on one support request.
+  /**
+   * F2: the identity is now SERVER-DERIVED or absent. `actor` is built by the
+   * controller from `request.user`, which only exists when
+   * OptionalJwtAuthGuard verified a real token signature. An anonymous
+   * submission stores `familyId: null` — honestly unattributed — and is never
+   * priority, because there is no verified plan to check.
    *
-   * SAME CAVEAT APPLIES to `isPriority` below (CLOSES A REAL GAP —
-   * 'priority_support' existed as a plan feature since Sprint 8 with
-   * zero enforcement anywhere): the worst case of a spoofed familyId
-   * here is a free-tier request incorrectly flagged priority in an
-   * internal support queue — low-stakes, unlike every other
-   * entitlement check in this codebase which gates real data access
-   * and is therefore JWT-verified. Accepted deliberately, not an
-   * oversight, given what's actually at risk. */
-  async submit(dto: CreateSupportRequestDto): Promise<ISupportRequestRecord> {
-    const isPriority = dto.familyId ? await this.entitlements.hasFeature(dto.familyId, 'priority_support') : false;
+   * The previous version read `dto.familyId`, i.e. trusted the request body,
+   * which meant anyone could type a UUID and be treated as that family for the
+   * `priority_support` entitlement lookup.
+   */
+  async submit(
+    dto: CreateSupportRequestDto,
+    actor?: { familyId?: string; userId?: string },
+  ): Promise<ISupportRequestRecord> {
+    const isPriority = actor?.familyId
+      ? await this.entitlements.hasFeature(actor.familyId, 'priority_support')
+      : false;
 
     return this.repository.create({
-      familyId: dto.familyId ?? null,
-      userId: dto.userId ?? null,
+      familyId: actor?.familyId ?? null,
+      userId: actor?.userId ?? null,
       email: dto.email,
       subject: dto.subject,
       message: dto.message,

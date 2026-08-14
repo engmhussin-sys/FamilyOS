@@ -61,6 +61,29 @@ env:
   # 17 is the only version that satisfies all three.
   JAVA_VERSION: "17"
 
+  # --- API_BASE_URL — the F2 addition, and the difference between an APK
+  # that installs and an APK that works (audit MA-004) ----------------------
+  # Both Flutter apps read their base URL from
+  # `String.fromEnvironment('API_BASE_URL')`. Nothing else is configurable.
+  #
+  # DEBUG: falls back to the emulator/host alias when the repository variable
+  # is unset, so this workflow keeps producing a usable artifact with zero
+  # repo configuration. The value MUST name a host that
+  # android/app/src/debug/res/xml/network_security_config.xml permits in
+  # cleartext (10.0.2.2, 10.0.3.2, 127.0.0.1, localhost, abny-dev.local) or
+  # else be https — otherwise the platform blocks every request at runtime
+  # and AppConfig.configurationError() says exactly that on the console.
+  #
+  # RELEASE: no default, on purpose. AppConfig throws at startup in release
+  # mode if the URL is not https, so building a release APK without a real
+  # backend URL would produce a crash-on-launch artifact. The release step
+  # below is therefore SKIPPED, loudly, when the variable is absent.
+  #
+  # To set them: repository Settings > Secrets and variables > Actions >
+  # Variables:  DEV_API_BASE_URL, RELEASE_API_BASE_URL.
+  DEV_API_BASE_URL: ${{ vars.DEV_API_BASE_URL || 'http://10.0.2.2:3000/api/v1' }}
+  RELEASE_API_BASE_URL: ${{ vars.RELEASE_API_BASE_URL }}
+
 jobs:
   # ==========================================================================
   # CHILD APP — the primary deliverable of sprint F1.
@@ -133,8 +156,12 @@ jobs:
 
       # HARD GATE. This is the deliverable. No continue-on-error here: if the
       # debug APK does not build, this job is red and says so.
+      #
+      # F2: --dart-define=API_BASE_URL is now MANDATORY on every build
+      # invocation. Without it the APK still built — it just could not talk
+      # to anything (MA-004). See the env block at the top of this file.
       - name: Build debug APK
-        run: flutter build apk --debug
+        run: flutter build apk --debug --dart-define=API_BASE_URL=$DEV_API_BASE_URL
 
       # Release is a BONUS, not the deliverable, so it may fail without
       # sinking the run. It is attempted because android/app/build.gradle
@@ -142,9 +169,15 @@ jobs:
       # upload keystore is required to produce an installable artifact.
       # It can still fail on R8/shrinker issues that debug never exercises —
       # which is itself useful information to surface early.
+      #
+      # SKIPPED when RELEASE_API_BASE_URL is unset: AppConfig throws on
+      # startup in release mode unless the URL is https, so the artifact
+      # would be a crash-on-launch APK. Producing one and calling it a
+      # "release build" is the false green CONTEXT §3.9 forbids.
       - name: Build release APK (best-effort — debug-signed)
         id: release
-        run: flutter build apk --release
+        if: env.RELEASE_API_BASE_URL != ''
+        run: flutter build apk --release --dart-define=API_BASE_URL=$RELEASE_API_BASE_URL
         continue-on-error: true
 
       - name: Upload debug APK
@@ -174,7 +207,12 @@ jobs:
             echo "|---|---|"
             echo "| flutter analyze | ${{ steps.analyze.outcome }} (non-blocking) |"
             echo "| flutter test | ${{ steps.test.outcome }} (non-blocking) |"
-            echo "| release build | ${{ steps.release.outcome }} (best-effort) |"
+            echo "| release build | ${{ steps.release.outcome }} (best-effort; skipped without RELEASE_API_BASE_URL) |"
+            echo ""
+            echo "| dart-define | Value |"
+            echo "|---|---|"
+            echo "| API_BASE_URL (debug) | \`$DEV_API_BASE_URL\` |"
+            echo "| API_BASE_URL (release) | \`${RELEASE_API_BASE_URL:-<unset — release skipped>}\` |"
             echo ""
             echo "| Artifact | Path | Size |"
             echo "|---|---|---|"
@@ -277,9 +315,9 @@ jobs:
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
 
-      # HARD GATE.
+      # HARD GATE. F2: same mandatory --dart-define as the child app.
       - name: Build debug APK
-        run: flutter build apk --debug
+        run: flutter build apk --debug --dart-define=API_BASE_URL=$DEV_API_BASE_URL
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -298,6 +336,7 @@ jobs:
             echo "| Step | Result |"
             echo "|---|---|"
             echo "| flutter analyze | ${{ steps.analyze.outcome }} (non-blocking) |"
+            echo "| API_BASE_URL (debug) | \`$DEV_API_BASE_URL\` |"
             echo ""
             apk="build/app/outputs/flutter-apk/app-debug.apk"
             echo "| Artifact | Path | Size |"

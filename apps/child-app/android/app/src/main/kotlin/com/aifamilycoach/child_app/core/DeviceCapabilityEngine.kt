@@ -18,15 +18,13 @@ import java.security.MessageDigest
 class DeviceCapabilityEngine(private val context: Context) {
     private val permissionManager = PermissionManager(context)
 
-    fun collect(accessibilityServiceComponentName: String): DeviceCapabilityReport {
+    fun collect(): DeviceCapabilityReport {
         val report = DeviceCapabilityReport(
             manufacturer = Build.MANUFACTURER,
             model = Build.MODEL,
             sdkInt = Build.VERSION.SDK_INT,
             usageAccessGranted = permissionManager.isUsageAccessGranted(),
-            accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-                accessibilityServiceComponentName,
-            ),
+            accessibilityEnabled = permissionManager.isChildGuardAccessibilityServiceEnabled(),
             overlayGranted = permissionManager.hasOverlayPermission(),
             batteryOptimizationExempted = permissionManager.isBatteryOptimizationExempted(),
             notificationsGranted = permissionManager.areNotificationsGranted(),
@@ -34,12 +32,12 @@ class DeviceCapabilityEngine(private val context: Context) {
         return report.copy(profileHash = computeHash(report))
     }
 
-    fun collectExpanded(accessibilityServiceComponentName: String): List<CapabilityEntry> {
+    fun collectExpanded(): List<CapabilityEntry> {
         val pm = context.packageManager
         val entries = mutableListOf<CapabilityEntry>()
 
         entries += CapabilityEntry("accessibility", true,
-            permissionManager.isAccessibilityServiceEnabled(accessibilityServiceComponentName), true, 1.0)
+            permissionManager.isChildGuardAccessibilityServiceEnabled(), true, 1.0)
         entries += CapabilityEntry("overlay", true, permissionManager.hasOverlayPermission(), true, 1.0)
         entries += CapabilityEntry("usage_access", true, permissionManager.isUsageAccessGranted(), true, 1.0)
         entries += CapabilityEntry("notifications", true, permissionManager.areNotificationsGranted(), false, 1.0)

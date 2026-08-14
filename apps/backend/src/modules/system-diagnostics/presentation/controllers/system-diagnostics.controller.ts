@@ -4,6 +4,7 @@ import type { Response } from 'express';
 import { ReadinessCheckService } from '../../application/readiness-check.service';
 import { ConfigurationService } from '../../../../config/configuration.service';
 import { FeatureFlagService } from '../../../feature-flags/application/feature-flag.service';
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 
 /**
  * No auth guard \u2014 same reasoning as HealthController: infrastructure
@@ -21,6 +22,7 @@ export class SystemDiagnosticsController {
   ) {}
 
   @Get('readiness')
+  @SystemRoute('HEALTH_CHECK', 'Infrastructure readiness probe; cannot authenticate and exposes no tenant data.')
   async readiness(@Res() res: Response) {
     const results = await this.readinessCheck.checkAll();
     const hasNotReady = results.some((r) => r.status === 'NOT_READY');
@@ -33,6 +35,7 @@ export class SystemDiagnosticsController {
   }
 
   @Get('diagnostics')
+  @SystemRoute('HEALTH_CHECK', 'Non-sensitive build/config diagnostics; reads FeatureFlag, a global model, and no tenant rows.')
   async diagnostics() {
     const memoryUsage = process.memoryUsage();
     const validationReport = this.configurationService.getValidationReport();

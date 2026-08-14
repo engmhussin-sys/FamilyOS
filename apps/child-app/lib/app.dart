@@ -8,6 +8,7 @@ import 'core/localization/locale_controller.dart';
 import 'core/theme/kid_theme.dart';
 import 'features/pairing/presentation/pairing_screen.dart';
 import 'features/device_status/presentation/device_home_screen.dart';
+import 'features/onboarding/presentation/prominent_disclosure_screen.dart';
 
 /// Sprint 4 update: the paired-state landing screen is now
 /// DeviceHomeScreen (permission checklist + capability sync), replacing
@@ -65,6 +66,15 @@ class _AppRoot extends ConsumerStatefulWidget {
 
 class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver {
   bool? _isPaired;
+
+  /// F2 (Play User Data policy; audit A3 §4/P2, verdict risk R5).
+  /// `null` = not read yet, `false` = disclosure must be shown FIRST.
+  ///
+  /// This gate sits ABOVE pairing on purpose. Pairing is the first thing
+  /// that talks to the backend, so putting the disclosure after it would
+  /// mean data left the device before the family was told what leaves the
+  /// device — which is the exact ordering the policy forbids.
+  bool? _hasAcknowledgedDisclosure;
   Timer? _wellbeingSafetyTimer;
 
   // FIXES A REAL COST GAP (Sprint 14.2): threshold state, checked
@@ -108,21 +118,50 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
   }
 
   Future<void> _checkSession() async {
+    // Disclosure first, session second — see _hasAcknowledgedDisclosure.
+    try {
+      final acknowledged =
+          await ref.read(onboardingConsentStoreProvider).hasAcknowledgedDisclosure();
+      if (mounted) setState(() => _hasAcknowledgedDisclosure = acknowledged);
+    } catch (_) {
+      // A preferences read failure must fail SAFE, i.e. towards showing
+      // the disclosure again, never towards skipping it.
+      if (mounted) setState(() => _hasAcknowledgedDisclosure = false);
+    }
+
     final tokenStorage = ref.read(tokenStorageProvider);
     final hasSession = await tokenStorage.hasSession();
     if (mounted) setState(() => _isPaired = hasSession);
-    if (hasSession) {
-      ref.read(heartbeatServiceProvider).start();
-      await _syncRuntimeAndStartEnforcement();
-      _startDigitalWellbeing();
+    // The heartbeat and the wellbeing sync are the two things that MOVE
+    // DATA OFF THE DEVICE. Neither may start before the disclosure has
+    // been acknowledged — including on an EXISTING paired install that is
+    // upgrading into this build, which is the case a naive gate at the
+    // widget level would have missed entirely: the widget would show the
+    // disclosure while the services quietly uploaded behind it.
+    if (hasSession && _hasAcknowledgedDisclosure == true) {
+      await _startSessionServices();
     }
+  }
+
+  /// Everything that begins network activity for a paired device. Split
+  /// out so it has exactly two callers, both of which are gated on the
+  /// disclosure: [_checkSession] and [_onDisclosureAccepted].
+  Future<void> _startSessionServices() async {
+    ref.read(heartbeatServiceProvider).start();
+    await _syncRuntimeAndStartEnforcement();
+    _startDigitalWellbeing();
+  }
+
+  void _onDisclosureAccepted() {
+    setState(() => _hasAcknowledgedDisclosure = true);
+    // An already-paired device that was waiting on the disclosure starts
+    // its services now, not on the next cold start.
+    if (_isPaired == true) _startSessionServices();
   }
 
   void _onPaired() {
     setState(() => _isPaired = true);
-    ref.read(heartbeatServiceProvider).start();
-    _syncRuntimeAndStartEnforcement();
-    _startDigitalWellbeing();
+    _startSessionServices();
   }
 
   /// FIXES A REAL COST GAP (Sprint 14.2 — previously found in Sprint
@@ -232,8 +271,11 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
 
   @override
   Widget build(BuildContext context) {
-    if (_isPaired == null) {
+    if (_isPaired == null || _hasAcknowledgedDisclosure == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_hasAcknowledgedDisclosure == false) {
+      return ProminentDisclosureScreen(onAccepted: _onDisclosureAccepted);
     }
     if (_isPaired == false) {
       return PairingScreen(onPaired: _onPaired);

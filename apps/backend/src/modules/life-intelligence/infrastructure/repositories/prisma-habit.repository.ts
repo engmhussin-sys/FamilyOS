@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IHabit, IHabitCompletion, ICreateHabitInput, HabitCompletionStatus } from '../../domain/habit.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaHabitRepository {
@@ -10,6 +11,7 @@ export class PrismaHabitRepository {
   async create(input: ICreateHabitInput): Promise<IHabit> {
     const row = await this.prisma.habit.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         title: input.title,
         category: input.category,
@@ -73,7 +75,7 @@ export class PrismaHabitRepository {
   async recordCompletion(habitId: string, childId: string, date: Date, status: HabitCompletionStatus = 'COMPLETED'): Promise<IHabitCompletion> {
     const row = await this.prisma.habitCompletion.upsert({
       where: { habitId_date: { habitId, date } },
-      create: { habitId, childId, date, status },
+      create: { familyId: tenantIdForWrite(), habitId, childId, date, status },
       update: { status },
     });
     return {
@@ -106,7 +108,7 @@ export class PrismaHabitRepository {
     if (missedHabitIds.length === 0) return 0;
 
     await this.prisma.habitCompletion.createMany({
-      data: missedHabitIds.map((habitId: string) => ({ habitId, childId, date, status: 'MISSED' })),
+      data: missedHabitIds.map((habitId: string) => ({ familyId: tenantIdForWrite(), habitId, childId, date, status: 'MISSED' as const })),
       skipDuplicates: true, // defense-in-depth against a race with a real completion landing between the two reads above
     });
     return missedHabitIds.length;

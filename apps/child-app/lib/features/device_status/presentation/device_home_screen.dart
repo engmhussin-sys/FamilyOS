@@ -8,6 +8,8 @@ import '../../../plugins/runtime/application/runtime_coordinator.dart';
 import '../../../plugins/telemetry/contracts/runtime_telemetry.dart';
 import '../../family_growth/presentation/my_growth_screen.dart';
 import '../../family_growth/presentation/rewards_screen.dart';
+import '../../onboarding/presentation/accessibility_priming_screen.dart';
+import '../../onboarding/presentation/oem_setup_screen.dart';
 
 /// Combines Sprint 4's three Flutter requirements ("Permission
 /// onboarding," "Child status," "Device health") into ONE screen rather
@@ -31,6 +33,13 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
   RuntimeTelemetrySnapshot? _telemetry;
   int _queuedEventCount = 0;
 
+  /// F2 (verdict risk R7): the OEM autostart step is offered ONCE,
+  /// automatically, and only on a device that needs it. Guarded by this
+  /// flag as well as by the persisted store so a resume from Settings —
+  /// which re-runs didChangeAppLifecycleState — cannot push the screen a
+  /// second time on top of itself.
+  bool _oemStepEvaluated = false;
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +47,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
     _refreshPermissions();
     _refreshEnforcementStatus();
     _refreshDiagnostics();
+    _maybeOfferOemStep();
   }
 
   @override
@@ -57,6 +67,42 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
       _refreshEnforcementStatus();
       _refreshDiagnostics();
     }
+  }
+
+  /// F2 (verdict risk R7). Shows the OEM autostart step exactly once per
+  /// install, and only when the device is one of the skins that kills
+  /// background services outside AOSP rules, or when the battery
+  /// exemption is missing. Every failure path here is swallowed: this is
+  /// a helpful extra step, and it must never be able to stop the status
+  /// screen from rendering.
+  Future<void> _maybeOfferOemStep() async {
+    if (_oemStepEvaluated) return;
+    _oemStepEvaluated = true;
+    try {
+      final store = ref.read(onboardingConsentStoreProvider);
+      if (await store.hasCompletedOemStep()) return;
+      final info = await ref.read(oemBackgroundServiceProvider).load();
+      if (!info.needsAttention) return;
+      if (!mounted) return;
+      await OemSetupScreen.show(context);
+    } catch (_) {
+      // Best-effort, like every other optional path on this screen.
+    }
+  }
+
+  /// F2 (Play policy, verdict risk R5). The permission checklist used to
+  /// deep-link straight into the system Accessibility screen. Every route
+  /// to that screen now passes through the priming interstitial first,
+  /// which is both the policy requirement and the honest thing to do for
+  /// the most powerful permission on the platform.
+  ///
+  /// Declining is a no-op — no nagging, no repeat prompt, no "you must".
+  Future<void> _requestPermission(PermissionStatus status) async {
+    if (status.kind == AgentPermissionKind.accessibilityService) {
+      final proceed = await AccessibilityPrimingScreen.show(context);
+      if (!proceed) return;
+    }
+    await ref.read(permissionStatusServiceProvider).requestPermission(status.kind);
   }
 
   /// Sprint 7's Runtime Diagnostics UI — surfaces
@@ -155,6 +201,15 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
               Text(t('deviceStatus.runtimeStatus'), style: const TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               _buildEnforcementStatusTile(t),
+              const SizedBox(height: 8),
+              // Always reachable, not only on first run: the OEM setting
+              // is the one a factory reset, a system update or a
+              // "battery saver" sweep silently undoes.
+              OutlinedButton.icon(
+                onPressed: () => OemSetupScreen.show(context),
+                icon: const Icon(Icons.battery_saver_outlined),
+                label: Text(t('oem.title')),
+              ),
               const SizedBox(height: 16),
               Text(t('deviceStatus.diagnostics'), style: const TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
@@ -246,13 +301,11 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
         status.isGranted ? Icons.check_circle : Icons.warning_amber_rounded,
         color: status.isGranted ? Colors.green : Colors.orange,
       ),
-      title: Text(status.label),
+      title: Text(t(status.labelKey)),
       trailing: status.isGranted
           ? null
           : TextButton(
-              onPressed: () async {
-                await ref.read(permissionStatusServiceProvider).requestPermission(status.kind);
-              },
+              onPressed: () => _requestPermission(status),
               child: Text(t('deviceStatus.fix')),
             ),
     );

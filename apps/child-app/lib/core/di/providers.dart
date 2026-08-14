@@ -23,6 +23,8 @@ import '../../plugins/screen_time/contracts/i_app_usage_collector.dart';
 import '../../plugins/screen_time/infrastructure/platform_app_usage_collector.dart';
 import '../../plugins/screen_time/application/digital_wellbeing_service.dart';
 import '../../plugins/screen_time/application/critical_event_coordinator.dart';
+import '../../features/onboarding/application/onboarding_consent_store.dart';
+import '../../features/onboarding/application/oem_background_service.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -174,4 +176,20 @@ final criticalEventCoordinatorProvider = Provider<CriticalEventCoordinator>((ref
   );
   ref.onDispose(coordinator.dispose);
   return coordinator;
+});
+
+// --- F2: onboarding (Play prominent disclosure + OEM survival) ---
+
+/// Local record that the first-run disclosure was shown and acknowledged
+/// on THIS device (audit A3 §4/P2, verdict risk R5). Not the backend's
+/// ParentalConsent record — see the store's own docstring.
+final onboardingConsentStoreProvider = Provider<OnboardingConsentStore>((ref) {
+  return const SharedPreferencesOnboardingConsentStore();
+});
+
+/// Typed wrapper over the native OEM autostart/battery deep links
+/// (verdict risk R7). Reuses the single agentPlatformChannelProvider like
+/// every other native-facing service here.
+final oemBackgroundServiceProvider = Provider<OemBackgroundService>((ref) {
+  return OemBackgroundService(ref.watch(agentPlatformChannelProvider));
 });

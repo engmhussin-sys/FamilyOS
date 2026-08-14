@@ -37,6 +37,7 @@ import type {
   IHeartbeatTelemetryInput,
   IPolicySyncResponse,
 } from '../../domain/device-status.types';
+import { runWithTenant } from '../../../../common/tenancy/tenant-context';
 
 export interface IDeviceRegistrationResult {
   deviceId: string;
@@ -103,6 +104,21 @@ export class PairingOrchestratorService {
    * only a SECOND device for the SAME child requires the entitlement
    * (a family with two phones for the same kid, not two different kids). */
   async registerDevice(
+    childId: string,
+    familyId: string,
+    input: Omit<ICreatePairingDeviceInput, 'childId' | 'familyId'>,
+  ): Promise<IDeviceRegistrationResult> {
+    // childId/familyId come from RegistrationTokenGuard's server-issued token
+    // (registration-token.guard.ts), not from the request body. Binding them as
+    // the tenant here converts an AUTH_BOOTSTRAP SystemContext into a real,
+    // narrow tenant scope for the rest of the registration.
+    return runWithTenant(
+      { familyId, actorType: 'DEVICE', actorId: `pairing-register:${childId}` },
+      () => this.registerDeviceScoped(childId, familyId, input),
+    );
+  }
+
+  private async registerDeviceScoped(
     childId: string,
     familyId: string,
     input: Omit<ICreatePairingDeviceInput, 'childId' | 'familyId'>,

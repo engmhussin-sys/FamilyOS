@@ -27,6 +27,7 @@ import { JwtAuthGuard, DeviceJwtAuthGuard } from '../../../auth/presentation/gua
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
 import type { IConsumedRegistrationToken } from '../../domain/registration-token.types';
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 
 @Controller('pairing')
 export class PairingController {
@@ -41,6 +42,10 @@ export class PairingController {
   }
 
   @Post('accept')
+  @SystemRoute(
+    'AUTH_BOOTSTRAP',
+    'A child device redeems a one-time pairing code before it holds any token; the family is resolved FROM the code, server-side.',
+  )
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   accept(@Body() dto: AcceptDto) {
@@ -48,6 +53,10 @@ export class PairingController {
   }
 
   @Post('device/register')
+  @SystemRoute(
+    'AUTH_BOOTSTRAP',
+    'RegistrationTokenGuard supplies childId/familyId from a server-issued registration token, not from a tenant access token.',
+  )
   @UseGuards(RegistrationTokenGuard)
   @HttpCode(HttpStatus.CREATED)
   registerDevice(

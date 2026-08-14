@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IGeneratedSmartTask, ISmartTask } from '../../domain/smart-task.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaSmartTaskRepository {
@@ -11,6 +12,7 @@ export class PrismaSmartTaskRepository {
   async createMany(childId: string, suggestions: IGeneratedSmartTask[], suggestedDate: Date, sourceSignals: Record<string, unknown>): Promise<number> {
     const result = await this.prisma.smartTask.createMany({
       data: suggestions.map((s) => ({
+        familyId: tenantIdForWrite(),
         childId,
         title: s.title,
         category: s.category,

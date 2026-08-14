@@ -8,6 +8,7 @@ import { AiUsageTrackingService } from '../../infrastructure/ai-usage-tracking.s
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { InternalAdminGuard } from '../../../../common/guards/internal-admin.guard';
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
 
@@ -80,6 +81,7 @@ export class AiPlatformController {
    * logged-in user see the whole business's AI spend. `windowDays`
    * defaults to 30 if not provided. */
   @Get('usage-summary')
+  @SystemRoute('ADMIN_CONSOLE', 'Platform-wide AI cost roll-up; aggregating one family at a time would defeat the purpose of the report.')
   @UseGuards(InternalAdminGuard)
   getUsageSummary(@Query('windowDays') windowDays?: string) {
     const parsed = windowDays ? parseInt(windowDays, 10) : 30;

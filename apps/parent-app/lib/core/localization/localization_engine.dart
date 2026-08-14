@@ -393,6 +393,15 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'family.continueButton': 'متابعة',
     'dashboard.title': 'الرئيسية',
     'dashboard.familySummary': 'ملخص العائلة',
+    // F2: the BASE key was missing from Arabic while _one/_other were
+    // present. Latent rather than active (every call site passes a
+    // count, so _resolvePluralKey never falls back to the base key) —
+    // but since F1 made Arabic the DEFAULT locale, a missing Arabic key
+    // no longer degrades to English: translate() falls back to the same
+    // Arabic map and then to the RAW KEY, which is what the user would
+    // read on screen. Parity is now enforced by
+    // scripts/verify_l10n_parity.py.
+    'dashboard.children': '{{count}} أطفال',
     'dashboard.children_one': 'طفل واحد',
     'dashboard.children_other': '{{count}} أطفال',
     'dashboard.devices': '{{count}} أجهزة',

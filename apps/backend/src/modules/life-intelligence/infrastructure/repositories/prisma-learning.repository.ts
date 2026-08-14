@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { ICreateLearningGoalInput, ICreateLearningSessionInput, ILearningGoal, ILearningSession } from '../../domain/learning.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaLearningRepository {
@@ -10,6 +11,7 @@ export class PrismaLearningRepository {
   async createGoal(input: ICreateLearningGoalInput): Promise<ILearningGoal> {
     const row = await this.prisma.learningGoal.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         subject: input.subject,
         title: input.title,
@@ -27,6 +29,7 @@ export class PrismaLearningRepository {
   async createSession(input: ICreateLearningSessionInput): Promise<ILearningSession> {
     const row = await this.prisma.learningSession.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         goalId: input.goalId,
         subject: input.subject,

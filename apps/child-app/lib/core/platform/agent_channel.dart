@@ -105,4 +105,25 @@ abstract class AgentPlatformChannel {
   Future<Map<Object?, Object?>> getEnforcementStatus();
 
   Future<void> startEnforcementService();
+
+  // --- F2 (audit verdict R7): OEM background-restriction onboarding ---
+
+  /// Describes this device's manufacturer-specific "keep this app
+  /// running" screen. Keys: `manufacturer`, `brand`, `oemKey`,
+  /// `hasOemIntent`, `batteryExempt`.
+  ///
+  /// `oemKey` is one of `xiaomi`, `oppo`, `vivo`, `huawei`, `samsung`,
+  /// `transsion`, `generic` — never null, never an error: an unrecognised
+  /// manufacturer is a normal answer (`generic`), not a failure.
+  Future<Map<Object?, Object?>> getOemBackgroundRestrictionInfo();
+
+  /// Opens the best screen this device actually has: the vendor autostart
+  /// list, else the platform battery-optimisation list, else this app's
+  /// settings page. Returns which one opened (`oem_autostart`,
+  /// `battery_optimization`, `app_details`, `none`) so the UI can describe
+  /// what the user is looking at instead of guessing.
+  ///
+  /// The native side never throws for a missing OEM Activity — that is the
+  /// single most common crash in apps that ship this feature.
+  Future<String> openOemBackgroundSettings();
 }

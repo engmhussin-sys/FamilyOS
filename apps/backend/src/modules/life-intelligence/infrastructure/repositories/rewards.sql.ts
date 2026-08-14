@@ -31,20 +31,26 @@
  * balance — that ordering is what makes the whole grant idempotent.
  *
  * $1 childId · $2 rewardType · $3 amount (unsigned) · $4 delta (signed)
- * $5 source · $6 idempotencyKey
+ * $5 source · $6 idempotencyKey · $7 familyId
+ *
+ * F2: `family_id` is written here explicitly. Raw SQL is NOT intercepted by the
+ * tenant extension, so a statement that omitted it would be the one write path
+ * in the codebase with no tenant at all — and after migration 0003 the column
+ * is NOT NULL, so it would simply fail. The value comes from the ambient tenant
+ * context, never from a caller argument that a client could influence.
  */
 export const SQL_INSERT_EARN_LEDGER_ENTRY = `
 INSERT INTO "rewards_ledger_entries"
-  ("id", "child_id", "type", "reward_type", "amount", "delta", "source", "idempotency_key", "created_at")
+  ("id", "family_id", "child_id", "type", "reward_type", "amount", "delta", "source", "idempotency_key", "created_at")
 VALUES
-  (gen_random_uuid(), $1::uuid, 'EARN', $2::"RewardType", $3::int, $4::int, $5::text, $6::text, now())
+  (gen_random_uuid(), $7::uuid, $1::uuid, 'EARN', $2::"RewardType", $3::int, $4::int, $5::text, $6::text, now())
 ON CONFLICT ("child_id", "idempotency_key") DO NOTHING`;
 
 /**
  * Applied only after the ledger insert actually created a row.
  *
  * $1 childId · $2 xpDelta · $3 coinsDelta · $4 starsDelta · $5 newLevel
- * (nullable — `NULL` leaves the level untouched)
+ * (nullable — `NULL` leaves the level untouched) · $6 familyId
  */
 export const SQL_APPLY_ACCOUNT_DELTAS = `
 UPDATE "rewards_accounts"
@@ -53,7 +59,7 @@ UPDATE "rewards_accounts"
        "stars" = "stars" + $4::int,
        "level" = COALESCE($5::int, "level"),
        "updated_at" = now()
- WHERE "child_id" = $1::uuid`;
+ WHERE "child_id" = $1::uuid AND "family_id" = $6::uuid`;
 
 /**
  * Claims the redemption. `WHERE status = 'REQUESTED'` makes this the
@@ -63,52 +69,52 @@ UPDATE "rewards_accounts"
  * `RewardsEngineService.approveRedemption`, which two concurrent callers
  * could both pass.
  *
- * $1 redemptionId · $2 decidedByUserId
+ * $1 redemptionId · $2 decidedByUserId · $3 familyId
  */
 export const SQL_CLAIM_REDEMPTION = `
 UPDATE "reward_redemptions"
    SET "status" = 'APPROVED', "decided_at" = now(), "decided_by_user_id" = $2::uuid
- WHERE "id" = $1::uuid AND "status" = 'REQUESTED'`;
+ WHERE "id" = $1::uuid AND "status" = 'REQUESTED' AND "family_id" = $3::uuid`;
 
 /**
  * The negative-balance guard. `WHERE coins >= $2` is evaluated under the
  * row lock the UPDATE itself takes, so it cannot be raced. `rowCount === 0`
  * means insufficient funds and the caller rolls the transaction back.
  *
- * $1 childId · $2 costCoins
+ * $1 childId · $2 costCoins · $3 familyId
  */
 export const SQL_DEDUCT_COINS_IF_SUFFICIENT = `
 UPDATE "rewards_accounts"
    SET "coins" = "coins" - $2::int, "updated_at" = now()
- WHERE "child_id" = $1::uuid AND "coins" >= $2::int`;
+ WHERE "child_id" = $1::uuid AND "coins" >= $2::int AND "family_id" = $3::uuid`;
 
 /**
  * The REDEEM side of the ledger. Its idempotency key is derived from the
  * redemption id, so the database itself caps a redemption at one REDEEM
  * row no matter how the call is retried.
  *
- * $1 childId · $2 costCoins · $3 redemptionId
+ * $1 childId · $2 costCoins · $3 redemptionId · $4 familyId
  */
 export const SQL_INSERT_REDEEM_LEDGER_ENTRY = `
 INSERT INTO "rewards_ledger_entries"
-  ("id", "child_id", "type", "reward_type", "amount", "delta", "source", "idempotency_key", "created_at")
+  ("id", "family_id", "child_id", "type", "reward_type", "amount", "delta", "source", "idempotency_key", "created_at")
 VALUES
-  (gen_random_uuid(), $1::uuid, 'REDEEM', 'COINS', $2::int, -$2::int, 'redemption:' || $3::text, 'redemption:' || $3::text, now())
+  (gen_random_uuid(), $4::uuid, $1::uuid, 'REDEEM', 'COINS', $2::int, -$2::int, 'redemption:' || $3::text, 'redemption:' || $3::text, now())
 ON CONFLICT ("child_id", "idempotency_key") DO NOTHING`;
 
 /**
  * DP-5: the balance recomputed from the ledger alone. `SUM(delta)` is
  * meaningful precisely because `delta` is signed; `SUM(amount)` never was.
  *
- * $1 childId
+ * $1 childId · $2 familyId
  */
 export const SQL_BALANCE_FROM_LEDGER = `
 SELECT "reward_type" AS reward_type, COALESCE(SUM("delta"), 0)::int AS balance
   FROM "rewards_ledger_entries"
- WHERE "child_id" = $1::uuid
+ WHERE "child_id" = $1::uuid AND "family_id" = $2::uuid
  GROUP BY "reward_type"`;
 
-/** Reconciles the cached account columns to the ledger. $1 childId */
+/** Reconciles the cached account columns to the ledger. $1 childId · $2 familyId */
 export const SQL_RECONCILE_ACCOUNT_FROM_LEDGER = `
 UPDATE "rewards_accounts" a
    SET "xp"    = COALESCE(l.xp, 0),
@@ -121,6 +127,6 @@ UPDATE "rewards_accounts" a
       SUM("delta") FILTER (WHERE "reward_type" = 'COINS') AS coins,
       SUM("delta") FILTER (WHERE "reward_type" = 'BADGE') AS stars
     FROM "rewards_ledger_entries"
-    WHERE "child_id" = $1::uuid
+    WHERE "child_id" = $1::uuid AND "family_id" = $2::uuid
   ) l
- WHERE a."child_id" = $1::uuid`;
+ WHERE a."child_id" = $1::uuid AND a."family_id" = $2::uuid`;

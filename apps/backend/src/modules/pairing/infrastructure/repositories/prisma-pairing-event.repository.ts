@@ -7,6 +7,7 @@ import type {
   IPairingEventRecord,
   IRecordPairingEventInput,
 } from '../../application/ports/pairing-event.repository.port';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaPairingEventRepository implements IPairingEventRepository {
@@ -15,6 +16,7 @@ export class PrismaPairingEventRepository implements IPairingEventRepository {
   async record(input: IRecordPairingEventInput): Promise<IPairingEventRecord> {
     const row = await this.prisma.devicePairingEvent.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         deviceId: input.deviceId,
         eventType: input.eventType,

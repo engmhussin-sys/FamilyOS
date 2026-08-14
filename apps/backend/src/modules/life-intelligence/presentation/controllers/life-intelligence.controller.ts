@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
 import { JwtAuthGuard, DeviceJwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
@@ -260,8 +260,14 @@ export class LifeIntelligenceController {
     // user can only ever request their OWN family's store; no
     // repository round-trip needed to prove that, their own verified
     // JWT already settles it.
+    // F2 (A4 \u00a73 row 18 / BA-016): this used to answer 403, which CONFIRMS
+    // the other family's store exists \u2014 an oracle an attacker can enumerate
+    // with. The rest of this codebase already answers 404 for a resource outside
+    // the caller's tenant (getDeviceOrThrowScopedToFamily,
+    // ChildNotFoundException); this route now matches. The cross-tenant probe
+    // suite asserts 404, never 403, for every id-taking route.
     if (user.familyId !== familyId) {
-      throw new ForbiddenException('Cannot view another family\u2019s store');
+      throw new NotFoundException('Store not found.');
     }
     return this.rewardsEngine.listFamilyStore(familyId);
   }

@@ -18,6 +18,7 @@ import {
   IRewardRule,
   IRewardsAccount,
 } from '../../domain/rewards.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaRewardsRepository {
@@ -26,7 +27,7 @@ export class PrismaRewardsRepository {
   async getOrCreateAccount(childId: string): Promise<IRewardsAccount> {
     const row = await this.prisma.rewardsAccount.upsert({
       where: { childId },
-      create: { childId },
+      create: { familyId: tenantIdForWrite(), childId },
       update: {},
     });
     return { id: row.id, childId: row.childId, xp: row.xp, coins: row.coins, stars: row.stars, level: row.level };
@@ -63,6 +64,7 @@ export class PrismaRewardsRepository {
         delta,
         source,
         effectiveKey,
+        tenantIdForWrite(),
       );
 
       if (inserted === 0) {
@@ -78,6 +80,7 @@ export class PrismaRewardsRepository {
         rewardType === 'COINS' ? delta : 0,
         rewardType === 'BADGE' ? delta : 0,
         newLevel ?? null,
+        tenantIdForWrite(),
       );
 
       return true;
@@ -91,6 +94,7 @@ export class PrismaRewardsRepository {
     const rows = await this.prisma.$queryRawUnsafe<Array<{ reward_type: string; balance: number }>>(
       SQL_BALANCE_FROM_LEDGER,
       childId,
+      tenantIdForWrite(),
     );
     const balances = { xp: 0, coins: 0, stars: 0 };
     for (const row of rows) {
@@ -105,7 +109,7 @@ export class PrismaRewardsRepository {
    * `RewardsAccount` is a cache of `SUM(delta)`, not an independent
    * source of truth. */
   async reconcileAccountFromLedger(childId: string): Promise<void> {
-    await this.prisma.$executeRawUnsafe(SQL_RECONCILE_ACCOUNT_FROM_LEDGER, childId);
+    await this.prisma.$executeRawUnsafe(SQL_RECONCILE_ACCOUNT_FROM_LEDGER, childId, tenantIdForWrite());
   }
 
   async findBadgeByKey(key: string): Promise<IBadgeDefinition | null> {
@@ -116,7 +120,7 @@ export class PrismaRewardsRepository {
 
   async awardBadgeIfNotAlready(childId: string, badgeId: string): Promise<boolean> {
     try {
-      await this.prisma.childBadgeAward.create({ data: { childId, badgeId } });
+      await this.prisma.childBadgeAward.create({ data: { familyId: tenantIdForWrite(), childId, badgeId } });
       return true;
     } catch {
       return false;
@@ -149,7 +153,7 @@ export class PrismaRewardsRepository {
   }
 
   async createRedemption(childId: string, rewardCatalogItemId: string): Promise<IRewardRedemption> {
-    const row = await this.prisma.rewardRedemption.create({ data: { childId, rewardCatalogItemId } });
+    const row = await this.prisma.rewardRedemption.create({ data: { familyId: tenantIdForWrite(), childId, rewardCatalogItemId } });
     return { id: row.id, childId: row.childId, rewardCatalogItemId: row.rewardCatalogItemId, status: row.status };
   }
 
@@ -177,6 +181,7 @@ export class PrismaRewardsRepository {
         SQL_CLAIM_REDEMPTION,
         redemptionId,
         decidedByUserId,
+        tenantIdForWrite(),
       );
       if (claimed === 0) {
         throw new BadRequestException('Redemption is no longer awaiting a decision, cannot approve again');
@@ -186,6 +191,7 @@ export class PrismaRewardsRepository {
         SQL_DEDUCT_COINS_IF_SUFFICIENT,
         childId,
         costCoins,
+        tenantIdForWrite(),
       );
       if (deducted === 0) {
         // Rolls back the claim above too — status and balance can never
@@ -193,7 +199,7 @@ export class PrismaRewardsRepository {
         throw new BadRequestException('Child does not have enough coins for this reward anymore');
       }
 
-      await tx.$executeRawUnsafe(SQL_INSERT_REDEEM_LEDGER_ENTRY, childId, costCoins, redemptionId);
+      await tx.$executeRawUnsafe(SQL_INSERT_REDEEM_LEDGER_ENTRY, childId, costCoins, redemptionId, tenantIdForWrite());
     });
   }
 

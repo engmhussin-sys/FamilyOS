@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { ILifeTimelineEvent, IRecordTimelineEventInput } from '../../domain/life-timeline.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaLifeTimelineRepository {
@@ -11,6 +12,7 @@ export class PrismaLifeTimelineRepository {
   async create(input: IRecordTimelineEventInput): Promise<ILifeTimelineEvent> {
     const row = await this.prisma.lifeTimelineEvent.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         sourceEngine: input.sourceEngine,
         category: input.category,

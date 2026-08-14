@@ -26,6 +26,15 @@ generator client {
   // exact base image; "native" is kept so local/non-Alpine
   // development environments are unaffected.
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // F2 (R8, tenant isolation): enables `new PrismaClient({ adapter })`.
+  // Production still runs the default library engine — nothing here changes
+  // that. The flag exists so the tenant-isolation proof suites can open a
+  // REAL connection to PostgreSQL in an environment where the Prisma engine
+  // binary cannot be downloaded (binaries.prisma.sh answers 403), by routing
+  // through @prisma/adapter-pg + the WASM query engine instead. Without it
+  // the constructor rejects the `adapter` option outright and the cross-tenant
+  // probe suite could only ever be CODE VERIFIED, never TESTED.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -324,6 +333,46 @@ model Family {
   challenges         FamilyChallenge[]
   supportRequests    SupportRequest[]
 
+  parentalConsents ParentalConsent[]
+  devicePairingEvents DevicePairingEvent[]
+  screenTimePolicies ScreenTimePolicy[]
+  dailyBehavioralSnapshots DailyBehavioralSnapshot[]
+  appUsageLogs AppUsageLog[]
+  appBlockRules AppBlockRule[]
+  locationSafeZones LocationSafeZone[]
+  locationEvents LocationEvent[]
+  aiRiskScores AiRiskScore[]
+  aiAlerts AiAlert[]
+  aiMemoryEntries AiMemoryEntry[]
+  notifications Notification[]
+  habits Habit[]
+  habitCompletions HabitCompletion[]
+  rewardsAccounts RewardsAccount[]
+  rewardsLedgerEntries RewardsLedgerEntry[]
+  childBadgeAwards ChildBadgeAward[]
+  rewardRedemptions RewardRedemption[]
+  childMessages ChildMessage[]
+  lifeTimelineEvents LifeTimelineEvent[]
+  childDigitalTwinProjections ChildDigitalTwinProjection[]
+  nutritionLogs NutritionLog[]
+  hydrationLogs HydrationLog[]
+  sleepLogs SleepLog[]
+  activityLogs ActivityLog[]
+  physicalMeasurementLogs PhysicalMeasurementLog[]
+  healthScoreDailies HealthScoreDaily[]
+  faithPractices FaithPractice[]
+  faithPracticeLogs FaithPracticeLog[]
+  learningGoals LearningGoal[]
+  learningSessions LearningSession[]
+  learningAssessments LearningAssessment[]
+  smartTasks SmartTask[]
+  familyChallengeParticipations FamilyChallengeParticipation[]
+  deviceRiskAssessments DeviceRiskAssessment[]
+  appCatalogEntries AppCatalogEntry[]
+  invoices Invoice[]
+  auditLogs AuditLog[]
+  aiUsageLogs AiUsageLog[]
+
   @@map("families")
 }
 
@@ -405,6 +454,7 @@ model Child {
 /// No AI/monitoring module is permitted to run for a child unless a matching
 /// row exists here with granted = true and revokedAt = null.
 model ParentalConsent {
+  familyId  String  @map("family_id") @db.Uuid
   id              String      @id @default(uuid()) @db.Uuid
   childId         String      @map("child_id") @db.Uuid
   consentType     ConsentType @map("consent_type")
@@ -418,8 +468,11 @@ model ParentalConsent {
   child         Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   grantedByUser User  @relation("ConsentGrantedBy", fields: [grantedByUserId], references: [id])
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, consentType])
   @@index([childId])
+  @@index([familyId])
   @@map("parental_consents")
 }
 
@@ -508,6 +561,7 @@ model Device {
 /// pairing-backend-domain-architecture.md §1.5's derived PairingSession
 /// read both depend on.
 model DevicePairingEvent {
+  familyId  String  @map("family_id") @db.Uuid
   id         String           @id @default(uuid()) @db.Uuid
   /// Nullable — secondary reference, populated from DEVICE_REGISTERED
   /// onward. Per Decision-065/066: the pairing lifecycle is a
@@ -532,8 +586,11 @@ model DevicePairingEvent {
 
   device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([deviceId, occurredAt])
   @@index([childId, occurredAt])
+  @@index([familyId])
   @@map("device_pairing_events")
 }
 
@@ -542,6 +599,7 @@ model DevicePairingEvent {
 /// (above) is a SEPARATE, rarely-changing cache; this table is the
 /// frequently-changing counterpart (Decision-043's core distinction).
 model DeviceRiskAssessment {
+  familyId  String  @map("family_id") @db.Uuid
   id             String    @id @default(uuid()) @db.Uuid
   deviceId       String    @map("device_id") @db.Uuid
   overallRisk    Int       @map("overall_risk") // 0-100
@@ -556,7 +614,10 @@ model DeviceRiskAssessment {
 
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([deviceId, assessedAt])
+  @@index([familyId])
   @@map("device_risk_assessments")
 }
 
@@ -599,6 +660,7 @@ model RefreshToken {
 // ============================================================================
 
 model ScreenTimePolicy {
+  familyId  String  @map("family_id") @db.Uuid
   id                 String    @id @default(uuid()) @db.Uuid
   childId            String    @map("child_id") @db.Uuid
   dailyLimitMinutes  Int?      @map("daily_limit_minutes")
@@ -614,13 +676,17 @@ model ScreenTimePolicy {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId])
+  @@index([familyId])
   @@map("screen_time_policies")
 }
 
 /// Apps observed installed on a child's device. Reported by the Child App,
 /// not by scraping message content — inventory only, no content capture.
 model AppCatalogEntry {
+  familyId  String  @map("family_id") @db.Uuid
   id          String    @id @default(uuid()) @db.Uuid
   deviceId    String    @map("device_id") @db.Uuid
   packageName String    @map("package_name")
@@ -634,8 +700,11 @@ model AppCatalogEntry {
 
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([deviceId, packageName])
   @@index([deviceId])
+  @@index([familyId])
   @@map("app_catalog_entries")
 }
 
@@ -680,6 +749,7 @@ model SupportRequest {
 }
 
 model DailyBehavioralSnapshot {
+  familyId  String  @map("family_id") @db.Uuid
   id                  String   @id @default(uuid()) @db.Uuid
   childId             String   @map("child_id") @db.Uuid
   deviceId            String   @map("device_id") @db.Uuid
@@ -723,8 +793,11 @@ model DailyBehavioralSnapshot {
   child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, usageDate])
   @@index([childId, usageDate])
+  @@index([familyId])
   @@map("daily_behavioral_snapshots")
 }
 
@@ -732,6 +805,7 @@ model DailyBehavioralSnapshot {
 /// (no per-tap or per-second logging) to minimize data collected about
 /// the child, per the project's privacy-first principle.
 model AppUsageLog {
+  familyId  String  @map("family_id") @db.Uuid
   id           String   @id @default(uuid()) @db.Uuid
   childId      String   @map("child_id") @db.Uuid
   deviceId     String   @map("device_id") @db.Uuid
@@ -754,12 +828,16 @@ model AppUsageLog {
   child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, deviceId, packageName, usageDate])
   @@index([childId, usageDate])
+  @@index([familyId])
   @@map("app_usage_logs")
 }
 
 model AppBlockRule {
+  familyId  String  @map("family_id") @db.Uuid
   id             String      @id @default(uuid()) @db.Uuid
   childId        String      @map("child_id") @db.Uuid
   packageName    String?     @map("package_name") // null when ruling by category
@@ -775,7 +853,10 @@ model AppBlockRule {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId])
+  @@index([familyId])
   @@map("app_block_rules")
 }
 
@@ -784,6 +865,7 @@ model AppBlockRule {
 // ============================================================================
 
 model LocationSafeZone {
+  familyId  String  @map("family_id") @db.Uuid
   id            String    @id @default(uuid()) @db.Uuid
   childId       String    @map("child_id") @db.Uuid
   name          String
@@ -798,7 +880,10 @@ model LocationSafeZone {
   child          Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
   locationEvents LocationEvent[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId])
+  @@index([familyId])
   @@map("location_safe_zones")
 }
 
@@ -808,6 +893,7 @@ model LocationSafeZone {
 /// expiresAt drives a scheduled purge job (default retention: 30 days)
 /// so raw location history does not accumulate indefinitely.
 model LocationEvent {
+  familyId  String  @map("family_id") @db.Uuid
   id             String            @id @default(uuid()) @db.Uuid
   childId        String            @map("child_id") @db.Uuid
   deviceId       String            @map("device_id") @db.Uuid
@@ -824,8 +910,11 @@ model LocationEvent {
   device   Device            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   safeZone LocationSafeZone? @relation(fields: [safeZoneId], references: [id])
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, recordedAt])
   @@index([expiresAt])
+  @@index([familyId])
   @@map("location_events")
 }
 
@@ -848,6 +937,7 @@ model LocationEvent {
 /// decision-making logic (Rule/Decision/Safety/Behavioral engines
 /// remain completely untouched).
 model AiUsageLog {
+  familyId  String? @map("family_id") @db.Uuid
   id                 String   @id @default(uuid()) @db.Uuid
   model              String
   inputTokens        Int      @map("input_tokens")
@@ -869,12 +959,17 @@ model AiUsageLog {
   sourceFeature      String?  @map("source_feature")
   createdAt          DateTime @default(now()) @map("created_at")
 
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
   @@index([createdAt])
   @@index([sourceFeature, createdAt])
+  @@index([familyId])
+  @@index([familyId, createdAt])
   @@map("ai_usage_logs")
 }
 
 model AiRiskScore {
+  familyId  String  @map("family_id") @db.Uuid
   id                String   @id @default(uuid()) @db.Uuid
   childId           String   @map("child_id") @db.Uuid
   scoreDate         DateTime @map("score_date") @db.Date
@@ -884,14 +979,18 @@ model AiRiskScore {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, scoreDate])
   @@index([childId])
+  @@index([familyId])
   @@map("ai_risk_scores")
 }
 
 /// A single actionable alert surfaced to parents. This is the AI layer's
 /// output contract — parents see alerts, never raw monitored content.
 model AiAlert {
+  familyId  String  @map("family_id") @db.Uuid
   id               String        @id @default(uuid()) @db.Uuid
   childId          String        @map("child_id") @db.Uuid
   category         AlertCategory
@@ -908,8 +1007,11 @@ model AiAlert {
   child          Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   reviewedByUser User? @relation("AlertReviewedBy", fields: [reviewedByUserId], references: [id])
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, status])
   @@index([severity])
+  @@index([familyId])
   @@map("ai_alerts")
 }
 
@@ -920,6 +1022,7 @@ model AiAlert {
 /// Append-only. Never updated or soft-deleted — this is the compliance
 /// trail (GDPR "right to access", security incident investigation).
 model AuditLog {
+  familyId  String? @map("family_id") @db.Uuid
   id         String    @id @default(uuid()) @db.Uuid
   actorType  ActorType @map("actor_type")
   actorUserId String?  @map("actor_user_id") @db.Uuid
@@ -932,12 +1035,17 @@ model AuditLog {
 
   actorUser User? @relation("AuditActorUser", fields: [actorUserId], references: [id])
 
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
   @@index([entityType, entityId])
   @@index([actorUserId])
+  @@index([familyId])
+  @@index([familyId, createdAt])
   @@map("audit_logs")
 }
 
 model AiMemoryEntry {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   /// HABIT | PREFERENCE | VIOLATION | RECOMMENDATION | CONFIDENCE —
@@ -952,8 +1060,11 @@ model AiMemoryEntry {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, category, key])
   @@index([childId, category])
+  @@index([familyId])
   @@map("ai_memory_entries")
 }
 
@@ -1010,6 +1121,7 @@ model Subscription {
 }
 
 model Invoice {
+  familyId  String  @map("family_id") @db.Uuid
   id                String        @id @default(uuid()) @db.Uuid
   subscriptionId    String        @map("subscription_id") @db.Uuid
   amountCents       Int           @map("amount_cents")
@@ -1021,7 +1133,10 @@ model Invoice {
 
   subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([subscriptionId])
+  @@index([familyId])
   @@map("invoices")
 }
 
@@ -1219,6 +1334,7 @@ model PartnerCampaign {
 }
 
 model Notification {
+  familyId  String  @map("family_id") @db.Uuid
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
   childId   String?   @map("child_id") @db.Uuid
@@ -1240,8 +1356,11 @@ model Notification {
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   child Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([userId, readAt])
   @@index([childId, createdAt])
+  @@index([familyId])
   @@map("notifications")
 }
 
@@ -1302,6 +1421,7 @@ enum TimelineCategory {
 /// Deliberately STATIC — AI-generated dynamic suggestions are a
 /// separate, later concern (Smart Tasks Engine, not built this sprint).
 model Habit {
+  familyId  String  @map("family_id") @db.Uuid
   id          String   @id @default(uuid()) @db.Uuid
   childId     String   @map("child_id") @db.Uuid
   title       String
@@ -1341,11 +1461,15 @@ model Habit {
   createdBy   User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   completions HabitCompletion[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, isActive])
+  @@index([familyId])
   @@map("habits")
 }
 
 model HabitCompletion {
+  familyId  String  @map("family_id") @db.Uuid
   id          String   @id @default(uuid()) @db.Uuid
   habitId     String   @map("habit_id") @db.Uuid
   childId     String   @map("child_id") @db.Uuid
@@ -1363,13 +1487,17 @@ model HabitCompletion {
   habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([habitId, date])
   @@index([childId, date])
+  @@index([familyId])
   @@map("habit_completions")
 }
 
 /// Rewards Engine — Family Economy
 model RewardsAccount {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @unique @map("child_id") @db.Uuid
   xp        Int      @default(0)
@@ -1380,11 +1508,15 @@ model RewardsAccount {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
   @@map("rewards_accounts")
 }
 
 /// Append-only ledger — mirrors AuditLog's own append-only discipline.
 model RewardsLedgerEntry {
+  familyId  String  @map("family_id") @db.Uuid
   id        String     @id @default(uuid()) @db.Uuid
   childId   String     @map("child_id") @db.Uuid
   type      String     // 'EARN' | 'REDEEM'
@@ -1419,8 +1551,11 @@ model RewardsLedgerEntry {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, idempotencyKey])
   @@index([childId, createdAt])
+  @@index([familyId])
   @@map("rewards_ledger_entries")
 }
 
@@ -1439,6 +1574,7 @@ model BadgeDefinition {
 }
 
 model ChildBadgeAward {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   badgeId   String   @map("badge_id") @db.Uuid
@@ -1447,7 +1583,10 @@ model ChildBadgeAward {
   child Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
   badge BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, badgeId])
+  @@index([familyId])
   @@map("child_badge_awards")
 }
 
@@ -1469,6 +1608,7 @@ model RewardCatalogItem {
 }
 
 model RewardRedemption {
+  familyId  String  @map("family_id") @db.Uuid
   id                  String            @id @default(uuid()) @db.Uuid
   childId             String            @map("child_id") @db.Uuid
   rewardCatalogItemId String            @map("reward_catalog_item_id") @db.Uuid
@@ -1480,7 +1620,10 @@ model RewardRedemption {
   child     Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
   rewardItem RewardCatalogItem @relation(fields: [rewardCatalogItemId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, status])
+  @@index([familyId])
   @@map("reward_redemptions")
 }
 
@@ -1505,6 +1648,7 @@ model RewardRule {
 /// Family Communication — AI Conversation with mandatory parent approval
 /// enforced at the schema level (Architecture 1.0 Decision 8).
 model ChildMessage {
+  familyId  String  @map("family_id") @db.Uuid
   id             String                 @id @default(uuid()) @db.Uuid
   childId        String                 @map("child_id") @db.Uuid
   fromUserId     String?                @map("from_user_id") @db.Uuid
@@ -1520,8 +1664,11 @@ model ChildMessage {
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   fromUser User? @relation(fields: [fromUserId], references: [id], onDelete: SetNull)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, deliveredAt])
   @@index([approvalStatus])
+  @@index([familyId])
   @@map("child_messages")
 }
 
@@ -1536,6 +1683,10 @@ model FamilyBroadcastMessage {
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
   authoredBy User @relation(fields: [authoredByUserId], references: [id], onDelete: Cascade)
 
+  // DP-1 gap found by the F2 registry test: this table carried family_id from
+  // the start but never had an index on it, so every family's broadcast list
+  // was a sequential scan of every family's broadcasts.
+  @@index([familyId, createdAt])
   @@map("family_broadcast_messages")
 }
 
@@ -1543,6 +1694,7 @@ model FamilyBroadcastMessage {
 /// (Architecture 1.0 Decision 10). No engine writes into another
 /// engine's table; every engine writes here through the same one service.
 model LifeTimelineEvent {
+  familyId  String  @map("family_id") @db.Uuid
   id           String            @id @default(uuid()) @db.Uuid
   childId      String            @map("child_id") @db.Uuid
   sourceEngine String            @map("source_engine")
@@ -1554,8 +1706,11 @@ model LifeTimelineEvent {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, occurredAt])
   @@index([childId, category])
+  @@index([familyId])
   @@map("life_timeline_events")
 }
 
@@ -1563,6 +1718,7 @@ model LifeTimelineEvent {
 /// Rebuildable from source tables at any time; if it and the source
 /// tables ever disagree, the source tables win (Architecture 1.0 §6.1).
 model ChildDigitalTwinProjection {
+  familyId  String  @map("family_id") @db.Uuid
   childId       String   @id @map("child_id") @db.Uuid
   healthSlice   Json?    @map("health_slice")
   learningSlice Json?    @map("learning_slice")
@@ -1575,6 +1731,9 @@ model ChildDigitalTwinProjection {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
   @@map("child_digital_twin_projections")
 }
 
@@ -1599,6 +1758,7 @@ enum FaithPracticeType {
 }
 
 model NutritionLog {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   date      DateTime @db.Date
@@ -1613,11 +1773,15 @@ model NutritionLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("nutrition_logs")
 }
 
 model HydrationLog {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   amountMl  Int      @map("amount_ml")
@@ -1625,11 +1789,15 @@ model HydrationLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, loggedAt])
+  @@index([familyId])
   @@map("hydration_logs")
 }
 
 model SleepLog {
+  familyId  String  @map("family_id") @db.Uuid
   id         String    @id @default(uuid()) @db.Uuid
   childId    String    @map("child_id") @db.Uuid
   date       DateTime  @db.Date
@@ -1639,11 +1807,15 @@ model SleepLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("sleep_logs")
 }
 
 model ActivityLog {
+  familyId  String  @map("family_id") @db.Uuid
   id            String                  @id @default(uuid()) @db.Uuid
   childId       String                  @map("child_id") @db.Uuid
   date          DateTime                @db.Date
@@ -1654,8 +1826,11 @@ model ActivityLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
   @@index([childId, socialContext])
+  @@index([familyId])
   @@map("activity_logs")
 }
 
@@ -1663,6 +1838,7 @@ model ActivityLog {
 /// anything containing "Growth" to avoid colliding with the Growth
 /// Score composite AI indicator.
 model PhysicalMeasurementLog {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   date      DateTime @db.Date
@@ -1672,11 +1848,15 @@ model PhysicalMeasurementLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("physical_measurement_logs")
 }
 
 model HealthScoreDaily {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   date      DateTime @db.Date
@@ -1686,11 +1866,15 @@ model HealthScoreDaily {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, date])
+  @@index([familyId])
   @@map("health_score_daily")
 }
 
 model FaithPractice {
+  familyId  String  @map("family_id") @db.Uuid
   id       String            @id @default(uuid()) @db.Uuid
   childId  String            @map("child_id") @db.Uuid
   type     FaithPracticeType
@@ -1702,11 +1886,15 @@ model FaithPractice {
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   logs  FaithPracticeLog[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, isActive])
+  @@index([familyId])
   @@map("faith_practices")
 }
 
 model FaithPracticeLog {
+  familyId  String  @map("family_id") @db.Uuid
   id         String   @id @default(uuid()) @db.Uuid
   practiceId String   @map("practice_id") @db.Uuid
   childId    String   @map("child_id") @db.Uuid
@@ -1717,8 +1905,11 @@ model FaithPracticeLog {
   practice FaithPractice @relation(fields: [practiceId], references: [id], onDelete: Cascade)
   child    Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([practiceId, date])
   @@index([childId, date])
+  @@index([familyId])
   @@map("faith_practice_logs")
 }
 
@@ -1734,6 +1925,7 @@ enum LearningGoalStatus {
 }
 
 model LearningGoal {
+  familyId  String  @map("family_id") @db.Uuid
   id         String             @id @default(uuid()) @db.Uuid
   childId    String             @map("child_id") @db.Uuid
   subject    String             // 'school' | 'language' | 'reading' | 'custom'
@@ -1745,11 +1937,15 @@ model LearningGoal {
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   sessions LearningSession[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, status])
+  @@index([familyId])
   @@map("learning_goals")
 }
 
 model LearningSession {
+  familyId  String  @map("family_id") @db.Uuid
   id              String   @id @default(uuid()) @db.Uuid
   childId         String   @map("child_id") @db.Uuid
   goalId          String?  @map("goal_id") @db.Uuid
@@ -1762,11 +1958,15 @@ model LearningSession {
   child Child          @relation(fields: [childId], references: [id], onDelete: Cascade)
   goal  LearningGoal?  @relation(fields: [goalId], references: [id], onDelete: SetNull)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("learning_sessions")
 }
 
 model LearningAssessment {
+  familyId  String  @map("family_id") @db.Uuid
   id         String   @id @default(uuid()) @db.Uuid
   childId    String   @map("child_id") @db.Uuid
   subject    String
@@ -1776,11 +1976,15 @@ model LearningAssessment {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, takenAt])
+  @@index([familyId])
   @@map("learning_assessments")
 }
 
 model SmartTask {
+  familyId  String  @map("family_id") @db.Uuid
   id             String          @id @default(uuid()) @db.Uuid
   childId        String          @map("child_id") @db.Uuid
   title          String
@@ -1794,8 +1998,11 @@ model SmartTask {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, status])
   @@index([childId, suggestedDate])
+  @@index([familyId])
   @@map("smart_tasks")
 }
 
@@ -1821,6 +2028,7 @@ model FamilyChallenge {
 }
 
 model FamilyChallengeParticipation {
+  familyId  String  @map("family_id") @db.Uuid
   id          String    @id @default(uuid()) @db.Uuid
   challengeId String    @map("challenge_id") @db.Uuid
   childId     String    @map("child_id") @db.Uuid
@@ -1829,7 +2037,10 @@ model FamilyChallengeParticipation {
   challenge FamilyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
   child     Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([challengeId, childId])
   @@index([childId])
+  @@index([familyId])
   @@map("family_challenge_participations")
 }

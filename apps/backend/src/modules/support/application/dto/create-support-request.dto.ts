@@ -1,11 +1,15 @@
-import { IsEmail, IsOptional, IsString, IsUUID, Length } from 'class-validator';
+import { IsEmail, IsString, Length } from 'class-validator';
 
-/** Deliberately allows submission WITHOUT being logged in — real
- * support scenarios include "I can't log in at all" and "I have a
- * question before creating an account." `familyId`/`userId` are
- * optional client-supplied context (the Parent App fills them in
- * when a session exists), never trusted alone for authorization —
- * this endpoint creates a record, it doesn't grant any access. */
+/** Deliberately allows submission WITHOUT being logged in — real support
+ * scenarios include "I can't log in at all" and "I have a question before
+ * creating an account."
+ *
+ * F2 (CONTEXT §3.3): `familyId` and `userId` USED to be optional fields here,
+ * client-supplied. They are gone. A spoofed `familyId` was enough to claim
+ * another family's `priority_support` entitlement, and — more fundamentally —
+ * the tenant is never something a request body gets to assert. When a caller
+ * does have a session, OptionalJwtAuthGuard puts the VERIFIED identity on the
+ * request and the controller passes that instead. */
 export class CreateSupportRequestDto {
   @IsEmail()
   email!: string;
@@ -17,12 +21,4 @@ export class CreateSupportRequestDto {
   @IsString()
   @Length(1, 5000)
   message!: string;
-
-  @IsOptional()
-  @IsUUID()
-  familyId?: string;
-
-  @IsOptional()
-  @IsUUID()
-  userId?: string;
 }

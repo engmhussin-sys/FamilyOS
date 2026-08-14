@@ -8,6 +8,7 @@ import type {
   IRuntimeAlertRecord,
   IRuntimeAlertRepository,
 } from '../../application/ports/runtime-alert.repository.port';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
@@ -59,6 +60,7 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
 
     await this.prisma.notification.create({
       data: {
+        familyId: tenantIdForWrite(),
         userId: recipient.userId,
         childId: input.childId,
         type: notificationType,

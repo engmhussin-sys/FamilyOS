@@ -67,10 +67,25 @@ jobs:
       - run: npx prisma migrate deploy
       - name: Type check
         run: npx tsc --noEmit
+      # F2 (R8) — BLOCKING. Static half of the tenant-isolation guard: fails the
+      # build on an un-extended PrismaClient, on raw SQL that touches a
+      # tenant-scoped table without mentioning family_id, on a client-supplied
+      # familyId, and on any model in schema.prisma that has not been
+      # classified in tenant-model-registry.ts.
+      - name: Tenant-scoping static guard
+        run: npm run ci:tenant-guard
       - name: Unit + DI-graph tests
-        run: npx jest --testPathIgnorePatterns=test/database --coverage
+        run: npx jest --testPathIgnorePatterns=test/database --testPathIgnorePatterns=test/tenancy --coverage
       - name: Database integration test
         run: npx jest test/database --forceExit
+      # F2 (R8) — BLOCKING. Dynamic half: the deny-by-default proof, the RLS
+      # proof, the R14 guard-coverage sweep over every controller, and the
+      # GENERATED cross-tenant probe suite, which boots the real application,
+      # registers two families over HTTP and replays every id-taking route with
+      # family A's token against family B's resources, requiring 404.
+      # Runs last because it is the slowest and the most informative when red.
+      - name: Tenant isolation proofs (deny-by-default, RLS, cross-tenant probe)
+        run: npx jest test/tenancy --forceExit --runInBand
       - name: Build
         run: npx nest build
 
@@ -155,8 +170,14 @@ jobs:
         continue-on-error: true
 
       # HARD GATE — deliberately not tolerant.
+      # F2 (audit MA-004): --dart-define=API_BASE_URL is mandatory on every
+      # `flutter build apk` in this repository. Without it the APK builds
+      # and cannot reach a backend, and an artifact nobody can log into is
+      # not evidence of anything. The fallback value points at the Android
+      # emulator's host alias, which is the one host the debug network
+      # security config permits in cleartext.
       - name: Build (debug APK, no signing needed for CI verification)
-        run: flutter build apk --debug
+        run: flutter build apk --debug --dart-define=API_BASE_URL=${{ vars.DEV_API_BASE_URL || 'http://10.0.2.2:3000/api/v1' }}
 
       # FIX 3 of 5: the job produced no artifact, so even a successful build
       # left nothing anyone could install.

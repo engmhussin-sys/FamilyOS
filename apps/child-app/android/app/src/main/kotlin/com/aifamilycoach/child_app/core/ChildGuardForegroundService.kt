@@ -18,7 +18,7 @@ import com.aifamilycoach.child_app.R
  * no watchdog duty is just a notification. Its one real job beyond the
  * mandatory persistent notification: periodically check whether
  * `ChildGuardAccessibilityService` is still enabled
- * (`PermissionManager.isAccessibilityServiceEnabled`, already built)
+ * (`PermissionManager.isChildGuardAccessibilityServiceEnabled`, already built)
  * and, if not, escalate via the notification — it cannot re-enable
  * Accessibility itself (no API allows that; only the user can, in
  * Settings) but it CAN make sure the parent's device finds out.
@@ -70,9 +70,8 @@ class ChildGuardForegroundService : Service() {
     private fun startWatchdog() {
         val runnable = object : Runnable {
             override fun run() {
-                val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-                    AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                )
+                val accessibilityEnabled =
+                    permissionManager.isChildGuardAccessibilityServiceEnabled()
                 val notification = buildNotification(isHealthy = accessibilityEnabled)
                 val notificationManager =
                     getSystemService(NOTIFICATION_SERVICE) as NotificationManager

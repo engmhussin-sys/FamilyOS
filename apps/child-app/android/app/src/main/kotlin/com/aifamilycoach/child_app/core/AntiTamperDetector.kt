@@ -22,11 +22,17 @@ import java.io.File
  */
 class AntiTamperDetector(private val context: Context) {
 
-    fun checkAll(accessibilityServiceComponentName: String): List<String> {
+    /**
+     * F2 (audit MA-008 / R6): the flattened-component-name parameter is
+     * gone. It was only ever forwarded to PermissionManager, which now
+     * derives the ComponentName from the service class itself — so the
+     * parameter could only ever have been a way to get it WRONG.
+     */
+    fun checkAll(): List<String> {
         val permissionManager = PermissionManager(context)
         val signals = mutableListOf<String>()
 
-        if (!permissionManager.isAccessibilityServiceEnabled(accessibilityServiceComponentName)) {
+        if (!permissionManager.isChildGuardAccessibilityServiceEnabled()) {
             signals.add("accessibility_disabled")
         }
         if (!permissionManager.isUsageAccessGranted()) {

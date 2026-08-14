@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IChildMessage, ISendChildMessageInput } from '../../domain/communication.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaCommunicationRepository {
@@ -10,6 +11,7 @@ export class PrismaCommunicationRepository {
   async create(input: ISendChildMessageInput, approvalStatus: IChildMessage['approvalStatus'], deliveredAt: Date | null): Promise<IChildMessage> {
     const row = await this.prisma.childMessage.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         fromUserId: input.fromUserId,
         authorType: input.authorType,

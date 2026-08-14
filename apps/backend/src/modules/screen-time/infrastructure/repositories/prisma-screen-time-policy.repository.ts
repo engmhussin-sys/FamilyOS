@@ -4,6 +4,7 @@ import type { ScreenTimePolicy } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type { ISetScreenTimePolicyInput } from '../../domain/screen-time.types';
 import type { IScreenTimePolicyRepository } from '../../application/ports/screen-time.repository.port';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaScreenTimePolicyRepository implements IScreenTimePolicyRepository {
@@ -16,6 +17,7 @@ export class PrismaScreenTimePolicyRepository implements IScreenTimePolicyReposi
   ): Promise<ScreenTimePolicy> {
     return this.prisma.screenTimePolicy.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId,
         createdByUserId,
         dailyLimitMinutes: input.dailyLimitMinutes,

@@ -3,12 +3,13 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { RedisService } from './common/redis/redis.service';
 import { RedisThrottlerStorage } from './common/throttler/redis-throttler.storage';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
+import { TenantContextInterceptor } from './common/tenancy/tenant-context.interceptor';
 import { AuthModule } from './modules/auth/auth.module';
 import { ChildrenModule } from './modules/children/children.module';
 import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
@@ -86,7 +87,14 @@ import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelli
     DataRetentionModule,
     LifeIntelligenceModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // F2 (R8, CONTEXT §3.3). Global on purpose: a controller added tomorrow is
+    // covered without anyone remembering to opt in, and a request that carries
+    // no verified familyId gets NO tenant context — which makes every
+    // tenant-scoped Prisma call on it throw rather than return everything.
+    { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

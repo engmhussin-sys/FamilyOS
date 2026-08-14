@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IDigitalTwin, IExplainableSubScore } from '../../domain/digital-twin.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaDigitalTwinRepository {
@@ -37,7 +38,7 @@ export class PrismaDigitalTwinRepository {
   }): Promise<void> {
     await this.prisma.childDigitalTwinProjection.upsert({
       where: { childId },
-      create: { childId, ...(slices as Record<string, unknown>) },
+      create: { familyId: tenantIdForWrite(), childId, ...(slices as Record<string, unknown>) },
       update: { ...(slices as Record<string, unknown>) },
     });
   }

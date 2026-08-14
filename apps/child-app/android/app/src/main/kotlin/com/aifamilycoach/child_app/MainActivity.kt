@@ -9,6 +9,7 @@ import com.aifamilycoach.child_app.core.DeviceCapabilityEngine
 import com.aifamilycoach.child_app.core.DeviceIdentityKeyManager
 import com.aifamilycoach.child_app.core.NativePolicy
 import com.aifamilycoach.child_app.core.NativePolicyStore
+import com.aifamilycoach.child_app.core.OemBackgroundRestrictionManager
 import com.aifamilycoach.child_app.core.PermissionManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -35,6 +36,10 @@ class MainActivity : FlutterActivity() {
         val capabilityEngine = DeviceCapabilityEngine(applicationContext)
         val antiTamperDetector = AntiTamperDetector(applicationContext)
         val nativePolicyStore = NativePolicyStore(applicationContext)
+        // F2 (verdict risk R7): OEM autostart / background-restriction
+        // deep links. Uses applicationContext like every other manager
+        // here; each Intent inside carries FLAG_ACTIVITY_NEW_TASK.
+        val oemRestrictions = OemBackgroundRestrictionManager(applicationContext)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -66,11 +71,10 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 AgentChannel.METHOD_IS_ACCESSIBILITY_SERVICE_ENABLED -> {
-                    result.success(
-                        permissionManager.isAccessibilityServiceEnabled(
-                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                        ),
-                    )
+                    // F2 (audit MA-008 / R6): no flattened-string argument
+                    // any more — PermissionManager derives its own
+                    // ComponentName from the service class.
+                    result.success(permissionManager.isChildGuardAccessibilityServiceEnabled())
                 }
                 AgentChannel.METHOD_OPEN_ACCESSIBILITY_SETTINGS -> {
                     permissionManager.openAccessibilitySettings()
@@ -94,11 +98,23 @@ class MainActivity : FlutterActivity() {
                     result.success(permissionManager.areNotificationsGranted())
                 }
 
+                // --- F2 (verdict risk R7): OEM background-restriction step ---
+                // Both handlers are total: an unknown manufacturer yields
+                // oemKey="generic" and hasOemIntent=false rather than an
+                // error, and openBestAvailableScreen() is documented as
+                // never throwing. There is deliberately NO error branch
+                // here, because "this OEM has no such screen" is a normal
+                // outcome, not a failure.
+                AgentChannel.METHOD_GET_OEM_BACKGROUND_RESTRICTION_INFO -> {
+                    result.success(oemRestrictions.info())
+                }
+                AgentChannel.METHOD_OPEN_OEM_BACKGROUND_SETTINGS -> {
+                    result.success(oemRestrictions.openBestAvailableScreen())
+                }
+
                 // --- Sprint 4: Device Capability Engine ---
                 AgentChannel.METHOD_GET_CAPABILITY_REPORT -> {
-                    val report = capabilityEngine.collect(
-                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                    )
+                    val report = capabilityEngine.collect()
                     result.success(
                         mapOf(
                             "manufacturer" to report.manufacturer,
@@ -115,11 +131,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 AgentChannel.METHOD_CHECK_TAMPER_SIGNALS -> {
-                    result.success(
-                        antiTamperDetector.checkAll(
-                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                        ),
-                    )
+                    result.success(antiTamperDetector.checkAll())
                 }
 
                 AgentChannel.METHOD_GET_RUNTIME_HEALTH -> {
@@ -286,9 +298,8 @@ class MainActivity : FlutterActivity() {
                 }
 
                 AgentChannel.METHOD_GET_ENFORCEMENT_STATUS -> {
-                    val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                    )
+                    val accessibilityEnabled =
+                        permissionManager.isChildGuardAccessibilityServiceEnabled()
                     val lastSyncedAt = nativePolicyStore.lastSyncedAtMillis()
                     result.success(
                         mapOf(

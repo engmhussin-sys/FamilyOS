@@ -12,6 +12,7 @@ import {
   INutritionLog,
   ISleepLog,
 } from '../../domain/health.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaHealthRepository {
@@ -20,6 +21,7 @@ export class PrismaHealthRepository {
   async createNutritionLog(input: ICreateNutritionLogInput): Promise<INutritionLog> {
     const row = await this.prisma.nutritionLog.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         date: new Date(input.date),
         mealType: input.mealType,
@@ -50,7 +52,7 @@ export class PrismaHealthRepository {
   }
 
   async createHydrationLog(input: ICreateHydrationLogInput): Promise<IHydrationLog> {
-    const row = await this.prisma.hydrationLog.create({ data: { childId: input.childId, amountMl: input.amountMl } });
+    const row = await this.prisma.hydrationLog.create({ data: { familyId: tenantIdForWrite(), childId: input.childId, amountMl: input.amountMl } });
     return { id: row.id, childId: row.childId, amountMl: row.amountMl, loggedAt: row.loggedAt };
   }
 
@@ -85,6 +87,7 @@ export class PrismaHealthRepository {
   async createSleepLog(input: ICreateSleepLogInput): Promise<ISleepLog> {
     const row = await this.prisma.sleepLog.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         date: new Date(input.date),
         sleepStart: new Date(input.sleepStart),
@@ -118,6 +121,7 @@ export class PrismaHealthRepository {
   async createActivityLog(input: ICreateActivityLogInput): Promise<IActivityLog> {
     const row = await this.prisma.activityLog.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         date: new Date(input.date),
         activityType: input.activityType,
@@ -167,7 +171,7 @@ export class PrismaHealthRepository {
   async upsertHealthScore(childId: string, date: Date, score: number, breakdown: Record<string, unknown>): Promise<void> {
     await this.prisma.healthScoreDaily.upsert({
       where: { childId_date: { childId, date } },
-      create: { childId, date, score, breakdown: breakdown as Prisma.InputJsonValue },
+      create: { familyId: tenantIdForWrite(), childId, date, score, breakdown: breakdown as Prisma.InputJsonValue },
       update: { score, breakdown: breakdown as Prisma.InputJsonValue },
     });
   }

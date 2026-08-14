@@ -42,6 +42,13 @@ class AgentChannelConstants {
   static const String methodGetTodayAppCategories = 'getTodayAppCategories';
   static const String methodGetTodaySessionStats = 'getTodaySessionStats';
 
+  // --- F2 (audit verdict R7): OEM background-restriction onboarding ---
+  // Must match AgentChannel.kt's METHOD_GET_OEM_BACKGROUND_RESTRICTION_INFO
+  // and METHOD_OPEN_OEM_BACKGROUND_SETTINGS exactly.
+  static const String methodGetOemBackgroundRestrictionInfo =
+      'getOemBackgroundRestrictionInfo';
+  static const String methodOpenOemBackgroundSettings = 'openOemBackgroundSettings';
+
   // --- Sprint 5: Runtime Enforcement Engine ---
   static const String methodSyncPolicyToNative = 'syncPolicyToNative';
   static const String methodGetEnforcementStatus = 'getEnforcementStatus';

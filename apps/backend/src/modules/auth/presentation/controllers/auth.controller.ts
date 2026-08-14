@@ -15,6 +15,7 @@ import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 
 /**
  * All parent-facing authentication endpoints.
@@ -28,6 +29,10 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @SystemRoute(
+    'AUTH_BOOTSTRAP',
+    'Registration creates the Family row itself; no tenant can exist before this call returns.',
+  )
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() dto: RegisterDto) {
@@ -35,6 +40,10 @@ export class AuthController {
   }
 
   @Post('login')
+  @SystemRoute(
+    'AUTH_BOOTSTRAP',
+    'Login resolves a User by email before any family membership is known.',
+  )
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginDto, @Req() req: Request) {
@@ -45,6 +54,10 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @SystemRoute(
+    'AUTH_BOOTSTRAP',
+    'Refresh looks up a RefreshToken by secret hash; the caller presents no access token to derive a tenant from.',
+  )
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async refresh(@Body() dto: RefreshTokenDto, @Req() req: Request) {

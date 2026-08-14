@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    DEBUG-ONLY network security configuration (audit MA-004).
+
+    Lives in src/debug/, so it exists ONLY in debug builds. It overrides
+    the strict src/main/res/xml/network_security_config.xml of the same
+    name by AGP source-set priority. It cannot leak into a release or
+    profile APK: those variants never see this source set.
+
+    The base config is still cleartext-DENIED. Only the explicitly named
+    development hosts below are exempt, so a debug build still cannot
+    silently talk plain HTTP to a staging or production domain.
+
+    HOW A TESTER POINTS THE APK AT A BACKEND
+    ========================================
+    1. Android emulator, backend on the same machine (the default path):
+         flutter run (dart-define API_BASE_URL=http://10.0.2.2:3000/api/v1)
+       10.0.2.2 is the emulator's alias for the HOST's loopback.
+       `localhost` inside the emulator means the emulator itself.
+       Nothing to edit here — 10.0.2.2 is already allowed below.
+
+    2. REAL PHYSICAL DEVICE over USB — the recommended path, and the
+       reason this file needs no editing in the common case:
+         adb reverse tcp:3000 tcp:3000
+         flutter run (dart-define API_BASE_URL=http://127.0.0.1:3000/api/v1)
+       `adb reverse` forwards the DEVICE's 127.0.0.1:3000 to the HOST's
+       port 3000, so the allow-list entry for 127.0.0.1 covers it and no
+       LAN address ever has to be hard-coded.
+
+    3. Real device over Wi-Fi, pointed at the developer's LAN IP — the
+       only case that needs a change here, because Android's network
+       security config takes literal host names/IPs and supports no
+       wildcards, no resource references and no build-time substitution.
+       Edit THE ONE LINE marked DEV HOST below to your machine's LAN
+       address and pass the matching dart-define. Keep it local: this
+       is the single line in this repository that is expected to differ
+       between developer machines, which is exactly why it is isolated
+       on its own and why it lives in a debug-only file.
+    (The dart-define flag is written without its leading double hyphen
+    above: XML forbids a double hyphen inside a comment. The real
+    command is
+    `flutter run` followed by the standard dart-define flag.)
+-->
+<network-security-config>
+    <!-- Everything not named below stays TLS-only, even in debug. -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Debug builds only: lets a developer run mitmproxy/Charles
+                 against the dev backend without patching the app. Absent
+                 from the release config on purpose. -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Android emulator -> host machine loopback. -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <!-- Genymotion emulator -> host machine loopback. -->
+        <domain includeSubdomains="false">10.0.3.2</domain>
+        <!-- `adb reverse tcp:3000 tcp:3000` lands here on a real device. -->
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <!-- DEV HOST: replace with your machine's LAN IP (e.g. 192.168.1.20)
+             when testing a physical device over Wi-Fi. Left as an mDNS name
+             so an unedited checkout simply fails to resolve rather than
+             silently reaching some other machine's 192.168.x.x address. -->
+        <domain includeSubdomains="false">abny-dev.local</domain>
+    </domain-config>
+</network-security-config>

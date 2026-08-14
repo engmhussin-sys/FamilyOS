@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/auth/session_expired_notifier.dart';
+import 'core/config/app_config.dart';
 import 'core/connectivity/connectivity_controller.dart';
 import 'core/di/providers.dart';
 import 'core/localization/locale_controller.dart';
@@ -28,6 +29,9 @@ import 'features/billing/presentation/redeem_code_screen.dart';
 import 'core/observability/crash_reporting.dart';
 
 void main() {
+  // F2 (audit MA-004) — identical guard to the child app's main(), for the
+  // identical reason. First statement, before the Sentry zone.
+  AppConfig.assertUsableForBuildMode();
   bootstrapWithCrashReporting(() async {
     runApp(const ProviderScope(child: ParentApp()));
   });

@@ -152,6 +152,20 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     await _invokeVoid(AgentChannelConstants.methodStartEnforcementService);
   }
 
+  // --- F2 (audit verdict R7): OEM background-restriction onboarding ---
+
+  @override
+  Future<Map<Object?, Object?>> getOemBackgroundRestrictionInfo() async {
+    return _invoke<Map<Object?, Object?>>(
+      AgentChannelConstants.methodGetOemBackgroundRestrictionInfo,
+    );
+  }
+
+  @override
+  Future<String> openOemBackgroundSettings() async {
+    return _invoke<String>(AgentChannelConstants.methodOpenOemBackgroundSettings);
+  }
+
   /// Void-returning calls still go through the same MissingPluginException/
   /// NOT_IMPLEMENTED handling as `_invoke` — factored out since `void`
   /// calls don't have a meaningful generic return type to check for null.

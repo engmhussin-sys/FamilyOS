@@ -45,10 +45,61 @@
          Kotlin or Dart source). Every unused sensitive permission is
          review surface bought for nothing. -->
 
+    <!-- F2 (verdict risk R7): package visibility for the OEM autostart
+         screens OemBackgroundRestrictionManager.kt deep-links into.
+
+         On Android 11+ (API 30) an app cannot see, resolve or launch
+         another package's Activity unless that package is declared here
+         or the app holds QUERY_ALL_PACKAGES. QUERY_ALL_PACKAGES is a
+         Play-restricted permission and is deliberately NOT used: the
+         eleven named packages below are the entire need.
+
+         Every one of them is a vendor "security centre" / "phone
+         manager" app that owns the device's out-of-AOSP autostart
+         allow-list. Without an entry on that list the enforcement agent
+         is killed on screen-off no matter what the app does — see the
+         class docstring. Naming the packages does not grant anything;
+         it only makes resolveActivity() honest, and the launch itself is
+         still wrapped in try/catch because these components are renamed
+         between skin versions. -->
+    <queries>
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.powerkeeper" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.coloros.oppoguardelf" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.samsung.android.lool" />
+        <package android:name="com.transsion.phonemaster" />
+        <package android:name="com.transsion.phonemanager" />
+    </queries>
+
+    <!-- F2 (audit MA-004): networkSecurityConfig + usesCleartextTraffic.
+
+         Without these two attributes this app was installable and
+         non-functional: Android 9+ (API 28) denies cleartext HTTP by
+         default, so every call to the default dev backend
+         (http://10.0.2.2:3000) failed with "CLEARTEXT communication ...
+         not permitted by network security policy".
+
+         android:usesCleartextTraffic="false" is the production default,
+         stated explicitly rather than relied upon. It is also what the
+         platform enforces on API 27 and below, where the config file's
+         cleartext flag is not consulted.
+
+         @xml/network_security_config resolves PER BUILD VARIANT:
+           release/profile -> src/main/res/xml/...  (TLS only, system CAs)
+           debug           -> src/debug/res/xml/... (cleartext for
+                              10.0.2.2 / 127.0.0.1 / localhost only)
+         Read either file's header comment for the full rationale. -->
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:localeConfig="@xml/locales_config">
         <activity
             android:name=".MainActivity"

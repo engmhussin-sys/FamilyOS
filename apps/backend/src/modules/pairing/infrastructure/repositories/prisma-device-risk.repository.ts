@@ -7,6 +7,7 @@ import type {
   IRecordRiskAssessmentInput,
 } from '../../application/ports/device-risk.repository.port';
 import type { IRiskAssessmentRecord } from '../../domain/risk.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaDeviceRiskRepository implements IDeviceRiskRepository {
@@ -15,6 +16,7 @@ export class PrismaDeviceRiskRepository implements IDeviceRiskRepository {
   async record(input: IRecordRiskAssessmentInput): Promise<IRiskAssessmentRecord> {
     const row = await this.prisma.deviceRiskAssessment.create({
       data: {
+        familyId: tenantIdForWrite(),
         deviceId: input.deviceId,
         overallRisk: input.overallRisk,
         overallLevel: input.overallLevel,

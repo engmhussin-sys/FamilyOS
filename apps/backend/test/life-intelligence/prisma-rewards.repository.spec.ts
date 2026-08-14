@@ -11,6 +11,8 @@
  */
 import { BadRequestException } from '@nestjs/common';
 
+import { runWithTenant } from '../../src/common/tenancy/tenant-context';
+
 import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-rewards.repository';
 import {
   SQL_APPLY_ACCOUNT_DELTAS,
@@ -19,6 +21,14 @@ import {
   SQL_INSERT_EARN_LEDGER_ENTRY,
   SQL_INSERT_REDEEM_LEDGER_ENTRY,
 } from '../../src/modules/life-intelligence/infrastructure/repositories/rewards.sql';
+
+const FAMILY_ID = 'family-1';
+/** F2: the raw statements now carry family_id, taken from the ambient tenant.
+ * Every call below therefore runs inside a tenant context — which is also the
+ * point: outside one, `tenantIdForWrite()` throws rather than writing a row
+ * with nobody's tenant on it. */
+const asTenant = <T>(fn: () => Promise<T>): Promise<T> =>
+  runWithTenant({ familyId: FAMILY_ID, actorType: 'USER', actorId: 'user-1' }, async () => fn());
 
 describe('PrismaRewardsRepository (DA-002)', () => {
   let executeRawUnsafe: jest.Mock;
@@ -45,7 +55,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
     it('writes the ledger first and only then the balance', async () => {
       executeRawUnsafe.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
 
-      const granted = await repository.applyEarn('child-1', 'XP', 50, undefined, 'habit_streak', 'key-1');
+      const granted = await asTenant(() => repository.applyEarn('child-1', 'XP', 50, undefined, 'habit_streak', 'key-1'));
 
       expect(granted).toBe(true);
       expect(executeRawUnsafe).toHaveBeenNthCalledWith(
@@ -57,6 +67,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
         50,
         'habit_streak',
         'key-1',
+        FAMILY_ID,
       );
       expect(executeRawUnsafe).toHaveBeenNthCalledWith(
         2,
@@ -66,13 +77,14 @@ describe('PrismaRewardsRepository (DA-002)', () => {
         0,
         0,
         null,
+        FAMILY_ID,
       );
     });
 
     it('leaves the balance untouched when the database rejects the duplicate', async () => {
       executeRawUnsafe.mockResolvedValueOnce(0); // ON CONFLICT DO NOTHING
 
-      const granted = await repository.applyEarn('child-1', 'XP', 50, undefined, 'habit_streak', 'key-1');
+      const granted = await asTenant(() => repository.applyEarn('child-1', 'XP', 50, undefined, 'habit_streak', 'key-1'));
 
       expect(granted).toBe(false);
       expect(executeRawUnsafe).toHaveBeenCalledTimes(1);
@@ -81,7 +93,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
     it('synthesises a key when the caller has none, so the unique index still applies', async () => {
       executeRawUnsafe.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
 
-      await repository.applyEarn('child-1', 'COINS', 20, undefined, 'manual:user-1');
+      await asTenant(() => repository.applyEarn('child-1', 'COINS', 20, undefined, 'manual:user-1'));
 
       const key = executeRawUnsafe.mock.calls[0][6];
       expect(typeof key).toBe('string');
@@ -91,7 +103,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
     it('moves stars by one for a BADGE grant and passes the new level through', async () => {
       executeRawUnsafe.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
 
-      await repository.applyEarn('child-1', 'BADGE', 1, 4, 'badge:first_streak', 'key-b');
+      await asTenant(() => repository.applyEarn('child-1', 'BADGE', 1, 4, 'badge:first_streak', 'key-b'));
 
       expect(executeRawUnsafe).toHaveBeenNthCalledWith(
         2,
@@ -101,6 +113,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
         0,
         1,
         4,
+        FAMILY_ID,
       );
     });
   });
@@ -109,14 +122,15 @@ describe('PrismaRewardsRepository (DA-002)', () => {
     it('claims the redemption, deducts, then writes the REDEEM ledger row', async () => {
       executeRawUnsafe.mockResolvedValueOnce(1).mockResolvedValueOnce(1).mockResolvedValueOnce(1);
 
-      await repository.approveRedemption('red-1', 'child-1', 100, 'user-1');
+      await asTenant(() => repository.approveRedemption('red-1', 'child-1', 100, 'user-1'));
 
-      expect(executeRawUnsafe).toHaveBeenNthCalledWith(1, SQL_CLAIM_REDEMPTION, 'red-1', 'user-1');
+      expect(executeRawUnsafe).toHaveBeenNthCalledWith(1, SQL_CLAIM_REDEMPTION, 'red-1', 'user-1', FAMILY_ID);
       expect(executeRawUnsafe).toHaveBeenNthCalledWith(
         2,
         SQL_DEDUCT_COINS_IF_SUFFICIENT,
         'child-1',
         100,
+        FAMILY_ID,
       );
       expect(executeRawUnsafe).toHaveBeenNthCalledWith(
         3,
@@ -124,6 +138,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
         'child-1',
         100,
         'red-1',
+        FAMILY_ID,
       );
     });
 
@@ -131,7 +146,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
       executeRawUnsafe.mockResolvedValueOnce(0);
 
       await expect(
-        repository.approveRedemption('red-1', 'child-1', 100, 'user-1'),
+        asTenant(() => repository.approveRedemption('red-1', 'child-1', 100, 'user-1')),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(executeRawUnsafe).toHaveBeenCalledTimes(1);
     });
@@ -140,7 +155,7 @@ describe('PrismaRewardsRepository (DA-002)', () => {
       executeRawUnsafe.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
 
       await expect(
-        repository.approveRedemption('red-1', 'child-1', 100, 'user-1'),
+        asTenant(() => repository.approveRedemption('red-1', 'child-1', 100, 'user-1')),
       ).rejects.toBeInstanceOf(BadRequestException);
       // The REDEEM ledger row is never reached; the claim is rolled back
       // with the transaction.
