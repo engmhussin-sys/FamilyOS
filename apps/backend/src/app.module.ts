@@ -33,6 +33,7 @@ import { SystemDiagnosticsModule } from './modules/system-diagnostics/system-dia
 import { DataRetentionModule } from './modules/data-retention/data-retention.module';
 import { ConfigurationModule } from './config/configuration.module';
 import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelligence.module';
+import { EventsModule } from './modules/events/events.module';
 
 @Module({
   imports: [
@@ -86,6 +87,14 @@ import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelli
     SystemDiagnosticsModule,
     DataRetentionModule,
     LifeIntelligenceModule,
+    // F3 (R3). Imported LAST on purpose: EventsModule imports
+    // LifeIntelligenceModule and PairingModule to reach the Rewards Engine, the
+    // Smart Notification pipeline and the device->child resolution, so the
+    // dependency edge runs Events -> those, never the other way. Nothing in an
+    // existing module imports EventsModule, which is why adding it here changed
+    // no existing behaviour: the backbone is wired IN FRONT of the engines, not
+    // through them.
+    EventsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

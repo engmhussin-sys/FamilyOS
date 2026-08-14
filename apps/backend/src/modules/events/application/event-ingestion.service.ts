@@ -1,0 +1,481 @@
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  PayloadTooLargeException,
+} from '@nestjs/common';
+
+import { PrismaService } from '../../../common/prisma/prisma.service';
+import { RedisService } from '../../../common/redis/redis.service';
+import { PairingOrchestratorService } from '../../pairing/application/services/pairing-orchestrator.service';
+import type { CompletionEvent, CompletionKind } from '../../../shared/events/completion-event';
+import {
+  BATCH_IDEMPOTENCY_TTL_SECONDS,
+  MAX_BATCH_CLOCK_SKEW_MS,
+  MAX_EVENTS_PER_BATCH,
+  MAX_EVENT_AGE_MS,
+  MAX_EVENT_FUTURE_MS,
+  REJECTION_MESSAGE_AR,
+  type EventRejectionCode,
+  type EventResult,
+  type IngestEventsData,
+} from '../../../shared/events/events-batch.contract';
+import { SUPPORTED_SCHEMA_VERSIONS } from '../../../shared/events/event-envelope';
+import {
+  isDeviceIngestibleEventType,
+  isDomainEventType,
+  type DomainEventType,
+} from '../../../shared/events/event-types';
+import { composeIdempotencyKey, utcLocalDate } from '../../../shared/events/idempotency';
+import { OutboxWriter, type PrismaLike } from './outbox.writer';
+import type { WireEventDto } from './dto/ingest-events.dto';
+
+/**
+ * What each event type declares about itself, so the loop below has no switch.
+ *
+ * Written as a DISCRIMINATED UNION rather than two independently-nullable
+ * fields, because the invariant "a completion type always has a sourceType" is
+ * real and the type system should be the thing that enforces it. With two
+ * nullable fields, `sourceType` still had to be asserted non-null at the one
+ * place it is read; with the union, narrowing on `spec.completionKind` proves
+ * it, and a future entry that sets a `completionKind` without a `sourceType`
+ * fails to compile instead of producing a `CompletionEvent` with a null
+ * `sourceType` that the Rewards Engine cannot route.
+ */
+type TypeSpec =
+  | {
+      readonly completionKind: CompletionKind;
+      readonly aggregateType: string;
+      readonly sourceType: CompletionEvent['sourceType'];
+      /** Which payload field carries the aggregate id. */
+      readonly sourceIdField: string | null;
+      /** Writes a domain row inside the event's own transaction. */
+      readonly writesDomainRow: boolean;
+    }
+  | {
+      /** Not a completion — never reaches the Rewards Engine. */
+      readonly completionKind: null;
+      readonly aggregateType: string;
+      readonly sourceType: null;
+      readonly sourceIdField: string | null;
+      readonly writesDomainRow: boolean;
+    };
+
+const TYPE_SPECS: Readonly<Partial<Record<DomainEventType, TypeSpec>>> = {
+  HABIT_COMPLETED: {
+    completionKind: 'HABIT',
+    aggregateType: 'HabitOccurrence',
+    sourceType: 'HabitOccurrence',
+    sourceIdField: 'habitId',
+    writesDomainRow: true,
+  },
+  TASK_COMPLETED: {
+    completionKind: 'TASK',
+    aggregateType: 'TaskOccurrence',
+    sourceType: 'TaskOccurrence',
+    sourceIdField: 'taskId',
+    writesDomainRow: false,
+  },
+  DAILY_GOAL_COMPLETED: {
+    completionKind: 'HABIT',
+    aggregateType: 'DailyGoal',
+    sourceType: 'HabitOccurrence',
+    sourceIdField: 'goalId',
+    writesDomainRow: false,
+  },
+  HYDRATION_GOAL_COMPLETED: {
+    completionKind: 'HEALTH_GOAL',
+    aggregateType: 'HydrationLog',
+    sourceType: 'HydrationLog',
+    sourceIdField: null,
+    writesDomainRow: false,
+  },
+  ACTIVITY_GOAL_COMPLETED: {
+    completionKind: 'HEALTH_GOAL',
+    aggregateType: 'ActivityLog',
+    sourceType: 'ActivityLog',
+    sourceIdField: null,
+    writesDomainRow: false,
+  },
+  EDUCATION_PROGRESS: {
+    completionKind: 'LEARNING_SESSION',
+    aggregateType: 'LearningSession',
+    sourceType: 'LearningSession',
+    sourceIdField: 'goalId',
+    writesDomainRow: false,
+  },
+  MEMORIZATION_COMPLETED: {
+    completionKind: 'FAITH_SESSION',
+    aggregateType: 'MemorizationProgress',
+    sourceType: 'MemorizationProgress',
+    sourceIdField: 'progressId',
+    writesDomainRow: false,
+  },
+  SCREEN_TIME_THRESHOLD: {
+    completionKind: null,
+    aggregateType: 'ScreenTimeBudget',
+    sourceType: null,
+    sourceIdField: null,
+    writesDomainRow: false,
+  },
+  IMPORTANT_SAFETY_EVENT: {
+    completionKind: null,
+    aggregateType: 'DeviceSafetySignal',
+    sourceType: null,
+    sourceIdField: null,
+    writesDomainRow: false,
+  },
+};
+
+/**
+ * `POST /events/batch` — the server side of docs/06 §6.
+ *
+ * THE FOUR THINGS THIS CLASS REFUSES TO DO, each of which is a real attack:
+ *  1. Read `familyId` or `childId` from the payload. Both come from the device
+ *     token via `getChildAndFamilyIdForDevice`, which ALSO re-checks that the
+ *     device is still ACTIVE — a revoked device with an unexpired token is
+ *     rejected here even though its JWT signature is perfectly valid.
+ *  2. Accept a client-chosen `idempotencyKey`. A device that could choose its
+ *     own key could choose a fresh one per retry and mint unlimited rewards, so
+ *     the key is composed server-side from server-known values.
+ *  3. Accept `REWARD_GRANTED` or `STREAK_ACHIEVED` from the wire. Both are
+ *     DERIVED events; a device that could post `REWARD_GRANTED` could
+ *     manufacture a notification for a reward that never happened.
+ *  4. Fail a whole batch for one bad event. docs/06 §6.5: one transaction per
+ *     event, "one corrupt event does not take down 199 valid ones".
+ */
+@Injectable()
+export class EventIngestionService {
+  private readonly logger = new Logger(EventIngestionService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly outbox: OutboxWriter,
+    private readonly pairing: PairingOrchestratorService,
+    private readonly redis: RedisService,
+  ) {}
+
+  async ingestBatch(params: {
+    deviceId: string;
+    deviceTime: string;
+    events: readonly WireEventDto[];
+    batchIdempotencyKey?: string;
+    traceId?: string;
+  }): Promise<IngestEventsData> {
+    const serverNow = new Date();
+
+    // --- batch-level gate 1: size (docs/06 §6.2) -----------------------------
+    if (params.events.length > MAX_EVENTS_PER_BATCH) {
+      throw new PayloadTooLargeException({
+        code: 'EVENT_BATCH_TOO_LARGE',
+        message: `A batch may carry at most ${MAX_EVENTS_PER_BATCH} events; received ${params.events.length}.`,
+      });
+    }
+
+    // --- batch-level gate 2: device clock (docs/06 §6.2) ---------------------
+    const deviceTimeMs = Date.parse(params.deviceTime);
+    if (Number.isNaN(deviceTimeMs) || Math.abs(deviceTimeMs - serverNow.getTime()) > MAX_BATCH_CLOCK_SKEW_MS) {
+      throw new BadRequestException({
+        code: 'DEVICE_CLOCK_SKEW',
+        message: 'Device clock differs from server clock by more than 10 minutes; the whole batch is rejected.',
+        serverTime: serverNow.toISOString(),
+      });
+    }
+
+    // --- the tenant. From the device row, never from the payload. -----------
+    const { childId, familyId } = await this.pairing.getChildAndFamilyIdForDevice(params.deviceId);
+
+    // --- replay protection layer 2 (docs/06 §6.6): the whole round trip -----
+    const cached = await this.readBatchReplay(familyId, params.deviceId, params.batchIdempotencyKey);
+    if (cached) return cached;
+
+    const results: EventResult[] = [];
+    for (const event of params.events) {
+      results.push(
+        await this.ingestOne({
+          event,
+          childId,
+          familyId,
+          deviceId: params.deviceId,
+          serverNow,
+          traceId: params.traceId ?? null,
+        }),
+      );
+    }
+
+    const data: IngestEventsData = {
+      accepted: results.filter((r) => r.status === 'ACCEPTED').length,
+      duplicates: results.filter((r) => r.status === 'DUPLICATE').length,
+      rejected: results.filter((r) => r.status === 'REJECTED').length,
+      serverTime: serverNow.toISOString(),
+      results,
+    };
+
+    await this.writeBatchReplay(familyId, params.deviceId, params.batchIdempotencyKey, data);
+    return data;
+  }
+
+  /**
+   * ONE EVENT, ONE TRANSACTION (docs/06 §6.5).
+   *
+   * Inside the transaction, in this order: the domain row, then the event row,
+   * then the outbox row. All three commit together or none does — which is the
+   * single property the entire Outbox pattern exists to provide.
+   */
+  private async ingestOne(ctx: {
+    event: WireEventDto;
+    childId: string;
+    familyId: string;
+    deviceId: string;
+    serverNow: Date;
+    traceId: string | null;
+  }): Promise<EventResult> {
+    const { event } = ctx;
+
+    const rejection = this.validate(event, ctx.serverNow);
+    if (rejection) return reject(event.clientEventId, rejection);
+
+    const type = event.type as DomainEventType;
+    const spec = TYPE_SPECS[type];
+    if (!spec) return reject(event.clientEventId, 'EVENT_TYPE_NOT_DEVICE_INGESTIBLE');
+
+    const occurredAt = new Date(event.occurredAt);
+    const localDate = event.localDate ?? utcLocalDate(occurredAt);
+    const sourceId = spec.sourceIdField
+      ? String(event.payload[spec.sourceIdField] ?? '')
+      : `${ctx.childId}`;
+
+    if (spec.sourceIdField && !isUuid(sourceId)) {
+      return reject(event.clientEventId, 'EVENT_PAYLOAD_INVALID');
+    }
+
+    const idempotencyKey = composeIdempotencyKey(type, {
+      childId: ctx.childId,
+      deviceId: ctx.deviceId,
+      sourceId,
+      localDate,
+      milestone: numberOrUndefined(event.payload.milestone ?? event.payload.thresholdPercent),
+      kind: stringOrUndefined(event.payload.goalType ?? event.payload.kind),
+      hourBucket: occurredAt.toISOString().slice(0, 13),
+    });
+
+    // The payload the SERVER stores — a CompletionEvent for completion types,
+    // the client's own payload otherwise. Client-sent childId/deviceId/
+    // idempotencyKey are overwritten, not merged: they are server-owned fields.
+    const storedPayload: Record<string, unknown> = spec.completionKind
+      ? ({
+          ...event.payload,
+          schemaVersion: 1,
+          completionKind: spec.completionKind,
+          childId: ctx.childId,
+          deviceId: ctx.deviceId,
+          sourceType: spec.sourceType,
+          sourceId,
+          localDate,
+          occurredAt: occurredAt.toISOString(),
+          idempotencyKey,
+          pointsHint: numberOrNull(event.payload.pointsHint),
+          verifiedBy: verifiedByOrDefault(event.payload.verifiedBy),
+          metadata: plainMetadata(event.payload.metadata),
+        } satisfies CompletionEvent as unknown as Record<string, unknown>)
+      : { ...event.payload, childId: ctx.childId, deviceId: ctx.deviceId, localDate };
+
+    try {
+      const outcome = await this.prismaLike().$transaction(async (tx) => {
+        if (spec.writesDomainRow && type === 'HABIT_COMPLETED') {
+          const written = await this.writeHabitCompletion(tx, {
+            habitId: sourceId,
+            childId: ctx.childId,
+            familyId: ctx.familyId,
+            localDate,
+          });
+          if (!written) return { created: false, domainEventId: null, missingSource: true };
+        }
+
+        const result = await this.outbox.writeWithin(tx, {
+          type,
+          aggregateType: spec.aggregateType,
+          aggregateId: isUuid(sourceId) ? sourceId : ctx.childId,
+          childId: ctx.childId,
+          deviceId: ctx.deviceId,
+          idempotencyKey,
+          clientEventId: event.clientEventId,
+          occurredAt,
+          traceId: ctx.traceId,
+          payload: storedPayload,
+        });
+        return { ...result, missingSource: false };
+      });
+
+      if (outcome.missingSource) return reject(event.clientEventId, 'EVENT_SOURCE_NOT_FOUND');
+      if (!outcome.created) {
+        // docs/06 §6.4: DUPLICATE is a SUCCESS. It is the acknowledgement the
+        // device needs to prune the row from its local queue after a timeout.
+        return { clientEventId: event.clientEventId, status: 'DUPLICATE' };
+      }
+      return {
+        clientEventId: event.clientEventId,
+        status: 'ACCEPTED',
+        eventId: outcome.domainEventId ?? undefined,
+      };
+    } catch (err) {
+      // One event's failure, one event's problem. No ids, no payload in the log
+      // line (CONTEXT §3 principle 8).
+      this.logger.warn(
+        `ingest.event_failed type=${event.type} error=${err instanceof Error ? err.message : String(err)}`,
+      );
+      return reject(event.clientEventId, 'EVENT_INTERNAL_ERROR');
+    }
+  }
+
+  /**
+   * Per-event validation, in the order docs/06 §6.2 lists it. Returns the
+   * rejection code, or `null` when the event is acceptable.
+   */
+  private validate(event: WireEventDto, serverNow: Date): EventRejectionCode | null {
+    if (!isDomainEventType(event.type)) return 'EVENT_UNKNOWN_TYPE';
+    if (!isDeviceIngestibleEventType(event.type)) return 'EVENT_TYPE_NOT_DEVICE_INGESTIBLE';
+
+    const version = event.schemaVersion ?? 1;
+    if (!SUPPORTED_SCHEMA_VERSIONS.includes(version)) return 'EVENT_SCHEMA_MISMATCH';
+
+    const occurredMs = Date.parse(event.occurredAt);
+    if (Number.isNaN(occurredMs)) return 'EVENT_CLOCK_SKEW';
+
+    const delta = occurredMs - serverNow.getTime();
+    // Future boundary: +5 minutes (docs/06 §6.2, and the brief).
+    if (delta > MAX_EVENT_FUTURE_MS) return 'EVENT_CLOCK_SKEW';
+    // Past boundary: 48 hours. See MAX_EVENT_AGE_MS for why this is 48h and not
+    // the 7 days docs/06 §6.2 states.
+    if (-delta > MAX_EVENT_AGE_MS) return 'EVENT_CLOCK_SKEW';
+
+    return null;
+  }
+
+  /**
+   * Writes the habit completion row. `upsert` on the existing
+   * `habit_completions (habit_id, date)` unique — so the SECOND arrival of the
+   * same completion touches no new row, exactly as `ON CONFLICT DO NOTHING`
+   * would. The habit's existence and ownership is checked FIRST, because a
+   * device that could complete an arbitrary habit id could complete another
+   * child's habits.
+   */
+  private async writeHabitCompletion(
+    tx: PrismaLike,
+    params: { habitId: string; childId: string; familyId: string; localDate: string },
+  ): Promise<boolean> {
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    const anyTx = tx as any;
+    const habit = await anyTx.habit.findFirst({
+      where: { id: params.habitId, childId: params.childId, isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!habit) return false;
+
+    const date = new Date(`${params.localDate}T00:00:00.000Z`);
+    await anyTx.habitCompletion.upsert({
+      where: { habitId_date: { habitId: params.habitId, date } },
+      create: {
+        familyId: params.familyId,
+        habitId: params.habitId,
+        childId: params.childId,
+        date,
+        status: 'COMPLETED',
+      },
+      update: {},
+    });
+    return true;
+  }
+
+  // --- batch replay cache (docs/06 §6.6 layer 2) ----------------------------
+  //
+  // Redis saves a full round trip when a device retries after a network
+  // timeout. It is a CACHE, not the guarantee: with Redis down, every event
+  // still lands on `domain_events (family_id, idempotency_key)` and comes back
+  // as DUPLICATE. Both failures below are therefore swallowed by design — a
+  // Redis outage must degrade this endpoint's latency, never its correctness.
+
+  private replayKey(familyId: string, deviceId: string, key: string): string {
+    return `events:batch:${familyId}:${deviceId}:${key}`;
+  }
+
+  private async readBatchReplay(
+    familyId: string,
+    deviceId: string,
+    key?: string,
+  ): Promise<IngestEventsData | null> {
+    if (!key) return null;
+    try {
+      const cached = await this.redis.get(this.replayKey(familyId, deviceId, key));
+      return cached ? (JSON.parse(cached) as IngestEventsData) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeBatchReplay(
+    familyId: string,
+    deviceId: string,
+    key: string | undefined,
+    data: IngestEventsData,
+  ): Promise<void> {
+    if (!key) return;
+    try {
+      await this.redis.setWithTtl(
+        this.replayKey(familyId, deviceId, key),
+        JSON.stringify(data),
+        BATCH_IDEMPOTENCY_TTL_SECONDS,
+      );
+    } catch {
+      /* see the note above: correctness does not depend on this. */
+    }
+  }
+
+  private prismaLike(): PrismaLike {
+    return this.prisma as unknown as PrismaLike;
+  }
+}
+
+function reject(clientEventId: string, errorCode: EventRejectionCode): EventResult {
+  return {
+    clientEventId,
+    status: 'REJECTED',
+    errorCode,
+    messageAr: REJECTION_MESSAGE_AR[errorCode],
+  };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function verifiedByOrDefault(value: unknown): CompletionEvent['verifiedBy'] {
+  return value === 'PARENT' || value === 'SENSOR' || value === 'SYSTEM' ? value : 'SELF';
+}
+
+/** ≤ 2 KB, scalars only — the contract's own bound, enforced not assumed. */
+function plainMetadata(value: unknown): Record<string, string | number | boolean> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+    if (JSON.stringify(out).length > 2048) {
+      delete out[k];
+      break;
+    }
+  }
+  return out;
+}

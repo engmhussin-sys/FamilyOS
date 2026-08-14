@@ -9,6 +9,7 @@ import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { configureTrustProxy } from './common/http/trust-proxy';
+import { OutboxRelay } from './modules/events/application/outbox.relay';
 
 /**
  * Sprint 4 (Observability) — CLOSES A REAL GAP: before this, a real
@@ -91,6 +92,18 @@ async function bootstrap(): Promise<void> {
   // a container orchestrator's graceful-shutdown grace period is wasted;
   // the process would be killed mid-request instead of draining cleanly.
   app.enableShutdownHooks();
+
+  // F3 (R3): start the Outbox relay HERE and not in `OutboxRelay.onModuleInit`.
+  // `AppModule` is instantiated by test/app.module.spec.ts and by the
+  // cross-tenant probe; a relay that started itself on module init would open
+  // database handles in suites that never asked for one and would keep Jest
+  // alive. Starting it at the process entry point means exactly one thing
+  // starts it — a real server — and tests drive `tick()` directly, which is
+  // also what makes relay behaviour assertable rather than timing-dependent.
+  //
+  // `enableShutdownHooks()` above already calls its `onModuleDestroy`, which
+  // clears the timer, so SIGTERM stops the poller before Prisma disconnects.
+  app.get(OutboxRelay).start();
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);

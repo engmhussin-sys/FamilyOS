@@ -16,7 +16,8 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:validate": "prisma validate",
-    "ci:tenant-guard": "ts-node scripts/ci/assert-tenant-scoping.ts"
+    "ci:tenant-guard": "ts-node scripts/ci/assert-tenant-scoping.ts",
+    "ci:event-emission": "ts-node scripts/ci/assert-event-emission.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

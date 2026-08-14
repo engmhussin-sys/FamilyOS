@@ -74,8 +74,18 @@ jobs:
       # classified in tenant-model-registry.ts.
       - name: Tenant-scoping static guard
         run: npm run ci:tenant-guard
+      # F3 (R3) — BLOCKING. The ratchet described in
+      # docs/architecture/EVENT_PIPELINE.md: a new module cannot write
+      # child-achievement state without either emitting through the Outbox or
+      # being added, by hand and with a written reason, to KNOWN_UNWIRED. It
+      # also forbids writing the three event tables from outside the events
+      # module. It deliberately does NOT claim to verify that an event is
+      # emitted in the SAME transaction as the write — see the script's own
+      # header for why that is not statically decidable here.
+      - name: Event-emission static guard
+        run: npm run ci:event-emission
       - name: Unit + DI-graph tests
-        run: npx jest --testPathIgnorePatterns=test/database --testPathIgnorePatterns=test/tenancy --coverage
+        run: npx jest --testPathIgnorePatterns=test/database --testPathIgnorePatterns=test/tenancy --testPathIgnorePatterns=test/events --coverage
       - name: Database integration test
         run: npx jest test/database --forceExit
       # F2 (R8) — BLOCKING. Dynamic half: the deny-by-default proof, the RLS
@@ -86,6 +96,14 @@ jobs:
       # Runs last because it is the slowest and the most informative when red.
       - name: Tenant isolation proofs (deny-by-default, RLS, cross-tenant probe)
         run: npx jest test/tenancy --forceExit --runInBand
+      # F3 (R3) — BLOCKING. The event pipeline end to end against the real
+      # PostgreSQL and the real Redis: a batch ingested over HTTP with a real
+      # device token, the relay dispatching it, the Rewards Engine granting
+      # once, exactly one notification, and the same batch replayed producing
+      # zero new rewards and zero new notifications. --runInBand because the
+      # suite owns the clock and the throttler counters in Redis.
+      - name: Event pipeline proofs (ingest -> bus -> reward -> notification)
+        run: npx jest test/events --forceExit --runInBand
       - name: Build
         run: npx nest build
 

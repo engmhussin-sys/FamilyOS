@@ -83,6 +83,14 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   'AppCatalogEntry',
   // -- gained family_id in migration 0003, backfilled via subscriptions --
   'Invoice',
+  // -- F3 (R3): the event backbone. Created STRICT in migration 0005, never
+  //    nullable, so there is no backfill and no orphan case. A domain event
+  //    without a family is not something this system can produce: the tenant is
+  //    stamped from the verified device token at ingestion, and every derived
+  //    event inherits it from the event that caused it.
+  'DomainEvent',
+  'OutboxMessage',
+  'ConsumedMessage',
 ]);
 
 /**

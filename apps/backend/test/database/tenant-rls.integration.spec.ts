@@ -98,7 +98,11 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
       WHERE n.nspname = 'public' AND c.relkind = 'r'
         AND c.relrowsecurity AND c.relforcerowsecurity
     `);
-    expect(rows[0].n).toBe(44);
+    // F3: 44 -> 47. Migration 0005 replays 0004's policy block verbatim over
+    // `domain_events`, `outbox_messages` and `consumed_messages`, so the count
+    // moving is the evidence that the event backbone did NOT get a weaker
+    // tenancy layer than the tables that came before it.
+    expect(rows[0].n).toBe(47);
 
     const families = await admin.query(
       `SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'families'`,
@@ -108,7 +112,10 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
     const policies = await admin.query(
       `SELECT count(*)::int AS n FROM pg_policies WHERE schemaname='public' AND policyname='tenant_isolation'`,
     );
-    expect(policies.rows[0].n).toBe(45);
+    // F3: 45 -> 48. The 44 strict tables + `families` itself, plus the three
+    // event-backbone tables migration 0005 adds. Same policy shape, same
+    // setting name, same owner-bypass — 0005 replays 0004's block verbatim.
+    expect(policies.rows[0].n).toBe(48);
   });
 
   it('with NO tenant setting, the restricted role sees NOTHING — fail-closed, not fail-open', async () => {

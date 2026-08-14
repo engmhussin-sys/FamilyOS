@@ -11,7 +11,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  * `TenantContext`, and `test/tenancy/tenant-context.spec.ts` asserts that.
  */
 
-export type TenantActorType = 'USER' | 'DEVICE';
+/**
+ * F3 adds `'SYSTEM'`: a consumer woken by the Outbox relay acts for a real,
+ * single family but is neither a logged-in parent nor a paired device.
+ * Labelling it `'DEVICE'` would put a false actor in the audit trail. Purely
+ * additive — `TenantContextInterceptor` still only ever produces USER or DEVICE
+ * from a token, because a token is the only thing it reads.
+ */
+export type TenantActorType = 'USER' | 'DEVICE' | 'SYSTEM';
 
 export interface TenantContext {
   readonly kind: 'TENANT';
@@ -44,7 +51,21 @@ export type SystemReason =
    *  reads the extension would otherwise scope to the CALLER's family. */
   | 'ACCOUNT_LIFECYCLE'
   /** Test harnesses and seed scripts only. Never reachable from HTTP. */
-  | 'TEST_FIXTURE';
+  | 'TEST_FIXTURE'
+  /**
+   * F3 (R3). The Outbox relay polls `outbox_messages` across every tenant —
+   * that is what a relay IS, and no per-request tenant exists on a timer tick.
+   *
+   * The bypass is deliberately NARROW and the narrowness is the control: only
+   * the CLAIM and the STATUS UPDATE run under this reason. The moment a message
+   * is claimed, the relay re-enters `runWithTenant({ familyId: message.familyId })`
+   * before touching the bus, so every consumer — Rewards, Notifications,
+   * Streaks — executes under the ordinary tenant extension with deny-by-default
+   * intact, exactly as if a request from that family had arrived. A consumer
+   * therefore cannot read another family's rows even though the relay that
+   * woke it could see them all.
+   */
+  | 'OUTBOX_RELAY';
 
 export interface SystemContext {
   readonly kind: 'SYSTEM';
