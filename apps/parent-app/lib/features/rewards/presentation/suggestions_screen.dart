@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
-import '../application/suggestions_controller.dart';
 import '../domain/achievement.dart';
 
 /// AI SUGGESTIONS — ADVISORY ONLY.

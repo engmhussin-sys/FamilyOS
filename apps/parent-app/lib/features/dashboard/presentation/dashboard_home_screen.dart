@@ -5,7 +5,6 @@ import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../authentication/application/auth_controller.dart';
 import '../../life_intelligence/presentation/digital_twin_screen.dart';
 import '../../life_intelligence/presentation/life_timeline_screen.dart';
 import '../../life_intelligence/presentation/habit_tracker_screen.dart';

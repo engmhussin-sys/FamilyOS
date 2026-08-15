@@ -427,7 +427,7 @@ class _CoachingTipCard extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [KidTheme.sage500.withOpacity(0.18), KidTheme.sage500.withOpacity(0.06)],
+          colors: [KidTheme.habitsAccent.withOpacity(0.18), KidTheme.habitsAccent.withOpacity(0.06)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -611,7 +611,7 @@ class _HealthProgressCard extends StatelessWidget {
                   value: target > 0 ? (actual / target).clamp(0.0, 1.0) : 0,
                   minHeight: 8,
                   backgroundColor: KidTheme.mutedInk.withOpacity(0.1),
-                  valueColor: AlwaysStoppedAnimation(achieved ? KidTheme.sage500 : KidTheme.healthAccent),
+                  valueColor: AlwaysStoppedAnimation(achieved ? KidTheme.habitsAccent : KidTheme.healthAccent),
                 ),
               ),
             ],

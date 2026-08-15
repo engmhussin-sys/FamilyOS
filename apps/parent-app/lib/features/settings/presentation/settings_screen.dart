@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/localization/localization_engine.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../authentication/application/auth_controller.dart';
 
 /// DESIGN PASS: each row now has a soft colored icon badge instead of
 /// a bare default-tint icon, and disabled/coming-soon rows are

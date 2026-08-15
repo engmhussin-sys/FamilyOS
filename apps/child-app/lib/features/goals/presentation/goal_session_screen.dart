@@ -5,7 +5,6 @@ import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/widgets/celebration_overlay.dart';
-import '../../../core/widgets/sparky_mascot.dart';
 import '../application/goal_session_controller.dart';
 import '../domain/child_goal.dart';
 import 'celebration_view.dart';
