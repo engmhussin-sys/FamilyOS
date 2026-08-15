@@ -6,6 +6,7 @@ import { DeleteAccountDto } from '../../application/dto/delete-account.dto';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { OwnerOnly } from '../../../../common/authz/roles.decorator';
 
 @Controller('account')
 @UseGuards(JwtAuthGuard)
@@ -17,6 +18,12 @@ export class AccountDeletionController {
    * password, tight enough to slow any automated abuse of a stolen
    * session token. */
   @Delete()
+  // PHASE C. This deletes the FAMILY, not merely a login: it cancels the
+  // subscription and soft-deletes every child. A4's custody-dispute scenario is
+  // exactly this route reached by the wrong parent. OWNER only — and the
+  // service re-reads `family_members` before acting, so a 15-minute-stale
+  // OWNER claim from a parent demoted moments ago still cannot execute it.
+  @OwnerOnly()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteAccount(@Body() dto: DeleteAccountDto, @CurrentUser() user: IJwtPayload): Promise<void> {

@@ -23,6 +23,7 @@ import { QuizService } from '../../application/services/quiz.service';
 import { PrismaRewardProgramRepository } from '../../infrastructure/repositories/prisma-reward-program.repository';
 import { StartAchievementDto, SubmitAchievementDto } from '../../application/dto/reward-program.dto';
 import { ALLOWED_EVIDENCE_MIME_TYPES, MAX_EVIDENCE_BYTES } from '../../../../shared/rewards/evidence';
+import { ChildSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * B5 (PA-B-019) — the shape multer hands a handler, declared HERE rather than
@@ -78,12 +79,14 @@ export class ChildAchievementsController {
   /** Today's programs, each with `available` and, when it is not, the reason —
    * so the app can explain rather than fail on tap. */
   @Get('today')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async today(@CurrentUser() device: IJwtPayload) {
     return this.achievements.todayForChild(await this.childOf(device));
   }
 
   @Post('start')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async start(@Body() dto: StartAchievementDto, @CurrentUser() device: IJwtPayload) {
     return this.achievements.start(await this.childOf(device), dto.programId);
@@ -92,6 +95,7 @@ export class ChildAchievementsController {
   /** SUBMIT EVIDENCE — not a result. There is deliberately no field on
    * `SubmitAchievementDto` by which a child states an outcome. */
   @Post(':achievementId/submit')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async submit(
     @Param('achievementId') achievementId: string,
@@ -115,6 +119,7 @@ export class ChildAchievementsController {
    * behind it `select`s four columns and the key is not one of them.
    */
   @Get(':achievementId/quiz')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async quizFor(
     @Param('achievementId', ParseUUIDPipe) achievementId: string,
@@ -140,6 +145,7 @@ export class ChildAchievementsController {
    * exactly the class of input PA-B-017 taught this codebase to stop trusting.
    */
   @Post(':achievementId/evidence')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('file', {
@@ -169,6 +175,7 @@ export class ChildAchievementsController {
   }
 
   @Get('mine')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async mine(@CurrentUser() device: IJwtPayload) {
     return this.achievements.listForChild(await this.childOf(device));
@@ -188,6 +195,7 @@ export class ChildAchievementsController {
    * admin dashboard already consumes, so this is a new, additive read.
    */
   @Get('badges')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async badges(@CurrentUser() device: IJwtPayload) {
     const rows = await this.repo.listBadgeAwards(await this.childOf(device));
@@ -203,6 +211,7 @@ export class ChildAchievementsController {
   }
 
   @Get('streaks')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async streaks(@CurrentUser() device: IJwtPayload) {
     return this.achievements.streaksForChild(await this.childOf(device));
@@ -211,6 +220,7 @@ export class ChildAchievementsController {
   /** The child's own earned rewards: bonus screen-time minutes still alive, and
    * the physical/custom rewards waiting on a parent. */
   @Get('rewards')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async rewards(@CurrentUser() device: IJwtPayload) {
     const childId = await this.childOf(device);

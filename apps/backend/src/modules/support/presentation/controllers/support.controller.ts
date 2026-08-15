@@ -8,6 +8,7 @@ import { OptionalJwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
 import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
+import { PlatformAdminSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('support')
 export class SupportController {
@@ -37,6 +38,7 @@ export class SupportController {
    * could receive requests but the team had no way to ever read them
    * back — see SupportService.listAll's own docstring. */
   @Get()
+  @PlatformAdminSurface()
   @SystemRoute('ADMIN_CONSOLE', 'Internal support queue, behind InternalAdminGuard; reading it is cross-tenant by purpose.')
   @UseGuards(InternalAdminGuard)
   listAll() {

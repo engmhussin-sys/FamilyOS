@@ -7,6 +7,7 @@ import { InternalAdminGuard } from '../../../../common/guards/internal-admin.gua
 import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { ParentSurface, PlatformAdminSurface } from '../../../../common/authz/roles.decorator';
 
 class TrackEventDto {
   sessionId!: string;
@@ -22,6 +23,7 @@ export class AnalyticsController {
   ) {}
 
   @Post('track')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   async track(@Body() dto: TrackEventDto, @CurrentUser() user: IJwtPayload): Promise<void> {
     await this.eventCollector.track({
@@ -37,6 +39,7 @@ export class AnalyticsController {
    * by ANY authenticated user before this — see InternalAdminGuard's
    * own docstring for the full finding. */
   @Get('dashboard-metrics')
+  @PlatformAdminSurface()
   @SystemRoute('ADMIN_CONSOLE', 'Product-wide dashboard metrics; cross-tenant aggregation is the feature, behind InternalAdminGuard.')
   @UseGuards(InternalAdminGuard)
   getDashboardMetrics() {

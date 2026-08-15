@@ -8,6 +8,7 @@ import { SubscribeDto } from '../dto/subscribe.dto';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { OwnerOnly, ParentSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('billing')
 @UseGuards(JwtAuthGuard)
@@ -19,11 +20,13 @@ export class BillingController {
   ) {}
 
   @Get('plans')
+  @ParentSurface()
   listPlans() {
     return this.planService.listActivePlans();
   }
 
   @Get('subscription')
+  @ParentSurface()
   async getSubscription(@CurrentUser() user: IJwtPayload) {
     const [subscription, isInTrial, trialDaysRemaining] = await Promise.all([
       this.subscriptionService.getForFamily(user.familyId!),
@@ -34,6 +37,7 @@ export class BillingController {
   }
 
   @Post('trial/start')
+  @ParentSurface()
   startTrial(@CurrentUser() user: IJwtPayload) {
     return this.subscriptionService.startTrial(user.familyId!);
   }
@@ -48,17 +52,25 @@ export class BillingController {
    * real user retrying a failed card, tight enough to block scripted abuse.
    */
   @Post('subscribe')
+  // PHASE C. `FamilyRole.OWNER` is documented in schema.prisma as the BILLING
+  // owner. Money leaves one person's card; a co-parent may read the plan and
+  // the history (below) but may not commit the family to a charge.
+  @OwnerOnly()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   subscribe(@Body() dto: SubscribeDto, @CurrentUser() user: IJwtPayload) {
     return this.subscriptionService.subscribe(user.familyId!, dto.planTier, dto.provider, user.sub);
   }
 
   @Post('cancel')
+  // PHASE C. Cancelling removes every paid entitlement from the whole family.
+  // Symmetric with subscribe: the billing owner decides.
+  @OwnerOnly()
   async cancel(@CurrentUser() user: IJwtPayload): Promise<void> {
     await this.subscriptionService.cancel(user.familyId!, user.sub);
   }
 
   @Get('history')
+  @ParentSurface()
   getBillingHistory(@CurrentUser() user: IJwtPayload) {
     return this.subscriptionService.getBillingHistory(user.familyId!);
   }

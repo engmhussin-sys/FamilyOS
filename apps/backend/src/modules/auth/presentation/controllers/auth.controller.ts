@@ -16,6 +16,7 @@ import { LoginDto } from '../dto/login.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * All parent-facing authentication endpoints.
@@ -68,6 +69,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Body() dto: RefreshTokenDto): Promise<void> {

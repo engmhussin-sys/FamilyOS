@@ -43,6 +43,7 @@ import {
   UpdateRewardProgramDto,
 } from '../../application/dto/reward-program.dto';
 import type { FulfilmentStatus } from '../../../../shared/rewards/reward-spec';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * PARENT SURFACE — `/api/v1/reward-programs` (the `api/v1` prefix is applied by
@@ -72,6 +73,7 @@ export class RewardProgramsController {
   /** Category -> Activity -> (for Quran) Surah. The whole first screen of the
    * create flow in one call, so the parent app does not make three. */
   @Get('catalogue')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   catalogue() {
     return {
@@ -97,6 +99,7 @@ export class RewardProgramsController {
 
   /** The 114 surahs. Reference data, identical for every family. */
   @Get('catalogue/surahs')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   surahs() {
     return { surahs: QURAN_SURAHS, total: QURAN_SURAHS.length };
@@ -105,12 +108,14 @@ export class RewardProgramsController {
   // --- programs -------------------------------------------------------------
 
   @Post()
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   create(@Body() dto: CreateRewardProgramDto, @CurrentUser() user: IJwtPayload) {
     return this.programs.create(user.familyId!, user.sub, dto);
   }
 
   @Get()
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   list(@Query('childId') childId: string | undefined, @CurrentUser() user: IJwtPayload) {
     return this.programs.list(user.familyId!, childId);
@@ -125,6 +130,7 @@ export class RewardProgramsController {
    * cannot collide; this one can.)
    */
   @Get('fulfilments')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   fulfilments(@Query('status') status?: string) {
     return this.payout.listFulfilments(status);
@@ -153,6 +159,7 @@ export class RewardProgramsController {
    * second query shape. The route is the only new thing.
    */
   @Get('achievements')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   achievementsOfChild(@Query('childId', ParseUUIDPipe) childId: string) {
     return this.achievements.listForChild(childId);
@@ -173,24 +180,28 @@ export class RewardProgramsController {
    * The answer key is accepted on write and never returned on read.
    */
   @Get('quiz-bank')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   listQuizBank(@Query('category') category: string, @Query('subject') subject?: string) {
     return this.repo.listBankQuestions({ category, subject: subject ?? null, ageYears: null });
   }
 
   @Get(':programId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   get(@Param('programId') programId: string) {
     return this.programs.get(programId);
   }
 
   @Patch(':programId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   update(@Param('programId') programId: string, @Body() dto: UpdateRewardProgramDto) {
     return this.programs.update(programId, dto);
   }
 
   @Delete(':programId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   archive(@Param('programId') programId: string) {
     return this.programs.remove(programId);
@@ -199,6 +210,7 @@ export class RewardProgramsController {
   // --- achievement queue ----------------------------------------------------
 
   @Get('achievements/pending')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   pending() {
     return this.achievements.listPending();
@@ -214,6 +226,7 @@ export class RewardProgramsController {
    * bytes come from the separate authenticated route below.
    */
   @Get('achievements/:achievementId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   async achievementDetail(@Param('achievementId', ParseUUIDPipe) achievementId: string) {
     const [attempts, evidence] = await Promise.all([
@@ -238,6 +251,7 @@ export class RewardProgramsController {
    * on the same origin family.
    */
   @Get('achievements/:achievementId/evidence/:evidenceId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   async readEvidence(
     @Param('evidenceId', ParseUUIDPipe) evidenceId: string,
@@ -258,6 +272,7 @@ export class RewardProgramsController {
    * were computable and unreadable by the person who buys the subscription.
    */
   @Get('streaks/:childId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   streaksOfChild(@Param('childId', ParseUUIDPipe) childId: string) {
     return this.achievements.streaksForChild(childId);
@@ -266,6 +281,7 @@ export class RewardProgramsController {
   // --- B5 (PA-B-017): the question bank a parent can author ------------------
 
   @Post('quiz-bank')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   createQuizQuestion(@Body() dto: CreateQuizQuestionDto, @CurrentUser() user: IJwtPayload) {
     if (dto.correctChoiceIndex >= dto.choices.length) {
@@ -289,12 +305,14 @@ export class RewardProgramsController {
   }
 
   @Get('achievements/:achievementId/attempts')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   attempts(@Param('achievementId') achievementId: string) {
     return this.achievements.attemptsOf(achievementId);
   }
 
   @Post('achievements/:achievementId/approve')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   approve(
     @Param('achievementId') achievementId: string,
@@ -305,6 +323,7 @@ export class RewardProgramsController {
   }
 
   @Post('achievements/:achievementId/reject')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   reject(
     @Param('achievementId') achievementId: string,
@@ -317,6 +336,7 @@ export class RewardProgramsController {
   // --- fulfilment -----------------------------------------------------------
 
   @Patch('fulfilments/:fulfilmentId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   moveFulfilment(
     @Param('fulfilmentId') fulfilmentId: string,
@@ -329,12 +349,14 @@ export class RewardProgramsController {
   // --- screen-time grants ---------------------------------------------------
 
   @Get('screen-time-grants/:childId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   grants(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.payout.listScreenTimeGrants(childId, user.familyId!);
   }
 
   @Delete('screen-time-grants/:grantId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   revokeGrant(@Param('grantId') grantId: string, @CurrentUser() user: IJwtPayload) {
     return this.payout.revokeScreenTimeGrant(grantId, user.sub);
@@ -345,6 +367,7 @@ export class RewardProgramsController {
   /** Returns DRAFTS. Nothing is created by this call — see
    * `RewardSuggestionService`'s header for why that is structural. */
   @Get('suggestions/:childId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   suggest(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.suggestions.suggest(user.familyId!, childId);
@@ -352,6 +375,7 @@ export class RewardProgramsController {
 
   /** The parent's EXPLICIT accept — the only path from a suggestion to a row. */
   @Post('suggestions/accept')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   acceptSuggestion(@Body() dto: AcceptSuggestionDto, @CurrentUser() user: IJwtPayload) {
     return this.suggestions.accept(user.familyId!, user.sub, dto.childId, dto.suggestionId);

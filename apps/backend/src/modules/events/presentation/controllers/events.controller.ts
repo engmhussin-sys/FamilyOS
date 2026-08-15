@@ -8,6 +8,7 @@ import { EVENTS_RATE_LIMIT, type IngestEventsResponse } from '../../../../shared
 import { EventIngestionService } from '../../application/event-ingestion.service';
 import { IngestEventsDto } from '../../application/dto/ingest-events.dto';
 import { DeviceEventsThrottlerGuard } from '../guards/device-events-throttler.guard';
+import { ChildSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * `POST /events/batch` (docs/06 §6; `/api/v1` is prepended by
@@ -33,6 +34,7 @@ export class EventsController {
    * contract the device codes against says 200.
    */
   @Post('batch')
+  @ChildSurface()
   @HttpCode(200)
   @SkipThrottle() // switches off the GLOBAL IP-keyed limit; see the guard.
   @Throttle({ default: { limit: EVENTS_RATE_LIMIT.limit, ttl: EVENTS_RATE_LIMIT.ttlMs } })

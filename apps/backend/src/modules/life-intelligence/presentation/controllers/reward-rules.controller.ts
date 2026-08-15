@@ -11,6 +11,7 @@ import {
   RULE_EVENT_TYPES,
   MIN_VERIFIED_BY_VALUES,
 } from '../../../../shared/rewards/reward-rule-catalogue';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * B4 (PA-B-015) — THE MISSING CONTROLLER.
@@ -50,6 +51,7 @@ export class RewardRulesController {
    * inherits before they change anything.
    */
   @Get('catalogue')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   async catalogue() {
     return {
@@ -67,18 +69,21 @@ export class RewardRulesController {
   /** The family's own rules AND the platform defaults it inherits, each marked
    * `tier` and `isInEffect` using the engine's own precedence function. */
   @Get()
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   list(@CurrentUser() user: IJwtPayload) {
     return this.rewardRules.listForFamily(user.familyId!);
   }
 
   @Post()
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   create(@Body() dto: CreateRewardRuleDto, @CurrentUser() user: IJwtPayload) {
     return this.rewardRules.create(user.familyId!, user.sub, dto);
   }
 
   @Patch(':ruleId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   update(@Param('ruleId') ruleId: string, @Body() dto: UpdateRewardRuleDto, @CurrentUser() user: IJwtPayload) {
     return this.rewardRules.update(user.familyId!, ruleId, dto);
@@ -87,6 +92,7 @@ export class RewardRulesController {
   /** Switch a rule OFF. The family keeps ownership of the engine, so the
    * platform defaults stay suppressed — see `selectApplicableRules`. */
   @Post(':ruleId/deactivate')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @HttpCode(204)
   async deactivate(@Param('ruleId') ruleId: string, @CurrentUser() user: IJwtPayload) {
@@ -96,6 +102,7 @@ export class RewardRulesController {
   /** REMOVE the rule entirely. When it was the last one this family owned for
    * its engine, the platform defaults take over again on the next completion. */
   @Delete(':ruleId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @HttpCode(204)
   async remove(@Param('ruleId') ruleId: string, @CurrentUser() user: IJwtPayload) {

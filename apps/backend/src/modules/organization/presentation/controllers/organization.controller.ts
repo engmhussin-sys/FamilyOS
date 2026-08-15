@@ -12,6 +12,7 @@ import { UpdateBrandingDto } from '../dto/update-branding.dto';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * Sprint B1 — the first real endpoints for the Organization surface
@@ -37,6 +38,7 @@ export class OrganizationController {
   ) {}
 
   @Post()
+  @ParentSurface()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   create(@Body() dto: CreateOrganizationDto, @CurrentUser() user: IJwtPayload) {
     return this.organizationService.createOrganization(user.sub, dto.type, dto.name, dto.parentOrganizationId ?? null);
@@ -45,21 +47,25 @@ export class OrganizationController {
   /** Sprint B3 — must be registered before ':organizationId' so Nest
    * doesn't try to treat the literal "mine" as an organizationId. */
   @Get('mine')
+  @ParentSurface()
   listMine(@CurrentUser() user: IJwtPayload) {
     return this.organizationService.listMyOrganizations(user.sub);
   }
 
   @Get(':organizationId')
+  @ParentSurface()
   getOne(@Param('organizationId') organizationId: string, @CurrentUser() user: IJwtPayload) {
     return this.organizationService.getOrganizationOrThrow(organizationId, user.sub);
   }
 
   @Get(':organizationId/members')
+  @ParentSurface()
   listMembers(@Param('organizationId') organizationId: string, @CurrentUser() user: IJwtPayload) {
     return this.organizationService.listMembers(organizationId, user.sub);
   }
 
   @Post(':organizationId/invitations')
+  @ParentSurface()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   inviteMember(
     @Param('organizationId') organizationId: string,
@@ -75,6 +81,7 @@ export class OrganizationController {
    * everything needed; the person accepting isn't necessarily a
    * member of anything yet. */
   @Post('invitations/:invitationId/accept')
+  @ParentSurface()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   acceptInvitation(@Param('invitationId') invitationId: string, @CurrentUser() user: IJwtPayload) {
     return this.organizationService.acceptInvitation(invitationId, user.sub);
@@ -82,6 +89,7 @@ export class OrganizationController {
 
   /** Sprint B2 — the Policy Engine surface. */
   @Post(':organizationId/policies')
+  @ParentSurface()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   setPolicy(
     @Param('organizationId') organizationId: string,
@@ -92,6 +100,7 @@ export class OrganizationController {
   }
 
   @Get(':organizationId/policies/:key/effective')
+  @ParentSurface()
   getEffectivePolicy(
     @Param('organizationId') organizationId: string,
     @Param('key') key: string,
@@ -102,6 +111,7 @@ export class OrganizationController {
 
   /** Sprint B4 — Partner Campaigns. */
   @Post(':organizationId/campaigns')
+  @ParentSurface()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   createCampaign(
     @Param('organizationId') organizationId: string,
@@ -113,6 +123,7 @@ export class OrganizationController {
 
   /** CLOSES A REAL GAP found in a final usability review. */
   @Get(':organizationId/campaigns')
+  @ParentSurface()
   listCampaigns(@Param('organizationId') organizationId: string, @CurrentUser() user: IJwtPayload) {
     return this.organizationService.listCampaigns(organizationId, user.sub);
   }
@@ -127,6 +138,7 @@ export class OrganizationController {
    * one real brute-force target: a bare code string with no other
    * identity check, guessable by trying many values quickly. */
   @Post('campaigns/redeem')
+  @ParentSurface()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   redeemCampaign(@Body() dto: RedeemCampaignDto, @CurrentUser() user: IJwtPayload) {
     if (!user.familyId) {
@@ -138,6 +150,7 @@ export class OrganizationController {
   /** Sprint B5 — White-Label. Write requires membership + WRITE
    * permission (checked inside the service). */
   @Post(':organizationId/branding')
+  @ParentSurface()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   updateBranding(
     @Param('organizationId') organizationId: string,

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomUUID } from 'crypto';
 
+import type { PersistedFamilyRole } from '../../../../common/authz/principal-role';
 import type { ActorType, IJwtPayload, ITokenPair } from '../../domain/auth.types';
 import {
   InvalidOrExpiredTokenException,
@@ -21,6 +22,12 @@ interface IIssueTokenPairParams {
   subjectId: string; // userId or deviceId, depending on actorType
   actorType: ActorType;
   familyId?: string;
+  /**
+   * PHASE C. The caller's `family_members.role`, resolved by the CALLER from
+   * persistence and signed into the token here. Omitted for DEVICE actors,
+   * whose role is `CHILD` by construction (see `principalRoleFromToken`).
+   */
+  familyRole?: PersistedFamilyRole;
   userAgent?: string;
   ipAddress?: string;
   /** SA-002. Omitted on login/pairing (a brand new session starts its own
@@ -74,6 +81,7 @@ export class TokenService {
       actorType: params.actorType,
       tokenKind: 'access',
       familyId: params.familyId,
+      familyRole: params.familyRole,
       jti,
     };
     const refreshPayload: IJwtPayload = { ...accessPayload, tokenKind: 'refresh' };

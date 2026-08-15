@@ -9,6 +9,7 @@ import { ChildCoachService } from '../../application/services/child-coach.servic
 import { DistressEscalationService } from '../../application/services/distress-escalation.service';
 import { isChildTopicCode } from '../../domain/child-coach-content';
 import { ChildCheckinDto } from '../dto/coach.dto';
+import { ChildSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * B8 — THE CHILD'S AI COACH TAB — `/api/v1/self/coach/*`.
@@ -54,6 +55,7 @@ export class ChildCoachController {
 
   /** The encouragement card. No child input exists on this path at all. */
   @Get('today')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async today(@CurrentUser() device: IJwtPayload) {
@@ -64,6 +66,7 @@ export class ChildCoachController {
   /** The closed question vocabulary the app renders as buttons. Static, so a
    * generous throttle — it is the cheapest call in the product. */
   @Get('topics')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   topics() {
@@ -72,6 +75,7 @@ export class ChildCoachController {
 
   /** The answer for one code, at the child's own age band. Never billed. */
   @Get('answer/:topicCode')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   async answer(@Param('topicCode') topicCode: string, @CurrentUser() device: IJwtPayload) {
@@ -104,6 +108,7 @@ export class ChildCoachController {
    * list should not be a free loop.
    */
   @Post('checkin')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async checkin(@Body() dto: ChildCheckinDto, @CurrentUser() device: IJwtPayload) {

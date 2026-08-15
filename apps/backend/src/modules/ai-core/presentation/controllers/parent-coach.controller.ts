@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
 import { ParentCoachService } from '../../application/services/parent-coach.service';
 import { AiBudgetService } from '../../infrastructure/ai-budget.service';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 /**
  * B8 — THE PARENT'S AI COACH TAB — `/api/v1/ai-coach/*`.
@@ -49,6 +50,7 @@ export class ParentCoachController {
 
   /** The whole tab in one call: headline insight, secondary insights, activities. */
   @Get('parent/:childId/summary')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   summary(@Param('childId', ParseUUIDPipe) childId: string, @CurrentUser() user: IJwtPayload) {
@@ -57,6 +59,7 @@ export class ParentCoachController {
 
   /** «اشرح لي تقدّم طفلي» */
   @Get('parent/:childId/progress')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   progress(@Param('childId', ParseUUIDPipe) childId: string, @CurrentUser() user: IJwtPayload) {
@@ -65,6 +68,7 @@ export class ParentCoachController {
 
   /** «ما الخطوة التالية؟» — deterministic, never billed. */
   @Get('parent/:childId/next-steps')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   nextSteps(@Param('childId', ParseUUIDPipe) childId: string, @CurrentUser() user: IJwtPayload) {
@@ -73,6 +77,7 @@ export class ParentCoachController {
 
   /** «اقترح أنشطة» — deterministic, never billed. */
   @Get('parent/:childId/activities')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   activities(@Param('childId', ParseUUIDPipe) childId: string, @CurrentUser() user: IJwtPayload) {
@@ -82,6 +87,7 @@ export class ParentCoachController {
   /** «كيف تعمل قواعد المكافآت؟» — read off the shared reward tables, never a
    * model's recollection of how this product works. */
   @Get('parent/:childId/reward-rules')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   rewardRules(@Param('childId', ParseUUIDPipe) childId: string, @CurrentUser() user: IJwtPayload) {
@@ -95,6 +101,7 @@ export class ParentCoachController {
    * `GET /ai-core/usage-summary` behind `InternalAdminGuard` and stays there.
    */
   @Get('budget')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   budgetStatus() {

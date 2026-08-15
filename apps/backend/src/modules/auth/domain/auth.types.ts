@@ -7,6 +7,8 @@
  * (services) testable without a database or an HTTP server.
  */
 
+import type { PersistedFamilyRole } from '../../../common/authz/principal-role';
+
 /** Who is the subject of a token: a parent's User account, or a Device. */
 export type ActorType = 'USER' | 'DEVICE';
 
@@ -20,6 +22,20 @@ export interface IJwtPayload {
   tokenKind: TokenKind;
   /** Present for USER actors once they belong to a family (nearly always). */
   familyId?: string;
+  /**
+   * PHASE C (A4 §SA-005). The caller's role INSIDE that family, copied from
+   * `family_members.role` at issue time and therefore signed.
+   *
+   * Optional for exactly one reason: tokens minted before this claim existed
+   * stay valid for up to 15 minutes after a deploy. `principalRoleFromToken()`
+   * degrades such a token to `PARENT` — the least privileged adult role — so
+   * the ordinary surface keeps working while the destructive operations stay
+   * out of reach. It is NOT optional because a route may skip it.
+   *
+   * DEVICE tokens do not carry it: their role is `CHILD` by construction, and
+   * deriving it from `actorType` leaves no claim to get out of sync.
+   */
+  familyRole?: PersistedFamilyRole;
   /** JWT ID — used to correlate a refresh token to its DB row for revocation. */
   jti: string;
 }
@@ -46,7 +62,8 @@ export interface IAuthenticatedUser {
   email: string;
   fullName: string;
   familyId: string;
-  familyRole: 'OWNER' | 'PARENT';
+  /** Same vocabulary as the token claim — one definition, no drift. */
+  familyRole: PersistedFamilyRole;
 }
 
 export interface IDeviceSessionContext {

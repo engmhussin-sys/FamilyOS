@@ -114,6 +114,9 @@ export class AuthService {
       subjectId: user.id,
       actorType: 'USER',
       familyId: membership.familyId,
+      // PHASE C (A4 §SA-005). The role travels in the signed token so the
+      // guard chain can decide without a database round-trip on every request.
+      familyRole: toFamilyRole(membership.role),
       userAgent: context.userAgent,
       ipAddress: context.ipAddress,
     });
@@ -152,10 +155,23 @@ export class AuthService {
     // SA-002). The successor stays in the SAME rotation family as the
     // token it replaces, so a later reuse anywhere in this chain can
     // still revoke the whole chain in one query.
+    // PHASE C. The role is RE-READ from persistence on every rotation rather
+    // than copied out of the old payload. Copying it would make the claim
+    // immortal: a parent demoted from OWNER would keep OWNER for as long as
+    // they kept refreshing, for up to the refresh token's 30 days. Re-reading
+    // bounds the staleness of any role change to one 15-minute access-token
+    // lifetime. (Device tokens have no persisted role — `CHILD` is derived
+    // from `actorType` — so nothing is looked up for them.)
+    const familyRole =
+      payload.actorType === 'USER'
+        ? await this.currentFamilyRole(payload.sub)
+        : undefined;
+
     return this.tokenService.issueTokenPair({
       subjectId: payload.sub,
       actorType: payload.actorType,
       familyId: payload.familyId,
+      familyRole,
       userAgent: context.userAgent,
       ipAddress: context.ipAddress,
       familyTokenId: record.familyTokenId,
@@ -175,5 +191,21 @@ export class AuthService {
       entityType: payload.actorType === 'USER' ? 'User' : 'Device',
       entityId: payload.sub,
     });
+  }
+
+  /**
+   * PHASE C. Best-effort re-read of the caller's current family role.
+   *
+   * Returns `undefined` when no membership can be found — which makes the
+   * successor token carry NO role claim, which `principalRoleFromToken()`
+   * degrades to `PARENT`. That is the fail-safe direction: a user whose
+   * membership row has vanished cannot end up holding OWNER.
+   */
+  private async currentFamilyRole(
+    userId: string,
+  ): Promise<IAuthenticatedUser['familyRole'] | undefined> {
+    const membership = await this.userRepository.findPrimaryFamilyMembership(userId);
+    if (!membership) return undefined;
+    return toFamilyRole(membership.role);
   }
 }

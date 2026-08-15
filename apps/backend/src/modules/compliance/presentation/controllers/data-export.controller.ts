@@ -5,6 +5,7 @@ import { DataExportService } from '../../application/services/data-export.servic
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('children/:childId/data-export')
 @UseGuards(JwtAuthGuard)
@@ -12,6 +13,7 @@ export class DataExportController {
   constructor(private readonly dataExportService: DataExportService) {}
 
   @Get()
+  @ParentSurface()
   // Export is more expensive than a normal read (fans out to three
   // services) — modestly throttled rather than left at the app default.
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
