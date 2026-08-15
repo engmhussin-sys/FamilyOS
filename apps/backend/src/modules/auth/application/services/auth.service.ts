@@ -64,6 +64,10 @@ export class AuthService {
     this.logger.log(`New parent registered: userId=${user.id} familyId=${family.id}`);
 
     await this.auditService.record({
+      // PC-S-006. `/auth/*` runs under `@SystemRoute('AUTH_BOOTSTRAP')`, so the
+      // tenant extension stamps nothing; the family is named explicitly, from
+      // the row this transaction just created.
+      familyId: family.id,
       actorType: 'USER',
       actorUserId: user.id,
       action: 'auth.register',
@@ -124,6 +128,10 @@ export class AuthService {
     await this.userRepository.updateLastLoginAt(user.id, new Date());
 
     await this.auditService.record({
+      // PC-S-006. "Who signed into this family's account, and when" is the
+      // single most useful line in a custody dispute, and it was not
+      // tenant-scoped. The id comes from the membership resolved above.
+      familyId: membership.familyId,
       actorType: 'USER',
       actorUserId: user.id,
       action: 'auth.login',
@@ -185,6 +193,8 @@ export class AuthService {
     const { payload } = await this.tokenService.verifyAndConsumeRefreshToken(refreshToken);
 
     await this.auditService.record({
+      // PC-S-006. From the VERIFIED refresh-token payload, not the request.
+      familyId: payload.familyId,
       actorType: payload.actorType,
       actorUserId: payload.actorType === 'USER' ? payload.sub : undefined,
       action: 'auth.logout',

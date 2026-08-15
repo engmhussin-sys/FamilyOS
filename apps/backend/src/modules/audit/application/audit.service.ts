@@ -4,6 +4,30 @@ import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 
 export interface IRecordAuditEventInput {
+  /**
+   * PHASE C (PC-S-006). The family this event belongs to, for the callers that
+   * run WITHOUT an ambient tenant.
+   *
+   * Under a normal request the tenant extension stamps `familyId` from the
+   * verified token and this field is unnecessary — pass nothing. But the whole
+   * `/auth/*` surface is `@SystemRoute('AUTH_BOOTSTRAP')`, because login runs
+   * before any family context can exist; under a SystemContext the extension
+   * passes writes through UNTOUCHED, so `auth.login`, `auth.register`,
+   * `auth.logout` and `auth.refresh_reuse_detected` were all landing with
+   * `family_id IS NULL`. Measured on the verify database before the fix: 202
+   * login rows and 184 register rows, zero of them tenant-scoped.
+   *
+   * That is the trail a custody dispute actually needs — "who signed into this
+   * family's account, and when" — and it could not be produced per-family.
+   * A1 (BA-009) found the column missing entirely and F2 added it; this closes
+   * the last set of writers that were not using it.
+   *
+   * It is SERVER-DERIVED at every call site (from the resolved membership or a
+   * verified token claim), never from a request body. `tenantIdForWrite`'s rule
+   * still holds: under a TENANT context a conflicting explicit id is a
+   * cross-tenant write and throws.
+   */
+  familyId?: string;
   actorType: 'USER' | 'DEVICE' | 'SYSTEM';
   actorUserId?: string;
   action: string;
@@ -38,6 +62,7 @@ export class AuditService {
   async record(input: IRecordAuditEventInput): Promise<void> {
     await this.prisma.auditLog.create({
       data: {
+        familyId: input.familyId,
         actorType: input.actorType,
         actorUserId: input.actorUserId,
         action: input.action,

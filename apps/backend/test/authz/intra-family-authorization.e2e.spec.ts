@@ -619,7 +619,34 @@ describeIfDb('PHASE C / P3 — intra-family authorization (real app, real Postgr
   });
 
   // =========================================================================
-  // 5. The database, not the code, is the last line on "one owner"
+  // 5. PC-S-006 — the auth lifecycle is tenant-scoped in the audit trail
+  // =========================================================================
+  it('auth.login and auth.register are written WITH familyId, not with NULL', async () => {
+    // Before this fix every `/auth/*` audit row landed with `family_id IS NULL`,
+    // because the whole surface is `@SystemRoute('AUTH_BOOTSTRAP')` and the
+    // tenant extension passes SystemContext writes through untouched. Measured
+    // on the verify database at the time: 202 `auth.login` rows and 184
+    // `auth.register` rows, zero of them tenant-scoped. "Who signed into this
+    // family's account, and when" is exactly the trail a custody dispute needs.
+    const rows = await sys('read auth audit for family A', () =>
+      prisma.auditLog.findMany({
+        where: { familyId: A.familyId, action: { in: ['auth.login', 'auth.register'] } },
+        select: { action: true, familyId: true, actorUserId: true },
+      }),
+    );
+    const actions = rows.map((r: any) => r.action);
+    expect(actions).toContain('auth.register');
+    expect(actions).toContain('auth.login');
+    for (const row of rows) {
+      expect(row.familyId).toBe(A.familyId);
+    }
+    // And the co-parent's login is scoped to the family they belong to, not to
+    // the one they registered (they never registered one).
+    expect(rows.some((r: any) => r.actorUserId === A2.userId)).toBe(true);
+  }, 30_000);
+
+  // =========================================================================
+  // 6. The database, not the code, is the last line on "one owner"
   // =========================================================================
   it('PostgreSQL refuses a second live OWNER in one family (migration 0009)', async () => {
     await expect(

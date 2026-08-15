@@ -189,6 +189,9 @@ export class TokenService {
 
     try {
       await this.auditService.record({
+        // PC-S-006. A reuse detection is a security event about ONE family and
+        // must be readable per-family; the id comes from the verified payload.
+        familyId: payload.familyId,
         actorType: payload.actorType,
         actorUserId: payload.actorType === 'USER' ? payload.sub : undefined,
         action: 'auth.refresh_reuse_detected',
