@@ -102,6 +102,27 @@ export function composeIdempotencyKey(
       return clamp(`device:${d}:paired`);
     case 'IMPORTANT_SAFETY_EVENT':
       return clamp(`device:${d}:safety:${parts.kind ?? 'unknown'}:${parts.hourBucket ?? day}`);
+
+    // -- F4 (Smart Learning & Reward Engine) ---------------------------------
+    case 'REWARD_PROGRAM_CREATED':
+      return clamp(`program:${src}:created`);
+    case 'ACHIEVEMENT_REQUESTED':
+      return clamp(`child:${c}:achvreq:${src}:${parts.milestone ?? 1}`);
+    case 'ACHIEVEMENT_VERIFIED':
+      // THE MULTIPLIER IS PART OF THE KEY — the brief's explicit requirement.
+      // This is only replay-safe because `multiplierBps` is FROZEN onto the
+      // achievement row at verification time and read back on every subsequent
+      // attempt rather than recomputed from "the streak as of now". See
+      // src/shared/rewards/streak-multiplier.ts for why that ordering matters.
+      return clamp(`child:${c}:achv:${src}:x${parts.milestone ?? 10000}`);
+    case 'ACHIEVEMENT_REJECTED':
+      return clamp(`child:${c}:achvrej:${src}:${parts.milestone ?? 1}`);
+    case 'QURAN_ACHIEVEMENT_COMPLETED':
+      return clamp(`child:${c}:quran:${src}`);
+    case 'LEARNING_GOAL_COMPLETED':
+      return clamp(`child:${c}:goaldone:${src}`);
+    case 'BADGE_EARNED':
+      return clamp(`child:${c}:badge:${src}`);
     default: {
       // Forward-compatible fallback: a type added to the catalogue without a
       // rule here still gets a deterministic key rather than a random one.

@@ -32,6 +32,22 @@ export const DOMAIN_EVENT_TYPES = [
   // -- required by docs/06 §6.0 + docs/05 §3.3 as CompletionEvent members --
   'TASK_COMPLETED',
   'MEMORIZATION_COMPLETED',
+  // -- F4 (Smart Learning & Reward Engine) --
+  //
+  // NONE of these is device-ingestible, and that single fact is the sprint's
+  // security design in one line. A child device REQUESTS an achievement over an
+  // authenticated `/self/*` route; the SERVER decides the verification outcome
+  // and emits `ACHIEVEMENT_VERIFIED`. A device able to post
+  // `ACHIEVEMENT_VERIFIED` on the wire could grant itself a reward — the same
+  // class of failure `REWARD_GRANTED` and `STREAK_ACHIEVED` were excluded for
+  // in F3.
+  'REWARD_PROGRAM_CREATED',
+  'ACHIEVEMENT_REQUESTED',
+  'ACHIEVEMENT_VERIFIED',
+  'ACHIEVEMENT_REJECTED',
+  'QURAN_ACHIEVEMENT_COMPLETED',
+  'LEARNING_GOAL_COMPLETED',
+  'BADGE_EARNED',
 ] as const;
 
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
@@ -59,6 +75,13 @@ export const COMPLETION_EVENT_TYPES = [
   'EDUCATION_PROGRESS',
   'MEMORIZATION_COMPLETED',
   'STREAK_ACHIEVED',
+  // F4: a VERIFIED achievement is a completion, and joining this set is the
+  // ONLY wiring the reward path needed — `RewardsCompletionConsumer` iterates
+  // this list, so it picked the new type up without a line changing in it.
+  // `ACHIEVEMENT_REQUESTED` is deliberately NOT here: a request is not a
+  // completion, and if it were in this set a child could grant itself a reward
+  // by submitting.
+  'ACHIEVEMENT_VERIFIED',
 ] as const;
 
 export type CompletionEventType = (typeof COMPLETION_EVENT_TYPES)[number];
@@ -210,5 +233,70 @@ export const DOMAIN_EVENT_CATALOGUE: Readonly<Record<DomainEventType, DomainEven
     idempotencyKeyTemplate: 'device:{deviceId}:safety:{kind}:{hourBucket}',
     carriesCompletionEvent: false,
     deviceIngestible: true,
+  },
+
+  // -- F4 (Smart Learning & Reward Engine) ----------------------------------
+
+  REWARD_PROGRAM_CREATED: {
+    type: 'REWARD_PROGRAM_CREATED',
+    producer: 'RewardProgramService (parent-authenticated)',
+    consumers: ['(none registered — recorded to domain_events as the audit trail)'],
+    idempotencyKeyTemplate: 'program:{programId}:created',
+    carriesCompletionEvent: false,
+    deviceIngestible: false,
+  },
+  ACHIEVEMENT_REQUESTED: {
+    type: 'ACHIEVEMENT_REQUESTED',
+    producer: 'AchievementService (child device, /self/*) or parent app',
+    consumers: ['AchievementVerificationConsumer'],
+    idempotencyKeyTemplate: 'child:{childId}:achvreq:{achievementId}:{attemptNo}',
+    carriesCompletionEvent: false,
+    deviceIngestible: false,
+  },
+  ACHIEVEMENT_VERIFIED: {
+    type: 'ACHIEVEMENT_VERIFIED',
+    producer: 'AchievementVerificationConsumer / parent approval (derived — server-decided)',
+    consumers: ['RewardsCompletionConsumer', 'QuranAchievementConsumer'],
+    // The multiplier is IN the key. It is frozen onto the achievement row at
+    // verification time and read back, never recomputed — see
+    // `src/shared/rewards/streak-multiplier.ts`.
+    idempotencyKeyTemplate: 'child:{childId}:achv:{achievementId}:x{multiplierBps}',
+    carriesCompletionEvent: true,
+    deviceIngestible: false,
+  },
+  ACHIEVEMENT_REJECTED: {
+    type: 'ACHIEVEMENT_REJECTED',
+    producer: 'AchievementVerificationConsumer / parent rejection',
+    consumers: ['(none — deliberately: CONTEXT §3 principle 7, a rejection does not notify a child)'],
+    idempotencyKeyTemplate: 'child:{childId}:achvrej:{achievementId}:{attemptNo}',
+    carriesCompletionEvent: false,
+    deviceIngestible: false,
+  },
+  QURAN_ACHIEVEMENT_COMPLETED: {
+    type: 'QURAN_ACHIEVEMENT_COMPLETED',
+    producer: 'QuranAchievementConsumer (derived from a VERIFIED Quran achievement)',
+    consumers: ['(none registered — recorded to domain_events; the reward already flowed)'],
+    idempotencyKeyTemplate: 'child:{childId}:quran:{achievementId}',
+    // NOT a completion: it is an announcement ABOUT one. If it carried a
+    // CompletionEvent it would reach the Rewards Engine and pay twice for one
+    // achievement.
+    carriesCompletionEvent: false,
+    deviceIngestible: false,
+  },
+  LEARNING_GOAL_COMPLETED: {
+    type: 'LEARNING_GOAL_COMPLETED',
+    producer: 'LearningGoalCompletionConsumer (derived — reuses the existing LearningGoal model)',
+    consumers: ['(none registered — recorded to domain_events)'],
+    idempotencyKeyTemplate: 'child:{childId}:goaldone:{goalId}',
+    carriesCompletionEvent: false,
+    deviceIngestible: false,
+  },
+  BADGE_EARNED: {
+    type: 'BADGE_EARNED',
+    producer: 'RewardsCompletionConsumer path (derived — only after a real ChildBadgeAward row)',
+    consumers: ['(none registered — the existing RewardsEngineService already notifies for badges)'],
+    idempotencyKeyTemplate: 'child:{childId}:badge:{badgeId}',
+    carriesCompletionEvent: false,
+    deviceIngestible: false,
   },
 };

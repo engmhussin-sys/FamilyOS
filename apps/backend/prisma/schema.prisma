@@ -306,6 +306,7 @@ model User {
   authoredChildMessages ChildMessage[]
   authoredBroadcasts FamilyBroadcastMessage[]
   supportRequests    SupportRequest[]
+  createdRewardPrograms RewardProgram[]
 
   @@index([status])
   @@map("users")
@@ -375,6 +376,13 @@ model Family {
   domainEvents DomainEvent[]
   outboxMessages OutboxMessage[]
   consumedMessages ConsumedMessage[]
+
+  // -- F4 (Smart Learning & Reward Engine) --
+  rewardPrograms RewardProgram[]
+  achievementRequests AchievementRequest[]
+  verificationAttempts VerificationAttempt[]
+  screenTimeRewardGrants ScreenTimeRewardGrant[]
+  rewardFulfilments RewardFulfilment[]
 
   @@map("families")
 }
@@ -448,6 +456,13 @@ model Child {
   learningAssessments LearningAssessment[]
   smartTasks          SmartTask[]
   challengeParticipations FamilyChallengeParticipation[]
+
+  // -- F4 (Smart Learning & Reward Engine) --
+  rewardPrograms      RewardProgram[]
+  achievementRequests AchievementRequest[]
+  verificationAttempts VerificationAttempt[]
+  screenTimeRewardGrants ScreenTimeRewardGrant[]
+  rewardFulfilments   RewardFulfilment[]
 
   @@index([familyId])
   @@map("children")
@@ -1379,10 +1394,24 @@ enum SmartTaskStatus {
   DISMISSED
 }
 
+/// F4 — EXTENDED, NOT REPLACED. `XP`/`COINS`/`BADGE` are untouched, so every
+/// existing reader, every existing ledger row and every existing CHECK
+/// constraint keeps working. The six values below are added with
+/// `ALTER TYPE ... ADD VALUE` in migration 0006 (additive, no rewrite).
+///
+/// `POINTS` is deliberately ABSENT: the product word "نقطة" maps onto the
+/// existing `XP` value rather than becoming a second currency next to it
+/// (CONTEXT §3 principle 1). See `src/shared/rewards/reward-spec.ts`.
 enum RewardType {
   XP
   COINS
   BADGE
+  SCREEN_TIME
+  PHYSICAL_REWARD
+  DIGITAL_REWARD
+  PRIVILEGE
+  PARENT_APPROVAL_REWARD
+  CUSTOM_REWARD
 }
 
 enum RedemptionStatus {
@@ -1642,9 +1671,25 @@ model RewardRule {
   isActive            Boolean    @default(true) @map("is_active")
   createdAt           DateTime   @default(now()) @map("created_at")
 
+  /// F4 — THE EXTENSION POINT, and the reason `RewardProgram` did not have to
+  /// bring its own grant path. A `RewardProgram` MATERIALISES companion
+  /// `RewardRule` rows (one per multiplier tier it has actually used), so the
+  /// existing `evaluateRewardRules` subset-match and the existing
+  /// `RewardsEngineService.processTriggerEvent` grant BOTH work unmodified —
+  /// zero lines changed in either. `triggerCondition` on a companion row is
+  /// `{ programId, multiplierBps }`, which is exactly what the engine already
+  /// knows how to match against a trigger payload.
+  programId           String?    @map("program_id") @db.Uuid
+  /// 10000 = 1.00x. Present on companion rows only; NULL on hand-authored and
+  /// platform rules, which is what keeps the partial unique index below from
+  /// touching them.
+  multiplierBps       Int?       @map("multiplier_bps")
+
   family Family? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  program RewardProgram? @relation(fields: [programId], references: [id], onDelete: Cascade)
 
   @@index([familyId, isActive])
+  @@index([programId])
   @@map("reward_rules")
 }
 
@@ -2072,6 +2117,17 @@ enum EventType {
   DEVICE_PAIRED
   SCREEN_TIME_THRESHOLD
   IMPORTANT_SAFETY_EVENT
+  // -- F4 (Smart Learning & Reward Engine). None is device-ingestible: a child
+  //    device requests an achievement over an authenticated /self/* route, and
+  //    the SERVER decides the verification outcome. A device that could post
+  //    ACHIEVEMENT_VERIFIED could grant itself a reward.
+  REWARD_PROGRAM_CREATED
+  ACHIEVEMENT_REQUESTED
+  ACHIEVEMENT_VERIFIED
+  ACHIEVEMENT_REJECTED
+  QURAN_ACHIEVEMENT_COMPLETED
+  LEARNING_GOAL_COMPLETED
+  BADGE_EARNED
 }
 
 enum OutboxStatus {
@@ -2190,4 +2246,295 @@ model ConsumedMessage {
   @@unique([consumerName, domainEventId])
   @@index([familyId, consumerName])
   @@map("consumed_messages")
+}
+
+// ============================================================
+// Sprint F4 — SMART LEARNING & REWARD ENGINE
+//
+// Every model below is ADDITIVE. Zero existing model is rewritten; the only
+// edits to pre-existing models are: five back-relations on `Family`, five on
+// `Child`, two nullable columns + one relation on `RewardRule`, six new values
+// on `RewardType`, and seven new values on `EventType`. All of those are
+// additive in PostgreSQL terms (`ADD COLUMN` nullable, `ALTER TYPE ... ADD
+// VALUE`), which is what makes migration 0006 safe on a database with rows.
+//
+// TENANCY (F2): every table here carries `family_id uuid NOT NULL` from the
+// moment it is created — there is no backfill and no orphan case — and every
+// one is registered STRICT in `tenant-model-registry.ts`. The two reference
+// tables (`reward_program_categories`, `quran_surahs`) are GLOBAL platform
+// catalogues with a written reason, exactly like `BadgeDefinition`.
+// ============================================================
+
+/// Reference catalogue, seeded by migration 0006 from
+/// `src/shared/rewards/program-taxonomy.ts`. A TABLE, not a PostgreSQL enum,
+/// so a nineteenth category is an INSERT and not an `ALTER TYPE` — the brief's
+/// own "so new ones don't need a migration" requirement.
+///
+/// GLOBAL (tenancy): a platform catalogue every family reads, owned by none.
+/// Same class and same reasoning as `BadgeDefinition` and `PlanDefinition`.
+model RewardProgramCategory {
+  code       String   @id @db.VarChar(40)
+  labelAr    String   @map("label_ar")
+  streakKind String   @map("streak_kind") @db.VarChar(20)
+  sortOrder  Int      @default(0) @map("sort_order")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  programs RewardProgram[]
+
+  @@map("reward_program_categories")
+}
+
+/// The 114 surahs with their Arabic name, transliteration, Hafs ayah count and
+/// revelation type — fixed, well-known reference data, seeded by migration 0006
+/// from `src/shared/rewards/quran.ts`.
+/// `test/rewards/quran-reference.spec.ts` asserts the code list and this table
+/// are identical row for row, and asserts both checksums (6,236 ayahs · 28
+/// Medinan surahs) against the TABLE and not only against the constant.
+///
+/// GLOBAL (tenancy): revelation is not tenant data.
+model QuranSurah {
+  number          Int    @id
+  nameAr          String @map("name_ar")
+  transliteration String
+  ayahCount       Int    @map("ayah_count")
+  /// MECCAN | MEDINAN — the King Fahd Complex classification.
+  revelationType  String @map("revelation_type") @db.VarChar(10)
+
+  @@map("quran_surahs")
+}
+
+/// THE PARENT-AUTHORED PROGRAM — what a parent creates.
+///
+/// WHY THIS IS A NEW TABLE AND NOT MORE COLUMNS ON `RewardRule` (the brief asks
+/// for this decision explicitly): `RewardRule` is SHARED-NULL — `family_id IS
+/// NULL` means "platform rule, visible to every family" — and it is a
+/// stateless matcher with three fields (engine, condition, payout). A program
+/// is tenant-owned by definition (a NULL-family program is meaningless), is
+/// addressed to a specific child, carries a lifecycle (`status`, `expiresAt`,
+/// archived), carries quotas that are counted against per-child history, and
+/// carries verification configuration. Forcing those eighteen columns onto a
+/// shared platform table would have made `family_id IS NULL` ambiguous and
+/// broken the one property `RewardRule`'s tenancy class depends on.
+///
+/// The REUSE is real and it is in the other direction: a program does not own a
+/// grant path. It MATERIALISES `RewardRule` rows (see `RewardRule.programId`),
+/// so the payout is still evaluated and written by the untouched
+/// `RewardsEngineService`.
+model RewardProgram {
+  familyId  String  @map("family_id") @db.Uuid
+  id        String  @id @default(uuid()) @db.Uuid
+  /// NULL = "all children in this family". A real, meaningful absence: the
+  /// brief asks for both shapes and a sentinel UUID would have been a lie.
+  childId   String? @map("child_id") @db.Uuid
+
+  category  String  @map("category") @db.VarChar(40)
+  activity  String  @map("activity") @db.VarChar(40)
+  /// Validated per activity by `validateTargetSpec` BEFORE the row is written —
+  /// surah 1..114 and an ayah range inside that surah's real ayah count.
+  targetSpec Json   @map("target_spec")
+  /// Human-readable Arabic summary of `targetSpec`, derived server-side once so
+  /// three clients do not each re-derive it.
+  targetSummaryAr String @map("target_summary_ar")
+
+  durationMinutes Int    @map("duration_minutes")
+  verificationLevel String @map("verification_level") @db.VarChar(40)
+  /// Method-specific configuration: `{ passScorePercent }` for QUIZ /
+  /// CODE_CHALLENGE / ASSESSMENT / DURATION_PLUS_QUIZ.
+  verificationConfig Json  @default("{}") @map("verification_config")
+
+  /// `{ type, amount, description?, expiresInHours? }` — validated by
+  /// `validateRewardSpec`, including the SCREEN_TIME per-grant ceiling.
+  rewardSpec Json  @map("reward_spec")
+
+  frequency String @default("DAILY") @map("frequency") @db.VarChar(20)
+  maxPerDay  Int   @default(1) @map("max_per_day")
+  maxPerWeek Int   @default(7) @map("max_per_week")
+  minAge     Int   @default(0) @map("min_age")
+  difficulty String @default("MEDIUM") @db.VarChar(20)
+  requiresParentApproval Boolean @default(false) @map("requires_parent_approval")
+  expiresAt  DateTime? @map("expires_at")
+  /// 10000 = 1.00x. The CEILING a program allows, not the multiplier applied:
+  /// the applied value is computed server-side from the child's real streak and
+  /// clamped to this.
+  streakMultiplierBps Int @default(30000) @map("streak_multiplier_bps")
+
+  status String @default("ACTIVE") @db.VarChar(20)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  archivedAt DateTime? @map("archived_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
+  categoryRef RewardProgramCategory @relation(fields: [category], references: [code])
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  rules RewardRule[]
+  achievements AchievementRequest[]
+
+  @@index([familyId, status])
+  @@index([childId, status])
+  @@index([familyId, category])
+  @@map("reward_programs")
+}
+
+/// A child's attempt at a program on a given day. THE SECURITY BOUNDARY: a
+/// child principal may create this row (status REQUESTED/IN_PROGRESS) and
+/// submit to it (SUBMITTED). It may never move it to VERIFIED, and no
+/// child-authenticated path writes `rewards_ledger_entries` — the verification
+/// outcome and the grant are decided server-side inside a consumer.
+model AchievementRequest {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  programId String @map("program_id") @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+
+  /// REQUESTED | IN_PROGRESS | SUBMITTED | PENDING_PARENT | VERIFIED | REJECTED | EXPIRED
+  status String @default("REQUESTED") @db.VarChar(20)
+  /// The family-local calendar day this attempt belongs to. Together with the
+  /// unique index below it is what makes `maxPerDay` countable and what makes a
+  /// replayed "start" idempotent rather than a second attempt.
+  localDate DateTime @map("local_date") @db.Date
+  /// 1-based. `(program_id, child_id, local_date, attempt_no)` is unique.
+  attemptNo Int @default(1) @map("attempt_no")
+
+  startedAt   DateTime? @map("started_at")
+  submittedAt DateTime? @map("submitted_at")
+  decidedAt   DateTime? @map("decided_at")
+  /// The parent who approved/rejected, when a human decided. NULL when the
+  /// server decided — and that difference is the audit trail.
+  decidedByUserId String? @map("decided_by_user_id") @db.Uuid
+
+  /// Server-measured, never client-claimed.
+  elapsedMinutes Int? @map("elapsed_minutes")
+
+  /// FROZEN AT VERIFICATION TIME. Read back — never recomputed — on every
+  /// subsequent grant attempt, which is what makes the multiplier safe to put
+  /// inside the idempotency key. See `streak-multiplier.ts`.
+  appliedMultiplierBps Int? @map("applied_multiplier_bps")
+  streakDaysAtVerification Int? @map("streak_days_at_verification")
+  /// The final amount the ledger was asked for, kept for audit even though the
+  /// ledger row is the source of truth.
+  grantedAmount Int? @map("granted_amount")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  family  Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  program RewardProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  child   Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  attempts VerificationAttempt[]
+  screenTimeGrants ScreenTimeRewardGrant[]
+  fulfilments RewardFulfilment[]
+
+  @@unique([programId, childId, localDate, attemptNo])
+  @@index([familyId, status])
+  @@index([childId, localDate])
+  @@index([programId, childId, localDate])
+  @@map("achievement_requests")
+}
+
+/// APPEND-ONLY. One row per verification decision, ever. `0006` REVOKEs UPDATE
+/// and DELETE on it at the privilege level for `abny_app`, the same discipline
+/// `0004` applied to `rewards_ledger_entries` and `audit_logs` — append-only by
+/// permission, not by convention.
+model VerificationAttempt {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  achievementId String @map("achievement_id") @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+
+  method String @db.VarChar(40)
+  /// PASSED | FAILED | ESCALATED
+  result String @db.VarChar(20)
+  scorePercent Int? @map("score_percent")
+  reasonCode String @map("reason_code") @db.VarChar(60)
+  /// Opaque pointer to submitted evidence (a recitation upload, a quiz run).
+  /// NO audio/media processing is built — this is a reference and nothing else.
+  evidenceRef String? @map("evidence_ref")
+  /// 1-based index of this attempt within the achievement.
+  attemptNumber Int @map("attempt_number")
+  /// SYSTEM | PARENT. Which principal decided.
+  verifierType String @map("verifier_type") @db.VarChar(20)
+  /// The parent user id when `verifierType = 'PARENT'`, NULL for SYSTEM.
+  verifierUserId String? @map("verifier_user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([achievementId, attemptNumber])
+  @@index([familyId, createdAt])
+  @@index([childId, createdAt])
+  @@map("verification_attempts")
+}
+
+/// A bounded, expiring, revocable grant of extra screen-time minutes.
+///
+/// This is what makes SCREEN_TIME a REAL reward rather than a number in a
+/// ledger: `ScreenTimeService.getEffectivePolicy` sums the ACTIVE, unexpired,
+/// unrevoked rows here and adds them to `ScreenTimePolicy.dailyLimitMinutes`.
+/// The base policy row is NOT edited — a reward must not silently rewrite a
+/// parental control, and it must expire on its own.
+model ScreenTimeRewardGrant {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+  achievementId String? @map("achievement_id") @db.Uuid
+  /// UNIQUE. The ledger row that paid for this grant — one grant per ledger
+  /// entry, enforced by the database, so a redelivered REWARD_GRANTED cannot
+  /// mint a second block of minutes.
+  ledgerEntryId String @unique @map("ledger_entry_id") @db.Uuid
+
+  minutes   Int
+  grantedAt DateTime @default(now()) @map("granted_at")
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  revokedByUserId String? @map("revoked_by_user_id") @db.Uuid
+  revokeReason String? @map("revoke_reason")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest? @relation(fields: [achievementId], references: [id], onDelete: SetNull)
+
+  @@index([childId, expiresAt])
+  @@index([familyId])
+  @@map("screen_time_reward_grants")
+}
+
+/// PENDING -> APPROVED -> FULFILLED | DECLINED, for the reward types a server
+/// cannot deliver by itself (a physical toy, a privilege, a custom promise).
+/// Legal transitions live in `reward-spec.ts`; the terminal states have no
+/// outgoing edge, which is why "fulfil a declined reward" is a 400.
+model RewardFulfilment {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+  achievementId String? @map("achievement_id") @db.Uuid
+  ledgerEntryId String @unique @map("ledger_entry_id") @db.Uuid
+
+  rewardType String @map("reward_type") @db.VarChar(40)
+  description String
+  quantity Int @default(1)
+  status String @default("PENDING") @db.VarChar(20)
+
+  decidedAt DateTime? @map("decided_at")
+  decidedByUserId String? @map("decided_by_user_id") @db.Uuid
+  fulfilledAt DateTime? @map("fulfilled_at")
+  note String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest? @relation(fields: [achievementId], references: [id], onDelete: SetNull)
+
+  @@index([familyId, status])
+  @@index([childId, status])
+  @@map("reward_fulfilments")
 }

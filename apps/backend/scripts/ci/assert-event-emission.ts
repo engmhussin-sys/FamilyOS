@@ -94,6 +94,10 @@ const DOMAIN_STATE_MODELS: ReadonlyMap<string, string> = new Map([
  */
 const KNOWN_UNWIRED: ReadonlyMap<string, string> = new Map([
   [
+    'src/modules/rewards-engine/infrastructure/repositories/prisma-reward-program.repository.ts',
+    'F4: DELIBERATELY SILENT, and the opposite of a gap. The `learningSession` write here is a REPORTING MIRROR of an achievement that has ALREADY been evented — AchievementOutcomeConsumer writes it while handling ACHIEVEMENT_VERIFIED, and emits QURAN_ACHIEVEMENT_COMPLETED / LEARNING_GOAL_COMPLETED for it in the same handler. Emitting EDUCATION_PROGRESS from here as the rule asks would be actively WRONG: EDUCATION_PROGRESS is a member of COMPLETION_EVENT_TYPES, so it would reach RewardsCompletionConsumer and pay a SECOND reward for one verified achievement.',
+  ],
+  [
     'src/modules/life-intelligence/infrastructure/repositories/prisma-habit.repository.ts',
     'In-app habit completion (parent/child app tick, not the device agent). The DEVICE path emits HABIT_COMPLETED through EventIngestionService; this repository is the same table reached from the UI and still emits nothing.',
   ],

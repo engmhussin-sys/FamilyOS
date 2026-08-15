@@ -34,6 +34,7 @@ import { DataRetentionModule } from './modules/data-retention/data-retention.mod
 import { ConfigurationModule } from './config/configuration.module';
 import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelligence.module';
 import { EventsModule } from './modules/events/events.module';
+import { RewardsEngineModule } from './modules/rewards-engine/rewards-engine.module';
 
 @Module({
   imports: [
@@ -95,6 +96,10 @@ import { EventsModule } from './modules/events/events.module';
     // no existing behaviour: the backbone is wired IN FRONT of the engines, not
     // through them.
     EventsModule,
+    // F4 (Smart Learning & Reward Engine). Imported AFTER EventsModule for the
+    // same reason: it depends on the backbone (OutboxWriter, EVENT_SUBSCRIBER,
+    // ConsumerIdempotency) and nothing in the backbone depends on it.
+    RewardsEngineModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -60,6 +60,9 @@ import { DeviceEventsThrottlerGuard } from './presentation/guards/device-events-
     StreakDetectionConsumer,
     DeviceEventsThrottlerGuard,
   ],
-  exports: [OutboxWriter, OutboxRelay, EVENT_PUBLISHER, EVENT_SUBSCRIBER],
+  // F4: `ConsumerIdempotency` is exported so the rewards-engine consumers get
+  // the SAME marker service — not a second copy with its own view of what has
+  // already been consumed.
+  exports: [OutboxWriter, OutboxRelay, EVENT_PUBLISHER, EVENT_SUBSCRIBER, ConsumerIdempotency],
 })
 export class EventsModule {}

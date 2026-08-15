@@ -102,7 +102,11 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
     // `domain_events`, `outbox_messages` and `consumed_messages`, so the count
     // moving is the evidence that the event backbone did NOT get a weaker
     // tenancy layer than the tables that came before it.
-    expect(rows[0].n).toBe(47);
+    // F4: 47 -> 52. Migration 0006 replays the same block over the five reward
+    // tables, for the same reason: the reward engine is the module with the
+    // most to lose from a tenancy gap, so it gets the strongest layer, not a
+    // dispensation for being new.
+    expect(rows[0].n).toBe(52);
 
     const families = await admin.query(
       `SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'families'`,
@@ -115,7 +119,8 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
     // F3: 45 -> 48. The 44 strict tables + `families` itself, plus the three
     // event-backbone tables migration 0005 adds. Same policy shape, same
     // setting name, same owner-bypass — 0005 replays 0004's block verbatim.
-    expect(policies.rows[0].n).toBe(48);
+    // F4: 48 -> 53, the five tables migration 0006 creates.
+    expect(policies.rows[0].n).toBe(53);
   });
 
   it('with NO tenant setting, the restricted role sees NOTHING — fail-closed, not fail-open', async () => {

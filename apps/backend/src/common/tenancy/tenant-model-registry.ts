@@ -91,6 +91,18 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   'DomainEvent',
   'OutboxMessage',
   'ConsumedMessage',
+  // -- F4 (Smart Learning & Reward Engine): created STRICT in migration 0006,
+  //    `family_id uuid NOT NULL` from the first row, so — exactly as in 0005 —
+  //    there is no backfill, no orphan case and no nullable window. A reward
+  //    program without a family is not something this system can produce: the
+  //    tenant is stamped from the parent's verified session on create, and
+  //    every downstream row (achievement, verification attempt, screen-time
+  //    grant, fulfilment) inherits it from the program that caused it.
+  'RewardProgram',
+  'AchievementRequest',
+  'VerificationAttempt',
+  'ScreenTimeRewardGrant',
+  'RewardFulfilment',
 ]);
 
 /**
@@ -156,6 +168,14 @@ export const GLOBAL_MODELS: ReadonlyMap<TenantModelName, string> = new Map([
   ['OrganizationPolicy', 'Part of the parallel B2B tenant axis keyed on organization_id; zero FK to Family by explicit schema constraint. See Organization above for the full reasoning.'],
   ['OrganizationInvitation', 'Part of the parallel B2B tenant axis keyed on organization_id; zero FK to Family by explicit schema constraint. See Organization above for the full reasoning.'],
   ['PartnerCampaign', 'Part of the parallel B2B tenant axis keyed on organization_id; zero FK to Family by explicit schema constraint. See Organization above for the full reasoning.'],
+  [
+    'RewardProgramCategory',
+    'F4: global category catalogue, seeded by migration 0006 from src/shared/rewards/program-taxonomy.ts. Exactly the BadgeDefinition case — the CATALOGUE is platform-owned and identical for every family, while ownership lives in RewardProgram, which IS strict. A table (not a PostgreSQL enum) so a nineteenth category is an INSERT rather than an ALTER TYPE.',
+  ],
+  [
+    'QuranSurah',
+    'F4: the 114 surahs and their Hafs ayah counts, seeded by migration 0006 from src/shared/rewards/quran.ts. Fixed reference data about the mushaf; it is not tenant data under any reading, and scoping it to a family would mean a family could not validate a target spec.',
+  ],
 ]);
 
 /** True for any model the extension must not let through without a tenant. */

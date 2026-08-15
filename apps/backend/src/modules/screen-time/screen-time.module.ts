@@ -5,7 +5,12 @@ import { ScreenTimeController, AppBlockRuleController } from './presentation/con
 import { ScreenTimeService } from './application/services/screen-time.service';
 import { PrismaScreenTimePolicyRepository } from './infrastructure/repositories/prisma-screen-time-policy.repository';
 import { PrismaAppBlockRuleRepository } from './infrastructure/repositories/prisma-app-block-rule.repository';
-import { SCREEN_TIME_POLICY_REPOSITORY, APP_BLOCK_RULE_REPOSITORY } from './application/ports/screen-time.repository.port';
+import { PrismaScreenTimeBonusRepository } from './infrastructure/repositories/prisma-screen-time-bonus.repository';
+import {
+  SCREEN_TIME_POLICY_REPOSITORY,
+  APP_BLOCK_RULE_REPOSITORY,
+  SCREEN_TIME_BONUS_REPOSITORY,
+} from './application/ports/screen-time.repository.port';
 
 @Module({
   imports: [ChildrenModule],
@@ -14,6 +19,9 @@ import { SCREEN_TIME_POLICY_REPOSITORY, APP_BLOCK_RULE_REPOSITORY } from './appl
     ScreenTimeService,
     { provide: SCREEN_TIME_POLICY_REPOSITORY, useClass: PrismaScreenTimePolicyRepository },
     { provide: APP_BLOCK_RULE_REPOSITORY, useClass: PrismaAppBlockRuleRepository },
+    // F4: the READ side of screen-time rewards. The rewards engine writes the
+    // grants; this module owns the question they answer.
+    { provide: SCREEN_TIME_BONUS_REPOSITORY, useClass: PrismaScreenTimeBonusRepository },
   ],
   // Exported so other modules — AiAssistantModule (needs the child's
   // current policy) and PairingModule (needs getBlockedPackageNames

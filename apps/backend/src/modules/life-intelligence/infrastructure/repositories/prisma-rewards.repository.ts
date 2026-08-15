@@ -17,6 +17,7 @@ import {
   IRewardRedemption,
   IRewardRule,
   IRewardsAccount,
+  RewardType,
 } from '../../domain/rewards.types';
 import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
@@ -50,7 +51,7 @@ export class PrismaRewardsRepository {
    * scenario C, where NULL keys made the unique index vacuous (every
    * NULL is distinct in PostgreSQL) and left keyless paths completely
    * unprotected. */
-  async applyEarn(childId: string, rewardType: 'XP' | 'COINS' | 'BADGE', amount: number, newLevel: number | undefined, source: string, idempotencyKey?: string): Promise<boolean> {
+  async applyEarn(childId: string, rewardType: RewardType, amount: number, newLevel: number | undefined, source: string, idempotencyKey?: string): Promise<boolean> {
     const effectiveKey = idempotencyKey ?? `nokey:${randomUUID()}`;
     // BADGE grants move `stars` by one, matching the original behaviour.
     const delta = rewardType === 'BADGE' ? 1 : amount;
@@ -73,6 +74,13 @@ export class PrismaRewardsRepository {
         return false;
       }
 
+      // F4: the six new reward types are LEDGER-ONLY. Their value is the side
+      // effect a consumer materialises (screen-time minutes, a fulfilment the
+      // parent delivers), not a balance column — so all three deltas are zero
+      // for them and the accounts cache stays a faithful sum of XP/COINS/BADGE,
+      // exactly as `SQL_RECONCILE_ACCOUNT_FROM_LEDGER` already assumes. Both
+      // statements below are scoped by family_id ($7 / $6) — raw SQL is not
+      // intercepted by the tenant extension, so it scopes itself.
       await tx.$executeRawUnsafe(
         SQL_APPLY_ACCOUNT_DELTAS,
         childId,

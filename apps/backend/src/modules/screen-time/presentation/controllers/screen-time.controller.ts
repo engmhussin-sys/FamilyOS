@@ -17,6 +17,17 @@ export class ScreenTimeController {
     return this.screenTimeService.getPolicy(childId, user.familyId!);
   }
 
+  /**
+   * F4. The allowance a device should actually enforce: the parent's base
+   * policy PLUS the bonus minutes the child has earned and not used up. A
+   * separate route rather than a change to `GET /` so no existing client's
+   * response shape moves under it.
+   */
+  @Get('effective')
+  getEffectivePolicy(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
+    return this.screenTimeService.getEffectivePolicy(childId, user.familyId!);
+  }
+
   @Post()
   setPolicy(
     @Param('childId') childId: string,

@@ -27,7 +27,12 @@ export type CompletionKind =
   | 'HEALTH_GOAL'
   | 'LEARNING_SESSION'
   | 'FAITH_SESSION'
-  | 'STREAK';
+  | 'STREAK'
+  // F4: a verified achievement against a parent-authored RewardProgram. It is
+  // a completion of a different granularity, exactly like STREAK, and routing
+  // it through this same contract is what let the Rewards Engine pay for a
+  // program without a single line changing inside it.
+  | 'ACHIEVEMENT';
 
 export type CompletionSourceType =
   | 'HabitOccurrence'
@@ -37,7 +42,8 @@ export type CompletionSourceType =
   | 'ActivityLog'
   | 'LearningSession'
   | 'MemorizationProgress'
-  | 'StreakMilestone';
+  | 'StreakMilestone'
+  | 'AchievementRequest';
 
 export type CompletionVerifiedBy = 'SELF' | 'PARENT' | 'SENSOR' | 'SYSTEM';
 
@@ -120,4 +126,10 @@ export const COMPLETION_KIND_TO_REWARD_ENGINE: Readonly<Record<CompletionKind, s
   LEARNING_SESSION: 'learning',
   FAITH_SESSION: 'faith',
   STREAK: 'habit-builder',
+  // F4 — THE ONE LINE. F3's own docstring promised "adding a fifth producer is
+  // one line in COMPLETION_KIND_TO_REWARD_ENGINE and zero lines in the
+  // consumer". This is that line, and that promise held: `reward-program` is
+  // the `triggerEngine` value the materialised companion RewardRule rows carry,
+  // so `evaluateRewardRules` matches them with no change either.
+  ACHIEVEMENT: 'reward-program',
 };

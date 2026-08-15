@@ -1,4 +1,37 @@
-export type RewardType = 'XP' | 'COINS' | 'BADGE';
+/**
+ * F4 — EXTENDED, NOT REPLACED. `XP`/`COINS`/`BADGE` keep their exact meaning and
+ * every existing reader keeps working; the six added values are the product
+ * reward types from the brief, which the ledger now records faithfully instead
+ * of collapsing them all into XP.
+ *
+ * `POINTS` is deliberately ABSENT: the product word "نقطة" maps onto the
+ * existing `XP` value rather than becoming a second currency next to it
+ * (CONTEXT §3 principle 1). See `src/shared/rewards/reward-spec.ts`.
+ *
+ * ACCOUNT SEMANTICS, stated because it is the non-obvious half: only XP, COINS
+ * and BADGE move `rewards_accounts` columns. The six new types move NO balance
+ * — their value is the side effect (`screen_time_reward_grants`,
+ * `reward_fulfilments`), and the ledger row is the record that it was owed.
+ * `SQL_RECONCILE_ACCOUNT_FROM_LEDGER` therefore stays correct unchanged,
+ * because it already FILTERs by reward_type.
+ */
+export type RewardType =
+  | 'XP'
+  | 'COINS'
+  | 'BADGE'
+  | 'SCREEN_TIME'
+  | 'PHYSICAL_REWARD'
+  | 'DIGITAL_REWARD'
+  | 'PRIVILEGE'
+  | 'PARENT_APPROVAL_REWARD'
+  | 'CUSTOM_REWARD';
+
+/** The three that move a balance. Everything else is ledger-only. */
+export const BALANCE_MOVING_REWARD_TYPES: ReadonlySet<RewardType> = new Set<RewardType>([
+  'XP',
+  'COINS',
+  'BADGE',
+]);
 export type RedemptionStatus = 'REQUESTED' | 'APPROVED' | 'DENIED' | 'FULFILLED';
 
 export interface IRewardsAccount {

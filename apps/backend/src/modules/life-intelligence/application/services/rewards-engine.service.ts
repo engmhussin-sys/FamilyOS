@@ -4,7 +4,7 @@ import { ChildrenService } from '../../../children/application/services/children
 import { PrismaRewardsRepository } from '../../infrastructure/repositories/prisma-rewards.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
 import { IRewardTriggerWriter } from '../../domain/reward-trigger.types';
-import { IRewardRedemption, IRewardsAccount, IRewardTriggerEvent } from '../../domain/rewards.types';
+import { IRewardRedemption, IRewardsAccount, IRewardTriggerEvent, RewardType } from '../../domain/rewards.types';
 import { computeLevelFromXp, evaluateRewardRules } from './rewards-rules';
 import { SmartNotificationIntegrationService } from './smart-notification-integration.service';
 
@@ -129,7 +129,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
   /** Returns whether a NEW grant actually happened (false when
    * idempotencyKey matched an existing entry — a real duplicate,
    * silently and correctly no-op'd, not an error). */
-  private async grantAmount(childId: string, familyId: string, rewardType: 'XP' | 'COINS', amount: number, source: string, idempotencyKey?: string): Promise<boolean> {
+  private async grantAmount(childId: string, familyId: string, rewardType: Exclude<RewardType, 'BADGE'>, amount: number, source: string, idempotencyKey?: string): Promise<boolean> {
     const account = await this.repository.getOrCreateAccount(childId);
     let newLevel: number | undefined;
 
