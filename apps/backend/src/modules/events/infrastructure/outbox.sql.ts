@@ -123,3 +123,100 @@ SELECT COALESCE(EXTRACT(EPOCH FROM (now() - MIN("created_at"))), 0)::int AS age_
        COUNT(DISTINCT "family_id")::int AS family_count
   FROM "outbox_messages"
  WHERE "status" IN ('PENDING', 'FAILED')`;
+
+/**
+ * PHASE C (`PC-B-002`) — THE DEAD LETTERS, BY NAME.
+ *
+ * `SQL_MARK_OUTBOX_FAILED` has been able to write `'DEAD'` since F3, and
+ * NOTHING has ever read it back. A grant whose announcement dead-lettered was
+ * therefore invisible: no metric, no query, no route — the operator could not
+ * learn that a parent was owed a notification that would never arrive. This is
+ * the gauge that makes that state observable, and it is deliberately the same
+ * shape as `SQL_OLDEST_PENDING_AGE_SECONDS` above: an aggregate an alert can
+ * page on, cross-tenant because a dead letter is a platform-level condition.
+ *
+ * GROUPED BY `event_type` because that is the axis an operator acts on — «12
+ * REWARD_GRANTED dead» is a different incident from «12 SCREEN_TIME_THRESHOLD
+ * dead», and one aggregate row hides which one happened.
+ */
+export const SQL_DEAD_LETTER_SUMMARY = `
+SELECT "event_type"::text AS event_type,
+       COUNT(*)::int AS count,
+       COALESCE(EXTRACT(EPOCH FROM (now() - MIN("created_at"))), 0)::int AS oldest_age_seconds,
+       COUNT(DISTINCT "family_id")::int AS family_count
+  FROM "outbox_messages"
+ WHERE "status" = 'DEAD'
+   AND "family_id" IS NOT NULL
+ GROUP BY "event_type"
+ ORDER BY COUNT(*) DESC`;
+
+/**
+ * The individual dead letters, newest failure first, bounded. `family_id` is
+ * SELECTED rather than filtered on: an operator triaging a dead letter needs to
+ * know whose family is affected, and the relay is cross-tenant by definition
+ * (the same `runAsSystem('OUTBOX_RELAY', ...)` justification the claim uses).
+ *
+ * $1 limit
+ */
+export const SQL_LIST_DEAD_LETTERS = `
+SELECT "id"              AS id,
+       "family_id"       AS family_id,
+       "domain_event_id" AS domain_event_id,
+       "event_type"::text AS event_type,
+       "attempt_count"   AS attempt_count,
+       "last_error"      AS last_error,
+       "created_at"      AS created_at
+  FROM "outbox_messages"
+ WHERE "status" = 'DEAD'
+   AND "family_id" IS NOT NULL
+ ORDER BY "created_at" ASC
+ LIMIT $1::int`;
+
+/**
+ * PHASE C (`PC-B-002`) — THE PATH BACK, AND WHY IT IS AN UPDATE AND NOT A
+ * SECOND QUEUE.
+ *
+ * A dead-lettered grant had no route to delivery: `SQL_CLAIM_OUTBOX_BATCH`
+ * claims `('PENDING', 'FAILED')` and DEAD is neither, by design — a message
+ * that has killed eight workers must not loop. What was missing is a
+ * DELIBERATE, OPERATOR-INITIATED return, and the correct shape for it is to
+ * put the existing row back at the head of the existing queue rather than to
+ * build a rival one (ADR-007: the outbox table IS the durable queue).
+ *
+ * `attempt_count` RESETS TO 0. Leaving it at 8 would mean the very first
+ * failure after recovery dead-letters it again, which makes recovery a
+ * one-attempt gesture rather than a real second chance.
+ *
+ * IDEMPOTENT BY CONSTRUCTION: `WHERE status = 'DEAD'` means a second run
+ * matches zero rows and returns 0. There is no "already recovered" flag to get
+ * out of step with the status column, and two operators pressing the button
+ * simultaneously requeue the message once.
+ *
+ * DETERMINISTIC: the filter is (event type, family) — both explicit — so the
+ * same call on the same table always moves the same rows. There is no
+ * "recover everything" default; `$2` NULL means "any family" only when the
+ * caller passes it, and `$1` NULL means "any event type" only when the caller
+ * passes that.
+ *
+ * $1 event type (nullable) · $2 familyId (nullable) · $3 limit
+ */
+export const SQL_RECOVER_DEAD_LETTERS = `
+UPDATE "outbox_messages"
+   SET "status" = 'PENDING',
+       "attempt_count" = 0,
+       "locked_by" = NULL,
+       "locked_at" = NULL,
+       "published_at" = NULL,
+       "next_attempt_at" = now(),
+       "last_error" = LEFT(COALESCE('recovered from DEAD; previous error: ' || "last_error", 'recovered from DEAD'), 500)
+ WHERE "id" IN (
+   SELECT "id"
+     FROM "outbox_messages"
+    WHERE "status" = 'DEAD'
+      AND "family_id" IS NOT NULL
+      AND ($1::text IS NULL OR "event_type"::text = $1::text)
+      AND ($2::uuid IS NULL OR "family_id" = $2::uuid)
+    ORDER BY "created_at" ASC
+    LIMIT $3::int
+    FOR UPDATE SKIP LOCKED
+ )`;

@@ -72,6 +72,36 @@ export class PrismaRewardsRepository {
     });
   }
 
+  /**
+   * PHASE C (`PC-B-001`) — «HAS THIS TRIGGER ALREADY BEEN PAID?», asked of the
+   * DATABASE rather than of a return value.
+   *
+   * `applyEarn` answers "did I create a row JUST NOW"; after a retry the answer
+   * is `false` for a grant that is very much committed, and `PA-B-009` is
+   * exactly what that ambiguity cost. This method answers the different, stable
+   * question the consumer actually needs: does the ledger already hold grants
+   * caused by this originating event?
+   *
+   * THE PREFIX IS NOT A HEURISTIC. `RewardsEngineService.processTriggerEvent`
+   * composes every grant key as `${event.idempotencyKey}:${rewardType}:${source}`
+   * — one line, one place — so `startsWith('<key>:')` selects exactly the rows
+   * that one trigger wrote and cannot select another trigger's, because the
+   * originating keys are themselves composed by `composeIdempotencyKey` from
+   * server-owned values and are unique per (family, occurrence).
+   *
+   * Tenant scoping comes from the F2 extension: `RewardsLedgerEntry` is STRICT,
+   * so there is no `familyId` argument to pass wrongly.
+   */
+  countGrantsForTrigger(childId: string, triggerIdempotencyKey: string): Promise<number> {
+    return this.prisma.rewardsLedgerEntry.count({
+      where: {
+        childId,
+        type: 'EARN',
+        idempotencyKey: { startsWith: `${triggerIdempotencyKey}:` },
+      },
+    });
+  }
+
   async getOrCreateAccount(childId: string): Promise<IRewardsAccount> {
     const row = await this.prisma.rewardsAccount.upsert({
       where: { childId },

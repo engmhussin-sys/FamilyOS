@@ -7,13 +7,20 @@ import { runWithTenant } from '../../../common/tenancy/tenant-context';
 import type { DomainEventEnvelope } from '../../../shared/events/event-envelope';
 import { ENVELOPE_VERSION } from '../../../shared/events/event-envelope';
 import { EVENT_PUBLISHER, type IEventPublisher } from '../domain/event-bus.port';
-import { OUTBOX_RELAY_DEFAULTS, type ClaimedOutboxMessage } from '../domain/outbox.types';
+import {
+  OUTBOX_RELAY_DEFAULTS,
+  type ClaimedOutboxMessage,
+  type DeadLetterReport,
+} from '../domain/outbox.types';
 import {
   SQL_CLAIM_OUTBOX_BATCH,
+  SQL_DEAD_LETTER_SUMMARY,
+  SQL_LIST_DEAD_LETTERS,
   SQL_MARK_OUTBOX_FAILED,
   SQL_MARK_OUTBOX_PUBLISHED,
   SQL_OLDEST_PENDING_AGE_SECONDS,
   SQL_RECLAIM_STALE_OUTBOX_LOCKS,
+  SQL_RECOVER_DEAD_LETTERS,
 } from '../infrastructure/outbox.sql';
 
 /**
@@ -287,6 +294,100 @@ export class OutboxRelay implements OnModuleDestroy {
     };
   }
 
+  /**
+   * PHASE C (`PC-B-002`) — THE DEAD LETTERS, MADE VISIBLE.
+   *
+   * F3 could WRITE `DEAD` and nothing could READ it. A reward whose
+   * announcement dead-lettered left the ledger row intact, the parent
+   * uninformed, and no signal anywhere that either had happened —
+   * `backlog()` counts only `('PENDING','FAILED')`, so a dead letter makes the
+   * backlog gauge go DOWN. That is the worst property an alert can have.
+   *
+   * Returns the aggregate an alert pages on AND the individual rows an
+   * operator triages, in one call, because asking for one without the other is
+   * never useful: the count says there is an incident, the rows say which
+   * families are owed something.
+   */
+  async deadLetters(limit = 100): Promise<DeadLetterReport> {
+    const [summary, rows] = await this.runInSystemScope(
+      'Dead-letter gauge and triage list over the outbox; cross-tenant because an undeliverable event is a platform-level condition.',
+      async () => {
+        const s = await this.prismaRaw().$queryRawUnsafe<RawDeadLetterSummaryRow[]>(
+          SQL_DEAD_LETTER_SUMMARY,
+        );
+        const r = await this.prismaRaw().$queryRawUnsafe<RawDeadLetterRow[]>(
+          SQL_LIST_DEAD_LETTERS,
+          limit,
+        );
+        return [s, r] as const;
+      },
+    );
+
+    const byEventType = summary.map((row) => ({
+      eventType: row.event_type,
+      count: Number(row.count),
+      oldestAgeSeconds: Number(row.oldest_age_seconds),
+      familyCount: Number(row.family_count),
+    }));
+
+    return {
+      total: byEventType.reduce((sum, row) => sum + row.count, 0),
+      byEventType,
+      messages: rows.map((row) => ({
+        id: row.id,
+        familyId: row.family_id,
+        domainEventId: row.domain_event_id,
+        eventType: row.event_type,
+        attemptCount: Number(row.attempt_count),
+        lastError: row.last_error,
+        createdAt: new Date(row.created_at).toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * PHASE C (`PC-B-002`) — THE PATH BACK.
+   *
+   * DELIBERATE, NOT AUTOMATIC. A dead letter is a message that failed eight
+   * times; requeueing it on a timer is how a poison message becomes an
+   * infinite loop. This is called by an operator (or by a recovery job an
+   * operator schedules), it is scoped by event type and/or family so the blast
+   * radius is stated at the call site, and it is bounded.
+   *
+   * IDEMPOTENT: the statement's own `WHERE status = 'DEAD'` is the guard, so
+   * calling it twice requeues once and the second call returns 0. Combined
+   * with `PC-B-001`'s fix — a redelivered completion whose grant already
+   * exists now RE-EMITS its announcement instead of swallowing it, and the
+   * announcement collides on `domain_events (family_id, idempotency_key)` —
+   * recovering a dead letter cannot produce a second reward, a second event or
+   * a second notification. That is what makes this safe to press twice.
+   *
+   * NO SECOND QUEUE AND NO NEW TABLE: the row goes back into
+   * `outbox_messages` at PENDING and the existing relay claims it with the
+   * existing `FOR UPDATE SKIP LOCKED` batch.
+   */
+  async recoverDeadLetters(
+    filter: { eventType?: string; familyId?: string; limit?: number } = {},
+  ): Promise<number> {
+    const recovered = await this.runInSystemScope(
+      'Operator-initiated recovery returns DEAD outbox messages to PENDING; cross-tenant by the same justification as the claim.',
+      () =>
+        this.prismaRaw().$executeRawUnsafe(
+          SQL_RECOVER_DEAD_LETTERS,
+          filter.eventType ?? null,
+          filter.familyId ?? null,
+          filter.limit ?? OUTBOX_RELAY_DEFAULTS.recoveryBatchSize,
+        ),
+    );
+
+    if (recovered > 0) {
+      this.logger.warn(
+        `outbox.dead_letters_recovered count=${recovered} eventType=${filter.eventType ?? '*'} family=${filter.familyId ?? '*'}`,
+      );
+    }
+    return Number(recovered);
+  }
+
   /* eslint-disable @typescript-eslint/no-explicit-any */
   private prismaRaw(): {
     $executeRawUnsafe: (sql: string, ...params: unknown[]) => Promise<number>;
@@ -299,6 +400,23 @@ export class OutboxRelay implements OnModuleDestroy {
     return this.prisma as any;
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+interface RawDeadLetterSummaryRow {
+  event_type: string;
+  count: number;
+  oldest_age_seconds: number;
+  family_count: number;
+}
+
+interface RawDeadLetterRow {
+  id: string;
+  family_id: string;
+  domain_event_id: string;
+  event_type: string;
+  attempt_count: number;
+  last_error: string | null;
+  created_at: Date | string;
 }
 
 interface RawClaimedRow {

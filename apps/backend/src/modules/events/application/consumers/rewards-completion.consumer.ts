@@ -31,14 +31,17 @@ export const REWARDS_COMPLETION_CONSUMER = 'RewardsCompletionConsumer';
  *
  * THE RULE THAT MATTERS MOST (CONTEXT §5, brief §46):
  *   if no reward was actually granted, NO `REWARD_GRANTED` event is emitted.
- * It is not a check somewhere further down — it is the `if (granted > 0)` that
- * the outbox write sits inside. There is no other producer of `REWARD_GRANTED`
- * in the codebase, so there is no path by which a duplicate completion can
- * reach the Notification Engine at all. `RewardsEngineService.processTriggerEvent`
- * returns the count of grants the DATABASE actually created (its ledger insert
- * is `ON CONFLICT DO NOTHING` and it returns `false` when zero rows were
- * written), so "granted" here means "PostgreSQL created a row", not "the code
- * believed it should".
+ * There is no other producer of `REWARD_GRANTED` in the codebase, so there is
+ * no path by which an unpaid completion can reach the Notification Engine at
+ * all.
+ *
+ * PHASE C (`PC-B-001`) — HOW THAT RULE IS NOW DECIDED, AND WHY IT CHANGED.
+ * The rule used to be expressed as `if (granted > 0)`, where `granted` is what
+ * `processTriggerEvent` returns: the number of ledger rows THIS ATTEMPT
+ * created. That is not the same question as "was this business event paid?",
+ * and `PA-B-009` is the price of the difference — see the comment at the branch
+ * itself. The rule is now decided against the LEDGER, which is the only
+ * authority on whether a reward exists, and the branch below states exactly how.
  */
 @Injectable()
 export class RewardsCompletionConsumer implements OnModuleInit {
@@ -93,13 +96,69 @@ export class RewardsCompletionConsumer implements OnModuleInit {
         announcedViaOutbox: true,
       });
 
-      if (granted === 0) {
-        // THE RULE. Duplicate or no matching rule => stop here. No event, no
-        // notification, nothing.
+      /**
+       * PHASE C (`PC-B-001`, closing `PA-B-009`) — THE LINE THAT LOST THE
+       * REWARD, AND WHAT REPLACES IT.
+       *
+       * WHAT WAS HERE: `if (granted === 0) return;`. The comment above it was
+       * right about the rule and wrong about the variable. `granted` counts the
+       * rows THIS ATTEMPT created, not the rows that exist; the ledger insert is
+       * `ON CONFLICT DO NOTHING`, so a RETRY of a message whose grant already
+       * committed sees 0 and returned here — permanently, and then the relay
+       * marked the message PUBLISHED. The reward was in the ledger, the
+       * `REWARD_GRANTED` event did not exist, and the parent was never told.
+       * `test/events/reward-delivery-recovery.e2e.spec.ts` reproduces exactly
+       * that: `{rewards: 1, timeline: 1, events: 0, notifications: 0}`, forever.
+       *
+       * THE FIX IS TO ASK A DURABLE QUESTION. `granted > 0` still means "new
+       * grants, announce them". `granted === 0` is now AMBIGUOUS and is
+       * resolved against the ledger: zero recorded grants means the rule
+       * genuinely did not match (THE RULE, unchanged — no grant, no event, no
+       * notification); a non-zero count means this business event WAS paid and
+       * its announcement is still owed.
+       *
+       * WHY RE-EMITTING CANNOT DUPLICATE ANYTHING. The announcement's key is
+       * `composeRewardGrantedKey(envelope.idempotencyKey)` — derived, stable
+       * across every redelivery — so a second write collides on
+       * `domain_events (family_id, idempotency_key)` and `OutboxWriter.write`
+       * returns `created: false` without a second row. The notification is keyed
+       * on `domain_events.id`, which is the SAME id, so B9's
+       * `notifications (family_id, source_event_id, user_id)` refuses a second
+       * one. The invariant ONE BUSINESS EVENT -> ONE REWARD -> ONE TIMELINE
+       * ENTRY -> ONE NOTIFICATION is preserved by two database constraints, not
+       * by this branch.
+       *
+       * THE EXTRA READ COSTS ONE COUNT, AND ONLY ON THE ZERO PATH. The happy
+       * path — `granted > 0` — does not execute it at all.
+       */
+      const recorded =
+        granted > 0
+          ? granted
+          : await this.rewards.countGrantsFor(
+              completion.childId,
+              envelope.familyId,
+              envelope.idempotencyKey,
+            );
+
+      if (recorded === 0) {
+        // THE RULE. No matching rule => stop here. No event, no notification,
+        // nothing. Now proven against the ledger rather than assumed from a
+        // per-attempt counter.
         this.logger.debug(
           `rewards.no_grant type=${envelope.type} eventId=${envelope.id} — no REWARD_GRANTED emitted.`,
         );
         return;
+      }
+
+      if (granted === 0) {
+        // The recovery path, logged LOUDLY. Reaching it means a previous
+        // attempt granted and then failed before announcing — the `PA-B-009`
+        // window really opened in production, and an operator should see that
+        // it did even though the system healed itself.
+        this.logger.warn(
+          `rewards.announcement_recovered type=${envelope.type} eventId=${envelope.id} ` +
+            `grants=${recorded} — a prior attempt granted without announcing; re-emitting REWARD_GRANTED.`,
+        );
       }
 
       const account = await this.rewards.getAccount(completion.childId, envelope.familyId);
@@ -118,7 +177,10 @@ export class RewardsCompletionConsumer implements OnModuleInit {
         traceId: envelope.traceId,
         payload: {
           childId: completion.childId,
-          grantCount: granted,
+          // `recorded`, not `granted`: on the recovery path `granted` is 0 and
+          // announcing "0 grants" for a reward that exists would be a lie in
+          // the one payload a parent-facing screen reads.
+          grantCount: recorded,
           sourceType: envelope.aggregateType,
           sourceId: envelope.aggregateId,
           sourceEventType: envelope.type,

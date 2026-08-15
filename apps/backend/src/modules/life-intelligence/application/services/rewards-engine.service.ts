@@ -92,6 +92,32 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     return this.repository.listLedgerEntries(childId, Math.min(Math.max(limit, 1), 200));
   }
 
+  /**
+   * PHASE C (`PC-B-001`) — THE QUESTION `processTriggerEvent`'S RETURN VALUE
+   * CANNOT ANSWER, AND WHY `PA-B-009` NEEDED IT.
+   *
+   * `processTriggerEvent` returns HOW MANY GRANTS THIS ATTEMPT CREATED. That is
+   * the right answer for "should I announce something new?" and the WRONG
+   * answer for "was this business event ever paid?" — after a retry the two
+   * diverge, because the ledger insert is `ON CONFLICT DO NOTHING` and the
+   * second attempt therefore returns 0 for a grant that is committed and real.
+   *
+   * `RewardsCompletionConsumer` used that 0 as "nothing happened" and returned
+   * without emitting `REWARD_GRANTED`. So a transient failure between the grant
+   * and the announcement became PERMANENT the moment the retry ran, and the
+   * relay marked the message PUBLISHED — a silent, unrecoverable loss reported
+   * as a success. This method is the durable question, asked of the ledger.
+   *
+   * IT IS A READ. It grants nothing, it writes nothing, and it cannot: a
+   * recovery path that could create a grant would be a second reward engine,
+   * which CONTEXT §3 principle 1 forbids and which would itself be the next
+   * double-grant bug.
+   */
+  async countGrantsFor(childId: string, familyId: string, idempotencyKey: string): Promise<number> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    return this.repository.countGrantsForTrigger(childId, idempotencyKey);
+  }
+
   /** The single entry point every other engine calls when a
    * reward-worthy event happens — evaluates every active Reward Rule
    * for this family/engine and grants whatever matches.

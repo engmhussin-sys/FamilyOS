@@ -46,4 +46,39 @@ export const OUTBOX_RELAY_DEFAULTS = {
   maxAttempts: 8,
   /** A lock older than this is treated as a dead worker's. */
   staleLockSeconds: 120,
+  /**
+   * PHASE C — how many DEAD messages one recovery call returns to the queue.
+   * Smaller than `batchSize` on purpose: recovery is an operator action taken
+   * during an incident, and a bounded, repeatable batch is easier to reason
+   * about than one statement that moves ten thousand rows.
+   */
+  recoveryBatchSize: 100,
 } as const;
+
+/**
+ * PHASE C (`PC-B-002`) — what an operator sees when a delivery has permanently
+ * failed. `byEventType` is what an alert pages on; `messages` is what a human
+ * triages. Both come from one call because either alone is not actionable.
+ */
+export interface DeadLetterSummaryRow {
+  readonly eventType: string;
+  readonly count: number;
+  readonly oldestAgeSeconds: number;
+  readonly familyCount: number;
+}
+
+export interface DeadLetterMessage {
+  readonly id: string;
+  readonly familyId: string;
+  readonly domainEventId: string;
+  readonly eventType: string;
+  readonly attemptCount: number;
+  readonly lastError: string | null;
+  readonly createdAt: string;
+}
+
+export interface DeadLetterReport {
+  readonly total: number;
+  readonly byEventType: readonly DeadLetterSummaryRow[];
+  readonly messages: readonly DeadLetterMessage[];
+}
