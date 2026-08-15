@@ -162,6 +162,33 @@ export function composeRewardGrantedKey(sourceIdempotencyKey: string): string {
 }
 
 /**
+ * PHASE C (`PC-B-006`) — the key that makes the REWARDS timeline entry
+ * exactly-once, enforced by `life_timeline_events_reward_source_key_uq`
+ * (migration 0010).
+ *
+ * Derived from the ORIGINATING trigger's key by the same rule as
+ * `composeRewardGrantedKey` above and for the same reason: every redelivery of
+ * one business event must compose a BYTE-IDENTICAL key, so the second INSERT
+ * collides instead of adding a second curated moment to a family's timeline.
+ *
+ * DISTINCT PREFIX FROM `composeRewardGrantedKey`, deliberately. The two keys
+ * live in different tables and could never collide with each other, but they
+ * are read by humans during an incident, and `granted:` meaning one thing in a
+ * `domain_events` row and another in a timeline row is exactly the ambiguity
+ * that makes an incident longer.
+ *
+ * There is NO keyless fallback. A caller with no trigger key writes no
+ * `sourceKey` at all, which leaves the row outside the PARTIAL index and
+ * preserves pre-Phase-C behaviour exactly. A synthesised constant would be far
+ * worse than nothing: it would collide across unrelated rewards and suppress
+ * every future timeline entry for that child — the same trap B9 called out for
+ * notification keys.
+ */
+export function composeRewardTimelineKey(sourceIdempotencyKey: string): string {
+  return clamp(`timeline:reward:${sourceIdempotencyKey}`);
+}
+
+/**
  * REMOVED IN B1: `utcLocalDate(iso)`.
  *
  * It was the fallback used when a device sent no `localDate`, and it was the

@@ -1868,6 +1868,29 @@ model LifeTimelineEvent {
   eventType    String            @map("event_type")
   title        String
   occurredAt   DateTime          @default(now()) @map("occurred_at")
+  /// PHASE C (`PC-B-006`) — CARRIES AN IDEMPOTENCY KEY, AND AN INDEX THIS FILE
+  /// CANNOT DECLARE. Recorded here so it is not invisible to the next reader.
+  ///
+  /// Migration 0010 adds:
+  ///   CREATE UNIQUE INDEX life_timeline_events_reward_source_key_uq
+  ///       ON life_timeline_events (child_id, ((metadata ->> 'sourceKey')))
+  ///    WHERE (metadata ->> 'sourceKey') IS NOT NULL;
+  ///
+  /// It is the FOURTH link of ONE BUSINESS EVENT -> ONE REWARD -> ONE TIMELINE
+  /// ENTRY -> ONE NOTIFICATION. The other three are `@@unique` on their own
+  /// models; this one is not, because Prisma cannot express a PARTIAL index over
+  /// a JSON EXPRESSION — and the key lives inside `metadata` rather than in a
+  /// column of its own only because `prisma generate` is unreachable in this
+  /// environment (binaries.prisma.sh answers 403 for both engines), so a new
+  /// column could not reach the generated client. Migration 0010's header
+  /// carries the full reasoning.
+  ///
+  /// PARTIAL, so it is additive: only the `reward_granted` entry sets a
+  /// `sourceKey`; every other engine's timeline write is unaffected.
+  ///
+  /// THE FOLLOW-UP, stated so it is not forgotten: once the Prisma engines are
+  /// downloadable, promote it to a real `sourceKey String? @map("source_key")`
+  /// field with `@@unique([childId, sourceKey])`, backfilling nothing.
   metadata     Json?
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)

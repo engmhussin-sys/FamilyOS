@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Inject } fr
 
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { composeRewardTimelineKey } from '../../../../shared/events/idempotency';
 import { forEntity, forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 import { IGrantCap, PrismaRewardsRepository } from '../../infrastructure/repositories/prisma-rewards.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
@@ -116,6 +117,63 @@ export class RewardsEngineService implements IRewardTriggerWriter {
   async countGrantsFor(childId: string, familyId: string, idempotencyKey: string): Promise<number> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
     return this.repository.countGrantsForTrigger(childId, idempotencyKey);
+  }
+
+  /**
+   * PHASE C (`PC-B-006`) — THE REPAIR, AND WHY IT CANNOT LIVE IN `announceGrant`.
+   *
+   * `announceGrant` is only reached when `actualGrantCount > 0`. On a
+   * redelivery the grant already exists, `processTriggerEvent` returns 0, and
+   * `announceGrant` is never called — so the one place that writes the timeline
+   * entry is exactly the place a retry cannot reach. A curated moment lost to a
+   * transient failure was therefore lost FOREVER, silently, while the outbox
+   * reported success: the identical shape as `PA-B-009`, one table over.
+   *
+   * This is the idempotent repair `RewardsCompletionConsumer` calls once it has
+   * established from the LEDGER that the grant is real. It is a plain keyed
+   * write: a no-op when the entry exists (the unique index refuses it and the
+   * repository reports the existing row), a repair when it does not.
+   *
+   * IT IS NOT WRAPPED IN A try/catch HERE, deliberately, and that is the whole
+   * point. The consumer runs under the relay, which retries; letting the error
+   * propagate is what converts «lost» into «retried». `announceGrant`'s own
+   * call still swallows, because the direct HTTP path has no second attempt.
+   */
+  async ensureGrantTimeline(
+    childId: string,
+    familyId: string,
+    event: IRewardTriggerEvent,
+    grantCount: number,
+  ): Promise<void> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    await this.recordGrantTimeline(childId, event, grantCount);
+  }
+
+  /**
+   * The ONE composition of the REWARDS timeline entry, shared by the direct
+   * path (`announceGrant`) and the outbox repair (`ensureGrantTimeline`) so the
+   * two can never drift into writing different rows for the same moment.
+   *
+   * `sourceKey` is present only when the trigger carried an idempotency key.
+   * Without one there is nothing stable to key on, so the row stays outside the
+   * partial unique index and behaves exactly as it did before Phase C — the
+   * honest fallback, and the same one B9 chose for notifications rather than
+   * synthesising a constant that would suppress every future entry.
+   */
+  private async recordGrantTimeline(
+    childId: string,
+    event: IRewardTriggerEvent,
+    grantCount: number,
+  ): Promise<void> {
+    await this.timeline.record({
+      childId,
+      sourceEngine: 'rewards',
+      category: 'REWARDS',
+      eventType: 'reward_granted',
+      title: 'Earned a reward',
+      metadata: { triggerEngine: event.engine, triggerType: event.type, grantCount },
+      sourceKey: event.idempotencyKey ? composeRewardTimelineKey(event.idempotencyKey) : undefined,
+    });
   }
 
   /** The single entry point every other engine calls when a
@@ -248,15 +306,17 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     grantCount: number,
   ): Promise<void> {
     try {
-      await this.timeline.record({
-        childId,
-        sourceEngine: 'rewards',
-        category: 'REWARDS',
-        eventType: 'reward_granted',
-        title: 'Earned a reward',
-        metadata: { triggerEngine: event.engine, triggerType: event.type, grantCount },
-      });
+      await this.recordGrantTimeline(childId, event, grantCount);
     } catch (err) {
+      // STILL SWALLOWED, and PC-B-006 does not change that: a timeline failure
+      // must never unwind a grant PostgreSQL has already committed, and on the
+      // DIRECT `/self/*` path there is nothing to retry with — the HTTP request
+      // is the only attempt there will ever be.
+      //
+      // What PC-B-006 changed is the OUTBOX path, where a retry does exist:
+      // `RewardsCompletionConsumer` now repairs this entry on redelivery and
+      // does NOT swallow the failure, so a lost curated moment heals instead of
+      // disappearing. The write is keyed, so the repair cannot duplicate it.
       this.logger.warn('Failed to write the reward timeline entry', err instanceof Error ? err.message : err);
     }
 

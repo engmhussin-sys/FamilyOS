@@ -1,0 +1,77 @@
+-- =============================================================================
+-- 0010_timeline_reward_idempotency — Phase C, step P0 (PC-B-006).
+--
+-- THE DEFECT. The invariant this phase was asked to prove is
+--
+--     ONE BUSINESS EVENT -> ONE REWARD -> ONE TIMELINE ENTRY -> ONE NOTIFICATION
+--
+-- and three of those four links were enforced by a database constraint:
+--
+--     ONE REWARD        rewards_ledger_entries (child_id, idempotency_key)
+--     ONE EVENT         domain_events (family_id, idempotency_key)
+--     ONE NOTIFICATION  notifications (family_id, source_event_id, user_id)   [B9]
+--     ONE TIMELINE ENTRY  -- nothing. A test asserted it. Nothing enforced it.
+--
+-- `life_timeline_events` has carried no unique key of any kind since 0001, and
+-- `RewardsEngineService.announceGrant` wraps its write in a try/catch that
+-- swallows the error — correctly, because a timeline failure must never unwind
+-- a grant PostgreSQL has already committed. The unmeasured consequence is that
+-- NOTHING then reports the failure: the relay sees a clean dispatch, marks the
+-- message PUBLISHED, and the curated moment for a real reward is gone with no
+-- retry and no trace. Measured in
+-- `test/events/reward-delivery-recovery.e2e.spec.ts` as
+-- {rewards: 1, events: 1, notifications: 1, timeline: 0}.
+--
+-- CONTEXT §3 principle 6, applied to the one link that did not have it: the
+-- primary defence is a DATABASE CONSTRAINT, never a check in code. With a key
+-- in place the repair becomes safe to attempt on every redelivery, which is
+-- what turns a silent permanent loss into a self-healing one.
+--
+-- WHY AN EXPRESSION INDEX ON `metadata` AND NOT A `source_key` COLUMN.
+-- Stated plainly rather than presented as a preference: `prisma generate` is
+-- UNREACHABLE in this environment (binaries.prisma.sh answers 403 for both the
+-- schema engine and the query engine — the same block Phase A and Phase B both
+-- recorded). A new column cannot reach the generated client, so application
+-- code could not write it. `metadata jsonb` already exists, Prisma already
+-- writes it, and PostgreSQL indexes expressions over it just as strictly as it
+-- indexes a column. The guarantee is identical; only the ergonomics are worse.
+-- A first-class `source_key VARCHAR` column is the follow-up the moment the
+-- Prisma engines are downloadable, and it is recorded as such in
+-- `PHASE-C-P0-Report.md` rather than left implied.
+--
+-- PARTIAL, and that is what makes it additive. The index applies ONLY to rows
+-- carrying a `sourceKey`, so:
+--   - every pre-existing row is untouched and cannot collide;
+--   - every other engine's timeline write (`first_habit_completion`,
+--     `hydration_target_reached`, `badge_awarded`, `level_up`, ...) keeps
+--     working with no key and no constraint, exactly as before;
+--   - only the reward-granted entry, which is the one this invariant is about,
+--     opts in.
+-- There is no backfill, because inventing a key for a historical row would be
+-- inventing a fact — the same reasoning 0006 used for `business_date`.
+--
+-- SCOPED BY `child_id` AND NOT `family_id`: the key is composed from the
+-- originating event's idempotency key, which is already unique per (family,
+-- occurrence), and every reader of this table filters by child. Adding
+-- `family_id` would widen the key without adding a guarantee.
+--
+-- RE-RUNNABLE, like 0003/0005/0006/0007/0009 before it: the only version of a
+-- migration that is safe the day after the first customer is one that can be
+-- run twice.
+-- =============================================================================
+
+-- One `reward_granted` timeline entry per originating business event.
+--
+-- `metadata->>'sourceKey'` is NULL for every row that does not opt in, and a
+-- partial index with `WHERE ... IS NOT NULL` therefore contains only the rows
+-- that do. Two deliveries of the same reward compose a byte-identical key
+-- (see `composeRewardTimelineKey` in src/shared/events/idempotency.ts) and the
+-- second INSERT raises 23505, which the repository reports as "already
+-- recorded" rather than as an error.
+CREATE UNIQUE INDEX IF NOT EXISTS "life_timeline_events_reward_source_key_uq"
+    ON "life_timeline_events" ("child_id", (("metadata" ->> 'sourceKey')))
+ WHERE ("metadata" ->> 'sourceKey') IS NOT NULL;
+
+-- The read this index does NOT serve: the timeline screen orders by
+-- `occurred_at` and is already covered by `life_timeline_events_child_id_occurred_at_idx`
+-- from 0001. Nothing here changes that plan.

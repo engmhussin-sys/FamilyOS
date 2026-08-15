@@ -446,6 +446,97 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
   });
 
   // =========================================================================
+  // 2b. PC-B-006 — THE TIMELINE ENTRY, WHICH HAD NO CONSTRAINT AND NO RETRY
+  // =========================================================================
+
+  describe('PC-B-006: a timeline write that fails must not vanish silently', () => {
+    it('THE FAILURE IS NOW VISIBLE: the message FAILS instead of being silently PUBLISHED', async () => {
+      await resetChildState(A);
+      const device = await newDevice(A);
+      await postBatch(device.token, [habitEvent(A, 'pc:timeline:1')]);
+
+      // `announceGrant` wraps its own timeline write in a try/catch that
+      // swallows the error, and PC-B-006 does NOT change that: on the direct
+      // `/self/*` path there is nothing to retry with, and a timeline failure
+      // must never unwind a committed grant.
+      //
+      // WHAT WAS MEASURED BEFORE THE FIX, with the consumer's repair call
+      // removed: `{rewards: 1, events: 1, notifications: 1, timeline: 0}` and
+      // the outbox message marked PUBLISHED. Nothing failed, nothing retried,
+      // nothing logged an error a human would see — the curated moment for a
+      // real reward was gone forever and the pipeline reported success. That is
+      // PA-B-009's exact shape, one table over.
+      const timeline = app.get(
+        require('../../src/modules/life-intelligence/application/services/life-timeline.service')
+          .LifeTimelineService,
+      );
+      const real = timeline.record.bind(timeline);
+      const spy = jest.spyOn(timeline, 'record').mockImplementation(async (...args: unknown[]) => {
+        const input = args[0] as { eventType?: string };
+        if (input.eventType === 'reward_granted') throw new Error('timeline store unavailable');
+        return real(input);
+      });
+
+      try {
+        await drainOutbox();
+      } finally {
+        spy.mockRestore();
+      }
+
+      const after = await chain(A);
+      // The grant stands — it is committed and nothing here may unwind it.
+      expect(after.rewards).toBe(1);
+      // And the announcement is WITHHELD rather than sent: notifying a parent
+      // about a reward that is missing from the timeline the notification tells
+      // them to go and look at would be worse than waiting for the retry.
+      expect(after.timeline).toBe(0);
+      expect(after.events).toBe(0);
+      expect(after.notifications).toBe(0);
+
+      const msg = await sys('read failed message', () =>
+        prisma.outboxMessage.findFirst({
+          where: { familyId: A.familyId, eventType: 'HABIT_COMPLETED' },
+        }),
+      );
+      expect(msg.status).toBe('FAILED');
+      expect(msg.lastError).toContain('timeline store unavailable');
+    });
+
+    it('THE REPAIR: the retry restores the entry and completes the chain', async () => {
+      await clearBackoff(A);
+
+      await drainOutbox();
+
+      // The grant already existed, so `processTriggerEvent` returns 0 and
+      // `announceGrant` is never reached — the repair therefore cannot live
+      // there. It lives in the consumer, keyed, and it is NOT swallowed, so a
+      // failure retries instead of disappearing.
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+    });
+
+    it('THE CONSTRAINT: four more replays still yield exactly one entry', async () => {
+      for (let i = 0; i < 4; i += 1) {
+        await sys('force redelivery', () =>
+          prisma.$executeRawUnsafe(
+            `UPDATE "outbox_messages"
+                SET "status" = 'PENDING', "published_at" = NULL, "next_attempt_at" = now() - INTERVAL '1 second'
+              WHERE "family_id" = $1::uuid`,
+            A.familyId,
+          ),
+        );
+        await sys('drop consumer markers', () =>
+          prisma.consumedMessage.deleteMany({ where: { familyId: A.familyId } }),
+        );
+        await drainOutbox();
+      }
+
+      // Enforced by `life_timeline_events_reward_source_key_uq`, not by the
+      // consumer marker — the marker is deleted above on every pass.
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+    });
+  });
+
+  // =========================================================================
   // 3. THE OTHER FAILURE MODES
   // =========================================================================
 

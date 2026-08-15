@@ -161,6 +161,38 @@ export class RewardsCompletionConsumer implements OnModuleInit {
         );
       }
 
+      /**
+       * PHASE C (`PC-B-006`) — THE TIMELINE ENTRY, MADE AS DURABLE AS THE
+       * REWARD IT DESCRIBES.
+       *
+       * `announceGrant` writes this entry inside `processTriggerEvent`, and it
+       * SWALLOWS a failure — correctly, because a timeline write must never
+       * unwind a committed grant. But `announceGrant` is only reached when new
+       * grants were created, so on a redelivery it is never called: the one
+       * place that writes the entry was exactly the place a retry could not
+       * reach, and a moment lost to a transient blip was lost forever while the
+       * outbox reported success. That is `PA-B-009`'s shape, one table over.
+       *
+       * This call is the repair, and it is NOT wrapped in a try/catch: the
+       * relay retries this consumer, so letting the error propagate is what
+       * turns «lost» into «retried». It is safe to run on EVERY delivery
+       * because the write is keyed and
+       * `life_timeline_events_reward_source_key_uq` (migration 0010) refuses
+       * the second one — the repository reports the existing row rather than
+       * throwing, so the ordinary path pays one refused INSERT and nothing else.
+       *
+       * BEFORE the outbox write, deliberately. If the entry cannot be written
+       * we want the message to retry with NO `REWARD_GRANTED` yet emitted,
+       * rather than to notify a parent about a reward that is missing from the
+       * timeline the notification tells them to go and look at.
+       */
+      await this.rewards.ensureGrantTimeline(
+        completion.childId,
+        envelope.familyId,
+        { engine, type: envelope.type, payload: { ...completion }, idempotencyKey: envelope.idempotencyKey },
+        recorded,
+      );
+
       const account = await this.rewards.getAccount(completion.childId, envelope.familyId);
 
       await this.outbox.write({
