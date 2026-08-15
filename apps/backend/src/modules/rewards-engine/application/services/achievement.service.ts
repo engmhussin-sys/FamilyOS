@@ -34,6 +34,8 @@ import {
   weekWindow,
 } from '../../domain/program-rules';
 import { PrismaRewardProgramRepository } from '../../infrastructure/repositories/prisma-reward-program.repository';
+import { QuizService } from './quiz.service';
+import { AchievementEvidenceService } from './achievement-evidence.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import type { SubmitAchievementDto } from '../dto/reward-program.dto';
 
@@ -70,6 +72,10 @@ export class AchievementService {
     private readonly repo: PrismaRewardProgramRepository,
     private readonly outbox: OutboxWriter,
     private readonly familyDate: FamilyDateService,
+    /** B5 (PA-B-017) — the ONLY producer of a quiz score in this backend. */
+    private readonly quiz: QuizService,
+    /** B5 (PA-B-019) — resolves a `submissionRef` to a real stored object. */
+    private readonly evidence: AchievementEvidenceService,
   ) {}
 
   /**
@@ -213,6 +219,22 @@ export class AchievementService {
       throw new NotFoundException({ code: 'PROGRAM_NOT_FOUND', messageAr: 'البرنامج غير موجود.' });
     }
 
+    /**
+     * B5 (PA-B-019) — `submissionRef` IS NO LONGER A FREE STRING.
+     *
+     * The DTO validates its shape and its length and always did. What it could
+     * not check is whether it POINTS AT ANYTHING: before B5 there was no
+     * upload path at all, so `{"submissionRef": "upload://abc"}` was as valid
+     * as any real reference, and `RECITATION_SUBMISSION` would happily escalate
+     * a recitation with no recording to a parent's queue. Now the ref must
+     * resolve to an `achievement_evidence` row belonging to THIS achievement —
+     * so a ref that is invented, or valid but for a different attempt, is a
+     * 400 with a non-punitive message telling the child to upload and retry.
+     */
+    if (dto.submissionRef) {
+      await this.evidence.assertBelongsToAchievement(dto.submissionRef, achievementId);
+    }
+
     const attemptNumber = (await this.repo.countAttempts(achievementId)) + 1;
     if (attemptNumber > MAX_VERIFICATION_ATTEMPTS) {
       // NON-PUNITIVE (principle 7): running out of automatic attempts escalates
@@ -237,6 +259,27 @@ export class AchievementService {
     const method = program.verificationLevel as VerificationMethod;
     const config = (program.verificationConfig ?? {}) as { passScorePercent?: number; subject?: string };
 
+    /**
+     * B5 (PA-B-017) — THE PROVENANCE FIX, IN ONE PLACE.
+     *
+     * `quizCorrect`/`quizTotal` used to be read straight off `dto`. They are
+     * now produced by `QuizService.grade`, which reads the question set the
+     * SERVER recorded in `quiz_assignments` and the answer key the SERVER
+     * holds in `quiz_questions`, and compares them against the answer sheet
+     * the child sent. The pure strategy below is untouched and its unit tests
+     * are untouched — it always compared the count correctly; the count is
+     * simply no longer the child's to choose.
+     *
+     * `null` (no served assignment) leaves both fields undefined, which makes
+     * `quizScore()` return null, which the strategy already reports as
+     * `QUIZ_NOT_SUBMITTED`. Answering a quiz that was never opened is not a
+     * crash and it is not a zero — it is «you have not taken it yet».
+     */
+    const grade =
+      method === 'QUIZ' || method === 'DURATION_PLUS_QUIZ'
+        ? await this.quiz.grade(achievementId, attemptNumber, dto.quizAnswers ?? [], now)
+        : null;
+
     const input: VerificationInput = {
       method,
       requiredDurationMinutes: program.durationMinutes,
@@ -245,8 +288,9 @@ export class AchievementService {
       foregroundMinutes: dto.foregroundMinutes ?? null,
       submission: {
         selfConfirmed: dto.selfConfirmed,
-        quizCorrect: dto.quizCorrect,
-        quizTotal: dto.quizTotal,
+        // SERVER-PRODUCED. Not a DTO field any more — see `grade` above.
+        quizCorrect: grade?.correct,
+        quizTotal: grade?.total,
         submissionRef: dto.submissionRef,
         testsPassed: dto.testsPassed,
         testsTotal: dto.testsTotal,

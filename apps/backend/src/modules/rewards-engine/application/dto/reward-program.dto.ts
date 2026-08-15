@@ -1,4 +1,7 @@
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -145,22 +148,51 @@ export class StartAchievementDto {
  * Child: "here is my evidence." Every field is EVIDENCE, not a decision, and
  * none of them is `result`. There is deliberately no way for a child to state
  * an outcome.
+ *
+ * B5 (PA-B-017) — `quizCorrect` and `quizTotal` USED TO BE HERE, and their
+ * removal is the fix. They were `@IsInt() @Min(0)` and `@IsInt() @Min(1)`,
+ * they came from the child's own device, and `VERIFICATION_MATRIX.QUIZ`
+ * carried `canAutoApprove: true` — so a well-formed `{"quizCorrect": 10,
+ * "quizTotal": 10}` was an auto-approved 100%. They are DELETED rather than
+ * ignored, on purpose: `main.ts` runs `forbidNonWhitelisted: true`, so a
+ * client still sending them now gets a 400 naming the offending property
+ * instead of quietly falling back to the old behaviour. `quizAnswers` replaces
+ * them, and the score is produced by `QuizService.grade` from the server's own
+ * answer key.
  */
 export class SubmitAchievementDto {
   @IsOptional()
   @IsBoolean()
   selfConfirmed?: boolean;
 
+  /**
+   * B5 — ONE CHOSEN INDEX PER SERVED QUESTION, positionally aligned with what
+   * `GET /self/achievements/:id/quiz` returned. This is an ANSWER SHEET, and
+   * the difference from what it replaces is the whole finding: a wrong answer
+   * sheet scores badly, whereas a wrong score scored whatever it liked.
+   *
+   * `Max(5)` bounds a choice index to the schema's own
+   * `jsonb_array_length(choices) BETWEEN 2 AND 6` CHECK; `ArrayMaxSize` bounds
+   * the sheet to more than any served set can be, so a padded array is
+   * rejected at the edge rather than truncated in the grader.
+   */
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  quizCorrect?: number;
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(5, { each: true })
+  quizAnswers?: number[];
 
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  quizTotal?: number;
-
+  /**
+   * B5 (PA-B-017, the `CODE_CHALLENGE` half). These stay, and what changed is
+   * what they are ALLOWED TO DO. There is no code sandbox in this backend and
+   * building one was not in scope, so the server cannot produce these numbers
+   * itself — which means they are a CLAIM, and a claim may no longer
+   * auto-approve. `VERIFICATION_MATRIX.CODE_CHALLENGE.canAutoApprove` is now
+   * `false`, so these become evidence a parent reads, exactly like
+   * `submissionRef`, instead of an input to a grant.
+   */
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -221,4 +253,64 @@ export class AcceptSuggestionDto {
 
   @IsUUID()
   childId!: string;
+}
+
+/**
+ * B5 (PA-B-017) — the parent's question-authoring form.
+ *
+ * `correctChoiceIndex` is ACCEPTED here and returned by nothing: the read
+ * routes `select` four columns and the key is not one of them. The
+ * cross-field rule (the index must fall inside `choices`) is checked in the
+ * controller against the actual array length rather than by a decorator,
+ * because class-validator cannot express "less than the length of a sibling
+ * field" — and the database enforces the same rule again in
+ * `quiz_questions_choices_chk`, so a future admin path that bypasses this DTO
+ * still cannot write an unanswerable question.
+ */
+export class CreateQuizQuestionDto {
+  @IsIn([...PROGRAM_CATEGORIES])
+  category!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  subject?: string;
+
+  @IsOptional()
+  @IsIn([...PROGRAM_DIFFICULTIES])
+  difficulty?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(18)
+  minAge?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(18)
+  maxAge?: number;
+
+  @IsString()
+  @MaxLength(500)
+  promptAr!: string;
+
+  /** 2..6 — the same bounds as the `quiz_questions_choices_chk` CHECK. */
+  @IsArray()
+  @ArrayMinSize(2)
+  @ArrayMaxSize(6)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  choices!: string[];
+
+  @IsInt()
+  @Min(0)
+  @Max(5)
+  correctChoiceIndex!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  explanationAr?: string;
 }

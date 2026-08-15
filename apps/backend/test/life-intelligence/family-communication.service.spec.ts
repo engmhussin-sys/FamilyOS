@@ -9,7 +9,13 @@ import { SafetyEngineService } from '../../src/modules/ai-core/application/servi
 import { AI_PROVIDER } from '../../src/modules/ai-core/domain/ai-provider.port';
 
 describe('FamilyCommunicationService', () => {
-  const repositoryMock = { create: jest.fn(), findById: jest.fn(), approveAndDeliver: jest.fn(), reject: jest.fn(), listDeliveredForChild: jest.fn(), acknowledge: jest.fn(), listPendingForFamily: jest.fn() };
+  // B9 — `draftAiMessage` now delegates to `draftAiMessageIfAbsent`, which
+  // calls `createIfAbsent` so a duplicate refused by
+  // `child_messages (family_id, source_event_id)` is reported rather than
+  // thrown. The real repository implements it by delegating to `create`, so
+  // the mock does the same and every existing assertion on `create` below
+  // keeps asserting the real thing.
+  const repositoryMock = { create: jest.fn(), createIfAbsent: jest.fn(), findById: jest.fn(), approveAndDeliver: jest.fn(), reject: jest.fn(), listDeliveredForChild: jest.fn(), acknowledge: jest.fn(), listPendingForFamily: jest.fn() };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const pairingOrchestratorMock = { getChildIdForDevice: jest.fn() };
   const safetyEngineMock = { validate: jest.fn() };
@@ -22,6 +28,14 @@ describe('FamilyCommunicationService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     safetyEngineMock.validate.mockReturnValue({ isSafe: true, rejectionReason: null });
+    // B9 — mirror the real `PrismaCommunicationRepository.createIfAbsent`,
+    // which is a thin P2002-catching wrapper around `create`. Wiring it this
+    // way keeps every existing `expect(repositoryMock.create)` assertion in
+    // this file asserting the SAME call it always did, rather than being
+    // rewritten to point at a new method and quietly losing its meaning.
+    repositoryMock.createIfAbsent.mockImplementation((...args: unknown[]) =>
+      (repositoryMock.create as jest.Mock)(...args),
+    );
     const moduleRef = await Test.createTestingModule({
       providers: [
         FamilyCommunicationService,

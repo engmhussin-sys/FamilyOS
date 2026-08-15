@@ -1,6 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import {
+  EVIDENCE_STORAGE,
+  type IEvidenceStorage,
+} from '../../rewards-engine/application/ports/evidence-storage.port';
 
 export interface IRetentionEnforcementResult {
   category: string;
@@ -22,7 +26,10 @@ export interface IRetentionEnforcementResult {
 export class DataRetentionEnforcementService {
   private readonly logger = new Logger(DataRetentionEnforcementService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(EVIDENCE_STORAGE) private readonly storage: IEvidenceStorage,
+  ) {}
 
   async enforceNotificationRetention(retentionDays = 90): Promise<IRetentionEnforcementResult> {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
@@ -95,6 +102,52 @@ export class DataRetentionEnforcementService {
     return { category: 'App Usage Data', action: 'HARD_DELETE', affectedRows: totalDeleted };
   }
 
+  /**
+   * B5 (PA-B-019) — THE RETENTION HOOK FOR UPLOADED EVIDENCE.
+   *
+   * A child's recitation is the most sensitive object this product stores, so
+   * the upload path was not allowed to ship without the sweep that removes it.
+   * Uses `retain_until` — a per-row column stamped at write time from
+   * `EVIDENCE_RETENTION_DAYS` — rather than a fixed lookback window, for the
+   * same reason `enforceLocationEventRetention` uses `expiresAt`: a policy
+   * change must not silently re-date objects stored under the previous one.
+   *
+   * TWO STEPS, IN THIS ORDER, AND THE ORDER IS THE POINT. The BYTES go first
+   * and the row is soft-deleted afterwards. Reversed, a crash between the two
+   * would leave an object with no row pointing at it — unreachable by the
+   * application and invisible to every future sweep, i.e. a child's voice
+   * recording retained forever by accident. This way a crash leaves a row
+   * whose object is gone, which the next run simply deletes again (deleting an
+   * absent key is a success in `IEvidenceStorage`) and which `read()` already
+   * reports as `EVIDENCE_EXPIRED`.
+   *
+   * SOFT delete for the row: `achievement_evidence` is part of the audit trail
+   * behind a granted reward, and «there WAS a recording and it has since been
+   * removed under policy» is a materially different statement from «there was
+   * never any evidence». The bytes are what retention is about; the fact is
+   * not.
+   */
+  async enforceAchievementEvidenceRetention(now = new Date()): Promise<IRetentionEnforcementResult> {
+    const due = await this.prisma.achievementEvidence.findMany({
+      where: { retainUntil: { lt: now }, deletedAt: null },
+      select: { id: true, storageKey: true },
+    });
+
+    for (const row of due) {
+      await this.storage.delete(row.storageKey);
+    }
+
+    const result = await this.prisma.achievementEvidence.updateMany({
+      where: { id: { in: due.map((r: { id: string }) => r.id) } },
+      data: { deletedAt: now },
+    });
+
+    this.logger.log(
+      `Retention: deleted ${due.length} achievement evidence object(s) from ${this.storage.backendName} and tombstoned ${result.count} row(s).`,
+    );
+    return { category: 'Achievement Evidence', action: 'HARD_DELETE_OBJECT_SOFT_DELETE_ROW', affectedRows: result.count };
+  }
+
   /** Runs both \u2014 the method a future scheduler (once chosen) would
    * call. Not scheduled anywhere itself. */
   async enforceAll(): Promise<IRetentionEnforcementResult[]> {
@@ -103,6 +156,7 @@ export class DataRetentionEnforcementService {
       await this.enforceAnalyticsRetention(),
       await this.enforceLocationEventRetention(),
       await this.enforceDigitalWellbeingRetention(),
+      await this.enforceAchievementEvidenceRetention(),
     ];
   }
 }

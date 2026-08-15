@@ -262,6 +262,27 @@ export class LifeIntelligenceController {
   }
 
   /**
+   * B5 — THE LEDGER READ (`PHASE-A-Backend §13.2`: «لا endpoint يقرأ
+   * `rewards_ledger_entries` إطلاقًا»).
+   *
+   * Placed beside `account` deliberately rather than at the
+   * `/children/:childId/rewards/ledger` path §13.2 sketched: the balance and
+   * the entries that produced it are one surface with one owner
+   * (`RewardsEngineService`), and splitting them across two modules would have
+   * put reward semantics in the children module. The mobile contract matrix in
+   * the B5+B9 report records the path that shipped.
+   */
+  @Get('rewards/:childId/ledger')
+  @UseGuards(JwtAuthGuard)
+  getRewardsLedger(
+    @Param('childId') childId: string,
+    @CurrentUser() user: IJwtPayload,
+    @Query('limit') limit?: string,
+  ) {
+    return this.rewardsEngine.getLedger(childId, user.familyId!, limit ? Number(limit) : undefined);
+  }
+
+  /**
    * Stricter than the global default (100/min via APP_GUARD, already
    * covering every route in this controller) \u2014 this specific
    * endpoint grants coins/XP/badges, so even same-family repeated

@@ -6,6 +6,7 @@ import {
   RUNTIME_ALERT_REPOSITORY,
   type IRuntimeAlertRepository,
 } from '../../../pairing/application/ports/runtime-alert.repository.port';
+import { forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 import { PrismaDigitalWellbeingRepository } from '../../infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { ConsentCheckService } from '../../../consent-check/application/consent-check.service';
 import { BaselineCalculatorService } from './baseline-calculator.service';
@@ -207,6 +208,13 @@ export class DigitalWellbeingEngineService {
 
     const priority: 'CRITICAL' | 'NORMAL' = input.eventType === 'CHILD_REQUEST' ? 'NORMAL' : 'CRITICAL';
 
+    // B9 (PA-B-007 / PA-B-008) — producer 6 of 7, the other full bypass of the
+    // fatigue guard. Same reasoning as `RuntimeAlertService`: the
+    // discriminator is the EVENT TYPE (one of five), so two DIFFERENT critical
+    // events inside the same five minutes are two notifications, while the
+    // same event type retried by a flaky device sync is one — which is what
+    // the five-minute window already did in code and now also does in the
+    // schema, where a concurrent retry cannot slip past it.
     await this.runtimeAlerts.createForFamilyOwner({
       familyId,
       childId,
@@ -214,6 +222,7 @@ export class DigitalWellbeingEngineService {
       body: input.body,
       data: { alertType: input.eventType, ...input.metadata },
       priority,
+      sourceEventId: forRecurringSignal('wellbeing', childId, input.eventType, new Date()),
     });
 
     if (input.eventType !== 'CHILD_REQUEST') {

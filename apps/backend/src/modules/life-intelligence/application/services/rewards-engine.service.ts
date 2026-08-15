@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Inject } fr
 
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { forEntity, forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 import { IGrantCap, PrismaRewardsRepository } from '../../infrastructure/repositories/prisma-rewards.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
 import { IRewardTriggerWriter } from '../../domain/reward-trigger.types';
@@ -68,6 +69,29 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     return this.repository.getOrCreateAccount(childId);
   }
 
+  /**
+   * B5 (`PHASE-A-Backend §13.2`) — «لا endpoint يقرأ `rewards_ledger_entries`
+   * إطلاقًا».
+   *
+   * `rewards_ledger_entries` is the append-only audit trail of every point,
+   * coin, XP and badge this product has ever granted. It has been written
+   * since Sprint 13, it carries the `(child_id, idempotency_key)` unique index
+   * that F1 built the whole replay defence on, and until B5 NO ROUTE READ IT.
+   * A parent could see a balance and could not see where it came from, which
+   * makes the balance unarguable in exactly the situation where a parent needs
+   * to argue with it.
+   *
+   * EXTENDING the existing rewards read surface rather than adding a rival:
+   * same service, same `assertChildBelongsToFamily` ownership check, same
+   * repository. `limit` is bounded here because §13 records «Pagination: صفر»
+   * across the whole API — a bounded limit is not pagination and is not
+   * presented as it; the cursor work is a stated open gap.
+   */
+  async getLedger(childId: string, familyId: string, limit = 100): Promise<unknown[]> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    return this.repository.listLedgerEntries(childId, Math.min(Math.max(limit, 1), 200));
+  }
+
   /** The single entry point every other engine calls when a
    * reward-worthy event happens — evaluates every active Reward Rule
    * for this family/engine and grants whatever matches.
@@ -131,8 +155,19 @@ export class RewardsEngineService implements IRewardTriggerWriter {
             // are notified — a deliberate product distinction, not
             // arbitrary duplication. Best-effort: never blocks the
             // grant itself, matching every other side-effect here.
-            await this.notifyGrant(childId, familyId, 'CHILD', 'BADGE_EARNED', `You earned a badge!`, `You earned the "${badge.title}" badge — awesome work!`);
-            await this.notifyGrant(childId, familyId, 'PARENT', 'BADGE_EARNED', 'New badge earned', `Your child earned the "${badge.title}" badge.`);
+            // B9 — THE ENTITY FORM. `child_badge_awards (child_id, badge_id)`
+            // is unique, so this child can earn this badge exactly once, ever.
+            // A key built on that pair is therefore permanently stable: replay
+            // the trigger tomorrow, next week, or from a redelivered message
+            // whose consumption marker was lost, and the composed key is
+            // byte-identical and the second notification is refused by the
+            // database. The child's row and the parent's row differ only by the
+            // `:child` facet the delivery layer appends, so notifying BOTH
+            // audiences — a deliberate product decision recorded above — stays
+            // possible without weakening anything.
+            const badgeKey = forEntity('badge', childId, badge.id);
+            await this.notifyGrant(childId, familyId, 'CHILD', 'BADGE_EARNED', `You earned a badge!`, `You earned the "${badge.title}" badge — awesome work!`, badgeKey);
+            await this.notifyGrant(childId, familyId, 'PARENT', 'BADGE_EARNED', 'New badge earned', `Your child earned the "${badge.title}" badge.`, badgeKey);
           }
         }
       } else {
@@ -208,6 +243,24 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     // so this runs the SAME fatigue guard — cooldown, duplicate window, quiet
     // hours, daily and category caps — as every other notification. No new
     // notification logic is built here.
+    // B9 — THE DIRECT PATH's key, and the one place where the composition has
+    // to fall back. `event.idempotencyKey` is the same value that protects the
+    // ledger row this notification is announcing (`rewards_ledger_entries
+    // (child_id, idempotency_key)`), so when it is present the notification is
+    // exactly as replay-proof as the grant it describes — which is the
+    // strongest statement available on a path that writes no domain event.
+    //
+    // WHEN IT IS ABSENT, and this is stated rather than hidden: PA-B-013's
+    // keyless legacy triggers still exist, and a key composed from nothing
+    // would be a constant that suppressed every future grant notification for
+    // that child forever. The bucketed form is the honest fallback — it
+    // guarantees «not twice within five minutes» at the database level and no
+    // more. `rewards_ledger_entries` remains the exactly-once authority for
+    // the grant itself; this is the notification about it.
+    const sourceEventId = event.idempotencyKey
+      ? forEntity('reward', childId, event.idempotencyKey)
+      : forRecurringSignal('reward', childId, `${event.engine}:${event.type}`, new Date());
+
     await this.notifyGrant(
       childId,
       familyId,
@@ -215,6 +268,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       'REWARD_GRANTED',
       'مكافأة جديدة',
       'حصل طفلك على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.',
+      sourceEventId,
     );
   }
 
@@ -294,7 +348,18 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       // "not every event" requirement; a level-up is a real
       // milestone, matching this file's own existing Timeline-write
       // threshold for what counts as milestone-worthy).
-      await this.notifyGrant(childId, familyId, 'CHILD', 'LEVEL_UP', `Level ${newLevel}!`, `You reached Level ${newLevel} — keep it up!`);
+      // B9 — THE ENTITY FORM again: a child crosses into level 7 once. XP is
+      // monotonic and `computeLevelFromXp` is pure, so «reached level N» is a
+      // fact with a stable identity even though no event row records it.
+      await this.notifyGrant(
+        childId,
+        familyId,
+        'CHILD',
+        'LEVEL_UP',
+        `Level ${newLevel}!`,
+        `You reached Level ${newLevel} — keep it up!`,
+        forEntity('levelup', childId, String(newLevel)),
+      );
     }
 
     return granted;
@@ -316,6 +381,10 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     type: string,
     title: string,
     body: string,
+    /** B9 — REQUIRED, not optional. Every one of this file's three call sites
+     * composes it explicitly above, and making it optional here would have
+     * re-opened the exact hole the constraint closes. */
+    sourceEventId: string,
   ): Promise<void> {
     try {
       await this.notificationIntegration.notifyEvent(childId, familyId, {
@@ -324,6 +393,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
         title,
         body,
         targetAudience,
+        sourceEventId,
       });
     } catch (err) {
       this.logger.warn(`Failed to notify reward grant (${type})`, err instanceof Error ? err.message : err);

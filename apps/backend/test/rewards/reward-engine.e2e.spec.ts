@@ -45,6 +45,10 @@ import { OutboxRelay } from '../../src/modules/events/application/outbox.relay';
 import { RewardsCompletionConsumer } from '../../src/modules/events/application/consumers/rewards-completion.consumer';
 import { ScreenTimeService } from '../../src/modules/screen-time/application/services/screen-time.service';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
+import {
+  RUNTIME_ALERT_REPOSITORY,
+  type IRuntimeAlertRepository,
+} from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
 
@@ -265,6 +269,19 @@ describeIfDb('F4 — the Quran reward journey end to end (real PostgreSQL, real 
       ],
     });
     jest.setSystemTime(NOON);
+
+    // B5: same reason `event-pipeline.e2e.spec.ts` does it, now that a THIRD
+    // e2e suite registers tenants from the same IP in the same `--runInBand`
+    // run — `/auth/register` allows 5 per minute and the counters live in the
+    // real Redis. Without this the failure is a 429 on a fixture, which looks
+    // like a reward-engine defect and is not one.
+    {
+      const Redis = require('ioredis');
+      const client = new Redis(process.env.REDIS_URL as string);
+      const keys = await client.keys('throttle:*');
+      if (keys.length > 0) await client.del(...keys);
+      await client.quit();
+    }
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
@@ -496,35 +513,151 @@ describeIfDb('F4 — the Quran reward journey end to end (real PostgreSQL, real 
     });
 
     /**
-     * AN HONEST LIMIT, CAPTURED AS A TEST RATHER THAN AS PROSE.
+     * B9 (PA-B-007 / PA-B-008) — WAS «KNOWN LIMIT», IS NOW A REGRESSION TEST.
      *
-     * The GRANT is protected by a unique constraint, so it is exactly once under
-     * any redelivery. The NOTIFICATION is protected by two weaker things: the
-     * `consumed_messages` marker (an optimisation, per F3's own docstring) and
-     * `NotificationFatigueGuard`'s 5-minute DUPLICATE window. Remove BOTH — a
-     * redelivery of a message whose marker was lost, more than five minutes
-     * later — and a second notification IS dispatched for a reward that was
-     * granted once.
+     * WHAT THIS TEST USED TO SAY, verbatim in its own title: «marker gone AND
+     * outside the fatigue window, the notification is not deduplicated», and
+     * it asserted `notificationCount = 2`. It was an honest measurement of a
+     * real defect, written by the project against itself, and Phase A §5 cited
+     * it as the proof that the last link in the CONTEXT §5 chain was held by a
+     * code check rather than a constraint.
      *
-     * This test asserts that exact behaviour so the limit cannot regress
-     * silently in either direction, and §11/§افتراضات of the F4 report names it
-     * with its fix (a unique index on
-     * `notifications (family_id, source_event_id)`), which is NOT built in this
-     * sprint. Note the scope: it needs the marker to be GONE, which in
-     * production means the row was written and then lost.
+     * WHY THE SAME SETUP NOW YIELDS 1. Nothing about the SETUP is softened —
+     * every hostile condition the original test created is still created here,
+     * and two more are added:
+     *
+     *   `consumed_messages` DELETED   the F3 optimisation is stripped, so a
+     *                                 redelivered message really does re-enter
+     *                                 `NotificationRewardConsumer.handle`.
+     *   clock at 12:30                thirty minutes past the grant, so
+     *                                 `NotificationFatigueGuard`'s five-minute
+     *                                 DUPLICATE window cannot swallow it, and
+     *                                 the daily/category caps are nowhere near
+     *                                 being hit.
+     *   fatigue history EMPTIED       (new) the `notifications` row from the
+     *                                 first delivery is what the guard reads
+     *                                 as history. It is deliberately made
+     *                                 unreadable to the guard below, so that a
+     *                                 pass here CANNOT be attributed to the
+     *                                 guard doing the guard's job.
+     *
+     * With the marker gone, the window passed and the history invisible, the
+     * ONLY thing left standing between a redelivery and a second row is
+     * `notifications (family_id, source_event_id, user_id)` — and
+     * `source_event_id` is `evt:<domain_events.id>`, which is identical on
+     * every redelivery of the same message for as long as the event row
+     * exists. The duplicate is not suppressed, it is REFUSED, by PostgreSQL,
+     * at insert time.
      */
-    it('KNOWN LIMIT: marker gone AND outside the fatigue window, the notification is not deduplicated', async () => {
+    it('B9 REGRESSION (was KNOWN LIMIT): marker gone, window passed, fatigue history blinded — the notification is STILL exactly one', async () => {
       await runJourney(A);
       expect(await notificationCount(A)).toBe(1);
+      const [first] = await sys('read the one notification', () =>
+        prisma.notification.findMany({ where: { familyId: A.familyId } }),
+      );
+      // The row carries a real causal key, not the migration's legacy backfill.
+      expect(String(first.sourceEventId).startsWith('evt:')).toBe(true);
+
+      // BLIND THE GUARD. `NotificationFatigueGuard` reads recent notifications
+      // for the CHILD; back-dating this row 48 hours puts it outside the
+      // 24-hour history window `fetchHistory` reads, so the guard sees an empty
+      // history and would happily allow a second send. The row itself stays in
+      // the table — which is the point: the CONSTRAINT still sees it.
+      await sys('back-date the notification out of the fatigue window', () =>
+        prisma.notification.update({
+          where: { id: first.id },
+          data: { createdAt: new Date(at('12:00').getTime() - 48 * 60 * 60 * 1000) },
+        }),
+      );
 
       jest.setSystemTime(at('12:30'));
       await redeliverEverything(A, false);
-      await drainOutbox();
+      const drained = await drainOutbox();
+      // The redelivery really happened — otherwise this test would pass by
+      // measuring nothing at all, which is how a regression test dies quietly.
+      expect(drained.published).toBeGreaterThan(0);
 
-      // The grant is still exactly once — the constraint held.
+      // The grant is exactly once — as it always was.
       expect(await ledgerCount(A)).toBe(1);
-      // The notification was not. This is the documented gap, measured.
-      expect(await notificationCount(A)).toBe(2);
+      // And so is the notification. This line is the whole of B9.
+      expect(await notificationCount(A)).toBe(1);
+    });
+
+    /**
+     * B9 — THE CONCURRENCY CASE PHASE A COULD NOT MEASURE.
+     *
+     * §5's failure table marked «two parallel deliveries (two app instances /
+     * two relay workers)» as **inference, not evidence** — derived from the
+     * `findFirst`->`create` shape, unmeasured because the existing suite is
+     * single-process. A five-minute window genuinely cannot see a concurrent
+     * writer: both queries return empty, both inserts proceed.
+     *
+     * Eight concurrent inserts of the SAME causal key, issued straight at the
+     * repository so nothing upstream can serialise them. Exactly one survives,
+     * decided by PostgreSQL. The seven others are refused as P2002 and
+     * reported as «not written» rather than thrown, which is what lets a relay
+     * treat a redelivery as handled instead of dead-lettering it.
+     */
+    it('B9: eight CONCURRENT deliveries of one causal key produce exactly one notification', async () => {
+      const repo = app.get<IRuntimeAlertRepository>(RUNTIME_ALERT_REPOSITORY);
+      const key = `evt:${A.familyId}:concurrency-probe`;
+
+      const results = await runWithTenant(
+        { familyId: A.familyId, actorType: 'SYSTEM', actorId: 'b9-concurrency' },
+        () =>
+          Promise.all(
+            Array.from({ length: 8 }, () =>
+              repo.createForFamilyOwner({
+                familyId: A.familyId,
+                childId: A.childId,
+                title: 'مكافأة جديدة',
+                body: 'حصل طفلك على مكافأة جديدة اليوم.',
+                type: 'REWARD_GRANTED',
+                priority: 'NORMAL',
+                sourceEventId: key,
+              }),
+            ),
+          ),
+      );
+
+      const written = await sys('count the rows for the probe key', () =>
+        prisma.notification.count({ where: { familyId: A.familyId, sourceEventId: key } }),
+      );
+      expect(written).toBe(1);
+      // And the repository told the truth about which one won.
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+
+    /**
+     * B9 — REWARD-AND-NOTIFICATION CONSISTENCY, from the other direction.
+     *
+     * `THE REPLAY` above proves a duplicate grant notifies zero times. This
+     * proves the stronger statement the brief asks for: a duplicate or failed
+     * REWARD produces zero notifications, structurally. `RewardsCompletionConsumer`
+     * emits `REWARD_GRANTED` only inside `if (granted > 0)`, and
+     * `NotificationRewardConsumer` subscribes to `REWARD_GRANTED` and nothing
+     * else — so there is no code path at all from a refused ledger insert to a
+     * notification. Measured rather than argued: the ledger row is deleted and
+     * the whole pipeline replayed with markers gone, so the grant is attempted
+     * AGAIN and succeeds AGAIN (a second real grant), and the notification
+     * count is checked against it.
+     */
+    it('B9: a redelivery that grants nothing notifies nothing — the two counts never disagree', async () => {
+      await runJourney(A);
+      const before = { ledger: await ledgerCount(A), notif: await notificationCount(A) };
+      expect(before).toEqual({ ledger: 1, notif: 1 });
+
+      // Three redeliveries, each stripped of its markers, each well past the
+      // fatigue window — the harshest replay this suite knows how to build.
+      for (const minute of ['12:31', '12:40', '12:55']) {
+        jest.setSystemTime(at(minute));
+        await redeliverEverything(A, false);
+        await drainOutbox();
+      }
+
+      expect(await ledgerCount(A)).toBe(1);
+      expect(await notificationCount(A)).toBe(1);
+      expect(await eventsOfType(A, 'REWARD_GRANTED')).toBe(1);
     });
   });
 

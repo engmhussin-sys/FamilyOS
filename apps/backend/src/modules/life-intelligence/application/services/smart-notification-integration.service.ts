@@ -7,12 +7,30 @@ import { evaluateSmartNotificationCandidates, type ISmartNotificationSignals } f
 import { evaluateFatigue, type ICandidateNotification, type IRecentNotification } from './notification-fatigue-guard';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessTimeHHMM, getStartOfBusinessDay } from '../../../../common/time/family-date';
+import { forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 
 export interface INotificationOutcome {
   type: string;
   targetAudience: 'PARENT' | 'CHILD';
   decision: 'SEND' | 'DEFER' | 'SUPPRESS';
   reason?: string;
+}
+
+/**
+ * B9 (PA-B-007 / PA-B-008) — a candidate PLUS the one thing that makes it
+ * identifiable.
+ *
+ * `ICandidateNotification` is left exactly as Sprint 16 wrote it: it is the
+ * input to a PURE function (`evaluateFatigue`) that has no business knowing
+ * about database keys, and its unit tests construct it directly. The causal
+ * key belongs to DELIVERY, not to the fatigue decision, so it is added here —
+ * at the layer that actually writes a row — and it is REQUIRED, so a producer
+ * cannot reach `deliver()` without having composed one.
+ */
+export interface IDeliverableNotification extends ICandidateNotification {
+  /** Composed with one of the three documented forms in
+   * `src/shared/notifications/notification-source-key.ts`. */
+  readonly sourceEventId: string;
 }
 
 const HISTORY_WINDOW_HOURS = 24;
@@ -62,9 +80,25 @@ export class SmartNotificationIntegrationService {
 
     const history = await this.fetchHistory(childId);
     const outcomes: INotificationOutcome[] = [];
+    // B9 — ONE `now` for the whole batch, so two candidates evaluated in the
+    // same call cannot land in two different dedupe buckets because a
+    // millisecond passed between them.
+    const now = new Date();
 
     for (const candidate of candidates) {
-      const outcome = await this.evaluateAndDeliver(childId, familyId, candidate, history);
+      // B9 — THE PERIODIC CLASS, composed here rather than by the caller
+      // because the caller supplies SIGNALS, not notifications: it does not
+      // know which candidates the decision engine will produce and cannot
+      // name them. A hydration reminder has no domain event and no entity —
+      // it is a recurring observation that SHOULD notify again later — so it
+      // takes the bucketed form, with the bucket width equal to the fatigue
+      // guard's own sliding DUPLICATE window. The guard stays the product
+      // behaviour; the constraint is the floor under it.
+      const deliverable: IDeliverableNotification = {
+        ...candidate,
+        sourceEventId: forRecurringSignal('signal', childId, candidate.type, now),
+      };
+      const outcome = await this.evaluateAndDeliver(childId, familyId, deliverable, history, now);
       outcomes.push(outcome);
       // Feeds back into the SAME history array used by subsequent
       // candidates in this same batch — two candidates matching in
@@ -87,9 +121,9 @@ export class SmartNotificationIntegrationService {
    * throws for a delivery failure — logged, not propagated, so a
    * notification issue never blocks the real business event (a habit
    * completion, a reward grant) that triggered it. */
-  async notifyEvent(childId: string, familyId: string, candidate: ICandidateNotification): Promise<INotificationOutcome> {
+  async notifyEvent(childId: string, familyId: string, candidate: IDeliverableNotification): Promise<INotificationOutcome> {
     const history = await this.fetchHistory(childId);
-    return this.evaluateAndDeliver(childId, familyId, candidate, history);
+    return this.evaluateAndDeliver(childId, familyId, candidate, history, new Date());
   }
 
   private async fetchHistory(childId: string): Promise<IRecentNotification[]> {
@@ -113,10 +147,10 @@ export class SmartNotificationIntegrationService {
   private async evaluateAndDeliver(
     childId: string,
     familyId: string,
-    candidate: ICandidateNotification,
+    candidate: IDeliverableNotification,
     history: IRecentNotification[],
+    now: Date,
   ): Promise<INotificationOutcome> {
-    const now = new Date();
     // B2 (PA-B-002), THE SERVER-LOCAL CLASS. This line was
     // `now.getHours()` — the CONTAINER's wall clock, not UTC and not the
     // family's. The default quiet-hours policy is 21:00-07:00; evaluated
@@ -144,8 +178,15 @@ export class SmartNotificationIntegrationService {
     }
 
     try {
-      await this.deliver(childId, familyId, candidate);
-      return { type: candidate.type, targetAudience: candidate.targetAudience, decision: 'SEND' };
+      const written = await this.deliver(childId, familyId, candidate);
+      // B9 — «the constraint refused it» is a real, reportable outcome, and it
+      // is a SUPPRESS rather than a SEND. Reporting SEND for a row the
+      // database rejected would put a lie in the log line
+      // `NotificationRewardConsumer` writes, and that log line is how the
+      // redelivery behaviour is observed in production.
+      return written
+        ? { type: candidate.type, targetAudience: candidate.targetAudience, decision: 'SEND' }
+        : { type: candidate.type, targetAudience: candidate.targetAudience, decision: 'SUPPRESS', reason: 'ALREADY_NOTIFIED' };
     } catch (err) {
       this.logger.warn(`Failed to deliver Smart Notification (${candidate.type})`, err instanceof Error ? err.message : err);
       // Deliberately still returns a real outcome object (not a
@@ -159,18 +200,34 @@ export class SmartNotificationIntegrationService {
   /** Routes a SEND-approved candidate to its correct real delivery
    * mechanism based on targetAudience — enforced structurally (CHILD
    * always goes through the approval-gated path). */
-  private async deliver(childId: string, familyId: string, candidate: ICandidateNotification): Promise<void> {
+  private async deliver(childId: string, familyId: string, candidate: IDeliverableNotification): Promise<boolean> {
     if (candidate.targetAudience === 'PARENT') {
-      await this.runtimeAlertRepository.createForFamilyOwner({
+      return this.runtimeAlertRepository.createForFamilyOwner({
         familyId,
         childId,
         title: candidate.title,
         body: candidate.body,
         priority: candidate.priority === 'HIGH' || candidate.priority === 'LOW' ? 'NORMAL' : candidate.priority,
         type: candidate.type,
+        sourceEventId: candidate.sourceEventId,
       });
-    } else {
-      await this.familyCommunication.draftAiMessage(childId, familyId, candidate.type, candidate.title, candidate.body);
     }
+    // B9 — the CHILD branch is protected too, and by the same kind of thing:
+    // `child_messages (family_id, source_event_id)`. Phase A's §5 table listed
+    // seven producer paths and marked all seven «قيد DB؟ ❌»; three of them
+    // (badge-to-child, level-up-to-child, and any CHILD-targeted signal) land
+    // here, not on `notifications`, so a fix that touched only one table would
+    // have left them exactly as exposed as before while reporting success.
+    // The `:child` facet keeps the child's row and the parent's row from
+    // colliding when ONE event legitimately notifies both audiences.
+    const drafted = await this.familyCommunication.draftAiMessageIfAbsent(
+      childId,
+      familyId,
+      candidate.type,
+      candidate.title,
+      candidate.body,
+      `${candidate.sourceEventId}:child`,
+    );
+    return drafted !== null;
   }
 }

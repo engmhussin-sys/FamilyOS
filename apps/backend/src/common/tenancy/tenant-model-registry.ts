@@ -103,6 +103,15 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   'VerificationAttempt',
   'ScreenTimeRewardGrant',
   'RewardFulfilment',
+
+  // -- B5 (PA-B-017, PA-B-019) --
+  // Both are reachable only through an AchievementRequest, which is strict, so
+  // rule 1 applies verbatim: the tenant is derivable from the relation graph
+  // and the row is meaningless outside one household. `achievement_evidence`
+  // in particular is the most sensitive table B5 adds — a recording of a
+  // child's voice — and STRICT is the only defensible class for it.
+  'QuizAssignment',
+  'AchievementEvidence',
 ]);
 
 /**
@@ -115,6 +124,14 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
  */
 export const SHARED_NULL_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   'RewardRule',
+  // B5 (PA-B-017). The question bank is the SECOND legitimate member of this
+  // class and it is here for exactly the reason the class exists: migration
+  // 0008 seeds platform sample questions with `family_id IS NULL` so every
+  // family can draw from them, while a family that authors its own questions
+  // gets rows only it can read. Making it GLOBAL would have leaked one
+  // family's authored questions to every other family; making it STRICT would
+  // have made the seeded bank invisible to everyone.
+  'QuizQuestion',
 ]);
 
 /**

@@ -384,6 +384,11 @@ model Family {
   screenTimeRewardGrants ScreenTimeRewardGrant[]
   rewardFulfilments RewardFulfilment[]
 
+  // -- B5 (server-owned quiz bank + evidence upload) --
+  quizQuestions QuizQuestion[]
+  quizAssignments QuizAssignment[]
+  achievementEvidence AchievementEvidence[]
+
   @@map("families")
 }
 
@@ -463,6 +468,10 @@ model Child {
   verificationAttempts VerificationAttempt[]
   screenTimeRewardGrants ScreenTimeRewardGrant[]
   rewardFulfilments   RewardFulfilment[]
+
+  // -- B5 (server-owned quiz bank + evidence upload) --
+  quizAssignments     QuizAssignment[]
+  achievementEvidence AchievementEvidence[]
 
   @@index([familyId])
   @@map("children")
@@ -1371,11 +1380,46 @@ model Notification {
   readAt    DateTime? @map("read_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
+  /// B9 (PA-B-007 / PA-B-008). THE COLUMN WHOSE ABSENCE WAS THE DEFECT.
+  ///
+  /// Every other link in the chain CONTEXT §5 describes — device event, outbox
+  /// message, consumer marker, ledger row — is protected by a UNIQUE index.
+  /// This row was protected by a `findFirst` over a five-minute window, which
+  /// is not a constraint: delete the consumption marker, wait six minutes,
+  /// redeliver, and one reward notified twice. The project's own «KNOWN LIMIT»
+  /// test measured exactly that (notificationCount = 2).
+  ///
+  /// This is the CAUSAL KEY of the notification, composed deliberately by each
+  /// producer (`src/shared/notifications/notification-source-key.ts`). For the
+  /// outbox path it is the `domain_events.id` that caused it, so it is stable
+  /// across every redelivery for all time; for the paths that have no domain
+  /// event it is a stated, documented composition. NOT NULL on purpose — a
+  /// nullable column lets a future producer opt out of the constraint by
+  /// forgetting, and forgetting is the failure mode a constraint exists to
+  /// remove.
+  sourceEventId String @map("source_event_id") @db.VarChar(200)
+
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   child Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
+  /// B9 — THE CONSTRAINT. `user_id` IS in the key and `type` is NOT; both
+  /// halves are deliberate.
+  ///
+  ///   `user_id` is in it because delivery is PER RECIPIENT. Today
+  ///   `createForFamilyOwner` writes one row, for the owner, and its own
+  ///   docstring names all-member fanout as a real follow-up. With `user_id`
+  ///   in the key that fanout is additive; without it the follow-up would have
+  ///   to WEAKEN this index in order to ship, which is how constraints die.
+  ///
+  ///   `type` is NOT in it because the declared rule is «one business event =>
+  ///   one notification», not «one per type». Putting `type` in the key would
+  ///   re-create PA-B-011 at the database level: four types from one event,
+  ///   four rows, all legal. A producer that genuinely needs two notifications
+  ///   from one event says so by composing two different source keys —
+  ///   visibly, at the call site.
+  @@unique([familyId, sourceEventId, userId])
   @@index([userId, readAt])
   @@index([childId, createdAt])
   @@index([familyId])
@@ -1756,11 +1800,30 @@ model ChildMessage {
   acknowledgedAt DateTime?              @map("acknowledged_at")
   createdAt      DateTime               @default(now()) @map("created_at")
 
+  /// B9 — THE OTHER HALF OF THE NOTIFICATION SURFACE, and the reason the fix
+  /// is not one column on one table.
+  ///
+  /// `SmartNotificationIntegrationService.deliver` routes PARENT candidates to
+  /// `notifications` and CHILD candidates to THIS table (through
+  /// `FamilyCommunicationService.draftAiMessage`, which is where the approval
+  /// gate lives). A child-targeted notification is therefore a `child_messages`
+  /// row, and it had exactly the same duplicate exposure — with no five-minute
+  /// window in front of it at all.
+  ///
+  /// NULLABLE here, unlike `notifications.source_event_id`, and that is a
+  /// stated distinction rather than an inconsistency: this table also holds
+  /// PARENT-AUTHORED messages, which are not caused by any event and must not
+  /// be deduplicated — a parent may legitimately send «أحسنت» twice. NULL means
+  /// «a human wrote this», and PostgreSQL treats NULLs as distinct in a unique
+  /// index, so the constraint below binds exactly the machine-generated rows.
+  sourceEventId  String?                @map("source_event_id") @db.VarChar(200)
+
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   fromUser User? @relation(fields: [fromUserId], references: [id], onDelete: SetNull)
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
+  @@unique([familyId, sourceEventId])
   @@index([childId, deliveredAt])
   @@index([approvalStatus])
   @@index([familyId])
@@ -2481,6 +2544,8 @@ model AchievementRequest {
   attempts VerificationAttempt[]
   screenTimeGrants ScreenTimeRewardGrant[]
   fulfilments RewardFulfilment[]
+  quizAssignments QuizAssignment[]
+  evidence AchievementEvidence[]
 
   @@unique([programId, childId, localDate, attemptNo])
   @@index([familyId, status])
@@ -2589,4 +2654,161 @@ model RewardFulfilment {
   @@index([familyId, status])
   @@index([childId, status])
   @@map("reward_fulfilments")
+}
+
+// ============================================================
+// B5 — THE SERVER-OWNED QUESTION BANK (PA-B-017)
+//
+// THE DEFECT, stated plainly: `QUIZ` and `CODE_CHALLENGE` read
+// `quizCorrect`/`quizTotal` and `testsPassed`/`testsTotal` FROM THE CHILD'S
+// OWN DEVICE and carried `canAutoApprove: true`. The server compared a number
+// the child chose against a threshold and paid out. There was no question bank
+// and no answer key anywhere in the repository — `grep -rn "correctAnswer\|
+// answerKey\|questionBank" src/` returned nothing. The child graded herself.
+//
+// THE FIX IS PROVENANCE, NOT VALIDATION. The server now owns both halves: it
+// SELECTS the questions (`quiz_assignments`) and it HOLDS the answer key
+// (`quiz_questions.correct_choice_index`), and the child submits ANSWERS. The
+// score that reaches `verification-strategies.ts` is produced by
+// `QuizGradingService`, never by a DTO field — the two DTO fields that used to
+// carry it are gone.
+//
+// CONTENT IS A BUSINESS DECISION AND IS NOT INVENTED HERE. Migration 0008
+// seeds a small, explicitly-labelled SAMPLE bank so the mechanism is provable
+// end to end; authoring the real bank is flagged for the client in the B5+B9
+// report's `افتراضات ومخاطر مفتوحة`.
+// ============================================================
+
+/// SHARED_NULL tenancy, the same mechanism `RewardRule` has used since Sprint
+/// 25 and B4 seeded 16 rows through: `family_id IS NULL` means «provided by
+/// the platform to every family», a non-NULL value means «this family wrote
+/// it». No new tenancy mechanism is introduced for the bank.
+model QuizQuestion {
+  familyId String? @map("family_id") @db.Uuid
+  id       String  @id @default(uuid()) @db.Uuid
+
+  /// A `ProgramCategory` code (`program-taxonomy.ts`), so a STUDY program
+  /// draws STUDY questions. Not an enum, matching this schema's own convention
+  /// for taxonomy codes that live in a table.
+  category String  @db.VarChar(40)
+  /// Optional narrowing inside a category (a school subject, a surah name).
+  subject  String? @db.VarChar(80)
+  difficulty String @default("EASY") @db.VarChar(20)
+  minAge   Int?    @map("min_age")
+  maxAge   Int?    @map("max_age")
+
+  promptAr String @map("prompt_ar")
+  /// `string[]`, 2..6 entries. JSON rather than a child table because a choice
+  /// has no identity of its own and is never queried independently.
+  choices  Json
+
+  /// THE ANSWER KEY. The one column in this schema that must never appear in a
+  /// response body; `QuizService.serve` selects explicit fields precisely so
+  /// this one cannot be leaked by a future `select: undefined`.
+  correctChoiceIndex Int @map("correct_choice_index")
+  explanationAr String? @map("explanation_ar")
+
+  isActive Boolean @default(true) @map("is_active")
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId, category, isActive])
+  @@index([category, isActive])
+  @@map("quiz_questions")
+}
+
+/// WHAT THE SERVER SERVED, so that what it grades is what it asked. Without
+/// this row the grading step would have to trust the client's statement of
+/// which questions it answered — the same provenance hole one level down.
+model QuizAssignment {
+  familyId String @map("family_id") @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
+  achievementId String @map("achievement_id") @db.Uuid
+  childId  String @map("child_id") @db.Uuid
+
+  /// 1-based, and part of the unique key: a re-submission under
+  /// `MAX_VERIFICATION_ATTEMPTS` gets a FRESH draw. Reusing one set across
+  /// three attempts would make the third attempt a memory test of the first.
+  attemptNo Int @map("attempt_no")
+
+  /// Ordered `string[]` of `quiz_questions.id`. Order is part of the contract:
+  /// the child answers by INDEX, so a reorder would misgrade.
+  questionIds Json @map("question_ids")
+  totalCount  Int  @map("total_count")
+
+  servedAt  DateTime  @default(now()) @map("served_at")
+  gradedAt  DateTime? @map("graded_at")
+  correctCount Int?   @map("correct_count")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// One served set per attempt. A second `GET .../quiz` inside the same
+  /// attempt returns THE SAME questions rather than re-rolling until an easy
+  /// draw appears — enforced by the database, not by a check in the service.
+  @@unique([achievementId, attemptNo])
+  @@index([familyId, childId])
+  @@map("quiz_assignments")
+}
+
+// ============================================================
+// B5 — EVIDENCE UPLOAD (PA-B-019)
+//
+// `RECITATION_SUBMISSION` and `COMPLETION_ARTIFACT` both require a
+// `submissionRef`, both are `canAutoApprove: false`, and there was NO WAY TO
+// PRODUCE ONE: zero multipart routes, zero storage abstraction, zero file
+// models in the repository. Every Quran program in the product was therefore
+// unreachable from the child app — the strategy could only ever return
+// `RECITATION_MISSING`.
+//
+// NO AUDIO ML AND NO IMAGE CLASSIFICATION IS BUILT. A parent still confirms.
+// This model stores the METADATA of a stored object; the bytes live behind
+// `IEvidenceStorage` (local disk today, S3-compatible as the documented
+// target).
+// ============================================================
+model AchievementEvidence {
+  familyId String @map("family_id") @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
+  achievementId String @map("achievement_id") @db.Uuid
+  childId  String @map("child_id") @db.Uuid
+
+  /// RECITATION | ARTIFACT — derived from the program's verification method by
+  /// the server, never sent by the client.
+  kind String @db.VarChar(40)
+
+  /// Opaque to every caller. Tenant-prefixed by the storage adapter
+  /// (`<familyId>/<childId>/<achievementId>/<id>.<ext>`) so a traversal in a
+  /// future adapter still cannot leave the family's own prefix.
+  storageKey String @map("storage_key") @db.VarChar(400)
+  /// The mime type the server DECIDED from the magic bytes, not the one the
+  /// client declared.
+  mimeType String @map("mime_type") @db.VarChar(100)
+  byteSize Int    @map("byte_size")
+  sha256   String @db.VarChar(64)
+  originalFilename String? @map("original_filename") @db.VarChar(255)
+
+  /// THE RETENTION HOOK. A child's recitation is among the most sensitive
+  /// bytes this product will ever hold. Set at write time from
+  /// `EVIDENCE_RETENTION_DAYS`, swept by
+  /// `DataRetentionEnforcementService.enforceAchievementEvidenceRetention`,
+  /// which is registered in `enforceAll()` like every other category.
+  retainUntil DateTime @map("retain_until")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// Content-addressed idempotency: the same bytes uploaded twice for one
+  /// attempt (a retry on a flaky mobile connection) is ONE asset, decided by
+  /// the database rather than by a size/name heuristic.
+  @@unique([achievementId, sha256])
+  @@index([familyId, achievementId])
+  @@index([retainUntil])
+  @@map("achievement_evidence")
 }

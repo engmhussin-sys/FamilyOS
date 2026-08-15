@@ -57,6 +57,21 @@ export interface IRewardRuleWriteInput {
 export class PrismaRewardsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * B5 — the first reader of `rewards_ledger_entries` in the repository's
+   * history. Newest first, because a parent opening a ledger is asking «what
+   * just happened», not «what happened in 2024». Tenant scoping comes from the
+   * F2 extension: `RewardsLedgerEntry` is STRICT, so no `familyId` argument
+   * exists to pass wrongly.
+   */
+  listLedgerEntries(childId: string, limit: number): Promise<unknown[]> {
+    return this.prisma.rewardsLedgerEntry.findMany({
+      where: { childId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
   async getOrCreateAccount(childId: string): Promise<IRewardsAccount> {
     const row = await this.prisma.rewardsAccount.upsert({
       where: { childId },

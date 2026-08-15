@@ -66,6 +66,36 @@ export class FamilyCommunicationService {
    * the caller's deterministic seed content; this method may reword
    * them via the AI Provider but never originates content on its own. */
   async draftAiMessage(childId: string, familyId: string, category: string, title: string, body: string): Promise<IChildMessage> {
+    const message = await this.draftAiMessageIfAbsent(childId, familyId, category, title, body);
+    if (message) return message;
+    // Unreachable without a `sourceEventId`, since NULL never collides. Kept
+    // rather than cast away so this overload cannot silently start returning
+    // `null` if a future caller does pass one.
+    throw new BadRequestException('Message already drafted for this cause');
+  }
+
+  /**
+   * B9 (PA-B-007 / PA-B-008) — the notification-producing form.
+   *
+   * Same Safety Engine gate, same approval gate, same AI rewording. The ONE
+   * difference is that it carries the causal key and returns `null` when
+   * `child_messages (family_id, source_event_id)` says this notification
+   * already exists — which is what makes a redelivered event produce ZERO new
+   * child messages instead of a second identical one.
+   *
+   * IT DOES NOT BYPASS THE APPROVAL GATE, and that is worth stating because
+   * it would be the easy shortcut: the row is still written `PENDING` with
+   * `deliveredAt = null`, exactly as `draftAiMessage` has always written it
+   * (Architecture 1.0 §5.8). B9 adds a constraint, not an exemption.
+   */
+  async draftAiMessageIfAbsent(
+    childId: string,
+    familyId: string,
+    category: string,
+    title: string,
+    body: string,
+    sourceEventId?: string,
+  ): Promise<IChildMessage | null> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
     const seedSafety = this.safetyEngine.validate(category, title, body);
@@ -75,7 +105,11 @@ export class FamilyCommunicationService {
 
     const { title: finalTitle, body: finalBody } = await this.tryPhraseWithAI(title, body);
 
-    return this.repository.create({ childId, authorType: 'AI', category, title: finalTitle, body: finalBody }, 'PENDING', null);
+    return this.repository.createIfAbsent(
+      { childId, authorType: 'AI', category, title: finalTitle, body: finalBody, sourceEventId },
+      'PENDING',
+      null,
+    );
   }
 
   /** Best-effort AI rewording \u2014 falls back to the deterministic seed

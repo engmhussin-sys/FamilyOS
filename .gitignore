@@ -59,3 +59,9 @@ Thumbs.db
 # Misc
 *.pem
 .turbo/
+
+# B5 (PA-B-019) — the LOCAL-DISK evidence storage root. Uploaded recitations
+# and artifacts are child data; they belong on a disk or in a bucket, never in
+# a git history. `EVIDENCE_STORAGE_ROOT` overrides the location; this is the
+# default `LocalDiskEvidenceStorage` uses, and the e2e suite really writes here.
+apps/backend/.evidence-store/

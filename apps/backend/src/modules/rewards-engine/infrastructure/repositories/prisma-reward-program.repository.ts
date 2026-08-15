@@ -343,4 +343,139 @@ export class PrismaRewardProgramRepository {
     });
     return rows.reduce((sum: number, r: { minutes: number }) => sum + r.minutes, 0);
   }
+
+  // --- B5 (PA-B-017): the server-owned question bank -------------------------
+
+  /**
+   * THE BANK READ, and the reason the answer key is `select`ed away here rather
+   * than in a mapper further up: this method is the boundary. A question that
+   * leaves this file carrying `correctChoiceIndex` is one refactor away from a
+   * response body, and the exploit PA-B-017 describes is precisely a child
+   * knowing what the server knows.
+   *
+   * The `OR family_id IS NULL` is NOT written here. `QuizQuestion` is
+   * registered SHARED_NULL in `tenant-model-registry.ts`, so the F2 tenant
+   * extension adds it — the same mechanism `reward_rules` has used since
+   * Sprint 25. Writing it by hand would have been a second implementation of a
+   * tested rule.
+   */
+  listBankQuestions(input: {
+    category: string;
+    subject?: string | null;
+    ageYears?: number | null;
+  }): Promise<Array<{ id: string; promptAr: string; choices: unknown; difficulty: string }>> {
+    return this.db.quizQuestion.findMany({
+      where: {
+        isActive: true,
+        category: input.category,
+        ...(input.subject ? { OR: [{ subject: input.subject }, { subject: null }] } : {}),
+        ...(input.ageYears != null
+          ? {
+              AND: [
+                { OR: [{ minAge: null }, { minAge: { lte: input.ageYears } }] },
+                { OR: [{ maxAge: null }, { maxAge: { gte: input.ageYears } }] },
+              ],
+            }
+          : {}),
+      },
+      select: { id: true, promptAr: true, choices: true, difficulty: true },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /** The re-read path for an assignment that already exists. Same `select` as
+   * `listBankQuestions`, so the answer key is unreachable from here too. */
+  listBankQuestionsByIds(
+    ids: string[],
+  ): Promise<Array<{ id: string; promptAr: string; choices: unknown; difficulty: string }>> {
+    return this.db.quizQuestion.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, promptAr: true, choices: true, difficulty: true },
+    });
+  }
+
+  /** THE ANSWER KEY LOOKUP. The only method in the repository that reads
+   * `correctChoiceIndex`, called only by `QuizGradingService.grade`, never by
+   * anything that produces a response. */
+  answerKeyFor(questionIds: string[]): Promise<Array<{ id: string; correctChoiceIndex: number }>> {
+    return this.db.quizQuestion.findMany({
+      where: { id: { in: questionIds } },
+      select: { id: true, correctChoiceIndex: true },
+    });
+  }
+
+  createBankQuestion(data: Record<string, unknown>): Promise<any> {
+    return this.db.quizQuestion.create({ data: { ...data, familyId: tenantIdForWrite() } });
+  }
+
+  findAssignment(achievementId: string, attemptNo: number): Promise<any | null> {
+    return this.db.quizAssignment.findFirst({ where: { achievementId, attemptNo } });
+  }
+
+  createAssignment(data: Record<string, unknown>): Promise<any> {
+    return this.db.quizAssignment.create({ data: { ...data, familyId: tenantIdForWrite() } });
+  }
+
+  markAssignmentGraded(id: string, correctCount: number, gradedAt: Date): Promise<any> {
+    return this.db.quizAssignment.update({
+      where: { id },
+      data: { correctCount, gradedAt },
+    });
+  }
+
+  // --- B5 (PA-B-019): evidence -----------------------------------------------
+
+  createEvidence(data: Record<string, unknown>): Promise<any> {
+    return this.db.achievementEvidence.create({ data: { ...data, familyId: tenantIdForWrite() } });
+  }
+
+  findEvidenceByHash(achievementId: string, sha256: string): Promise<any | null> {
+    return this.db.achievementEvidence.findFirst({
+      where: { achievementId, sha256, deletedAt: null },
+    });
+  }
+
+  findEvidence(id: string): Promise<any | null> {
+    return this.db.achievementEvidence.findFirst({ where: { id, deletedAt: null } });
+  }
+
+  listEvidence(achievementId: string): Promise<any[]> {
+    return this.db.achievementEvidence.findMany({
+      where: { achievementId, deletedAt: null },
+      // `storage_key` is deliberately absent: a parent reviewing evidence gets
+      // an id to fetch through the authenticated route, never a path.
+      select: {
+        id: true,
+        kind: true,
+        mimeType: true,
+        byteSize: true,
+        originalFilename: true,
+        createdAt: true,
+        retainUntil: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // --- B5: the reads the mobile inventory named as missing -------------------
+
+  /** PA-B-024 / §13.2 — «لا endpoint يقرأ `rewards_ledger_entries` إطلاقًا».
+   * The table has been written since Sprint 13 and read by nothing. */
+  listLedgerEntriesForChild(childId: string, limit: number): Promise<any[]> {
+    return this.db.rewardsLedgerEntry.findMany({
+      where: { childId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  /** PA-M-001 child path C10 — `ChildBadgeAward` is written by
+   * `RewardsEngineService` and, before B5, read by nobody at all. */
+  listBadgeAwards(childId: string): Promise<any[]> {
+    return this.db.childBadgeAward.findMany({
+      where: { childId },
+      orderBy: { awardedAt: 'desc' },
+      include: { badge: true },
+    });
+  }
 }

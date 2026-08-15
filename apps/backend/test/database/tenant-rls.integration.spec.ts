@@ -106,7 +106,13 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
     // tables, for the same reason: the reward engine is the module with the
     // most to lose from a tenancy gap, so it gets the strongest layer, not a
     // dispensation for being new.
-    expect(rows[0].n).toBe(52);
+    // B5: 52 -> 54. Migration 0008 replays it again over `quiz_assignments`
+    // and `achievement_evidence`. `quiz_questions` is deliberately NOT counted
+    // here: this query counts tables whose `family_id` is NOT NULL, and the
+    // question bank's is nullable by design (SHARED_NULL). It still gets RLS —
+    // with the OR-NULL policy shape `reward_rules` uses — and the policy count
+    // below is where that shows up.
+    expect(rows[0].n).toBe(54);
 
     const families = await admin.query(
       `SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'families'`,
@@ -120,7 +126,9 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
     // event-backbone tables migration 0005 adds. Same policy shape, same
     // setting name, same owner-bypass — 0005 replays 0004's block verbatim.
     // F4: 48 -> 53, the five tables migration 0006 creates.
-    expect(policies.rows[0].n).toBe(53);
+    // B5: 53 -> 56, the three tables migration 0008 creates — two with the
+    // strict policy and `quiz_questions` with the OR-NULL shape.
+    expect(policies.rows[0].n).toBe(56);
   });
 
   it('with NO tenant setting, the restricted role sees NOTHING — fail-closed, not fail-open', async () => {

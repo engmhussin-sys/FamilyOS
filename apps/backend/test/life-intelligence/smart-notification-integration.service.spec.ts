@@ -10,7 +10,12 @@ import { familyDateProvider } from '../common/family-date.testing';
 describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A REAL GAP: the pure decision engines had zero real caller before this)', () => {
   const notificationRepoMock = { findRecentForChild: jest.fn() };
   const runtimeAlertRepoMock = { createForFamilyOwner: jest.fn() };
-  const familyCommunicationMock = { draftAiMessage: jest.fn() };
+  // B9 — the delivery layer now calls `draftAiMessageIfAbsent`, which returns
+  // the drafted message or `null` when
+  // `child_messages (family_id, source_event_id)` refused it. The mock returns
+  // a truthy message by default so «delivered» stays the default in every test
+  // that is not about deduplication.
+  const familyCommunicationMock = { draftAiMessageIfAbsent: jest.fn() };
 
   let service: SmartNotificationIntegrationService;
 
@@ -29,6 +34,11 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
   beforeEach(async () => {
     jest.clearAllMocks();
     notificationRepoMock.findRecentForChild.mockResolvedValue([]);
+    // B9 — `true`/a message means «a row was written». `false`/`null` now
+    // means «the constraint or the window said this already exists», which the
+    // service reports as SUPPRESS/ALREADY_NOTIFIED.
+    runtimeAlertRepoMock.createForFamilyOwner.mockResolvedValue(true);
+    familyCommunicationMock.draftAiMessageIfAbsent.mockResolvedValue({ id: 'msg-1' });
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -57,17 +67,23 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
     expect(result).toEqual([]);
     expect(notificationRepoMock.findRecentForChild).not.toHaveBeenCalled();
     expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
-    expect(familyCommunicationMock.draftAiMessage).not.toHaveBeenCalled();
+    expect(familyCommunicationMock.draftAiMessageIfAbsent).not.toHaveBeenCalled();
   });
 
   describe('SEND — the happy path', () => {
-    it('a CHILD-targeted candidate (hydration) routes through draftAiMessage (approval-gated), never direct alert', async () => {
+    it('a CHILD-targeted candidate (hydration) routes through draftAiMessageIfAbsent (approval-gated), never direct alert', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
 
       const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
 
       expect(result).toEqual([{ type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'SEND' }]);
-      expect(familyCommunicationMock.draftAiMessage).toHaveBeenCalledWith(childId, familyId, 'HYDRATION_REMINDER', 'Water break?', expect.any(String));
+      // B9 — the sixth argument is the composed causal key. `processSignals`
+      // builds it itself (`signal:<child>:<type>:w<bucket>`) because its caller
+      // supplies SIGNALS and cannot name notifications that do not exist yet.
+      expect(familyCommunicationMock.draftAiMessageIfAbsent).toHaveBeenCalledWith(
+        childId, familyId, 'HYDRATION_REMINDER', 'Water break?', expect.any(String),
+        expect.stringMatching(/^signal:child-1:HYDRATION_REMINDER:w\d+:child$/),
+      );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
   });
@@ -82,7 +98,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
 
       expect(result).toEqual([{ type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'SUPPRESS', reason: 'COOLDOWN' }]);
-      expect(familyCommunicationMock.draftAiMessage).not.toHaveBeenCalled();
+      expect(familyCommunicationMock.draftAiMessageIfAbsent).not.toHaveBeenCalled();
     });
   });
 
@@ -93,12 +109,12 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
 
       expect(result).toEqual([{ type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'DEFER', reason: 'QUIET_HOURS' }]);
-      expect(familyCommunicationMock.draftAiMessage).not.toHaveBeenCalled();
+      expect(familyCommunicationMock.draftAiMessageIfAbsent).not.toHaveBeenCalled();
     });
   });
 
   describe('Parent vs Child routing', () => {
-    it('STUDY_REMINDER (also CHILD-targeted per Sprint 16 classification) consistently routes to draftAiMessage', async () => {
+    it('STUDY_REMINDER (also CHILD-targeted per Sprint 16 classification) consistently routes to draftAiMessageIfAbsent', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
       const studySignals: ISmartNotificationSignals = {
         ...hydrationTriggerSignals,
@@ -107,7 +123,10 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       };
       await service.processSignals(childId, familyId, studySignals);
 
-      expect(familyCommunicationMock.draftAiMessage).toHaveBeenCalledWith(childId, familyId, 'STUDY_REMINDER', expect.any(String), expect.any(String));
+      expect(familyCommunicationMock.draftAiMessageIfAbsent).toHaveBeenCalledWith(
+        childId, familyId, 'STUDY_REMINDER', expect.any(String), expect.any(String),
+        expect.stringMatching(/^signal:child-1:STUDY_REMINDER:w\d+:child$/),
+      );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
   });
@@ -115,7 +134,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
   describe('resilience and batch correctness', () => {
     it('a delivery failure for one candidate does not block delivering a different candidate in the same batch', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
-      familyCommunicationMock.draftAiMessage.mockRejectedValueOnce(new Error('transient failure'));
+      familyCommunicationMock.draftAiMessageIfAbsent.mockRejectedValueOnce(new Error('transient failure'));
       const multiSignals: ISmartNotificationSignals = {
         ...hydrationTriggerSignals,
         studyTask: { isIncomplete: true, usualStudyWindowStarted: true },
@@ -142,10 +161,21 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         title: '7-day streak!',
         body: 'Amazing consistency!',
         targetAudience: 'CHILD',
+        // B9 — the causal key is now a REQUIRED part of a deliverable
+        // candidate. The `:child` facet below is appended by the delivery
+        // layer, not by the caller.
+        sourceEventId: 'evt:11111111-1111-4111-8111-111111111111',
       });
 
       expect(outcome).toEqual({ type: 'STREAK_ACHIEVED', targetAudience: 'CHILD', decision: 'SEND' });
-      expect(familyCommunicationMock.draftAiMessage).toHaveBeenCalledWith(childId, familyId, 'STREAK_ACHIEVED', '7-day streak!', 'Amazing consistency!');
+      expect(familyCommunicationMock.draftAiMessageIfAbsent).toHaveBeenCalledWith(
+        childId,
+        familyId,
+        'STREAK_ACHIEVED',
+        '7-day streak!',
+        'Amazing consistency!',
+        'evt:11111111-1111-4111-8111-111111111111:child',
+      );
     });
 
     it('a PARENT-targeted event candidate routes through createForFamilyOwner', async () => {
@@ -157,10 +187,20 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         title: 'New badge!',
         body: 'Your child earned a badge.',
         targetAudience: 'PARENT',
+        sourceEventId: 'badge:child-1:badge-1',
       });
 
       expect(runtimeAlertRepoMock.createForFamilyOwner).toHaveBeenCalledWith(
-        expect.objectContaining({ childId, familyId, type: 'BADGE_EARNED', title: 'New badge!' }),
+        expect.objectContaining({
+          childId,
+          familyId,
+          type: 'BADGE_EARNED',
+          title: 'New badge!',
+          // B9 — the key reaches the single writer of `notifications`
+          // unchanged. If it did not, the unique index would have nothing to
+          // work with and the KNOWN LIMIT would still be a limit.
+          sourceEventId: 'badge:child-1:badge-1',
+        }),
       );
     });
 
@@ -172,6 +212,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
 
       const outcome = await service.notifyEvent(childId, familyId, {
         type: 'BADGE_EARNED', priority: 'NORMAL', title: 't', body: 'b', targetAudience: 'PARENT',
+        sourceEventId: 'badge:child-1:badge-2',
       });
 
       expect(outcome).toEqual({ type: 'BADGE_EARNED', targetAudience: 'PARENT', decision: 'SUPPRESS', reason: 'DUPLICATE' });

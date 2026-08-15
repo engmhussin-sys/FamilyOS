@@ -7,6 +7,9 @@ import { PairingModule } from '../pairing/pairing.module';
 import { AchievementOutcomeConsumer } from './application/consumers/achievement-outcome.consumer';
 import { RewardSideEffectConsumer } from './application/consumers/reward-side-effect.consumer';
 import { AchievementService } from './application/services/achievement.service';
+import { AchievementEvidenceService } from './application/services/achievement-evidence.service';
+import { QuizService } from './application/services/quiz.service';
+import { EvidenceStorageModule } from './evidence-storage.module';
 import { RewardPayoutService } from './application/services/reward-payout.service';
 import { RewardProgramService } from './application/services/reward-program.service';
 import { RewardSuggestionService } from './application/services/reward-suggestion.service';
@@ -40,17 +43,24 @@ import { RewardProgramsController } from './presentation/controllers/reward-prog
  * consumers that never fire — silently.
  */
 @Module({
-  imports: [EventsModule, ChildrenModule, PairingModule, AiCoreModule],
+  imports: [EventsModule, ChildrenModule, PairingModule, AiCoreModule, EvidenceStorageModule],
   controllers: [RewardProgramsController, ChildAchievementsController],
   providers: [
     PrismaRewardProgramRepository,
     RewardProgramService,
     AchievementService,
+    // B5 — `QuizService` (PA-B-017) and `AchievementEvidenceService`
+    // (PA-B-019). Both are collaborators of the EXISTING `AchievementService`,
+    // not rivals to it: there is still exactly one `submit()` and exactly one
+    // `markVerified()`, and neither new service can emit an event or write a
+    // ledger row.
+    QuizService,
+    AchievementEvidenceService,
     RewardPayoutService,
     RewardSuggestionService,
     AchievementOutcomeConsumer,
     RewardSideEffectConsumer,
   ],
-  exports: [RewardProgramService, AchievementService, RewardPayoutService],
+  exports: [RewardProgramService, AchievementService, RewardPayoutService, AchievementEvidenceService],
 })
 export class RewardsEngineModule {}

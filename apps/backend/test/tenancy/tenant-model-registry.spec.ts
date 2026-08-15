@@ -61,8 +61,12 @@ describe('tenant model registry', () => {
   // catalogues (`RewardProgramCategory`, `QuranSurah`).
   // Bumping the number here is the intended workflow, not a workaround: a model
   // added WITHOUT touching the registry still fails the two tests above.
-  it('the schema still has 70 models — the number this classification was built against', () => {
-    expect(prismaModels).toHaveLength(70);
+  // B5:      70 -> 73. Migration 0008 adds `QuizQuestion` (SHARED_NULL, the
+  // server-owned question bank that closes PA-B-017), `QuizAssignment` and
+  // `AchievementEvidence` (both STRICT — the second is a recording of a
+  // child's voice and STRICT is the only defensible class for it).
+  it('the schema still has 73 models — the number this classification was built against', () => {
+    expect(prismaModels).toHaveLength(73);
   });
 
   it.each([...STRICT_TENANT_MODELS])(
@@ -110,9 +114,16 @@ describe('tenant model registry', () => {
   // from the first row — no backfill, so no orphan case ever existed for them
   // either. GLOBAL 10 -> 12: the category catalogue and the mushaf, both
   // platform reference data with a written reason in the registry.
-  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006', () => {
-    expect(STRICT_TENANT_MODELS.size).toBe(52);
-    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(5);
+  // B5: 52 -> 54, and SHARED_NULL+PLATFORM 5 -> 6. Migration 0008 CREATES
+  // `quiz_assignments` and `achievement_evidence` with `family_id NOT NULL`
+  // from the first row (no backfill, so no orphan case ever existed for them),
+  // and `quiz_questions` NULLABLE on purpose — `family_id IS NULL` is the
+  // platform sample bank every family draws from, the same mechanism
+  // `RewardRule` has used since Sprint 25. GLOBAL is unchanged at 12: B5 adds
+  // no un-tenanted table.
+  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008', () => {
+    expect(STRICT_TENANT_MODELS.size).toBe(54);
+    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(6);
     expect(SELF_TENANT_MODELS.size).toBe(1);
     expect(GLOBAL_MODELS.size).toBe(12);
   });

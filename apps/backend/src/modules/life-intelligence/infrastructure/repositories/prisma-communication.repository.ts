@@ -20,9 +20,40 @@ export class PrismaCommunicationRepository {
         title: input.title,
         body: input.body,
         deliveredAt: deliveredAt ?? undefined,
+        // B9 — NULL for a parent-authored message, a composed causal key for a
+        // machine-generated one. See `ISendChildMessageInput.sourceEventId`.
+        sourceEventId: input.sourceEventId ?? null,
       },
     });
     return this.toDomain(row);
+  }
+
+  /**
+   * B9 (PA-B-007 / PA-B-008) — the child-side counterpart of
+   * `PrismaRuntimeAlertRepository`'s P2002 branch.
+   *
+   * Returns `null` when `child_messages (family_id, source_event_id)` refuses
+   * the insert, which now means exactly one thing: this notification has
+   * already been drafted for this cause in this family. That is a SUCCESS —
+   * a redelivered outbox message did its job the first time — so the caller
+   * reports a suppressed duplicate rather than failing a business transaction
+   * that has already committed.
+   *
+   * Any other error is rethrown: swallowing a genuine write failure would turn
+   * a lost notification into a silent one, which is the other half of
+   * PA-B-009, and this method must not add to it.
+   */
+  async createIfAbsent(
+    input: ISendChildMessageInput,
+    approvalStatus: IChildMessage['approvalStatus'],
+    deliveredAt: Date | null,
+  ): Promise<IChildMessage | null> {
+    try {
+      return await this.create(input, approvalStatus, deliveredAt);
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') return null;
+      throw err;
+    }
   }
 
   async findById(messageId: string): Promise<IChildMessage | null> {

@@ -1,15 +1,19 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
@@ -25,11 +29,14 @@ import { QURAN_SURAHS } from '../../../../shared/rewards/quran';
 import { VERIFICATION_MATRIX, VERIFICATION_METHODS } from '../../../../shared/rewards/verification';
 import { PROGRAM_REWARD_TYPES } from '../../../../shared/rewards/reward-spec';
 import { AchievementService } from '../../application/services/achievement.service';
+import { AchievementEvidenceService } from '../../application/services/achievement-evidence.service';
+import { PrismaRewardProgramRepository } from '../../infrastructure/repositories/prisma-reward-program.repository';
 import { RewardPayoutService } from '../../application/services/reward-payout.service';
 import { RewardProgramService } from '../../application/services/reward-program.service';
 import { RewardSuggestionService } from '../../application/services/reward-suggestion.service';
 import {
   AcceptSuggestionDto,
+  CreateQuizQuestionDto,
   CreateRewardProgramDto,
   DecideAchievementDto,
   TransitionFulfilmentDto,
@@ -56,6 +63,8 @@ export class RewardProgramsController {
     private readonly achievements: AchievementService,
     private readonly payout: RewardPayoutService,
     private readonly suggestions: RewardSuggestionService,
+    private readonly evidence: AchievementEvidenceService,
+    private readonly repo: PrismaRewardProgramRepository,
   ) {}
 
   // --- catalogue (reference data) ------------------------------------------
@@ -121,6 +130,54 @@ export class RewardProgramsController {
     return this.payout.listFulfilments(status);
   }
 
+  // --- B5: routes whose FIRST segment is a literal ------------------------
+  //
+  // ORDER IS LOAD-BEARING. Express matches in declaration order, so
+  // `@Get(':programId')` below would swallow `GET /reward-programs/achievements`
+  // and `GET /reward-programs/quiz-bank` and hand the literal string
+  // "achievements" to `findProgram()` as a uuid. The pre-existing
+  // `achievements/pending` never hit this because it has two segments; these
+  // two have one. They are declared HERE, above the parameterised route, and
+  // `test/rewards/b5-mobile-contract.e2e.spec.ts` asserts both return 200 —
+  // so a future reorder is caught by a test rather than by a 500 in
+  // production.
+
+  /**
+   * B5 — «[الوالد] تاريخ إنجازات طفل» (`PHASE-A-Backend §13.2`). The audit's
+   * exact words: «`listForChild` موجودة **بلا route والد**» — the service
+   * method has existed since F4 and only the CHILD's own device could reach
+   * it. This is the parent's read of the same method, tenant-scoped by the F2
+   * extension, so a parent in family B gets an empty list rather than a 403.
+   *
+   * EXTENDED, NOT ADDED: no new service method, no new repository method, no
+   * second query shape. The route is the only new thing.
+   */
+  @Get('achievements')
+  @UseGuards(JwtAuthGuard)
+  achievementsOfChild(@Query('childId', ParseUUIDPipe) childId: string) {
+    return this.achievements.listForChild(childId);
+  }
+
+  /**
+   * THE MECHANISM, SHIPPED WITH A SAMPLE BANK — and the content question
+   * flagged, not answered.
+   *
+   * Migration 0008 seeds twelve platform questions (`family_id IS NULL`) so
+   * the server-side scoring path is provable the moment it runs. Authoring a
+   * real, age-graded, pedagogically-reviewed bank is a BUSINESS DECISION and
+   * inventing large amounts of educational content inside a backend sprint
+   * would have been the wrong kind of initiative. These two routes are how a
+   * family adds its own questions today and how an admin tool will add
+   * platform ones later; the open question is recorded in the B5+B9 report.
+   *
+   * The answer key is accepted on write and never returned on read.
+   */
+  @Get('quiz-bank')
+  @UseGuards(JwtAuthGuard)
+  listQuizBank(@Query('category') category: string, @Query('subject') subject?: string) {
+    return this.repo.listBankQuestions({ category, subject: subject ?? null, ageYears: null });
+  }
+
   @Get(':programId')
   @UseGuards(JwtAuthGuard)
   get(@Param('programId') programId: string) {
@@ -145,6 +202,90 @@ export class RewardProgramsController {
   @UseGuards(JwtAuthGuard)
   pending() {
     return this.achievements.listPending();
+  }
+
+  /**
+   * B5 — «[الوالد] إنجاز واحد بتفاصيله». Returns the achievement, its
+   * append-only attempt history and its uploaded evidence METADATA in one
+   * call, because a parent deciding on a recitation needs all three and three
+   * round trips on a mobile connection is a worse review experience than one.
+   *
+   * The evidence list carries ids, types and sizes — never `storageKey`. The
+   * bytes come from the separate authenticated route below.
+   */
+  @Get('achievements/:achievementId')
+  @UseGuards(JwtAuthGuard)
+  async achievementDetail(@Param('achievementId', ParseUUIDPipe) achievementId: string) {
+    const [attempts, evidence] = await Promise.all([
+      this.achievements.attemptsOf(achievementId),
+      this.evidence.list(achievementId),
+    ]);
+    return { attempts, evidence };
+  }
+
+  /**
+   * B5 (PA-B-019) — THE PARENT'S REVIEW READ, and the reason there is no
+   * signed URL anywhere in this feature.
+   *
+   * Streams the bytes through the application, so every read of a child's
+   * voice recording passes the parent JWT guard and the F2 tenant extension.
+   * A pre-signed URL would have been less code and a bearer capability that
+   * leaves authz entirely — see `evidence-storage.port.ts`.
+   *
+   * `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`
+   * together stop a stored file from ever being rendered as active content in
+   * a browser context, which matters because the admin dashboard is a web app
+   * on the same origin family.
+   */
+  @Get('achievements/:achievementId/evidence/:evidenceId')
+  @UseGuards(JwtAuthGuard)
+  async readEvidence(
+    @Param('evidenceId', ParseUUIDPipe) evidenceId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = await this.evidence.read(evidenceId);
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Length', String(file.byteSize));
+    res.setHeader('Content-Disposition', 'attachment');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(file.bytes);
+  }
+
+  /**
+   * B5 — «[الوالد] streaks الطفل — متاح للطفل فقط». Same
+   * `AchievementService.streaksForChild` the child route calls; the streaks
+   * were computable and unreadable by the person who buys the subscription.
+   */
+  @Get('streaks/:childId')
+  @UseGuards(JwtAuthGuard)
+  streaksOfChild(@Param('childId', ParseUUIDPipe) childId: string) {
+    return this.achievements.streaksForChild(childId);
+  }
+
+  // --- B5 (PA-B-017): the question bank a parent can author ------------------
+
+  @Post('quiz-bank')
+  @UseGuards(JwtAuthGuard)
+  createQuizQuestion(@Body() dto: CreateQuizQuestionDto, @CurrentUser() user: IJwtPayload) {
+    if (dto.correctChoiceIndex >= dto.choices.length) {
+      throw new BadRequestException({
+        code: 'QUIZ_ANSWER_OUT_OF_RANGE',
+        messageAr: 'رقم الإجابة الصحيحة خارج نطاق الخيارات المُدخلة.',
+      });
+    }
+    return this.repo.createBankQuestion({
+      category: dto.category,
+      subject: dto.subject ?? null,
+      difficulty: dto.difficulty ?? 'EASY',
+      minAge: dto.minAge ?? null,
+      maxAge: dto.maxAge ?? null,
+      promptAr: dto.promptAr,
+      choices: dto.choices,
+      correctChoiceIndex: dto.correctChoiceIndex,
+      explanationAr: dto.explanationAr ?? null,
+      createdByUserId: user.sub,
+    });
   }
 
   @Get('achievements/:achievementId/attempts')

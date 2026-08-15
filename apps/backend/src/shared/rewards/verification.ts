@@ -97,6 +97,19 @@ export const VERIFICATION_MATRIX: Readonly<Record<VerificationMethod, Verificati
     labelAr: 'تأكيد الوالد',
     rationaleAr: 'لا يمنح الخادم شيئًا: القرار للوالد دائمًا.',
   },
+  /**
+   * B5 (PA-B-017) — STILL `canAutoApprove: true`, AND NOW IT IS TRUE.
+   *
+   * Phase A's objection was not that the comparison was client-side; it was
+   * that the INPUT was. The server compared a number the child chose against a
+   * threshold, which is `SELF_CHECK` with an arithmetic step. As of B5 the
+   * server SELECTS the questions (`quiz_assignments`), HOLDS the answer key
+   * (`quiz_questions.correct_choice_index`) and COMPUTES the score
+   * (`QuizService.grade`); the child sends an answer sheet and
+   * `SubmitAchievementDto` has no field by which a score can be stated at all.
+   * The auto-approval is therefore the server trusting itself, which is the
+   * only thing it was ever entitled to do.
+   */
   QUIZ: {
     method: 'QUIZ',
     canAutoApprove: true,
@@ -104,7 +117,8 @@ export const VERIFICATION_MATRIX: Readonly<Record<VerificationMethod, Verificati
     requiresExplicitChoice: false,
     lowTrustOnly: false,
     labelAr: 'اختبار قصير',
-    rationaleAr: 'يُقارن الحاصل بعتبة النجاح المحدّدة في البرنامج، خادميًا.',
+    rationaleAr:
+      'الخادم يختار الأسئلة ويحتفظ بمفتاح الإجابات ويصحّح بنفسه، والطفل يرسل إجاباته فقط لا درجته. تُقارن النتيجة بعتبة النجاح المحدّدة في البرنامج.',
   },
   RECITATION_SUBMISSION: {
     method: 'RECITATION_SUBMISSION',
@@ -135,14 +149,39 @@ export const VERIFICATION_MATRIX: Readonly<Record<VerificationMethod, Verificati
     rationaleAr:
       'صورة أو ملف يرفعه الطفل كدليل. يُخزَّن المرجع فقط والقرار للوالد — لا تحليل آلي للمحتوى في هذا الـ sprint.',
   },
+  /**
+   * B5 (PA-B-017), THE OTHER HALF — AND THE HONEST ANSWER RATHER THAN THE
+   * FLATTERING ONE.
+   *
+   * `QUIZ` was fixable because a multiple-choice answer key is a table. A code
+   * challenge is not: grading it means EXECUTING a child's code against a test
+   * suite, which needs a sandbox this backend does not have and which was not
+   * in B5's scope. So `testsPassed`/`testsTotal` remain what they always were
+   * — numbers from the child's device — and the only defensible response to an
+   * input the server cannot produce is to stop paying out on it.
+   *
+   * `canAutoApprove` therefore flips `true` -> `false`. The strategy still
+   * runs, still computes a percentage, still writes it onto the append-only
+   * `VerificationAttempt` row; `verify()`'s existing matrix gate then converts
+   * the PASS to ESCALATED, exactly as it already does for
+   * `RECITATION_SUBMISSION`. A parent sees the claimed result and decides.
+   * Nothing about the enforcement mechanism is new — only this boolean is.
+   *
+   * THIS IS A STRENGTHENING, and it is stated as one: a program that used to
+   * pay automatically now waits for a parent. A real server-side runner
+   * (containerised, resource-capped, language-scoped) is the follow-up that
+   * would let it flip back, and it is recorded in the B5+B9 report's
+   * `افتراضات ومخاطر مفتوحة` rather than implied by leaving the flag alone.
+   */
   CODE_CHALLENGE: {
     method: 'CODE_CHALLENGE',
-    canAutoApprove: true,
+    canAutoApprove: false,
     strength: 'MODERATE',
     requiresExplicitChoice: false,
     lowTrustOnly: false,
     labelAr: 'تحدٍّ برمجي',
-    rationaleAr: 'نتيجة الاختبارات (ناجح/إجمالي) تُقارن بالعتبة خادميًا.',
+    rationaleAr:
+      'لا يوجد مُشغّل اختبارات على الخادم، فنتيجة الاختبارات تصل من جهاز الطفل. تُسجَّل كدليل ويقرّر ولي الأمر — لا منح آليًا.',
   },
   DURATION_PLUS_QUIZ: {
     method: 'DURATION_PLUS_QUIZ',
@@ -214,6 +253,16 @@ export interface VerificationInput {
 
 export interface VerificationSubmission {
   readonly selfConfirmed?: boolean;
+  /**
+   * B5 (PA-B-017) — UNCHANGED SHAPE, CHANGED PROVENANCE, and the distinction
+   * is the point. These two fields are still how the pure `QUIZ` strategy
+   * receives a score, and its unit tests are untouched because the strategy
+   * was never the defect. What changed is upstream: `AchievementService.submit`
+   * now fills them from `QuizService.grade` — the server's own answer key
+   * against the server's own recorded question set — instead of copying them
+   * out of the request body. There is no longer any route by which a child can
+   * put a value here.
+   */
   readonly quizCorrect?: number;
   readonly quizTotal?: number;
   /** Opaque reference to an uploaded recitation or artifact. NO audio and NO

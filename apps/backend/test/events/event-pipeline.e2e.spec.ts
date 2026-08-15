@@ -1019,6 +1019,10 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
             body: 'b',
             priority: 'NORMAL',
             createdAt: at('08:00'),
+            // B9 — `notifications.source_event_id` is NOT NULL. A fixture that
+            // seeds history must state a key like any other writer; six
+            // distinct ones, because the six rows are six distinct causes.
+            sourceEventId: `seed:daily-max:${i}`,
           })),
         }),
       );
@@ -1045,6 +1049,8 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
             body: 'b',
             priority: 'NORMAL',
             createdAt,
+            // B9 — two rows, two causes, two keys.
+            sourceEventId: `seed:category-max:${createdAt.toISOString()}`,
           })),
         }),
       );
@@ -1084,6 +1090,10 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
             // 30 minutes ago: past the 5-minute duplicate window, well inside
             // the 120-minute cooldown. So the rule that fires is COOLDOWN.
             createdAt: at('11:30'),
+            // B9 — `notifications.source_event_id` is NOT NULL. This fixture
+            // seeds the history the cooldown rule reads, so it states a causal
+            // key like any other writer of the table.
+            sourceEventId: 'seed:cooldown-history',
           },
         }),
       );
@@ -1097,6 +1107,8 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
             title: 'اشرب الماء',
             body: 'حان وقت شرب الماء.',
             targetAudience: 'PARENT',
+            // B9 — a deliverable candidate must carry its causal key.
+            sourceEventId: 'signal:hydration-cooldown-probe',
           }),
       );
 
