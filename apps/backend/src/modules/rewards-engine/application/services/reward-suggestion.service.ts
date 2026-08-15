@@ -6,6 +6,7 @@ import { AI_PROVIDER, type IAIProvider } from '../../../ai-core/domain/ai-provid
 import {
   CATEGORY_ACTIVITIES,
   PROGRAM_CATEGORY_LABEL_AR,
+  type ProgramActivity,
   type ProgramCategory,
 } from '../../../../shared/rewards/program-taxonomy';
 import { findSurah } from '../../../../shared/rewards/quran';
@@ -140,7 +141,28 @@ export class RewardSuggestionService {
   }
 
   private draftFor(category: ProgramCategory, age: number, childId: string): CreateRewardProgramDto | null {
-    const activity = CATEGORY_ACTIVITIES[category][0];
+    // B8 — FIXES A REAL BUG THE ADVERSARIAL SUITE FOUND BY EXECUTION.
+    //
+    // This was `CATEGORY_ACTIVITIES[category][0]` for every category, and for
+    // QURAN that first entry is `QURAN_MEMORIZE_AYAH` — the SINGLE-ayah
+    // activity. The Quran branch below then built `{ fromAyah: 1, toAyah: 5 }`,
+    // which `validateTargetSpec` correctly refuses with `AYAH_RANGE_NOT_SINGLE`.
+    // QURAN is ranked FIRST for every age band, so the AI's top suggestion was
+    // one a parent could look at and never accept: `GET suggestions` returned
+    // 200 and `POST suggestions/accept` returned 400, every single time.
+    //
+    // Nothing caught it because no test had ever accepted a Quran draft — the
+    // F4 suite asserted that `suggest()` writes nothing (it does not) and the
+    // B4 suite accepted a hand-written program. The advisory loop was broken at
+    // its most-used point and every existing test still passed, which is
+    // precisely the class of defect an adversarial "accept what the AI
+    // proposed" test exists to find.
+    //
+    // The fix is the ACTIVITY, not the target: an ayah RANGE is what the draft
+    // means, so it names the range activity. `activityBelongsToCategory` still
+    // holds (both are QURAN activities) and no validation was relaxed.
+    const activity: ProgramActivity =
+      category === 'QURAN' ? 'QURAN_MEMORIZE_AYAH_RANGE' : CATEGORY_ACTIVITIES[category][0];
     const duration = age < 8 ? 10 : age < 12 ? 20 : 30;
     const points = age < 8 ? 10 : age < 12 ? 20 : 30;
 

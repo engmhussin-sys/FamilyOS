@@ -1,6 +1,6 @@
 import type { IConfigValidationIssue } from '../domain/configuration.types';
 
-const VALID_AI_MODELS_PREFIX = 'claude-'; // this backend has exactly one AI provider integration today (Anthropic) \u2014 see AnthropicAIProvider
+const VALID_AI_MODELS_PREFIX = 'claude-'; // the PRIMARY ring of the provider chain (Anthropic) \u2014 see AnthropicAIProvider
 
 /**
  * Sprint 9. Checks that configured values are well-formed and point at
@@ -35,6 +35,22 @@ export class EnvironmentValidator {
         key: 'ANTHROPIC_API_KEY',
         severity: 'WARNING',
         message: 'Missing — AI Assistant/Diagnostics/Recommendation phrasing will degrade to deterministic fallback text.',
+      });
+    }
+
+    // B8 (PA-B-027): the SECONDARY ring. A WARNING, never FATAL, and worded so
+    // it is clear that running single-provider is a supported configuration —
+    // `FallbackAiProvider` skips an unconfigured ring rather than failing it.
+    // What is NOT supported silently is believing you have failover when you do
+    // not, which is the state this backend was in before B8.
+    if (env.ANTHROPIC_API_KEY && !env.OPENAI_API_KEY) {
+      issues.push({
+        key: 'OPENAI_API_KEY',
+        severity: 'WARNING',
+        message:
+          'Missing — the AI provider chain has NO secondary ring. An Anthropic outage will degrade every AI ' +
+          'feature to deterministic text (safe) and will fail /ai-assistant/ask outright (a real outage). ' +
+          'CONTEXT §2 specifies OpenAI as the fallback provider.',
       });
     }
 

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
 
-import type { IAIProvider, IAIProviderRequest } from '../domain/ai-provider.port';
+import type { IAIProviderAdapter, IAIProviderRequest } from '../domain/ai-provider.port';
 import { CircuitBreaker } from './circuit-breaker';
 import { AiUsageTrackingService } from './ai-usage-tracking.service';
 
@@ -46,10 +46,15 @@ const CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
  * @anthropic-ai/sdk — unchanged from Sprint 4's original design.
  */
 @Injectable()
-export class AnthropicAIProvider implements IAIProvider {
+export class AnthropicAIProvider implements IAIProviderAdapter {
+  /** B8 — the ring's stable name, used for the chain's circuit-breaker key and
+   * for every `ai_provider_failure` / `ai_provider_failover` log line. */
+  readonly id = 'anthropic';
+
   private readonly logger = new Logger(AnthropicAIProvider.name);
   private readonly client: Anthropic;
   private readonly model: string;
+  private readonly apiKey: string | undefined;
   private readonly circuitBreaker = new CircuitBreaker(
     CIRCUIT_BREAKER_FAILURE_THRESHOLD,
     CIRCUIT_BREAKER_COOLDOWN_MS,
@@ -66,18 +71,33 @@ export class AnthropicAIProvider implements IAIProvider {
           'See apps/backend/.env.example.',
       );
     }
+    this.apiKey = apiKey;
     this.client = new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES });
     this.model = this.configService.get<string>('AI_ASSISTANT_MODEL') ?? DEFAULT_MODEL;
   }
 
-  async complete({ systemPrompt, userMessage, sourceFeature }: IAIProviderRequest): Promise<string> {
+  /** B8: without a key this ring is SKIPPED by `FallbackAiProvider` rather than
+   * called and failed — an unconfigured provider is not an outage, and letting
+   * it trip its own breaker would have reported one on every single request of
+   * a perfectly healthy single-provider deployment. */
+  isConfigured(): boolean {
+    return typeof this.apiKey === 'string' && this.apiKey.length > 0;
+  }
+
+  async complete({ systemPrompt, userMessage, sourceFeature, timeoutMs }: IAIProviderRequest): Promise<string> {
     return this.circuitBreaker.execute(async () => {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: MAX_TOKENS,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
-      });
+      const response = await this.client.messages.create(
+        {
+          model: this.model,
+          max_tokens: MAX_TOKENS,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMessage }],
+        },
+        // B8: a per-call ceiling, so an interactive parent-facing call can ask
+        // for §3.3's 12s instead of inheriting the 20s batch default that was
+        // previously the only number this file knew.
+        timeoutMs !== undefined ? { timeout: timeoutMs } : undefined,
+      );
 
       this.trackCost(response.usage, sourceFeature);
 
