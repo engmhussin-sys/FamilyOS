@@ -56,7 +56,7 @@ FamilyOS/
 │   └── shared-types/     إعادة تصدير لعقود الأحداث (ليست حزمة workspace حقيقية)
 ├── docs/                 86 ملف Markdown
 ├── scripts/
-├── .github/workflows/    ci.yml · build-apk.yml   ← لم تُشغَّل أي منهما قط
+├── .github/workflows/    ci.yml (يستدعي) · build-apk.yml   ← لم تُشغَّل أي منهما قط
 └── docker-compose.yml
 ```
 
@@ -192,7 +192,8 @@ Child Device → POST /api/v1/events/batch (device JWT, tenant من التوكن
 | Admin Dashboard | **`TESTED`** | `vitest run` ⇒ **28/28 · 4 ملفات · exit 0** (نُفِّذ في 2026-08-15) |
 | TypeScript يُترجم نظيفًا | **`TESTED`** | `npx tsc -p tsconfig.build.json --noEmit` ⇒ **exit 0 · صفر diagnostic** |
 | حارسا CI: tenant-scoping · event-emission | **`TESTED`** | كلاهما `0 violations` (نُفِّذا في 2026-08-15) |
-| Child/Parent Flutter Apps — **أي شيء** | 🔴 **`BLOCKED`** | صفر `flutter pub get`/`analyze`/`test`/`build` في تاريخ المشروع |
+| Child/Parent Flutter Apps — **أي شيء يحتاج Dart SDK** | 🔴 **`BLOCKED`** | صفر `flutter pub get`/`analyze`/`test`/`build` في تاريخ المشروع |
+| Flutter — التحقق الثابت (Phase C) | **`STATIC VERIFIED`** | `scripts/dart_preflight.py`: 12 فحصًا · 677 نداء مُنشئ · 194 مرجع عضو · 195 سلسلة وراثة داخل الشجرة ⇒ **0 error / 0 warning** بعد إصلاح 7 أعطال. الضوابط السالبة **12/12** |
 | Kotlin Agent على جهاز حقيقي | 🔴 **`BLOCKED`** | صفر تنفيذ · صفر اختبار Kotlin (0 ملف) |
 | FCM push إلى جهاز حقيقي | 🔴 **`BLOCKED`** | لا مشروع Firebase ولا `google-services.json` |
 | `npm ci` (تثبيت نظيف) | 🔴 **فاشل اليوم** | `EUSAGE`: الـ lockfile خارج التزامن — ناقص `@prisma/adapter-pg@5.22.0`، `@prisma/driver-adapter-utils@5.22.0`، `postgres-array@3.0.2` |
@@ -240,7 +241,7 @@ Child Device → POST /api/v1/events/batch (device JWT, tenant من التوكن
 | 9 | Notification Decision Engine يقرأ **ساعة الخادم** لا منطقة الأسرة الزمنية | quiet hours ستُخطئ لكل أسرة خارج UTC — أي **كل السوق المستهدف** | Backend Lead | **2 يوم** |
 | 10 | `@SystemRoute` مخرج قوي يتخطى الـ tenant extension (13 استخدامًا) بلا اختبار يفشل إن نمت القائمة | القائمة ستنمو بصمت | Security Engineer | **1 يوم** |
 | 11 | خطوط Fredoka/Inter **لا تدعم العربية** · تباين السجل اللغوي (Flutter عامية مصرية مقابل Kotlin فصحى، والطفل يرى الاثنين) | انهيار الهوية البصرية في اللغة الأولى للمنتج؛ والثاني قرار منتج لا هندسة | UX + Flutter + PO | **1.5 يوم + قرار** |
-| 12 | لا `pubspec.lock` ولا `analysis_options.yaml` في أيٍّ من التطبيقين | البناء **غير حتمي**: بناءان متتاليان قد يستخدمان شجرتي تبعيات مختلفتين | Flutter Lead | **0.5 يوم** |
+| 12 | لا `pubspec.lock` (‏`analysis_options.yaml` أُجّل عمدًا لِما بعد أول ناتج أخضر) | البناء **غير حتمي**: بناءان متتاليان قد يستخدمان شجرتي تبعيات مختلفتين. Phase C جعل الـ CI **يولّد الملف ويرفعه**؛ يبقى على العميل **تنزيله والتزامه** — دورة واحدة | Flutter Lead + العميل | **0.25 يوم** |
 | 13 | `AiRiskScore` («درجة خطورة يومية للطفل») | **لغة Parental Control العقابي** التي يرفضها `CONTEXT` §1 و§3.7 — أعِد التأطير إلى `WellbeingScore` أو احذف | Product Owner | **1 يوم** |
 
 ---
@@ -322,19 +323,37 @@ Child Device → POST /api/v1/events/batch (device JWT, tenant من التوكن
 
 **السبب:** بيئة البناء لا تحوي Flutter SDK ولا Dart SDK ولا Android SDK، و`pub.dev` و`dl.google.com` و`storage.googleapis.com` و Maven Central **محجوبة (403)**.
 
-| المؤشر | القيمة المعلنة |
-|---|---|
-| ثقة نجاح **أول** `flutter build apk` | **≈ 55%** |
-| ثقة أن التطبيق **يعمل** بعد التثبيت | **≈ 35%** |
+| المؤشر | Phase B | **Phase C (الآن)** |
+|---|---|---|
+| ثقة نجاح **أول** `flutter build apk` — تطبيق الطفل | ≈ 55% | **≈ 68%** |
+| ثقة نجاح **أول** `flutter build apk` — تطبيق الوالد | **0%** (كان محجوبًا حتميًا بلا `google-services.json`) | **≈ 62%** |
+| ثقة أن **أول** `flutter analyze` يخرج نظيفًا (صفر error) | لم تُقدَّر | **≈ 30%** |
+| ثقة أن التطبيق **يعمل** بعد التثبيت | ≈ 35% | **≈ 40%** |
 
-**لماذا الفارق 20 نقطة:** «APK يُبنى» ≠ «APK يعمل». الأول يعني أن التوليتشين رضي؛ الثاني يعني أن الطفل يفتح التطبيق فيتصل ويقترن ويُنفَّذ عليه حدّ الشاشة. المخاطر غير المحسومة: `flutter analyze` قد يكشف **70–100 بندًا** (تطابق الأنواع وnull-safety و`@override` الناقصة خارج ما يثبته أي سكربت) · `pubspec.lock` **غائب** في التطبيقين ⇒ البناء غير حتمي · `analysis_options.yaml` **غائب** · تعارض محتمل بين `shared_preferences` و`flutter_secure_storage` و`connectivity_plus` · قيم `compileSdk`/`minSdk` **مستنتجة من التوثيق لا مقروءة من SDK** · **Kotlin لم يُترجم قط** (فُحصت الأقواس والمراجع، **لا الأنواع**) · `google-services.json` غير موجود ⇒ **تطبيق الوالد لا يُبنى إطلاقًا** · صيغة `ENABLED_ACCESSIBILITY_SERVICES` قد تكون معكوسة على أجهزة OEM حقيقية، وهي **مصدر الحقيقة لخمس آليات** — خطأ واحد يجعل التطبيق **يكذب على الوالد باتجاه ثابت**.
+**ما تغيّر في Phase C، وأثره على كل رقم:**
+
+| البند | قبل | بعد |
+|---|---|---|
+| **تحليل ثابت** | 3 سكربتات (imports · l10n · a11y) | **+12 فحصًا** في `scripts/dart_preflight.py` (arity المُنشئات · named params · statics · enum members · `@override` · رموز غير مستوردة · providers خارج النطاق · imports غير مستعملة · `part`) ولكلٍّ **ضابط سالب** في `dart_preflight_selftest.py` — **12/12 يمرّ** |
+| **أعطال حقيقية** | غير معروفة | **7 وُجدت وأُصلحت**: 4 أخطاء ترجمة صريحة (`ApiException` غير مستورد ×2 · `authControllerProvider` غير مستورد · `KidTheme.sage500` غير موجود ×3) و3 `unused_import` (وهي **warnings قاتلة** لأن `--fatal-warnings` افتراضي) |
+| **`google-services.json`** | غيابه يفشل بناء الوالد **حتميًا** | **فُكَّ الارتباط** خلف `-Pabny.firebase=auto\|required\|off`. الوالد يُنتج APK debug اليوم، **بلا push** — راجع `docs/release/FIREBASE_SETUP.md` |
+| **`compileSdk`/`targetSdk`/`minSdk`** | `flutter.*` ⇒ تتبع تاريخًا لا commit | **حرفية: 34 / 34 / 21**. `ndkVersion` مُبقاة عمدًا (لا يمكن التحقق منها بلا SDK) |
+| **اختبارات Flutter** | الوالد **صفر ملف** · الطفل 11 ملف خدمات، صفر widget | **+3 ملفات**، smoke لسطح F4 في التطبيقين (loading/empty/error بالعربية لكل شاشة). **لم تُنفَّذ قط** |
+| **CI** | `continue-on-error` على analyze و format و test؛ لا وظيفة APK للوالد | **صارم**: analyze + test + build كلها حاجزة، **و**diagnostic — كل مرحلة تعمل ويُرفع ناتجها كاملًا، والفشل في النهاية على الحصيلة. تعريف واحد يستدعيه `ci.yml` |
+| **`pubspec.lock`** | غائب، ولا مسار لتوليده | ما زال غائبًا (‏`pub get` محجوب هنا)، لكن الـ CI **يولّده ويرفعه كـ artifact**، ويستخدم `--enforce-lockfile` فور التزامه ⇒ **دورة واحدة** |
+
+**لماذا الرقم لم يقفز أعلى من ذلك — الأسباب المتبقية بالاسم:**
+`analysis_options.yaml` ما زال غائبًا · `pubspec.lock` غير ملتزم بعد ⇒ حلّ التبعيات ما زال يتبع تاريخًا · **الاستدلال على الأنواع (type inference) خارج قدرة أي فحص هنا كليًا** وهو أكبر مصدر لبلاغات `flutter analyze` المتوقَّعة · **Kotlin (21 ملفًا) لم يُترجَم قط** — فُحصت الأقواس والمراجع، لا الأنواع · التنزيلات نفسها (Flutter SDK · Android SDK · Maven) لم تُختبر من runner · صيغة `ENABLED_ACCESSIBILITY_SERVICES` قد تكون معكوسة على أجهزة OEM حقيقية، وهي **مصدر الحقيقة لخمس آليات**.
 
 **ما يفكّ الحصار — بالضبط، وبهذا الترتيب:**
 
 1. **GitHub token بصلاحية push على `engmhussin-sys/FamilyOS`** ⇒ دفع الفرع `abny/sprint-f1-unblock`.
-2. **تشغيل `.github/workflows/build-apk.yml`** — الـ workflow **موجود وجاهز ولم يُشغَّل قط**؛ الـ runner لديه شبكة مفتوحة إلى `pub.dev` و Maven Central.
-3. قراءة ناتج أول `flutter analyze` **قبل** الالتزام بأي جدول زمني.
-4. مشروع Firebase حقيقي + `google-services.json` كـ CI secret ⇒ أول بناء لتطبيق الوالد.
+2. **تشغيل `.github/workflows/build-apk.yml`** — الـ runner لديه شبكة مفتوحة إلى `pub.dev` و Maven Central. **APK تطبيق الوالد لم يعد يحتاج Firebase لهذه الخطوة.**
+3. **تنزيل artifact ‏`pubspec-lock-<app>` والتزام الملفين** — الخطوة الوحيدة الإلزامية بعد التشغيلة، وهي التي تجعل البناء قابلًا لإعادة الإنتاج (‏`PA-M-016`).
+4. قراءة ناتج أول `flutter analyze` **قبل** الالتزام بأي جدول زمني. الـ workflow يجمّع البلاغات **حسب القاعدة** تحديدًا لهذا الغرض.
+5. مشروع Firebase حقيقي + `google-services.json` كـ secret ⇒ push حقيقي والرحلتان J8 و J10.
+
+الأوامر كاملة، والبوابات، ومصفوفة التوافق: **`docs/release/FLUTTER_CI_RUNBOOK.md`**.
 
 > **لا يُلتزَم بأي تاريخ للموبايل قبل قراءة ناتج أول `flutter analyze`.** هذا ليس تحفّظًا بلاغيًا: الفارق بين 3 أيام و12 يومًا في هذا البند وحده.
 
@@ -349,8 +368,8 @@ Child Device → POST /api/v1/events/batch (device JWT, tenant من التوكن
 | Backend — tenancy **310** · events **94** | 404 | أقوى طبقتين | extension + registry + RLS + controller-guard + cross-tenant probe · bus + outbox + `/v1/events/batch` |
 | Backend — integration/e2e حقيقية | 7 مجموعات | **قريبة من الصفر قبل F1** | `event-pipeline.e2e` · `cross-tenant-probe.e2e` · `tenant-extension` · `tenant-rls` · `rewards-concurrency` · `refresh-token-family` · `schema` |
 | **Admin Dashboard** | **28 / 28** | 4 ملفات | `vitest run` — نُفِّذ فعليًا |
-| **Child Flutter App** | 11 ملفًا · **68 حالة معلنة** | **لم تُشغَّل قط** | `BLOCKED` — لا Dart SDK |
-| **Parent Flutter App** | **0 ملف · 0 اختبار** | **صفر مطلق** | 6,580 سطرًا و26 شاشة و14 عميل API بلا اختبار واحد |
+| **Child Flutter App** | 12 ملفًا · **78 حالة معلنة** (‏+10 widget في Phase C، وهي **أول** اختبارات widget فيه) | **لم تُشغَّل قط** | `BLOCKED` — لا Dart SDK |
+| **Parent Flutter App** | **2 ملف · 25 حالة معلنة** (Phase C — أول اختبار في تاريخ التطبيق) | **لم تُشغَّل قط** | smoke لسطح F4: كل شاشة تُبنى بـ repository مموّه وتُظهر loading/empty/error بالعربية |
 | **Native Kotlin Agent** | **0 ملف اختبار** | **صفر مطلق** | `PolicyEnforcer` و`SessionAnalyzer` دوال نقية تُختبر بـ JUnit **في ساعات** — لا عذر هندسي |
 
 ### 9.1 بوابات الـ CI القائمة الآن
