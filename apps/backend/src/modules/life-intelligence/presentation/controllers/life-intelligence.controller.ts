@@ -129,7 +129,9 @@ export class LifeIntelligenceController {
   @ParentSurface()
   @UseGuards(JwtAuthGuard)
   logActivity(@Param('childId') childId: string, @Body() dto: LogActivityDto, @CurrentUser() user: IJwtPayload) {
-    return this.healthEngine.logActivity(childId, user.familyId!, dto);
+    // PC-B-003 — the PARENT actor: keeps the bounded back-fill, the same way
+    // the habit/faith/learning parent routes already do.
+    return this.healthEngine.logActivity(childId, user.familyId!, dto, 'PARENT');
   }
 
   @Get('health/:childId/score')
@@ -537,7 +539,14 @@ export class LifeIntelligenceController {
   @UseGuards(DeviceJwtAuthGuard)
   async selfLogActivity(@Body() dto: LogActivityDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.healthEngine.logActivity(childId, familyId, dto);
+    // PC-B-003 (PA-B-004, one route late). `dto.date` reached `ActivityLog.date`
+    // verbatim from a DEVICE token, and the activity streak reads that column
+    // verbatim — so a child could back-fill a month of exercise it never did
+    // and collect `streak:{childId}:activity:30`. Measured, then closed. The
+    // `'DEVICE'` actor makes the engine discard the date; it is passed
+    // EXPLICITLY rather than relying on the default so this route states its
+    // own trust level, exactly like the habit, faith and learning routes.
+    return this.healthEngine.logActivity(childId, familyId, dto, 'DEVICE');
   }
 
   /** Sprint 16.4 — CLOSES A REAL GAP: LearningEngineService had zero

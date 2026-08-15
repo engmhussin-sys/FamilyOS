@@ -21,6 +21,17 @@ import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessDayRange, isBusinessDate } from '../../../../common/time/family-date';
 
 /**
+ * PHASE C (`PC-B-003`) \u2014 how far back a PARENT may back-fill an activity log.
+ *
+ * The same 30 days `getDailyProgress` already uses as `STREAK_WINDOW_DAYS` and
+ * that `logActivity` already passes to `daysAgo(30, ...)` for its own streak
+ * query, named once here rather than being a third loose `30` in this file. A
+ * log older than the window contributes to no streak and to no daily goal, so
+ * accepting one only widens the idempotency key space for no product value.
+ */
+const ACTIVITY_STREAK_WINDOW_DAYS = 30;
+
+/**
  * Architecture 1.0 \u00a73/\u00a75: merges what were three separate engines
  * (Nutrition, Hydration, Activity) into one, plus Sleep \u2014 per the
  * approved decision that activity explicitly belongs to Health
@@ -156,11 +167,54 @@ export class HealthEngineService {
     return this.repository.createSleepLog({ ...input, childId });
   }
 
-  async logActivity(childId: string, familyId: string, input: Omit<ICreateActivityLogInput, 'childId'>): Promise<IActivityLog> {
+  /**
+   * PHASE C (`PC-B-003`) — THE ONE HEALTH PATH B1 NEVER REACHED.
+   *
+   * THE EXPLOIT, measured before it was closed
+   * (`test/rewards/reward-source-forgery.e2e.spec.ts`). `POST
+   * /life-intelligence/self/health/activity-logs` is a DEVICE-token route and
+   * it passed `dto.date` straight into `ActivityLog.date` — the `@db.Date`
+   * column `getDailyActivityTotals` reads back VERBATIM, precisely because that
+   * repository method is documented as timezone-free on the grounds that the
+   * column «already holds a business date». It held whatever the child typed.
+   * Thirty POSTs dated across the previous thirty days, the last of them dated
+   * today so the 60-minute goal crossing fires, and `computeCurrentStreak`
+   * returned 30: `streak:{childId}:activity:30` granted, 100 COINS, zero
+   * exercise. The ledger key from that run is quoted in the Phase C report.
+   *
+   * B1 (PA-B-004) closed exactly this on Habits, B4 on Faith, and
+   * `LearningEngineService` carries its own `resolveSessionDate`. Activity was
+   * missed because its date arrives INSIDE the DTO object rather than as a
+   * separate argument, so the `actor` parameter the other three grew was never
+   * added here and the gap was invisible at every call site.
+   *
+   * THE FIX IS THE SAME FIX, NOT A NEW ONE. `actor` defaults to `'DEVICE'`, so
+   * a route that forgets to pass it fails CLOSED (the child's date is
+   * discarded) rather than open. A parent keeps a BOUNDED back-fill — never the
+   * future, never further back than the streak window — which is a real product
+   * need at a different trust level, and is the same shape as
+   * `HabitEngineService.resolveCompletionDate` on purpose rather than a fourth
+   * variation of the rule.
+   */
+  async logActivity(
+    childId: string,
+    familyId: string,
+    input: Omit<ICreateActivityLogInput, 'childId'>,
+    actor: 'PARENT' | 'DEVICE' = 'DEVICE',
+  ): Promise<IActivityLog> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    const log = await this.repository.createActivityLog({ ...input, childId });
 
     const timeZone = await this.familyDate.timeZoneOf(familyId);
+    // Resolved BEFORE the row is written, so the day that is STORED and the day
+    // every downstream goal, streak and idempotency key is decided on are the
+    // same value rather than two derivations that could disagree.
+    const logDate = this.resolveLogDate(
+      input.date,
+      getBusinessDate(new Date(), timeZone),
+      actor,
+      timeZone,
+    );
+    const log = await this.repository.createActivityLog({ ...input, childId, date: logDate });
 
     if (input.socialContext === 'GROUP' || input.socialContext === 'TEAM') {
       const since = this.daysAgo(30, timeZone);
@@ -188,7 +242,24 @@ export class HealthEngineService {
     const today = FamilyDateService.toDateColumn(todayStr);
     const todayMinutes = await this.repository.sumActivityMinutesOnDate(childId, today);
     const activityTargetMinutes = 60;
-    if (todayMinutes >= activityTargetMinutes && todayMinutes - input.durationMinutes < activityTargetMinutes) {
+    /**
+     * PHASE C (`PC-B-004`) — `logDate === todayStr` IS NEW, AND IT IS NOT
+     * DECORATION.
+     *
+     * The crossing test is «today's total reached the target, and it had not
+     * before THIS log». The second half subtracts `input.durationMinutes` from
+     * today's total — which is only meaningful if this log LANDED on today. A
+     * back-dated parent log does not, so the subtraction removed minutes that
+     * were never added and re-declared a goal already crossed hours earlier: a
+     * duplicate timeline entry and a re-fired trigger on every back-fill. The
+     * ledger's idempotency key absorbed the grant, which is exactly why this
+     * stayed invisible; the timeline entry had no such protection.
+     */
+    if (
+      logDate === todayStr &&
+      todayMinutes >= activityTargetMinutes &&
+      todayMinutes - input.durationMinutes < activityTargetMinutes
+    ) {
       await this.timeline.record({
         childId,
         sourceEngine: 'health',
@@ -332,6 +403,40 @@ export class HealthEngineService {
         streakDays: computeCurrentStreak(activityQualifyingDays, dateStr),
       },
     };
+  }
+
+  /**
+   * PHASE C (`PC-B-003`) — B1's RULE, ON THE PATH THAT NEVER GOT IT.
+   *
+   * Deliberately a COPY OF THE SHAPE of `HabitEngineService.resolveCompletionDate`
+   * and `FaithEngineService.resolveLogDate`, not a fourth variation and not an
+   * abstraction extracted in a security fix. The three differ only in the
+   * window constant they clamp to, and the reason each one lives next to the
+   * engine whose window it uses is that a shared helper would have to take the
+   * window as a parameter — at which point the call site can pass the wrong
+   * one, which is the failure mode this fix exists to remove, not to relocate.
+   *
+   *   A DEVICE gets `todayStr`. Always. Its `date` is not read at all, so
+   *   there is no bound to get wrong and nothing to validate.
+   *
+   *   A PARENT gets a bounded back-fill: never the FUTURE (a future-dated log
+   *   pre-mints an idempotency key for a day that has not happened — measured
+   *   as reachable before this fix), and never further back than
+   *   `ACTIVITY_STREAK_WINDOW_DAYS`, beyond which the log affects no streak and
+   *   no goal and only widens the key space.
+   */
+  private resolveLogDate(
+    dateStr: string | undefined,
+    todayStr: string,
+    actor: 'PARENT' | 'DEVICE',
+    timeZone: string,
+  ): string {
+    if (actor !== 'PARENT' || dateStr === undefined) return todayStr;
+
+    const requested = isBusinessDate(dateStr) ? dateStr : getBusinessDate(new Date(dateStr), timeZone);
+    if (requested > todayStr) return todayStr;
+    const earliest = FamilyDateService.addDays(todayStr, -ACTIVITY_STREAK_WINDOW_DAYS);
+    return requested < earliest ? earliest : requested;
   }
 
   /** B2: lookback lower bound, as the UTC-midnight instant the day columns

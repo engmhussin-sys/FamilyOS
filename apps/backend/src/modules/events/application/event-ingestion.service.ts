@@ -322,7 +322,37 @@ export class EventIngestionService {
           occurredAt: occurredAt.toISOString(),
           idempotencyKey,
           pointsHint: numberOrNull(event.payload.pointsHint),
-          verifiedBy: verifiedByOrDefault(event.payload.verifiedBy),
+          /**
+           * PHASE C (`PC-B-005`) — B1's LESSON, APPLIED TO THE FIELD B1 DID NOT
+           * LOOK AT.
+           *
+           * This used to be `verifiedByOrDefault(event.payload.verifiedBy)`,
+           * which accepted `'PARENT'`, `'SENSOR'` and `'SYSTEM'` STRAIGHT OFF
+           * THE WIRE. `meetsVerificationFloor` (rewards-rules.ts) reads exactly
+           * this field to decide whether a rule carrying
+           * `minVerifiedBy: 'PARENT'` — rank 3, the highest — is satisfied. So
+           * a parent's «pay only when I have confirmed it» was defeated by one
+           * word in a free-form JSON payload the child's own device composes.
+           * Measured before the fix: a forged `{"verifiedBy": "PARENT"}` on a
+           * self-posted `HABIT_COMPLETED` produced a real 250 XP ledger row
+           * against a PARENT-floored rule.
+           *
+           * `POST /events/batch` is reachable ONLY with a device token
+           * (`DeviceJwtAuthGuard`). The caller IS the child's device. It cannot
+           * witness a parent, it cannot attest a sensor it also controls, and
+           * it is not the system — so the only honest value it can produce is
+           * `SELF`, and that is now a constant rather than a parse.
+           *
+           * A genuine `PARENT` verification still exists and still clears the
+           * floor: it comes from the PARENT-authenticated routes, where the
+           * server asserts it from the session (`HabitEngineService` and its
+           * siblings pass `actor === 'PARENT'`). The claim is not lost here —
+           * it is demoted to `clientReportedVerifiedBy` telemetry below, the
+           * same treatment B1 gave `clientReportedLocalDate`, so a fleet
+           * reporting values it is not entitled to is diagnosable instead of
+           * silent.
+           */
+          verifiedBy: 'SELF',
           metadata: plainMetadata(event.payload.metadata),
         } satisfies CompletionEvent as unknown as Record<string, unknown>)
       : { ...event.payload, childId: ctx.childId, deviceId: ctx.deviceId, localDate };
@@ -519,6 +549,7 @@ function buildClientDateTelemetry(
   clientReportedLocalDate: string | null;
   clientReportedTimezone: string | null;
   clientLocalDateSkewDays: number | null;
+  clientReportedVerifiedBy: string | null;
 } {
   const claimed = typeof event.localDate === 'string' ? event.localDate : null;
   const skewDays =
@@ -533,6 +564,14 @@ function buildClientDateTelemetry(
     clientReportedLocalDate: claimed,
     clientReportedTimezone: typeof event.timezone === 'string' ? event.timezone : null,
     clientLocalDateSkewDays: Number.isFinite(skewDays as number) ? skewDays : null,
+    // PHASE C (`PC-B-005`). What the device SAID verified this completion, kept
+    // for the same reason `clientReportedLocalDate` is kept: a device claiming
+    // `PARENT` is either an out-of-date client or an attempt, and both are
+    // worth being able to see. The authoritative `verifiedBy` is the server's
+    // constant `'SELF'`, set above; this field is read by no rule, no key and
+    // no query.
+    clientReportedVerifiedBy:
+      typeof event.payload?.verifiedBy === 'string' ? event.payload.verifiedBy : null,
   };
 }
 
@@ -551,10 +590,6 @@ function numberOrNull(value: unknown): number | null {
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function verifiedByOrDefault(value: unknown): CompletionEvent['verifiedBy'] {
-  return value === 'PARENT' || value === 'SENSOR' || value === 'SYSTEM' ? value : 'SELF';
 }
 
 /** ≤ 2 KB, scalars only — the contract's own bound, enforced not assumed. */

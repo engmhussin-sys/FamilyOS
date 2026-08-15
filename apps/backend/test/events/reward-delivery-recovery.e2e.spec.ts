@@ -269,6 +269,23 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
     });
   }
 
+
+  /**
+   * The `/auth/register` throttle counter lives in the SHARED Redis and is
+   * IP-keyed, so every suite in a `--runInBand` run draws on one budget. This
+   * suite clears it on the way IN (so a previous run cannot 429 its fixtures)
+   * and on the way OUT (so it returns what it consumed to the suites that run
+   * after it). Only the second half is new, and it is the half that matters in
+   * a repository where several suites now register families.
+   */
+  async function clearRegisterThrottle(): Promise<void> {
+    const Redis = require('ioredis');
+    const client = new Redis(process.env.REDIS_URL as string);
+    const keys = await client.keys('throttle:*');
+    if (keys.length > 0) await client.del(...keys);
+    await client.quit();
+  }
+
   beforeAll(async () => {
     jest.useFakeTimers({
       doNotFake: [
@@ -290,13 +307,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
     });
     jest.setSystemTime(NOON);
 
-    {
-      const Redis = require('ioredis');
-      const client = new Redis(process.env.REDIS_URL as string);
-      const keys = await client.keys('throttle:*');
-      if (keys.length > 0) await client.del(...keys);
-      await client.quit();
-    }
+    await clearRegisterThrottle();
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
@@ -328,6 +339,8 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
     jest.setSystemTime(NOON);
     jest.useRealTimers();
     await app?.close();
+    // Return the register-throttle budget this suite consumed.
+    await clearRegisterThrottle();
   });
 
   beforeEach(() => {
