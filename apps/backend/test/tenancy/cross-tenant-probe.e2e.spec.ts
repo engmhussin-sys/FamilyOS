@@ -29,17 +29,42 @@ import request = require('supertest');
 
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/common/prisma/prisma.service';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { Role } from '../../src/common/authz/principal-role';
+import { ROLES_METADATA } from '../../src/common/authz/roles.decorator';
+import { PasswordService } from '../../src/modules/auth/application/services/password.service';
+import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { createTenantExtension } from '../../src/common/tenancy/tenant.extension';
+import { runAsSystemAsync } from '../../src/common/tenancy/system-context';
+import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { integrationDatabaseUrl } from './prisma-test-client';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'ALL', 'OPTIONS', 'HEAD', 'SEARCH'];
 
+/**
+ * PHASE C. The `/auth/register` throttle counter lives in the REAL Redis and is
+ * IP-keyed, so every e2e suite in one `--runInBand` run draws on ONE budget from
+ * 127.0.0.1. A suite that consumes without returning makes whichever suite runs
+ * after it fail with a 429 that has nothing to do with what it asserts — and
+ * this file registers two families. Cleared on the way in and on the way out.
+ */
+async function clearThrottleCounters(): Promise<void> {
+  const Redis = require('ioredis');
+  const client = new Redis(process.env.REDIS_URL as string);
+  const keys = await client.keys('throttle:*');
+  if (keys.length > 0) await client.del(...keys);
+  await client.quit();
+}
+
 interface Route {
   method: string;
   path: string;
   params: string[];
+  /** PHASE C: the roles the route declares, and the guards it carries. */
+  roles: string[] | undefined;
+  guardNames: string[];
 }
 
 function findControllerFiles(dir: string, acc: string[] = []): string[] {
@@ -69,7 +94,17 @@ function enumerateRoutes(): Route[] {
         if (sub === undefined) continue;
         const verb = HTTP_METHODS[Reflect.getMetadata(METHOD_METADATA, handler)];
         const full = `/${base}/${sub}`.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
-        out.push({ method: verb, path: full, params: [...full.matchAll(/:(\w+)/g)].map((m) => m[1]) });
+        const classGuards: any[] = Reflect.getMetadata(GUARDS_METADATA, exported) ?? [];
+        const methodGuards: any[] = Reflect.getMetadata(GUARDS_METADATA, handler) ?? [];
+        out.push({
+          method: verb,
+          path: full,
+          params: [...full.matchAll(/:(\w+)/g)].map((m) => m[1]),
+          roles:
+            (Reflect.getMetadata(ROLES_METADATA, handler) as string[] | undefined) ??
+            (Reflect.getMetadata(ROLES_METADATA, exported) as string[] | undefined),
+          guardNames: [...classGuards, ...methodGuards].map((g) => g?.name ?? String(g)),
+        });
       }
     }
   }
@@ -116,6 +151,19 @@ describeIfDb('R8 — generated cross-tenant probe suite against the real applica
   /** Resource ids OWNED BY FAMILY B, keyed by the route param name they fill. */
   const bResources: Record<string, string> = {};
   const createdUserIds: string[] = [];
+  /**
+   * PHASE C. Two more principals INSIDE family B, so the same generated route
+   * table can be replayed across ROLES and not only across TENANTS:
+   *   - `bChildToken`: a genuine paired-device (CHILD) access token;
+   *   - `bCoParentToken`: a genuine co-parent (PARENT) access token.
+   * Both are minted by the application's own TokenService — the same call the
+   * pairing and login paths make — rather than obtained over HTTP, because the
+   * `/auth/*` throttle budget is shared across every e2e suite in one run and
+   * this suite must not spend more of it than the isolation probe needs.
+   */
+  let bChildToken = '';
+  let bCoParentToken = '';
+  let bCoParentUserId = '';
 
   async function register(label: 'A' | 'B') {
     const res = await request(http)
@@ -148,6 +196,8 @@ describeIfDb('R8 — generated cross-tenant probe suite against the real applica
   const auth = (label: 'A' | 'B') => ({ Authorization: `Bearer ${tokens[label]}` });
 
   beforeAll(async () => {
+    await clearThrottleCounters();
+
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
       .useValue(offlinePrismaService())
@@ -195,6 +245,68 @@ describeIfDb('R8 — generated cross-tenant probe suite against the real applica
 
     // familyId appears as a path param on one route (rewards store).
     bResources.familyId = familyIds.B;
+
+    // --- PHASE C: a CHILD device and a co-parent PARENT, both in family B ---
+    const sys = (what: string, fn: () => Promise<any>): Promise<any> =>
+      runAsSystemAsync('TEST_FIXTURE', `cross-role probe fixture: ${what}`, async () => await fn());
+    const tokenService = app.get(TokenService);
+
+    const device = await sys('seed device for B', () =>
+      prisma.device.create({
+        data: {
+          familyId: familyIds.B,
+          ownerType: 'CHILD',
+          childId: bResources.childId,
+          platform: 'ANDROID',
+          status: 'ACTIVE',
+          pairedAt: new Date(),
+        },
+        select: { id: true },
+      }),
+    );
+    bChildToken = (
+      await runWithTenant(
+        { familyId: familyIds.B, actorType: 'DEVICE', actorId: device.id },
+        () =>
+          tokenService.issueTokenPair({
+            subjectId: device.id,
+            actorType: 'DEVICE',
+            familyId: familyIds.B,
+          }),
+      )
+    ).accessToken;
+
+    const coParent = await sys('seed co-parent for B', async () =>
+      prisma.user.create({
+        data: {
+          email: `probe.coparent.${stamp}@example.com`,
+          passwordHash: await app.get(PasswordService).hash('Probe-CoParent-Passw0rd!23'),
+          fullName: 'Probe Co-Parent B',
+          termsAcceptedAt: new Date(),
+          termsVersion: 'v1-placeholder',
+        },
+        select: { id: true },
+      }),
+    );
+    bCoParentUserId = coParent.id;
+    createdUserIds.push(coParent.id);
+    await sys('seed co-parent membership', () =>
+      prisma.familyMember.create({
+        data: { familyId: familyIds.B, userId: coParent.id, role: 'PARENT' },
+      }),
+    );
+    bCoParentToken = (
+      await runWithTenant(
+        { familyId: familyIds.B, actorType: 'USER', actorId: coParent.id },
+        () =>
+          tokenService.issueTokenPair({
+            subjectId: coParent.id,
+            actorType: 'USER',
+            familyId: familyIds.B,
+            familyRole: 'PARENT',
+          }),
+      )
+    ).accessToken;
   }, 60_000);
 
   afterAll(async () => {
@@ -206,6 +318,7 @@ describeIfDb('R8 — generated cross-tenant probe suite against the real applica
       });
     }
     await app?.close();
+    await clearThrottleCounters();
   });
 
   it('seeded two distinct families with real tokens and real resources', () => {
@@ -314,5 +427,111 @@ describeIfDb('R8 — generated cross-tenant probe suite against the real applica
     const res = await request(http).get(`/children/${bResources.childId}`).set(auth('B'));
     expect(res.status).toBe(200);
     expect(res.body.id).toBe(bResources.childId);
+  }, 30_000);
+
+  // =========================================================================
+  // PHASE C / P3 — THE CROSS-ROLE SWEEP
+  //
+  // The tenant probe above replays the route table across FAMILIES. A4 §SA-005
+  // showed the second axis was wide open: inside ONE family, every principal
+  // had every permission. This replays the SAME derived route table across
+  // ROLES, in the direction that is safe to execute — every call below is one
+  // the system must REFUSE, so nothing is written and no fixture is mutated by
+  // sweeping.
+  //
+  // Generated, not hand-written: a route added tomorrow is swept tomorrow.
+  // =========================================================================
+
+  const FILLER_UUID = '00000000-0000-4000-8000-000000000000';
+  const fillParams = (route: Route): string => {
+    let url = route.path;
+    for (const p of route.params) url = url.replace(`:${p}`, bResources[p] ?? FILLER_UUID);
+    return url;
+  };
+  const send = (route: Route, url: string, token: string) => {
+    const verb = route.method.toLowerCase() as 'get' | 'post' | 'patch' | 'put' | 'delete';
+    return (request(http) as any)[verb](url).set({ Authorization: `Bearer ${token}` }).send({});
+  };
+
+  /** Every route the CHILD surface does NOT include, and that is not public. */
+  const notChildRoutes = routes.filter(
+    (r) => (r.roles ?? []).length > 0 && !(r.roles ?? []).includes(Role.CHILD),
+  );
+
+  it('the cross-role sweep has a meaningful number of routes to probe', () => {
+    expect(notChildRoutes.length).toBeGreaterThanOrEqual(140);
+    expect(routes.filter((r) => (r.roles ?? []).includes(Role.CHILD)).length).toBeGreaterThanOrEqual(30);
+  });
+
+  it.each(notChildRoutes.map((r) => [`${r.method} ${r.path}`, r] as const))(
+    "%s — a CHILD's device token must NOT reach it",
+    async (_label, route) => {
+      const res = await send(route, fillParams(route), bChildToken);
+      // Not 2xx is the whole requirement. The status will be 401 on the parent
+      // surface (the `jwt` strategy rejects a `device-jwt` actor before any
+      // handler runs) and 404 on the platform surface; both are refusals, and
+      // asserting the exact one would be asserting an implementation detail of
+      // Passport rather than the security property.
+      expect([200, 201, 202, 204]).not.toContain(res.status);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    },
+    30_000,
+  );
+
+  /** Routes reserved for the family OWNER. Derived, so the list cannot drift. */
+  const ownerOnlyRoutes = routes.filter(
+    (r) => JSON.stringify(r.roles) === JSON.stringify([Role.OWNER]),
+  );
+
+  it('the OWNER-only surface is non-empty — otherwise the sweep below is vacuous', () => {
+    expect(ownerOnlyRoutes.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it.each(ownerOnlyRoutes.map((r) => [`${r.method} ${r.path}`, r] as const))(
+    '%s — a CO-PARENT (PARENT) must be refused with 403 ROLE_NOT_PERMITTED',
+    async (_label, route) => {
+      const res = await send(route, fillParams(route), bCoParentToken);
+      expect(res.status).toBe(403);
+      // 403 and not 404 here is deliberate and argued in `authz.errors.ts`: the
+      // caller is a PROVEN member of this tenant, so there is no existence to
+      // conceal — only a permission to report, with a code the app can branch
+      // on. The guard also runs BEFORE the ValidationPipe, which is why an
+      // empty body does not turn this into a 400.
+      expect(res.body.code).toBe('ROLE_NOT_PERMITTED');
+      expect(res.body.requiredRoles).toEqual([Role.OWNER]);
+      expect(res.body.heldRole).toBe(Role.PARENT);
+    },
+    30_000,
+  );
+
+  it('the co-parent is NOT locked out of the ordinary parenting surface', () => {
+    // Without this the sweep above would pass just as well if PARENT had been
+    // denied everything, which would be a different bug wearing the same green.
+    return request(http)
+      .get('/children')
+      .set({ Authorization: `Bearer ${bCoParentToken}` })
+      .expect(200)
+      .then((res: any) => {
+        expect(Array.isArray(res.body)).toBe(true);
+        expect(res.body.map((c: any) => c.id)).toContain(bResources.childId);
+      });
+  }, 30_000);
+
+  it("a co-parent still cannot reach family A — role and tenant are independent locks", async () => {
+    expect(bCoParentUserId).toBeTruthy();
+    const res = await request(http)
+      .get('/children')
+      .set({ Authorization: `Bearer ${bCoParentToken}` });
+    expect(res.status).toBe(200);
+    // Family A's child must not appear in family B's co-parent's list.
+    const aChild = await request(http)
+      .post('/children')
+      .set(auth('A'))
+      .send({ firstName: 'Probe Kid A', dateOfBirth: '2016-02-02' });
+    expect([200, 201]).toContain(aChild.status);
+    const again = await request(http)
+      .get('/children')
+      .set({ Authorization: `Bearer ${bCoParentToken}` });
+    expect(again.body.map((c: any) => c.id)).not.toContain(aChild.body.id);
   }, 30_000);
 });
