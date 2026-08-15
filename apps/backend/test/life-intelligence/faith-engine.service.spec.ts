@@ -82,9 +82,60 @@ describe('FaithEngineService', () => {
       repositoryMock.recordLog.mockResolvedValue({ id: 'l3', practiceId: 'p1', childId, date: new Date(), progress: { surah: 'Al-Fatiha' }, completedAt: new Date() });
       repositoryMock.countPracticeLogsTotal.mockResolvedValue(2);
 
-      await service.logPractice('p1', childId, familyId, '2026-01-01', { surah: 'Al-Fatiha' });
+      // B4: a PARENT session may back-fill, and a date inside the 30-day
+      // window is honoured verbatim — the metadata still reaches the
+      // repository unchanged, which is what this test is actually about.
+      const backfill = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
+      await service.logPractice('p1', childId, familyId, backfill, { surah: 'Al-Fatiha' }, 'PARENT');
 
-      expect(repositoryMock.recordLog).toHaveBeenCalledWith('p1', childId, new Date('2026-01-01'), { surah: 'Al-Fatiha' });
+      expect(repositoryMock.recordLog).toHaveBeenCalledWith('p1', childId, new Date(`${backfill}T00:00:00.000Z`), { surah: 'Al-Fatiha' });
+    });
+
+    /**
+     * B4 (PA-B-004 closed for Faith). Faith took `dateStr` from whoever called
+     * it, and the DEVICE route passed `dto.date` straight through. Harmless
+     * while Faith granted nothing; a key-minting exploit the moment B4 connected
+     * it to the reward engine. The gate ships in the same commit as the grant.
+     */
+    it('IGNORES a device-supplied date entirely — the day is derived from the family calendar', async () => {
+      repositoryMock.findPracticeById.mockResolvedValue(practice);
+      repositoryMock.recordLog.mockResolvedValue({ id: 'l4', practiceId: 'p1', childId, date: new Date(), progress: null, completedAt: new Date() });
+      repositoryMock.countPracticeLogsTotal.mockResolvedValue(2);
+
+      const today = new Date().toISOString().slice(0, 10);
+      await service.logPractice('p1', childId, familyId, '2001-09-09', undefined, 'DEVICE');
+
+      expect(repositoryMock.recordLog).toHaveBeenCalledWith('p1', childId, new Date(`${today}T00:00:00.000Z`), undefined);
+      // ...and the reward key therefore carries the DERIVED day, not the chosen
+      // one. A device that could choose the day could mint unlimited rewards.
+      const keyed = rewardTriggerMock.trigger.mock.calls.find((c: any[]) => c[2].type === 'FAITH_PRACTICE_COMPLETED');
+      expect(keyed).toBeDefined();
+      expect(keyed![2].idempotencyKey).toBe(`faith-practice:p1:${today}`);
+      expect(keyed![2].idempotencyKey).not.toContain('2001-09-09');
+    });
+
+    /**
+     * B4 (PA-B-013). The engine fires TWO triggers for one practice log. The
+     * legacy `practice_logged` has no idempotency key and is deliberately NOT in
+     * `RULE_EVENT_TYPES`, so no managed rule can match it; the keyed
+     * `FAITH_PRACTICE_COMPLETED` is the one the platform default answers. One
+     * real-world log, one payable trigger.
+     */
+    it('fires the KEYED FAITH_PRACTICE_COMPLETED alongside the legacy keyless trigger', async () => {
+      repositoryMock.findPracticeById.mockResolvedValue(practice);
+      repositoryMock.recordLog.mockResolvedValue({ id: 'l5', practiceId: 'p1', childId, date: new Date(), progress: null, completedAt: new Date() });
+      repositoryMock.countPracticeLogsTotal.mockResolvedValue(3);
+
+      await service.logPractice('p1', childId, familyId);
+
+      const types = rewardTriggerMock.trigger.mock.calls.map((c: any[]) => c[2].type);
+      expect(types).toEqual(['practice_logged', 'FAITH_PRACTICE_COMPLETED']);
+
+      const legacy = rewardTriggerMock.trigger.mock.calls[0][2];
+      const keyed = rewardTriggerMock.trigger.mock.calls[1][2];
+      expect(legacy.idempotencyKey).toBeUndefined();
+      expect(keyed.idempotencyKey).toBeDefined();
+      expect(keyed.payload.verifiedBy).toBe('SELF');
     });
   });
 

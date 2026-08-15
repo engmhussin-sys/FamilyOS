@@ -68,6 +68,10 @@ describe('PrismaRewardsRepository (DA-002)', () => {
         'habit_streak',
         'key-1',
         FAMILY_ID,
+        // B4: `$8` is `business_date`. NULL here because this caller passed no
+        // business date — an uncapped, pre-B4-shaped grant. The column is
+        // nullable precisely so those keep working unchanged.
+        null,
       );
       expect(executeRawUnsafe).toHaveBeenNthCalledWith(
         2,
@@ -98,6 +102,18 @@ describe('PrismaRewardsRepository (DA-002)', () => {
       const key = executeRawUnsafe.mock.calls[0][6];
       expect(typeof key).toBe('string');
       expect(key).toMatch(/^nokey:/);
+    });
+
+    it('B4: stamps the FAMILY business date onto the ledger row when the caller supplies one', async () => {
+      executeRawUnsafe.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
+
+      await asTenant(() =>
+        repository.applyEarn('child-1', 'XP', 10, undefined, 'reward_rule:r1', 'key-bd', undefined, '2026-08-14'),
+      );
+
+      // `$8` — the same day the idempotency key was composed from, so the cap
+      // count and the key can never disagree about which day a grant belongs to.
+      expect(executeRawUnsafe.mock.calls[0][8]).toBe('2026-08-14');
     });
 
     it('moves stars by one for a BADGE grant and passes the new level through', async () => {

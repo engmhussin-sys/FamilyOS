@@ -1,11 +1,12 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
 
 import { ChildrenService } from '../../../children/application/services/children.service';
-import { PrismaRewardsRepository } from '../../infrastructure/repositories/prisma-rewards.repository';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { IGrantCap, PrismaRewardsRepository } from '../../infrastructure/repositories/prisma-rewards.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
 import { IRewardTriggerWriter } from '../../domain/reward-trigger.types';
-import { IRewardRedemption, IRewardsAccount, IRewardTriggerEvent, RewardType } from '../../domain/rewards.types';
-import { computeLevelFromXp, evaluateRewardRules } from './rewards-rules';
+import { IRewardRule, IRewardRedemption, IRewardsAccount, IRewardTriggerEvent, RewardType } from '../../domain/rewards.types';
+import { computeLevelFromXp, evaluateRewardRules, selectApplicableRules } from './rewards-rules';
 import { SmartNotificationIntegrationService } from './smart-notification-integration.service';
 
 /**
@@ -47,6 +48,10 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     private readonly childrenService: ChildrenService,
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
     private readonly notificationIntegration: SmartNotificationIntegrationService,
+    // B4 — the ONE source of "which day is it for this family?" (B1+B2).
+    // Daily and weekly rule caps are counted on the family's calendar, so a
+    // Cairo child completing a habit at 00:30 is counted against TODAY.
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   /** IRewardTriggerWriter's public entry point — identical behavior to
@@ -84,18 +89,33 @@ export class RewardsEngineService implements IRewardTriggerWriter {
 
     const rules = await this.repository.listActiveRewardRules(familyId, event.engine);
     const grants = evaluateRewardRules(rules, event);
+    if (grants.length === 0) return 0;
+
+    // B4 — the cap lookup, built ONCE per trigger and only when a rule that
+    // actually matched declares a cap. A rule with no caps costs zero extra
+    // queries and zero extra locks, which keeps the untouched pre-B4 paths
+    // exactly as fast as they were.
+    const applicable = selectApplicableRules(rules);
+    // THE FAMILY'S TODAY, resolved ONCE per trigger, by the single authority
+    // B1+B2 established. It is stamped onto every ledger row this trigger
+    // writes (`rewards_ledger_entries.business_date`) and it is what the caps
+    // below count against, so the stored day and the counted day are the same
+    // value rather than two derivations that could disagree.
+    const businessDate = await this.familyDate.getBusinessDate(familyId);
+    const caps = this.buildCaps(businessDate, applicable, grants);
 
     let actualGrantCount = 0;
 
     for (const grant of grants) {
       const grantIdempotencyKey = event.idempotencyKey ? `${event.idempotencyKey}:${grant.rewardType}:${grant.source}` : undefined;
+      const cap = caps.get(grant.source);
 
       if (grant.rewardType === 'BADGE') {
         const badge = await this.repository.findBadgeByKey(grant.amountOrBadgeId);
         if (!badge) continue; // misconfigured rule referencing a deleted badge key — skip, don't crash
         const awarded = await this.repository.awardBadgeIfNotAlready(childId, badge.id);
         if (awarded) {
-          const granted = await this.repository.applyEarn(childId, 'BADGE', 1, undefined, grant.source, grantIdempotencyKey);
+          const granted = await this.repository.applyEarn(childId, 'BADGE', 1, undefined, grant.source, grantIdempotencyKey, cap, businessDate);
           if (granted) {
             actualGrantCount++;
             await this.timeline.record({
@@ -118,18 +138,134 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       } else {
         const amount = Number(grant.amountOrBadgeId);
         if (!Number.isFinite(amount) || amount <= 0) continue; // malformed rule config — skip, don't crash
-        const granted = await this.grantAmount(childId, familyId, grant.rewardType, amount, grant.source, grantIdempotencyKey);
+        const granted = await this.grantAmount(childId, familyId, grant.rewardType, amount, grant.source, grantIdempotencyKey, cap, businessDate);
         if (granted) actualGrantCount++;
       }
+    }
+
+    if (actualGrantCount > 0) {
+      await this.announceGrant(childId, familyId, event, actualGrantCount);
     }
 
     return actualGrantCount;
   }
 
+  /**
+   * B4 — ONE BUSINESS EVENT -> ONE REWARD -> ONE TIMELINE ENTRY -> ONE
+   * NOTIFICATION, closed HERE, once, for every domain.
+   *
+   * WHAT WAS MISSING, on each of the two paths:
+   *
+   *   THE OUTBOX PATH had the notification (`NotificationRewardConsumer`) and
+   *   NO TIMELINE ENTRY. `/events/batch` never runs a domain service, so none
+   *   of the `timeline.record` calls in `habit-engine.service.ts` and its
+   *   siblings is reached; a habit completed through the pipeline earned XP
+   *   that appeared nowhere on the family's timeline.
+   *
+   *   THE DIRECT PATH had domain timeline entries and NO NOTIFICATION. It never
+   *   writes an outbox message, so `REWARD_GRANTED` is never emitted and
+   *   `NotificationRewardConsumer` never runs — on exactly the routes the Child
+   *   App actually calls today (PA-M-034). This is the 🔴 Phase A recorded
+   *   against the Notification stage of six chains.
+   *
+   * Both are closed by writing the REWARDS-category entry here, and by
+   * notifying here only when nothing else will. `announcedViaOutbox` is the
+   * switch and exactly one caller sets it.
+   *
+   * ONE ENTRY, NOT ONE PER GRANT: a completion matching an XP rule and a COINS
+   * rule is ONE thing that happened to the child, and the timeline is "curated
+   * moments" (Architecture 1.0 §5.11), not a ledger — the ledger is already the
+   * per-grant record and it is the audit trail.
+   *
+   * BEST-EFFORT, like every other side effect in this file: a timeline or
+   * notification failure must never unwind a reward the database has committed.
+   */
+  private async announceGrant(
+    childId: string,
+    familyId: string,
+    event: IRewardTriggerEvent,
+    grantCount: number,
+  ): Promise<void> {
+    try {
+      await this.timeline.record({
+        childId,
+        sourceEngine: 'rewards',
+        category: 'REWARDS',
+        eventType: 'reward_granted',
+        title: 'Earned a reward',
+        metadata: { triggerEngine: event.engine, triggerType: event.type, grantCount },
+      });
+    } catch (err) {
+      this.logger.warn('Failed to write the reward timeline entry', err instanceof Error ? err.message : err);
+    }
+
+    if (event.announcedViaOutbox) return;
+
+    // The SAME Arabic, non-punitive, PII-free copy `NotificationRewardConsumer`
+    // sends (CONTEXT §3 principles 7 and 8: the message is a pointer, the app
+    // fetches the detail over an authenticated GET). `notifyGrant` is the
+    // existing wrapper around `SmartNotificationIntegrationService.notifyEvent`,
+    // so this runs the SAME fatigue guard — cooldown, duplicate window, quiet
+    // hours, daily and category caps — as every other notification. No new
+    // notification logic is built here.
+    await this.notifyGrant(
+      childId,
+      familyId,
+      'PARENT',
+      'REWARD_GRANTED',
+      'مكافأة جديدة',
+      'حصل طفلك على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.',
+    );
+  }
+
+  /**
+   * B4 — `maxPerDay` / `maxPerWeek` windows, ON THE FAMILY'S CALENDAR.
+   *
+   * The window is a range of CALENDAR DATES, not a range of instants, because
+   * that is what `rewards_ledger_entries.business_date` stores. `businessDate`
+   * came from `FamilyDateService`, the only reader of `Family.timezone` after
+   * B1+B2, and it is the same value stamped on the row — so the cap counts the
+   * days the grants actually belong to rather than re-deriving boundaries that
+   * could disagree with them.
+   *
+   * A ROLLING seven-day window, not a fixed Sat..Fri week: the product has no
+   * "week start" setting, and inventing one would have been a product decision
+   * taken in a repository. Rolling is also the stricter reading of "no more
+   * than N per week" and needs no calendar convention to explain.
+   */
+  private buildCaps(
+    businessDate: string,
+    rules: IRewardRule[],
+    grants: Array<{ source: string }>,
+  ): Map<string, IGrantCap> {
+    const caps = new Map<string, IGrantCap>();
+    const capped = rules.filter(
+      (rule) => (rule.maxPerDay != null || rule.maxPerWeek != null) && grants.some((g) => g.source === `reward_rule:${rule.id}`),
+    );
+    if (capped.length === 0) return caps;
+
+    // `FamilyDateService.addDays` walks the CALENDAR (`YYYY-MM-DD` ->
+    // `YYYY-MM-DD`), never `Date` arithmetic. Subtracting 6 * 86,400,000 ms
+    // would be off by an hour across a DST transition and therefore off by a
+    // DAY at the boundary — the construct B1 removed from the streak
+    // calculator for exactly this reason.
+    const weekStartDate = FamilyDateService.addDays(businessDate, -6);
+
+    for (const rule of capped) {
+      caps.set(`reward_rule:${rule.id}`, {
+        maxPerDay: rule.maxPerDay ?? null,
+        maxPerWeek: rule.maxPerWeek ?? null,
+        businessDate,
+        weekStartDate,
+      });
+    }
+    return caps;
+  }
+
   /** Returns whether a NEW grant actually happened (false when
    * idempotencyKey matched an existing entry — a real duplicate,
    * silently and correctly no-op'd, not an error). */
-  private async grantAmount(childId: string, familyId: string, rewardType: Exclude<RewardType, 'BADGE'>, amount: number, source: string, idempotencyKey?: string): Promise<boolean> {
+  private async grantAmount(childId: string, familyId: string, rewardType: Exclude<RewardType, 'BADGE'>, amount: number, source: string, idempotencyKey?: string, cap?: IGrantCap, businessDate?: string): Promise<boolean> {
     const account = await this.repository.getOrCreateAccount(childId);
     let newLevel: number | undefined;
 
@@ -141,7 +277,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       }
     }
 
-    const granted = await this.repository.applyEarn(childId, rewardType, amount, newLevel, source, idempotencyKey);
+    const granted = await this.repository.applyEarn(childId, rewardType, amount, newLevel, source, idempotencyKey, cap, businessDate);
 
     if (granted && newLevel !== undefined) {
       await this.timeline.record({

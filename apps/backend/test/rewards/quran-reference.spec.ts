@@ -25,6 +25,8 @@ import {
   findSurah,
   isAyahRangeInSurah,
 } from '../../src/shared/rewards/quran';
+import { PROGRAM_CATEGORIES } from '../../src/shared/rewards/program-taxonomy';
+import { ADDITIONAL_REWARD_CATEGORIES } from '../../src/shared/rewards/reward-rule-catalogue';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 
 describe('Quran reference data', () => {
@@ -171,9 +173,21 @@ describeIfDb('the SEEDED quran_surahs table equals the TypeScript constant', () 
     expect(rows.filter((r: any) => r.revelationType === 'MEDINAN')).toHaveLength(28);
   });
 
-  it('seeds the 18 program categories from the brief', async () => {
+  /**
+   * B4: the count is no longer a literal. Migration 0007 added the four
+   * categories the client's list named that 0006 did not have (RELIGION,
+   * FITNESS, FAMILY_CONTRIBUTION, CUSTOM), and it added them as ROWS — which is
+   * the whole reason `reward_program_categories` is a table and not an enum.
+   * Asserting `PROGRAM_CATEGORIES.length + ADDITIONAL_REWARD_CATEGORIES.length`
+   * keeps this test doing its real job (the seed equals the code) and makes it
+   * survive the nineteenth category, which is the property being defended.
+   */
+  it('seeds every program category from the code catalogue — 0006 and 0007 together', async () => {
     const rows = await prisma.rewardProgramCategory.findMany({ orderBy: { sortOrder: 'asc' } });
-    expect(rows).toHaveLength(18);
+    expect(rows).toHaveLength(PROGRAM_CATEGORIES.length + ADDITIONAL_REWARD_CATEGORIES.length);
+    expect(rows.map((r: any) => r.code)).toEqual(
+      expect.arrayContaining([...PROGRAM_CATEGORIES, ...ADDITIONAL_REWARD_CATEGORIES.map((c) => c.code)]),
+    );
     expect(rows.map((r: any) => r.code)).toEqual(
       expect.arrayContaining([
         'QURAN',

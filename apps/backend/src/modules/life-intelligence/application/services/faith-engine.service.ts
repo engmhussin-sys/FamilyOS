@@ -41,12 +41,29 @@ export class FaithEngineService {
     return this.repository.listActivePractices(childId, await this.todayColumn(familyId));
   }
 
+  /**
+   * B4 — `actor`, AND WHY IT HAD TO ARRIVE WITH THE REWARD.
+   *
+   * Until B4 this method took `dateStr` from whoever called it, and
+   * `POST /life-intelligence/self/faith/:practiceId/log` — a DEVICE-token route
+   * — passed `dto.date` straight through. That is PA-B-004's exact shape, and
+   * B1 closed it on the habit and learning routes but not here, for one reason:
+   * FAITH GRANTED NOTHING, so a chosen date bought a chosen row and no more.
+   *
+   * B4 connects faith to the reward engine, which turns the same input into a
+   * chosen IDEMPOTENCY KEY — `faith-practice:{practiceId}:{businessDate}` — and
+   * a chosen key mints unlimited rewards. So the gate lands in the same commit
+   * as the grant, never after it. `'DEVICE'` is the default, i.e. the safe
+   * side: a future call site that forgets to declare an actor gets the derived
+   * date, not the supplied one.
+   */
   async logPractice(
     practiceId: string,
     childId: string,
     familyId: string,
     dateStr?: string,
     progress?: Record<string, unknown>,
+    actor: 'PARENT' | 'DEVICE' = 'DEVICE',
   ): Promise<IFaithPracticeLog> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
@@ -60,9 +77,8 @@ export class FaithEngineService {
     // same day, but the evening ones are the previous UTC day, so the old
     // implementation split a single day's practices across two.
     const timeZone = await this.familyDate.timeZoneOf(familyId);
-    const businessDate = dateStr && isBusinessDate(dateStr)
-      ? dateStr
-      : getBusinessDate(dateStr ?? new Date(), timeZone);
+    const todayStr = getBusinessDate(new Date(), timeZone);
+    const businessDate = this.resolveLogDate(dateStr, todayStr, actor, timeZone);
     const date = FamilyDateService.toDateColumn(businessDate);
     const log = await this.repository.recordLog(practiceId, childId, date, progress);
 
@@ -86,16 +102,73 @@ export class FaithEngineService {
     // own reasoning: a Reward Rules failure never blocks the practice
     // log itself from succeeding.
     try {
+      // LEGACY, KEYLESS, AND NOW UNREACHABLE BY ANY MANAGED RULE. Kept because
+      // a family may hold a pre-B4 wildcard rule that depends on this name.
+      // `practice_logged` is deliberately NOT in `RULE_EVENT_TYPES`, so no
+      // platform default and no parent-authored rule can ever match it — which
+      // is what stops one practice log being paid twice, once here without a
+      // key and once below with one (PA-B-013).
       await this.rewardTrigger.trigger(childId, familyId, {
         engine: 'faith',
         type: 'practice_logged',
         payload: { practiceType: practice.type, streakDays: totalLogsForPractice },
+      });
+
+      // B4 — THE KEYED TRIGGER THAT CONNECTS FAITH.
+      //
+      // THE VERIFICATION CONDITION IS THE ROW ABOVE. `recordLog` has already
+      // written a real `FaithPracticeLog` for (practice, child, business date)
+      // before this line runs, and it is that write — not a timer, not a
+      // client assertion — that the reward is paid for. If it throws, this is
+      // never reached.
+      //
+      // KEY COMPOSITION, and which category it falls into: the key carries a
+      // DAY component, so it belongs to the class Phase A called EXPLOITABLE
+      // rather than STRUCTURALLY IMMUNE. It is replay-safe only because
+      // `businessDate` is a SERVER output — `Family.timezone` applied to the
+      // server clock for a device, or a bounded parent back-fill — which is
+      // exactly the invariant B1 established and the `actor` gate above
+      // enforces. Same category as HABIT_COMPLETED, same defence.
+      await this.rewardTrigger.trigger(childId, familyId, {
+        engine: 'faith',
+        type: 'FAITH_PRACTICE_COMPLETED',
+        payload: {
+          practiceType: practice.type,
+          streakDays: totalLogsForPractice,
+          // Read by a rule that sets a `minVerifiedBy` floor. A practice log is
+          // asserted by whoever called: a parent's own session is PARENT
+          // evidence, a child's device is SELF.
+          verifiedBy: actor === 'PARENT' ? 'PARENT' : 'SELF',
+        },
+        idempotencyKey: `faith-practice:${practiceId}:${businessDate}`,
       });
     } catch {
       // Intentionally swallowed — see comment above.
     }
 
     return log;
+  }
+
+  /**
+   * B1 (PA-B-004) applied to Faith by B4, mirroring
+   * `HabitEngineService.resolveCompletionDate` exactly rather than inventing a
+   * second set of bounds: never the future (a future date pre-mints keys for
+   * days that have not happened), never further back than the score window (a
+   * date beyond it moves no score and no streak, and only widens the key
+   * space).
+   */
+  private resolveLogDate(
+    dateStr: string | undefined,
+    todayStr: string,
+    actor: 'PARENT' | 'DEVICE',
+    timeZone: string,
+  ): string {
+    if (actor !== 'PARENT' || dateStr === undefined) return todayStr;
+
+    const requested = isBusinessDate(dateStr) ? dateStr : getBusinessDate(new Date(dateStr), timeZone);
+    if (requested > todayStr) return todayStr;
+    const earliest = FamilyDateService.addDays(todayStr, -SCORE_WINDOW_DAYS);
+    return requested < earliest ? earliest : requested;
   }
 
   /** Feeds the Faith Score sub-component of the Digital Twin

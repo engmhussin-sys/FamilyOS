@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { LearningEngineService } from '../../src/modules/life-intelligence/application/services/learning-engine.service';
 import { PrismaLearningRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-learning.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
+import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
 import { familyDateProvider } from '../common/family-date.testing';
 
@@ -35,6 +36,10 @@ describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2,
         { provide: PrismaLearningRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        // B4: `completeGoal` writes the goal completion to the SAME Unified
+        // Timeline every other engine writes to — the existing
+        // LIFE_TIMELINE_WRITER token, not a new one.
+        { provide: LIFE_TIMELINE_WRITER, useValue: { record: jest.fn() } },
         // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
         familyDateProvider()
       ],

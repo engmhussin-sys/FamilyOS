@@ -6,9 +6,11 @@ import {
   SQL_APPLY_ACCOUNT_DELTAS,
   SQL_BALANCE_FROM_LEDGER,
   SQL_CLAIM_REDEMPTION,
+  SQL_COUNT_EARN_IN_WINDOW,
   SQL_DEDUCT_COINS_IF_SUFFICIENT,
   SQL_INSERT_EARN_LEDGER_ENTRY,
   SQL_INSERT_REDEEM_LEDGER_ENTRY,
+  SQL_LOCK_GRANT_SCOPE,
   SQL_RECONCILE_ACCOUNT_FROM_LEDGER,
 } from './rewards.sql';
 import {
@@ -20,6 +22,36 @@ import {
   RewardType,
 } from '../../domain/rewards.types';
 import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
+
+/**
+ * B4 — the window a `maxPerDay` / `maxPerWeek` cap is counted over. Both
+ * windows are computed by `RewardsEngineService` from `FamilyDateService`, so
+ * the repository never has to know what a timezone is and there is no second
+ * answer to "which day is it?" (the class of bug B1+B2 removed).
+ */
+export interface IGrantCap {
+  readonly maxPerDay: number | null;
+  readonly maxPerWeek: number | null;
+  /** `YYYY-MM-DD` on the family's calendar — the day being counted. */
+  readonly businessDate: string;
+  /** `YYYY-MM-DD`, six calendar days before `businessDate`. A ROLLING week. */
+  readonly weekStartDate: string;
+}
+
+/** What a parent (or the platform seed) may set on a managed rule. */
+export interface IRewardRuleWriteInput {
+  readonly triggerEngine: string;
+  readonly eventType: string;
+  readonly triggerCondition: Record<string, unknown>;
+  readonly rewardType: RewardType;
+  readonly rewardAmountOrBadgeId: string;
+  readonly maxPerDay: number | null;
+  readonly maxPerWeek: number | null;
+  readonly minVerifiedBy: string | null;
+  readonly category: string | null;
+  readonly labelAr: string | null;
+  readonly isActive: boolean;
+}
 
 @Injectable()
 export class PrismaRewardsRepository {
@@ -51,12 +83,46 @@ export class PrismaRewardsRepository {
    * scenario C, where NULL keys made the unique index vacuous (every
    * NULL is distinct in PostgreSQL) and left keyless paths completely
    * unprotected. */
-  async applyEarn(childId: string, rewardType: RewardType, amount: number, newLevel: number | undefined, source: string, idempotencyKey?: string): Promise<boolean> {
+  async applyEarn(
+    childId: string,
+    rewardType: RewardType,
+    amount: number,
+    newLevel: number | undefined,
+    source: string,
+    idempotencyKey?: string,
+    cap?: IGrantCap,
+    businessDate?: string,
+  ): Promise<boolean> {
     const effectiveKey = idempotencyKey ?? `nokey:${randomUUID()}`;
     // BADGE grants move `stars` by one, matching the original behaviour.
     const delta = rewardType === 'BADGE' ? 1 : amount;
 
     return this.prisma.$transaction(async (tx) => {
+      // B4 — maxPerDay / maxPerWeek, AND WHY THE LOCK IS HERE.
+      //
+      // A cap is a COUNT, and a count-then-insert is the exact read-then-write
+      // shape A2 §7.3 measured letting 8 concurrent identical requests through.
+      // The idempotency key does not help: two DIFFERENT completions (two
+      // different habits) legitimately carry two different keys and would both
+      // pass a naive count.
+      //
+      // `pg_advisory_xact_lock` serialises grants for this (child, rule) pair
+      // and nothing else, and it is released by the transaction, not by us.
+      // The window is one INSERT wide; the lock key is derived from values the
+      // server owns.
+      if (cap) {
+        await tx.$executeRawUnsafe(SQL_LOCK_GRANT_SCOPE, `${childId}:${source}`);
+
+        if (cap.maxPerDay != null) {
+          const dayCount = await this.countInWindow(tx, childId, source, cap.businessDate, cap.businessDate);
+          if (dayCount >= cap.maxPerDay) return false;
+        }
+        if (cap.maxPerWeek != null) {
+          const weekCount = await this.countInWindow(tx, childId, source, cap.weekStartDate, cap.businessDate);
+          if (weekCount >= cap.maxPerWeek) return false;
+        }
+      }
+
       const inserted = await tx.$executeRawUnsafe(
         SQL_INSERT_EARN_LEDGER_ENTRY,
         childId,
@@ -66,6 +132,7 @@ export class PrismaRewardsRepository {
         source,
         effectiveKey,
         tenantIdForWrite(),
+        businessDate ?? null,
       );
 
       if (inserted === 0) {
@@ -93,6 +160,19 @@ export class PrismaRewardsRepository {
 
       return true;
     });
+  }
+
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  private async countInWindow(tx: any, childId: string, source: string, fromDate: string, toDate: string): Promise<number> {
+    const rows = (await tx.$queryRawUnsafe(
+      SQL_COUNT_EARN_IN_WINDOW,
+      childId,
+      source,
+      fromDate,
+      toDate,
+      tenantIdForWrite(),
+    )) as Array<{ n: number | bigint }>;
+    return rows.length > 0 ? Number(rows[0].n) : 0;
   }
 
   /** DP-5 (deterministic recomputation): the balance rebuilt from the
@@ -135,11 +215,126 @@ export class PrismaRewardsRepository {
     }
   }
 
+  /**
+   * BOTH TIERS IN ONE QUERY, and that `OR: [{familyId}, {familyId: null}]` is
+   * not new — it has been here since Sprint 25. B4 changed nothing about it,
+   * which is the point: the platform defaults migration 0007 seeded with
+   * `family_id IS NULL` reach every family, including families created long
+   * before the migration ran, through a read path that already worked and is
+   * already covered by `tenant-extension.integration.spec.ts` (`RewardRule` is
+   * registered SHARED_NULL in `tenant-model-registry.ts:117`).
+   *
+   * Precedence between the two tiers is applied by `selectApplicableRules` in
+   * `rewards-rules.ts` — a pure function, testable without a database.
+   *
+   * B4 DROPPED `isActive: true` FROM THE QUERY, deliberately. `isActive` is
+   * still honoured — `evaluateRewardRules` skips an inactive rule on its first
+   * line — but precedence has to be able to SEE a family's deactivated rule,
+   * because a deactivated family rule is how a family says \"pay nothing for
+   * this engine\". If the query hid it, deactivating the only rule you own
+   * would silently hand the engine back to the platform defaults and keep
+   * paying, which is the opposite of what the parent just asked for.
+   */
   async listActiveRewardRules(familyId: string, triggerEngine: string): Promise<IRewardRule[]> {
     const rows = await this.prisma.rewardRule.findMany({
-      where: { triggerEngine, isActive: true, OR: [{ familyId }, { familyId: null }] },
+      where: { triggerEngine, OR: [{ familyId }, { familyId: null }] },
     });
-    return rows.map((row) => ({
+    return rows.map((row) => this.toRule(row));
+  }
+
+  // --- B4: RewardRule management (PA-B-015) ---------------------------------
+
+  /** Every rule this family can see — its own plus the platform defaults —
+   * so the parent UI can show what is actually in force, not just what the
+   * family typed. */
+  async listRewardRulesForFamily(familyId: string): Promise<IRewardRule[]> {
+    const rows = await this.prisma.rewardRule.findMany({
+      where: { OR: [{ familyId }, { familyId: null }], programId: null },
+      orderBy: [{ familyId: 'asc' }, { triggerEngine: 'asc' }, { eventType: 'asc' }],
+    });
+    return rows.map((row) => this.toRule(row));
+  }
+
+  /** A family-owned rule by id. Returns null for a platform rule and for
+   * another family's rule alike — the tenant extension scopes the read, and a
+   * `familyId: null` row is deliberately excluded so no parent can mutate the
+   * platform tier through this path. */
+  async findFamilyRewardRule(familyId: string, ruleId: string): Promise<IRewardRule | null> {
+    const row = await this.prisma.rewardRule.findFirst({ where: { id: ruleId, familyId, programId: null } });
+    return row ? this.toRule(row) : null;
+  }
+
+  async countFamilyRewardRules(familyId: string): Promise<number> {
+    return this.prisma.rewardRule.count({ where: { familyId, programId: null } });
+  }
+
+  async createRewardRule(familyId: string, createdByUserId: string, input: IRewardRuleWriteInput): Promise<IRewardRule> {
+    const row = await this.prisma.rewardRule.create({
+      data: {
+        familyId,
+        createdByUserId,
+        triggerEngine: input.triggerEngine,
+        eventType: input.eventType,
+        triggerCondition: input.triggerCondition as object,
+        rewardType: input.rewardType,
+        rewardAmountOrBadgeId: input.rewardAmountOrBadgeId,
+        maxPerDay: input.maxPerDay,
+        maxPerWeek: input.maxPerWeek,
+        minVerifiedBy: input.minVerifiedBy,
+        category: input.category,
+        labelAr: input.labelAr,
+        isActive: input.isActive,
+      },
+    });
+    return this.toRule(row);
+  }
+
+  async updateRewardRule(ruleId: string, patch: Partial<IRewardRuleWriteInput>): Promise<IRewardRule> {
+    const row = await this.prisma.rewardRule.update({
+      where: { id: ruleId },
+      data: {
+        ...(patch.rewardAmountOrBadgeId !== undefined ? { rewardAmountOrBadgeId: patch.rewardAmountOrBadgeId } : {}),
+        ...(patch.maxPerDay !== undefined ? { maxPerDay: patch.maxPerDay } : {}),
+        ...(patch.maxPerWeek !== undefined ? { maxPerWeek: patch.maxPerWeek } : {}),
+        ...(patch.minVerifiedBy !== undefined ? { minVerifiedBy: patch.minVerifiedBy } : {}),
+        ...(patch.category !== undefined ? { category: patch.category } : {}),
+        ...(patch.labelAr !== undefined ? { labelAr: patch.labelAr } : {}),
+        ...(patch.isActive !== undefined ? { isActive: patch.isActive } : {}),
+      },
+    });
+    return this.toRule(row);
+  }
+
+  /** DEACTIVATE, never DELETE. A ledger row's `source` is
+   * `reward_rule:<id>`; deleting the rule would orphan the audit trail of
+   * every reward it ever paid. Same reasoning as `deactivateProgramRules`. */
+  async deactivateRewardRule(ruleId: string): Promise<void> {
+    await this.prisma.rewardRule.update({ where: { id: ruleId }, data: { isActive: false } });
+  }
+
+  /** THE ONLY ROUTE BACK TO THE PLATFORM DEFAULTS. `selectApplicableRules`
+   * decides engine ownership by EXISTENCE, so deactivating a rule means "pay
+   * nothing for this engine" and REMOVING it means "go back to how it was". Two
+   * different intentions, two different verbs — a parent should not have to
+   * discover that one of them secretly means the other. */
+  async deleteRewardRule(ruleId: string): Promise<void> {
+    await this.prisma.rewardRule.delete({ where: { id: ruleId } });
+  }
+
+  /** The catalogue a parent picks a category from — read straight out of
+   * `reward_program_categories`, which is a TABLE. Nothing in the grant path
+   * branches on the value, so a nineteenth category is an INSERT. */
+  async listRewardCategories(): Promise<Array<{ code: string; labelAr: string; streakKind: string; sortOrder: number }>> {
+    const rows = await this.prisma.rewardProgramCategory.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    return rows.map((r) => ({ code: r.code, labelAr: r.labelAr, streakKind: r.streakKind, sortOrder: r.sortOrder }));
+  }
+
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  private toRule(row: any): IRewardRule {
+    return {
       id: row.id,
       familyId: row.familyId,
       triggerEngine: row.triggerEngine,
@@ -147,7 +342,13 @@ export class PrismaRewardsRepository {
       rewardType: row.rewardType as IRewardRule['rewardType'],
       rewardAmountOrBadgeId: row.rewardAmountOrBadgeId,
       isActive: row.isActive,
-    }));
+      eventType: row.eventType ?? null,
+      maxPerDay: row.maxPerDay ?? null,
+      maxPerWeek: row.maxPerWeek ?? null,
+      minVerifiedBy: row.minVerifiedBy ?? null,
+      category: row.category ?? null,
+      labelAr: row.labelAr ?? null,
+    };
   }
 
   async listActiveCatalogItems(familyId: string): Promise<IRewardCatalogItem[]> {

@@ -63,6 +63,13 @@ describeIfDb('DA-002 — rewards idempotency and redemption concurrency (real Po
         params.source,
         params.idempotencyKey,
         familyId,
+        // B4: `$8` is `business_date` — the family's calendar day the grant
+        // belongs to, which `maxPerDay` / `maxPerWeek` are counted against.
+        // NULL here on purpose: this suite is about the UNIQUE CONSTRAINT under
+        // concurrency, and the constraint is `(child_id, idempotency_key)` with
+        // no date component. Passing NULL proves the insert still behaves
+        // identically for a caller that has no cap to enforce.
+        null,
       ]);
       if (inserted.rowCount === 0) {
         await client.query('COMMIT');

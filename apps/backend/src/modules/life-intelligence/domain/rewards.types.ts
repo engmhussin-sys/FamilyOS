@@ -85,6 +85,30 @@ export interface IRewardRule {
   rewardType: RewardType;
   rewardAmountOrBadgeId: string;
   isActive: boolean;
+
+  /** B4 (PA-B-015 · PA-B-013). The domain event type this rule answers.
+   *
+   * `null`/absent is the pre-B4 WILDCARD: match anything from `triggerEngine`.
+   * It is kept because F4 companion rows match on `{programId, multiplierBps}`
+   * and because rules seeded before B4 exist. Every MANAGED rule — platform
+   * default or parent-authored — names its type, and a named type is what stops
+   * one rule paying twice for one completion (once for the keyed
+   * `HABIT_COMPLETED` trigger, once for the legacy keyless `habit_completed`
+   * trigger the same engine still fires). */
+  eventType?: string | null;
+  /** `null` = uncapped. Counted on the FAMILY's business day. */
+  maxPerDay?: number | null;
+  /** `null` = uncapped. Counted on the family's rolling business week. */
+  maxPerWeek?: number | null;
+  /** `SELF` | `SENSOR` | `SYSTEM` | `PARENT`. The weakest evidence this rule
+   * will pay for, compared against `CompletionEvent.verifiedBy`. `null` =
+   * accept whatever the producer asserted. */
+  minVerifiedBy?: string | null;
+  /** FK into `reward_program_categories.code`. Carried for reporting only —
+   * NOTHING in the grant path branches on it, which is what keeps the category
+   * set open (CONTEXT: no closed enum in business logic). */
+  category?: string | null;
+  labelAr?: string | null;
 }
 
 /** The event a Reward Rule is evaluated against \u2014 a small, explicit
@@ -104,6 +128,32 @@ export interface IRewardTriggerEvent {
    * — most engines have an obvious one) simply omit this; the
    * request proceeds exactly as it did before this field existed. */
   idempotencyKey?: string;
+
+  /**
+   * B4 — WHICH SIDE OF THE PIPELINE THIS TRIGGER CAME FROM, and the reason it
+   * has to be stated rather than guessed.
+   *
+   * There are two ways a grant happens, and they announce it differently:
+   *
+   *   THE OUTBOX PATH (`POST /events/batch` -> `RewardsCompletionConsumer`)
+   *     emits `REWARD_GRANTED` inside its own `if (granted > 0)`, and
+   *     `NotificationRewardConsumer` turns that into exactly one notification.
+   *     That is F3's architecture and it works.
+   *
+   *   THE DIRECT PATH (`POST /life-intelligence/self/habits/:id/complete` and
+   *     its siblings — the routes the Child App actually calls today, PA-M-034)
+   *     calls `IRewardTriggerWriter.trigger` inside the HTTP request. There is
+   *     no outbox message and therefore NO `REWARD_GRANTED`, so before B4 a
+   *     reward earned on the path every real client uses notified NOBODY. That
+   *     is the 🔴 Phase A recorded against the Notification stage of six chains.
+   *
+   * Setting this to `true` tells the engine "an outbox announcement is already
+   * coming, do not notify". The consumer sets it; nothing else does. Making it
+   * EXPLICIT rather than inferring it from the presence of an idempotency key
+   * or from the event type is deliberate: a wrong inference here produces
+   * either zero notifications or two, and both are silent failures.
+   */
+  announcedViaOutbox?: boolean;
 }
 
 export interface IRewardGrant {

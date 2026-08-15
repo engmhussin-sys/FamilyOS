@@ -84,6 +84,13 @@ export class RewardsCompletionConsumer implements OnModuleInit {
         // The database-level idempotency key. This is what makes a redelivered
         // message grant zero additional rewards.
         idempotencyKey: envelope.idempotencyKey,
+        // B4 — THE ONLY PLACE THIS IS SET. A grant made here is announced by
+        // the `REWARD_GRANTED` outbox message written below, which
+        // `NotificationRewardConsumer` turns into exactly one notification. The
+        // engine must therefore NOT notify again, or one completion through
+        // this pipeline would produce two. The direct `/self/*` callers leave
+        // it unset and the engine notifies for them, because nothing else will.
+        announcedViaOutbox: true,
       });
 
       if (granted === 0) {

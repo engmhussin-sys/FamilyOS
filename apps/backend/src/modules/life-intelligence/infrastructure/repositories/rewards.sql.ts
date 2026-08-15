@@ -41,9 +41,9 @@
  */
 export const SQL_INSERT_EARN_LEDGER_ENTRY = `
 INSERT INTO "rewards_ledger_entries"
-  ("id", "family_id", "child_id", "type", "reward_type", "amount", "delta", "source", "idempotency_key", "created_at")
+  ("id", "family_id", "child_id", "type", "reward_type", "amount", "delta", "source", "idempotency_key", "business_date", "created_at")
 VALUES
-  (gen_random_uuid(), $7::uuid, $1::uuid, 'EARN', $2::"RewardType", $3::int, $4::int, $5::text, $6::text, now())
+  (gen_random_uuid(), $7::uuid, $1::uuid, 'EARN', $2::"RewardType", $3::int, $4::int, $5::text, $6::text, $8::date, now())
 ON CONFLICT ("child_id", "idempotency_key") DO NOTHING`;
 
 /**
@@ -113,6 +113,59 @@ SELECT "reward_type" AS reward_type, COALESCE(SUM("delta"), 0)::int AS balance
   FROM "rewards_ledger_entries"
  WHERE "child_id" = $1::uuid AND "family_id" = $2::uuid
  GROUP BY "reward_type"`;
+
+/**
+ * B4 — how many times THIS RULE has already paid THIS CHILD inside a window of
+ * FAMILY BUSINESS DAYS.
+ *
+ * `source` is `reward_rule:<ruleId>`, composed by `evaluateRewardRules`, so the
+ * count is per-rule: a family holding three rules gets three independent caps
+ * rather than one shared one.
+ *
+ * THE WINDOW IS A RANGE OF `business_date` VALUES, NOT A `created_at` RANGE,
+ * and that is the whole point. `business_date` is what
+ * `FamilyDateService.getBusinessDate(familyId)` returned at grant time — the
+ * same value the idempotency key was built from — so "today" here is the
+ * family's today, decided once, by the one authority B1+B2 established. A
+ * `created_at` range would have compared PostgreSQL's `now()` against
+ * boundaries computed from the application's clock, and mis-bucketed exactly
+ * the hours around local midnight that PA-B-001 was about.
+ *
+ * Both bounds are INCLUSIVE because both are calendar dates: for maxPerDay the
+ * caller passes the same date twice.
+ *
+ * $1 childId · $2 source · $3 fromDate · $4 toDate (both inclusive) · $5 familyId
+ */
+export const SQL_COUNT_EARN_IN_WINDOW = `
+SELECT COUNT(*)::int AS n
+  FROM "rewards_ledger_entries"
+ WHERE "child_id" = $1::uuid
+   AND "family_id" = $5::uuid
+   AND "type" = 'EARN'
+   AND "source" = $2::text
+   AND "business_date" IS NOT NULL
+   AND "business_date" >= $3::date
+   AND "business_date" <= $4::date`;
+
+/**
+ * Serialises cap evaluation for one (child, rule) pair.
+ *
+ * A cap is a COUNT, and count-then-insert is precisely the read-then-write A2
+ * §7.3 proved lets 8 concurrent requests through. The idempotency key cannot
+ * help here: two DIFFERENT completions carry two DIFFERENT keys and both
+ * legitimately pass the unique index, so only a lock can make "at most N per
+ * business day" true under concurrency.
+ *
+ * `pg_advisory_xact_lock` is released by COMMIT/ROLLBACK, never by us, so a
+ * crash inside the transaction cannot leave it held. `hashtextextended` returns
+ * the 64-bit key form and takes a seed, which is a far larger collision space
+ * than 32-bit `hashtext`; a collision would only ever serialise two unrelated
+ * (child, rule) pairs against each other for the width of one INSERT, never
+ * produce a wrong answer.
+ *
+ * $1 lock scope string (`<childId>:reward_rule:<ruleId>`)
+ */
+export const SQL_LOCK_GRANT_SCOPE = `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`;
 
 /** Reconciles the cached account columns to the ledger. $1 childId · $2 familyId */
 export const SQL_RECONCILE_ACCOUNT_FROM_LEDGER = `

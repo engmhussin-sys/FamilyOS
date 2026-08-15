@@ -33,6 +33,8 @@ import { BaselineCalculatorService } from './application/services/baseline-calcu
 import { PatternDetectionService } from './application/services/pattern-detection.service';
 import { AnomalyDetectionService } from './application/services/anomaly-detection.service';
 import { LifeIntelligenceController } from './presentation/controllers/life-intelligence.controller';
+import { RewardRulesController } from './presentation/controllers/reward-rules.controller';
+import { RewardRuleService } from './application/services/reward-rule.service';
 import { LIFE_TIMELINE_WRITER } from './domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
 
@@ -81,7 +83,11 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
  */
 @Module({
   imports: [ChildrenModule, PairingModule, NotificationsModule, AiCoreModule, ConsentCheckModule, BillingModule],
-  controllers: [LifeIntelligenceController],
+  // B4 (PA-B-015): `RewardRulesController` is the controller Phase A found
+  // missing. It reuses this module's existing `PrismaRewardsRepository` — the
+  // same repository the grant path reads rules through — so there is exactly
+  // one owner of the `reward_rules` table.
+  controllers: [LifeIntelligenceController, RewardRulesController],
   providers: [
     HabitEngineService,
     LifeTimelineService,
@@ -106,6 +112,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     PrismaLearningRepository,
     PrismaSmartTaskRepository,
     PrismaRewardsRepository,
+    RewardRuleService,
     PrismaCommunicationRepository,
     PrismaDigitalTwinRepository,
     PrismaDigitalWellbeingRepository,
@@ -126,6 +133,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     FamilyInsightService,
     DigitalWellbeingEngineService,
     SmartNotificationIntegrationService,
+    RewardRuleService,
     LIFE_TIMELINE_WRITER,
     REWARD_TRIGGER_WRITER,
   ],

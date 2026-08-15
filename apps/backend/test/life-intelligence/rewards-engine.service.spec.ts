@@ -5,6 +5,10 @@ import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/inf
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
+import { FamilyDateService } from '../../src/common/time/family-date.service';
+
+/** The family's calendar day, fixed so the assertions can name it. */
+const BUSINESS_DAY = '2026-08-14';
 
 describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4, CLOSES A REAL GAP: zero idempotency existed before this)', () => {
   const repositoryMock = {
@@ -17,6 +21,17 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
   const notificationIntegrationMock = { notifyEvent: jest.fn() };
+  // B4: the engine now counts maxPerDay/maxPerWeek on the FAMILY's business
+  // day, so it depends on the single date authority B1+B2 introduced. Every
+  // rule in this suite is uncapped, so none of these is ever called — which is
+  // itself the assertion that an uncapped rule costs no extra query and no
+  // advisory lock, leaving the pre-B4 hot path exactly as it was.
+  const familyDateMock = {
+    // Resolved ONCE per trigger and stamped onto every ledger row this trigger
+    // writes, so the day a grant belongs to and the day a cap counts are the
+    // same value rather than two derivations.
+    getBusinessDate: jest.fn().mockResolvedValue(BUSINESS_DAY),
+  };
 
   let service: RewardsEngineService;
 
@@ -46,6 +61,7 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
+        { provide: FamilyDateService, useValue: familyDateMock },
       ],
     }).compile();
     service = moduleRef.get(RewardsEngineService);
@@ -58,7 +74,10 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
       const count = await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
 
       expect(count).toBe(1);
-      expect(repositoryMock.applyEarn).toHaveBeenCalledWith(childId, 'XP', 50, undefined, 'reward_rule:rule-1', undefined);
+      // B4: the trailing `undefined` is the CAP argument. This rule declares no
+      // maxPerDay/maxPerWeek, so no cap is built and no advisory lock is taken —
+      // asserting it explicitly keeps the pre-B4 hot path pinned.
+      expect(repositoryMock.applyEarn).toHaveBeenCalledWith(childId, 'XP', 50, undefined, 'reward_rule:rule-1', undefined, undefined, BUSINESS_DAY);
     });
   });
 
@@ -163,8 +182,8 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
       });
 
       expect(count).toBe(1);
-      expect(repositoryMock.applyEarn).toHaveBeenNthCalledWith(1, childId, 'XP', 50, undefined, 'reward_rule:rule-1', 'multi-grant-key:XP:reward_rule:rule-1');
-      expect(repositoryMock.applyEarn).toHaveBeenNthCalledWith(2, childId, 'COINS', 20, undefined, 'reward_rule:rule-2', 'multi-grant-key:COINS:reward_rule:rule-2');
+      expect(repositoryMock.applyEarn).toHaveBeenNthCalledWith(1, childId, 'XP', 50, undefined, 'reward_rule:rule-1', 'multi-grant-key:XP:reward_rule:rule-1', undefined, BUSINESS_DAY);
+      expect(repositoryMock.applyEarn).toHaveBeenNthCalledWith(2, childId, 'COINS', 20, undefined, 'reward_rule:rule-2', 'multi-grant-key:COINS:reward_rule:rule-2', undefined, BUSINESS_DAY);
     });
   });
 
@@ -192,12 +211,71 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
       expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(childId, familyId, expect.objectContaining({ type: 'LEVEL_UP', targetAudience: 'CHILD' }));
     });
 
-    it('a routine (non-level-up) XP grant does NOT notify — not every event should produce a notification', async () => {
+    /**
+     * B4 CHANGED THIS RULE DELIBERATELY, and the change is the point.
+     *
+     * Sprint 16.2 decided a routine XP grant notifies nobody, on the reasoning
+     * that a notification per small grant is spam. That reasoning was sound and
+     * its consequence was not: the DIRECT path (`/self/habits/:id/complete` and
+     * siblings — the only routes any real client calls, PA-M-034) writes no
+     * outbox message, so `REWARD_GRANTED` is never emitted, so
+     * `NotificationRewardConsumer` never runs. A child earning a reward on the
+     * path the product actually uses notified NOBODY. That is the 🔴 Phase A
+     * recorded against the Notification stage of six chains.
+     *
+     * Meanwhile the OUTBOX path already notified on EVERY grant, routine or
+     * not. So the old rule was not "don't spam" — it was "notify on one path
+     * and not the other", which is an asymmetry, not a policy.
+     *
+     * B4's rule: ONE REAL GRANT -> ONE PARENT NOTIFICATION, on both paths,
+     * routed through the SAME `NotificationFatigueGuard` (cooldown, duplicate
+     * window, quiet hours, daily max, category max) that exists precisely to
+     * decide what is too much. Volume control belongs to the guard, not to a
+     * branch that skipped a whole delivery path.
+     */
+    it('a routine XP grant on the DIRECT path notifies the parent exactly once', async () => {
       repositoryMock.applyEarn.mockResolvedValue(true); // small xpRule amount (50), no level threshold crossed
 
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
 
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(1);
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
+        childId,
+        familyId,
+        expect.objectContaining({ type: 'REWARD_GRANTED', targetAudience: 'PARENT' }),
+      );
+      // CONTEXT §3 principle 8: the push carries no child name and no habit
+      // title — it is a pointer, and the app fetches the detail over an
+      // authenticated GET.
+      const sent = notificationIntegrationMock.notifyEvent.mock.calls[0][2];
+      expect(sent.title).toBe('مكافأة جديدة');
+    });
+
+    /**
+     * THE OTHER HALF OF THE SAME RULE, and the reason `announcedViaOutbox`
+     * exists. A grant made by `RewardsCompletionConsumer` is announced by the
+     * `REWARD_GRANTED` outbox message it writes, which
+     * `NotificationRewardConsumer` turns into one notification. If the engine
+     * also notified, one completion through `/events/batch` would produce TWO —
+     * which is PA-B-011's shape, reintroduced by the fix for PA-B-015.
+     */
+    it('a grant announced through the OUTBOX does not notify from the engine — the consumer owns it', async () => {
+      repositoryMock.applyEarn.mockResolvedValue(true);
+
+      await service.processTriggerEvent(childId, familyId, {
+        engine: 'habit-builder',
+        type: 'x',
+        payload: {},
+        idempotencyKey: 'batch-key',
+        announcedViaOutbox: true,
+      });
+
       expect(notificationIntegrationMock.notifyEvent).not.toHaveBeenCalled();
+      // The TIMELINE entry is still written on both paths — it is the half the
+      // outbox path never had.
+      expect(timelineMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'REWARDS', eventType: 'reward_granted' }),
+      );
     });
 
     it('CRITICAL: a duplicate/idempotency-rejected grant (granted === false) does NOT notify', async () => {
@@ -216,11 +294,15 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
       repositoryMock.applyEarn.mockResolvedValueOnce(true);
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'retry-key' });
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(1);
+      // TWO, because this 10,000 XP grant crosses a level threshold: the
+      // milestone LEVEL_UP notification to the child, and B4's single
+      // REWARD_GRANTED notification to the parent. The NUMBER is not the
+      // property under test — the property is that the RETRY below adds none.
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(2);
 
       repositoryMock.applyEarn.mockResolvedValueOnce(false); // the retry — correctly rejected as a duplicate
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'retry-key' });
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(1); // still 1, not 2
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(2); // still 2, not 4
     });
 
     it('CRITICAL: a FAILED reward (real error, not a duplicate) does NOT notify — the error propagates before notification code is ever reached', async () => {

@@ -522,6 +522,34 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
       // Family B's rule is `habit-builder`. An EDUCATION_PROGRESS completion
       // routes to the `learning` engine, so zero rules match, so
       // `processTriggerEvent` returns 0, so no REWARD_GRANTED is emitted.
+      //
+      // B4 (PA-B-015): migration 0007 seeded PLATFORM DEFAULT rules with
+      // `family_id IS NULL`, which is exactly the point of that sprint — a
+      // family that configures nothing now earns for learning. So the premise
+      // of this test ("zero rules match") has to be re-established DELIBERATELY
+      // rather than by the absence that used to produce it. Family B opts out
+      // of the learning engine by owning a DEACTIVATED learning rule:
+      // `selectApplicableRules` decides engine ownership by EXISTENCE, so this
+      // one row suppresses the platform tier, and `evaluateRewardRules` skips
+      // the row itself because it is inactive. Net: zero applicable rules, the
+      // original premise, and the assertions below are untouched.
+      //
+      // This also makes the test cover a second real property for free: a
+      // parent CAN switch an engine's rewards off, and the pipeline honours it
+      // all the way to zero notifications.
+      await sys('opt family B out of the learning engine', () =>
+        prisma.rewardRule.create({
+          data: {
+            familyId: B.familyId,
+            triggerEngine: 'learning',
+            eventType: 'EDUCATION_PROGRESS',
+            triggerCondition: {},
+            rewardType: 'XP',
+            rewardAmountOrBadgeId: '1',
+            isActive: false,
+          },
+        }),
+      );
       const device = await newDevice(B);
       const res = await postBatch(device.token, [
         {

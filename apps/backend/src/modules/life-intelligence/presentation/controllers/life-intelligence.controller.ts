@@ -158,7 +158,9 @@ export class LifeIntelligenceController {
     @Body() dto: LogFaithPracticeDto,
     @CurrentUser() user: IJwtPayload,
   ) {
-    return this.faithEngine.logPractice(practiceId, childId, user.familyId!, dto.date, dto.progress);
+    // PARENT session: `dto.date` is honoured, bounded to [today-30, today] by
+    // the engine — a parent may legitimately back-fill a missed prayer.
+    return this.faithEngine.logPractice(practiceId, childId, user.familyId!, dto.date, dto.progress, 'PARENT');
   }
 
   @Get('faith/:childId/score')
@@ -186,6 +188,25 @@ export class LifeIntelligenceController {
     // B1 (PA-B-004): a parent session may back-date a session log; the engine
     // bounds it to [today-30, today].
     return this.learningEngine.logSession(childId, user.familyId!, dto, 'PARENT');
+  }
+
+  /**
+   * B4 — the GOALS chain's trigger, which did not exist before this sprint.
+   *
+   * `JwtAuthGuard` ONLY, and there is deliberately no `/self/*` sibling: the
+   * whole point of the goal payout is that a parent confirms it. The engine
+   * additionally refuses to complete a goal with fewer than two real logged
+   * sessions, so this route cannot be used to mint the 50-COIN default by
+   * pressing a button.
+   */
+  @Post('learning/:childId/goals/:goalId/complete')
+  @UseGuards(JwtAuthGuard)
+  completeLearningGoal(
+    @Param('childId') childId: string,
+    @Param('goalId') goalId: string,
+    @CurrentUser() user: IJwtPayload,
+  ) {
+    return this.learningEngine.completeGoal(goalId, childId, user.familyId!);
   }
 
   @Get('learning/:childId/progress')
@@ -524,7 +545,12 @@ export class LifeIntelligenceController {
   @UseGuards(DeviceJwtAuthGuard)
   async selfLogFaithPractice(@Param('practiceId') practiceId: string, @Body() dto: LogFaithPracticeDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.faithEngine.logPractice(practiceId, childId, familyId, dto.date, dto.progress);
+    // B4 (PA-B-004, closed here for Faith in the same commit that makes Faith
+    // grant): `dto.date` IS NOT PASSED. This is a DEVICE-token route, and the
+    // date it carried composes the reward idempotency key
+    // `faith-practice:{practiceId}:{day}` — a device that chose the day chose
+    // the key. The day is derived from the family calendar instead.
+    return this.faithEngine.logPractice(practiceId, childId, familyId, undefined, dto.progress, 'DEVICE');
   }
 
   @Get('self/messages')

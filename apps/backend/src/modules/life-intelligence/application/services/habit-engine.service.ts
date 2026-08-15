@@ -181,7 +181,12 @@ export class HabitEngineService {
       await this.rewardTrigger.trigger(childId, familyId, {
         engine: 'habit-builder',
         type: 'HABIT_COMPLETED',
-        payload: { habitId, category: habit.category, isShared: habit.isShared, status },
+        // B4: `verifiedBy` is read by a rule that sets a `minVerifiedBy` floor.
+        // A habit ticked on the child's own device is SELF evidence; the same
+        // completion recorded from a parent's authenticated session is PARENT
+        // evidence. Nothing else in the payload can be mistaken for a
+        // verification claim, and the child cannot set this field.
+        payload: { habitId, category: habit.category, isShared: habit.isShared, status, verifiedBy: actor === 'PARENT' ? 'PARENT' : 'SELF' },
         // B1: `businessDate` is a SERVER output — `Family.timezone` applied to
         // the server clock, or a parent-authorised back-fill inside a bounded
         // window. It is never the raw string a device sent.

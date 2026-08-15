@@ -6,6 +6,7 @@ import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/inf
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
+import { FamilyDateService } from '../../src/common/time/family-date.service';
 
 describe('RewardsEngineService', () => {
   const repositoryMock = {
@@ -24,6 +25,10 @@ describe('RewardsEngineService', () => {
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
   const notificationIntegrationMock = { notifyEvent: jest.fn() };
+  // B4: rule caps are counted on the FAMILY's business day, so the engine now
+  // depends on B1+B2's single date authority. No rule in this suite declares a
+  // cap, so nothing here is ever called.
+  const familyDateMock = { getBusinessDate: jest.fn().mockResolvedValue('2026-08-14') };
   let service: RewardsEngineService;
   const childId = 'child-1';
   const familyId = 'family-1';
@@ -38,6 +43,7 @@ describe('RewardsEngineService', () => {
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
+        { provide: FamilyDateService, useValue: familyDateMock },
       ],
     }).compile();
     service = moduleRef.get(RewardsEngineService);
@@ -89,7 +95,8 @@ describe('RewardsEngineService', () => {
 
       await service.processTriggerEvent(childId, familyId, { engine: 'faith', type: 't', payload: { x: 1 } });
 
-      expect(repositoryMock.applyEarn).toHaveBeenCalledWith(childId, 'BADGE', 1, undefined, 'reward_rule:r1', undefined);
+      // B4: the trailing `undefined` is the CAP argument — this rule declares no maxPerDay/maxPerWeek.
+      expect(repositoryMock.applyEarn).toHaveBeenCalledWith(childId, 'BADGE', 1, undefined, 'reward_rule:r1', undefined, undefined, '2026-08-14');
       expect(timelineMock.record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'badge_awarded' }));
     });
 

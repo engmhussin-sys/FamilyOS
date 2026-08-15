@@ -114,7 +114,13 @@ export class HealthEngineService {
         await this.rewardTrigger.trigger(childId, familyId, {
           engine: 'health',
           type: 'DAILY_GOAL_COMPLETED',
-          payload: { metric: 'hydration', targetMl: target, totalMl: totalToday },
+          // B4: SELF, honestly. The CROSSING is decided server-side (the target
+          // comes from the child's age, the total is summed from stored rows on
+          // the family's business day), but the millilitres themselves are
+          // child-reported. Claiming SENSOR or SYSTEM here would overstate the
+          // evidence, and a family that wants a stronger bar can raise the
+          // rule's `minVerifiedBy` and log hydration from the parent app.
+          payload: { metric: 'hydration', targetMl: target, totalMl: totalToday, verifiedBy: 'SELF' },
           idempotencyKey: `daily-goal:hydration:${childId}:${todayStr}`,
         });
 
@@ -196,7 +202,7 @@ export class HealthEngineService {
         await this.rewardTrigger.trigger(childId, familyId, {
           engine: 'health',
           type: 'DAILY_GOAL_COMPLETED',
-          payload: { metric: 'activity', targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes },
+          payload: { metric: 'activity', targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes, verifiedBy: 'SELF' },
           idempotencyKey: `daily-goal:activity:${childId}:${todayStr}`,
         });
 

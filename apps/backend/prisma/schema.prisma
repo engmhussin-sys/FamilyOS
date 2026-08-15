@@ -1579,6 +1579,22 @@ model RewardsLedgerEntry {
   /// per-call key instead, which keeps manual/admin grants working
   /// while making the unique index total over the table.
   idempotencyKey String @map("idempotency_key")
+  /// B4 — WHICH FAMILY DAY THIS GRANT BELONGS TO.
+  ///
+  /// `FamilyDateService.getBusinessDate(familyId)` at grant time — the same
+  /// value the idempotency key above was composed from. `maxPerDay` and
+  /// `maxPerWeek` are counted against THIS column and never against a
+  /// `created_at` range: `created_at` is PostgreSQL's `now()` while a day
+  /// boundary is computed from the application's clock, and comparing the two
+  /// mis-buckets exactly the hours around local midnight that PA-B-001 was
+  /// about. It also means a family changing its timezone does not silently
+  /// re-bucket its entire reward history.
+  ///
+  /// NULLABLE: rows written before B4 have no business date and must not be
+  /// invented one. They count against no cap, which is correct — no cap existed
+  /// when they were written. `REDEEM` rows leave it NULL too; a redemption is
+  /// not rate-limited by a rule.
+  businessDate DateTime? @map("business_date") @db.Date
   createdAt DateTime   @default(now()) @map("created_at")
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
@@ -1588,6 +1604,7 @@ model RewardsLedgerEntry {
   @@unique([childId, idempotencyKey])
   @@index([childId, createdAt])
   @@index([familyId])
+  @@index([childId, source, businessDate])
   @@map("rewards_ledger_entries")
 }
 
@@ -1685,11 +1702,41 @@ model RewardRule {
   /// touching them.
   multiplierBps       Int?       @map("multiplier_bps")
 
+  /// B4 (PA-B-015 · PA-B-013) — THE MANAGEMENT COLUMNS.
+  ///
+  /// `eventType` is the load-bearing one. A rule used to match on
+  /// `triggerEngine` alone, so ONE habit-builder rule matched BOTH the keyed
+  /// `HABIT_COMPLETED` trigger and the legacy keyless `habit_completed` trigger
+  /// that the same engine still fires — two ledger rows for one completion, and
+  /// the keyless one carried a `nokey:<uuid>` key no unique index can catch.
+  /// A rule that names its event type matches exactly one of them.
+  ///
+  /// NULL = wildcard, the pre-B4 behaviour, kept because F4 companion rows are
+  /// matched by `{programId, multiplierBps}` and must stay untouched.
+  eventType           String?    @map("event_type") @db.VarChar(60)
+  /// FK into `reward_program_categories.code` — a TABLE, never a PostgreSQL
+  /// enum, so the client's category list grows by INSERT. NULL on F4 companion
+  /// rows (the PROGRAM carries the category there).
+  category            String?    @map("category") @db.VarChar(40)
+  labelAr             String?    @map("label_ar")
+  /// Counted on the FAMILY's business day / business week
+  /// (`FamilyDateService.getBusinessDayRange`), never on UTC and never on the
+  /// container clock. NULL = uncapped.
+  maxPerDay           Int?       @map("max_per_day")
+  maxPerWeek          Int?       @map("max_per_week")
+  /// SELF | SENSOR | SYSTEM | PARENT — the weakest evidence this rule will pay
+  /// for. Compared against `CompletionEvent.verifiedBy`. NULL = accept any.
+  minVerifiedBy       String?    @map("min_verified_by") @db.VarChar(10)
+  createdByUserId     String?    @map("created_by_user_id") @db.Uuid
+  updatedAt           DateTime   @default(now()) @updatedAt @map("updated_at")
+
   family Family? @relation(fields: [familyId], references: [id], onDelete: Cascade)
   program RewardProgram? @relation(fields: [programId], references: [id], onDelete: Cascade)
+  categoryRef RewardProgramCategory? @relation(fields: [category], references: [code])
 
   @@index([familyId, isActive])
   @@index([programId])
+  @@index([triggerEngine, isActive])
   @@map("reward_rules")
 }
 
@@ -2281,6 +2328,11 @@ model RewardProgramCategory {
   createdAt  DateTime @default(now()) @map("created_at")
 
   programs RewardProgram[]
+  /// B4: a managed `RewardRule` also names a category, from this same table.
+  /// The client's list (Religion, Fitness, Family contribution, Custom) arrived
+  /// as four INSERTs in migration 0007 — no enum was widened, no business logic
+  /// branches on the value.
+  rules    RewardRule[]
 
   @@map("reward_program_categories")
 }
