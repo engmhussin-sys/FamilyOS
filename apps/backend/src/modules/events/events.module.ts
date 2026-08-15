@@ -12,6 +12,7 @@ import { RewardsCompletionConsumer } from './application/consumers/rewards-compl
 import { NotificationRewardConsumer } from './application/consumers/notification-reward.consumer';
 import { StreakDetectionConsumer } from './application/consumers/streak-detection.consumer';
 import { EventsController } from './presentation/controllers/events.controller';
+import { OutboxOperationsController } from './presentation/controllers/outbox-operations.controller';
 import { DeviceEventsThrottlerGuard } from './presentation/guards/device-events-throttler.guard';
 
 /**
@@ -46,7 +47,10 @@ import { DeviceEventsThrottlerGuard } from './presentation/guards/device-events-
     // a device token becomes a (childId, familyId) without trusting the body.
     PairingModule,
   ],
-  controllers: [EventsController],
+  // PC-B-002 — the operator surface for a delivery that died. The relay was
+  // already provided and exported here; the controller only reads it, so no
+  // provider changes and no second relay instance.
+  controllers: [EventsController, OutboxOperationsController],
   providers: [
     InProcessEventBus,
     { provide: EVENT_PUBLISHER, useExisting: InProcessEventBus },

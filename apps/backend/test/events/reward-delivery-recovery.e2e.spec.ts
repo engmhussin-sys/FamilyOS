@@ -654,6 +654,28 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
       expect(await count('outboxMessage', { familyId: A.familyId, status: 'DEAD' })).toBe(0);
     });
 
+    it('the operator route surfaces the same gauge, and refuses an unauthenticated caller', async () => {
+      const anonymous = await request(http).get('/system/outbox/dead-letters');
+      expect(anonymous.status).toBe(401);
+
+      const authorised = await request(http)
+        .get('/system/outbox/dead-letters')
+        .set({ 'x-internal-admin-key': process.env.INTERNAL_ADMIN_API_KEY as string });
+      expect(authorised.status).toBe(200);
+
+      const body = authorised.body.data ?? authorised.body;
+      // The backlog gauge comes back ALONGSIDE the dead letters, because
+      // "12 dead and 0 pending" and "12 dead and 4,000 pending" are different
+      // incidents and an operator should not need two calls to tell them apart.
+      expect(body.backlog).toBeDefined();
+      expect(Array.isArray(body.deadLetters.byEventType)).toBe(true);
+
+      const refusedRecover = await request(http)
+        .post('/system/outbox/dead-letters/recover')
+        .send({ eventType: 'REWARD_GRANTED' });
+      expect(refusedRecover.status).toBe(401);
+    });
+
     it('RECOVERY IS IDEMPOTENT: running it again requeues nothing and changes nothing', async () => {
       const before = await chain(A);
       expect(await relay.recoverDeadLetters({ eventType: 'REWARD_GRANTED', familyId: A.familyId })).toBe(0);
