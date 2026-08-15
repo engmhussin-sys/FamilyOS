@@ -13,6 +13,7 @@ import { CorrelationIdMiddleware } from './common/middleware/correlation-id.midd
 import { TenantContextInterceptor } from './common/tenancy/tenant-context.interceptor';
 import { AuthModule } from './modules/auth/auth.module';
 import { ChildrenModule } from './modules/children/children.module';
+import { FamiliesModule } from './modules/families/families.module';
 import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
 import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
@@ -73,6 +74,11 @@ import { RewardsEngineModule } from './modules/rewards-engine/rewards-engine.mod
     // ONE implementation of "which calendar day is it for this family".
     TimeModule,
     AuthModule,
+    // PHASE C. Leaf module owning the family-membership surface (roster,
+    // ownership transfer, co-parent removal). Placed next to ChildrenModule
+    // because it is the same layer: the family graph itself, not an engine
+    // over it.
+    FamiliesModule,
     ChildrenModule,
     ScreenTimeModule,
     AiAssistantModule,

@@ -394,6 +394,14 @@ model Family {
 
 /// Join table: which Users belong to which Family, and with what role.
 /// Supports co-parenting (two parents, one family) from day one.
+///
+/// PHASE C (A4 SA-005): `role` is no longer a label. It is read by
+/// `assertRoleAllowed()` on every authenticated request (via the signed
+/// `familyRole` JWT claim) and re-read from THIS TABLE, inside the mutating
+/// transaction, by every destructive operation. Migration 0009 adds a PARTIAL
+/// UNIQUE INDEX -- one live OWNER per family -- which Prisma's schema language
+/// cannot express (no `WHERE` on `@@unique`), so it lives in SQL only. Read
+/// 0009_rbac_family_ownership/migration.sql before changing anything here.
 model FamilyMember {
   id        String     @id @default(uuid()) @db.Uuid
   familyId  String     @map("family_id") @db.Uuid
