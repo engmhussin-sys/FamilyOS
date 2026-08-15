@@ -128,131 +128,30 @@ jobs:
       - name: Build
         run: npx vite build
 
-  child-app:
-    name: Child Agent (Flutter)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/child-app
-    steps:
-      - uses: actions/checkout@v4
-
-      # FIX 2 of 5 (audit §10.1): there was no setup-java step at all.
-      # gradle-wrapper.properties pins Gradle 8.3, and Gradle could not run
-      # on JDK 21 until 8.5 — so on a runner defaulting to 21 this job died
-      # with "Unsupported class file major version 65" before compiling a
-      # single line. Must come BEFORE flutter-action.
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      # FIX 1 of 5: `channel: stable` alone is unpinned, so the effective
-      # Flutter version changed every fortnight. Flutter 3.27+ defaults
-      # compileSdk to 35, which AGP 8.1.1 (settings.gradle) rejects outright.
-      # See .github/workflows/build-apk.yml for the full version rationale.
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.24.5"
-          channel: stable
-          cache: true
-
-      - run: flutter pub get
-
-      # FIX 4 of 5: was `--fatal-infos`, which fails on informational lints.
-      # The tree has never been analyzed even once, so this starts
-      # non-blocking to keep the rest of the pipeline observable.
-      # TODO(F2): remove `continue-on-error` and restore `--fatal-infos`
-      # once the analyzer reports zero. That flip is the real MA-001 gate.
-      - name: Static analysis
-        run: flutter analyze --no-fatal-infos
-        continue-on-error: true
-
-      # FIX 5 of 5: `dart format --set-exit-if-changed` failed with
-      # certainty — 369 lines in this app exceed 80 characters (911 across
-      # both apps, audit MA-014). Relaxed to a non-blocking report so it
-      # surfaces the diff without blocking every commit.
-      # TODO(F2): run `dart format .` once, commit the result, then restore
-      # `--set-exit-if-changed` and drop `continue-on-error`. Formatting is
-      # worth gating on — but only after a single normalising commit, not by
-      # failing 911 pre-existing lines onto whoever pushes next.
-      - name: Format check (reporting only — see comment)
-        run: dart format --output=none .
-        continue-on-error: true
-
-      # Still expected to be red until the 58 cases are triaged; kept
-      # non-blocking for now so the build step below is always reached.
-      # TODO(F2): make blocking (MA-011).
-      - name: Unit tests
-        run: flutter test
-        continue-on-error: true
-
-      # HARD GATE — deliberately not tolerant.
-      # F2 (audit MA-004): --dart-define=API_BASE_URL is mandatory on every
-      # `flutter build apk` in this repository. Without it the APK builds
-      # and cannot reach a backend, and an artifact nobody can log into is
-      # not evidence of anything. The fallback value points at the Android
-      # emulator's host alias, which is the one host the debug network
-      # security config permits in cleartext.
-      - name: Build (debug APK, no signing needed for CI verification)
-        run: flutter build apk --debug --dart-define=API_BASE_URL=${{ vars.DEV_API_BASE_URL || 'http://10.0.2.2:3000/api/v1' }}
-
-      # FIX 3 of 5: the job produced no artifact, so even a successful build
-      # left nothing anyone could install.
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-child-app-debug-${{ github.sha }}
-          path: apps/child-app/build/app/outputs/flutter-apk/app-debug.apk
-          retention-days: 30
-          if-no-files-found: error
-
-  # FIX (audit MA-028): there was NO parent-app job at all — 6,388 lines and
-  # 26 screens with zero CI coverage.
+  # =========================================================================
+  # FLUTTER — PHASE C.
   #
-  # The APK build itself lives in build-apk.yml because it needs the
-  # GOOGLE_SERVICES_JSON secret (MA-015). This job covers everything that
-  # does NOT need Firebase config: resolution, analysis, and tests. That is
-  # most of the value and it runs on every PR, including from forks.
-  parent-app:
-    name: Parent App (Flutter)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/parent-app
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.24.5"
-          channel: stable
-          cache: true
-
-      - run: flutter pub get
-
-      # TODO(F2): make blocking, as above.
-      - name: Static analysis
-        run: flutter analyze --no-fatal-infos
-        continue-on-error: true
-
-      - name: Format check (reporting only — see child-app comment)
-        run: dart format --output=none .
-        continue-on-error: true
-
-      # This app has ZERO test files today (audit §8). The step is here so
-      # the first test someone writes is executed automatically rather than
-      # needing a CI change too. `flutter test` exits non-zero when it finds
-      # no tests, hence continue-on-error until the first one lands.
-      # TODO(F2): make blocking once tests exist (MA-011).
-      - name: Unit tests
-        run: flutter test
-        continue-on-error: true
+  # This job used to be two hand-maintained copies (child-app, parent-app),
+  # both with `continue-on-error` on `flutter analyze`, on `dart format` and
+  # on `flutter test`, and neither building the parent APK at all. Every one
+  # of those TODO(F2) markers is now discharged: the gate is strict, and it
+  # lives in exactly ONE file so the two workflows cannot drift apart.
+  #
+  # .github/workflows/build-apk.yml is that file. It runs, for BOTH apps:
+  #   flutter pub get -> flutter analyze -> flutter test
+  #     -> flutter build apk --debug -> upload APK
+  # fails on analyzer errors, test failures or build failures, and captures
+  # the full output of every stage as an artifact and into the job summary so
+  # that one run answers everything instead of stopping at the first error.
+  #
+  # `secrets: inherit` passes GOOGLE_SERVICES_JSON through when it exists. Its
+  # absence no longer blocks the parent app — see that workflow's Firebase
+  # step and apps/parent-app/android/app/build.gradle.
+  # =========================================================================
+  flutter:
+    name: Flutter (parent-app + child-app)
+    uses: ./.github/workflows/build-apk.yml
+    secrets: inherit
 
   docker:
     name: Docker Build (Sprint 9 — Production Image)

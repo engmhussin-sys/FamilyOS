@@ -163,17 +163,30 @@ def check_workflows() -> None:
         if not name.endswith((".yml", ".yaml")):
             continue
         text = open(os.path.join(wf_dir, name), encoding="utf-8").read()
-        for line in text.splitlines():
-            stripped = line.strip()
-            # Skip YAML comments: this workflow's own header prose talks
-            # about `flutter build apk` at length.
-            if "flutter build apk" not in line or stripped.startswith("#"):
+
+        # PHASE C: the naive line-by-line form of this check produced seven
+        # false positives the moment build-apk.yml was rewritten, because it
+        # matched (a) YAML `- name:` step labels, (b) `echo` lines inside job
+        # summaries, and (c) the first physical line of a shell command split
+        # across several lines with a trailing `\`. All three are text ABOUT a
+        # build, not a build. So: join shell line-continuations first, then
+        # require the match to look like an actual invocation.
+        joined = re.sub(r"\\\n\s*", " ", text)
+        for raw in joined.splitlines():
+            line = raw.strip()
+            if "flutter build apk" not in line:
                 continue
+            if line.startswith("#"):
+                continue                       # YAML comment / prose
+            if re.match(r"^-?\s*name\s*:", line):
+                continue                       # a step label
+            if re.match(r"^(echo|printf)\b", line):
+                continue                       # job-summary text, not a command
             builds += 1
             if "--dart-define=API_BASE_URL=" not in line:
-                fail(f"{name}: `flutter build apk` without --dart-define=API_BASE_URL -> {line.strip()}")
+                fail(f"{name}: `flutter build apk` without --dart-define=API_BASE_URL -> {line}")
             else:
-                ok(f"{name}: {line.strip()}")
+                ok(f"{name}: {line[:110]}")
     if builds == 0:
         fail("no `flutter build apk` invocation found in any workflow")
 
