@@ -26,7 +26,29 @@ class PushRegistrationService {
 
   final PairingApi _pairingApi;
 
+  /// PHASE C — the client half of the Firebase decoupling in
+  /// `android/app/build.gradle`. When the Gradle build ran without a real
+  /// `google-services.json`, `Firebase.initializeApp()` threw and the catch
+  /// below swallowed it — correct behaviour, but indistinguishable in the
+  /// logs from a genuine Firebase outage. This flag makes the two states
+  /// legible to whoever reads a crash report or a CI job summary.
+  ///
+  /// Pass `--dart-define=ENABLE_PUSH=false` on a build that was deliberately
+  /// produced without Firebase config. DEFAULT IS TRUE: nothing about the
+  /// normal build changes, and no existing behaviour is removed.
+  static const bool pushEnabled =
+      bool.fromEnvironment('ENABLE_PUSH', defaultValue: true);
+
   Future<void> initializeAndRegister() async {
+    if (!pushEnabled) {
+      debugPrint(
+        'PushRegistrationService: disabled by --dart-define=ENABLE_PUSH=false. '
+        'This build has no Firebase Cloud Messaging: no FCM token is requested, '
+        '/pairing/parent-device/push-token is never called, and no parent push '
+        'notification can be delivered to this device. Everything else works.',
+      );
+      return;
+    }
     try {
       await Firebase.initializeApp();
     } catch (e) {

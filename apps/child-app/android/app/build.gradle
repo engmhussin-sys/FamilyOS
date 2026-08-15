@@ -29,7 +29,29 @@ android {
     // what this project's own MainActivity.kt package declaration
     // already uses: com.aifamilycoach.child_app).
     namespace "com.aifamilycoach.child_app"
-    compileSdk flutter.compileSdkVersion
+    // ---------------------------------------------------------------
+    // PA-M-016 — SDK LEVELS ARE PINNED TO LITERALS, NOT TO THE FLUTTER
+    // VERSION.
+    //
+    // These were `flutter.compileSdkVersion` / `flutter.targetSdkVersion` /
+    // `flutter.minSdkVersion`, which resolve from whatever Flutter SDK
+    // happens to be installed. That makes the Android API levels a function
+    // of a DATE rather than of this commit: Flutter 3.24.x resolves
+    // compileSdk to 34, Flutter 3.27+ resolves it to 35, and AGP 8.1.1
+    // (android/settings.gradle) refuses compileSdk > 34 outright with
+    // "compileSdk 35 requires Android Gradle Plugin 8.6.0 or higher".
+    //
+    // The literals below are exactly what Flutter 3.24.5 — the version
+    // .github/workflows/ci.yml and build-apk.yml pin — resolves to today,
+    // so this is a no-op for the pinned toolchain and a hard stop for any
+    // unpinned one. If a future Flutter bump is wanted, these three numbers
+    // and the AGP version move together, in one reviewed commit.
+    //
+    // ndkVersion is deliberately LEFT on flutter.ndkVersion: its correct
+    // literal cannot be verified without a Flutter SDK, and a wrong NDK pin
+    // fails as an opaque download error rather than a legible one.
+    // ---------------------------------------------------------------
+    compileSdk 34
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -47,21 +69,22 @@ android {
 
     defaultConfig {
         applicationId "com.aifamilycoach.child_app"
-        // RECOVERY NOTE (Sprint 17.3): deliberately using Flutter's own
-        // standard flutter.minSdkVersion rather than guessing a specific
-        // number. The existing Manifest declares
-        // android:foregroundServiceType="specialUse" on
-        // ChildGuardForegroundService — a real Android 14 (API 34)
-        // concept — while MainActivity.kt's own Build.VERSION.SDK_INT
-        // checks suggest the app is meant to run on a wider range of
-        // OS versions with graceful degradation. Choosing the exact
-        // right minSdk here without being able to run a real build in
-        // this environment risks a wrong guess that's harder to debug
-        // than Flutter's own build-time warning would be — left as the
-        // one deliberate, low-risk default, flagged here for the first
-        // real `flutter build apk` run to confirm or correct.
-        minSdk flutter.minSdkVersion
-        targetSdk flutter.targetSdkVersion
+        // PHASE C, superseding the Sprint 17.3 recovery note that said this
+        // was "deliberately flutter.minSdkVersion rather than guessing":
+        // 21 is not a guess, it is exactly the value Flutter 3.24.5 (the
+        // version both workflows pin) resolves flutter.minSdkVersion to.
+        // Writing it down changes nothing about today's build and stops a
+        // Flutter bump from silently moving it.
+        //
+        // The Manifest's android:foregroundServiceType="specialUse" on
+        // ChildGuardForegroundService is an Android 14 (API 34) concept, but
+        // it is a TARGET-level concern, not a minimum: MainActivity.kt's own
+        // Build.VERSION.SDK_INT checks are what let this run below 34, and
+        // targetSdk 34 below is what makes the specialUse declaration
+        // meaningful. The first real build is still the thing that confirms
+        // this — nothing here has been compiled.
+        minSdk 21
+        targetSdk 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
