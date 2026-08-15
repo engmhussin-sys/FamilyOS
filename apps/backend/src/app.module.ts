@@ -37,6 +37,7 @@ import { ConfigurationModule } from './config/configuration.module';
 import { LifeIntelligenceModule } from './modules/life-intelligence/life-intelligence.module';
 import { EventsModule } from './modules/events/events.module';
 import { RewardsEngineModule } from './modules/rewards-engine/rewards-engine.module';
+import { SchedulerModule } from './modules/scheduler/scheduler.module';
 
 @Module({
   imports: [
@@ -111,6 +112,10 @@ import { RewardsEngineModule } from './modules/rewards-engine/rewards-engine.mod
     // same reason: it depends on the backbone (OutboxWriter, EVENT_SUBSCRIBER,
     // ConsumerIdempotency) and nothing in the backbone depends on it.
     RewardsEngineModule,
+    // PHASE C P4 (PA-B-031): the scheduler. Registering the module only builds
+    // the graph; the poller is started by `main.ts`, exactly like the outbox
+    // relay, so instantiating AppModule in a test does not start a timer.
+    SchedulerModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -104,7 +104,7 @@ describe('PHASE C P4 — retention targets', () => {
   it('covers materially more than the five tables A2 measured', () => {
     // A2 §9.1: «التغطية: 5 جداول من 60 (8%)». This is the number that has to
     // move, and it is asserted rather than claimed.
-    expect(RETENTION_COVERED_TABLES.length).toBeGreaterThanOrEqual(10);
+    expect(RETENTION_COVERED_TABLES.length).toBeGreaterThanOrEqual(11);
   });
 
   it('never deletes an outbox message that has not been delivered', () => {
@@ -125,13 +125,24 @@ describe('PHASE C P4 — retention targets', () => {
     expect(events?.extraPredicate).toContain(`om."status" <> 'PUBLISHED'`);
   });
 
+  it('never deletes a job_run that is still RUNNING', () => {
+    const runs = RETENTION_TARGETS.find((t) => t.table === 'job_runs');
+    expect(runs?.extraPredicate).toContain(`"status" <> 'RUNNING'`);
+  });
+
   describe('audit-log security classification', () => {
     /** Every `action: '...'` literal written anywhere in src/. */
     const actions = (() => {
       const found = new Set<string>();
       for (const file of walk(path.join(ROOT, 'src'))) {
         const text = fs.readFileSync(file, 'utf8');
-        for (const m of text.matchAll(/action:\s*'([a-z][a-z0-9._]*)'/g)) found.add(m[1]);
+        // Two shapes: the `action:` property every AuditService caller passes,
+        // and the first positional argument of the scheduler controller's own
+        // `recordAudit` helper. Missing the second is how a whole subsystem's
+        // audit actions escape classification.
+        for (const m of text.matchAll(/(?:action:\s*|recordAudit\(\s*)'([a-z][a-z0-9._]*)'/g)) {
+          found.add(m[1]);
+        }
       }
       return [...found].sort();
     })();
@@ -175,6 +186,7 @@ describe('PHASE C P4 — retention targets', () => {
         'auth.login',
         'auth.refresh_reuse_detected',
         'authz.break_glass.opened',
+        'scheduler.job.manual_run',
       ]) {
         expect(SECURITY_AUDIT_ACTION_PREFIXES.some((p) => action.startsWith(p))).toBe(true);
       }

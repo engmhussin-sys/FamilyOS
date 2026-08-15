@@ -389,6 +389,9 @@ model Family {
   quizAssignments QuizAssignment[]
   achievementEvidence AchievementEvidence[]
 
+  // -- PHASE C P4 (scheduler): one row per family-scoped job execution. --
+  jobRuns JobRun[]
+
   @@map("families")
 }
 
@@ -2842,4 +2845,152 @@ model AchievementEvidence {
   @@index([familyId, achievementId])
   @@index([retainUntil])
   @@map("achievement_evidence")
+}
+
+// ============================================================
+// PHASE C — P4: THE SCHEDULER (PA-B-031)
+//
+// THE DEFECT THIS CLOSES, stated as a measurement rather than as a complaint:
+// before these two tables there was NO recurring execution mechanism in this
+// repository other than `OutboxRelay`'s own `setInterval`. Not `@nestjs/schedule`,
+// not BullMQ, not a cron entry, not a `Procfile` worker. Everything written to
+// be run "periodically" — `DataRetentionEnforcementService.enforceAll()`,
+// `HabitEngineService.markMissedHabits()` — had ZERO production callers, which
+// means retention was a policy document with an unexecuted implementation
+// underneath it, and `habit_completions.status = 'MISSED'` was a value the
+// vocabulary allowed and no code path ever wrote.
+//
+// WHY POSTGRES AND NOT A NEW QUEUE. Identical reasoning to ADR-007 and to the
+// outbox relay's own transport note: the durable state a scheduler needs IS a
+// table (a run history you can query is not optional — it is requirement §3
+// "observable"), and the exclusion a scheduler needs across replicas is a
+// conditional UPDATE plus `pg_try_advisory_xact_lock`, both of which this
+// database already provides and this codebase already uses
+// (`rewards.sql.ts:168`). BullMQ would have added a second datastore holding
+// authoritative state, a second retry policy, and a second place a job can be
+// stuck. `@nestjs/schedule` would have added cron parsing and NOTHING else —
+// no lock, no history, no per-family calendar — and cron parsing is the one
+// piece a family-scoped scheduler cannot use anyway, because "02:00" for a
+// Cairo family and "02:00" for a Riyadh family are different instants and no
+// server-side crontab can express both.
+// ============================================================
+
+/// THE JOB REGISTRY AND ITS SCHEDULING STATE — one row per named job.
+///
+/// TENANCY: GLOBAL, and the reason is the same one written next to
+/// `FeatureFlag`: this is platform configuration, not tenant data. A job
+/// DEFINITION belongs to the deployment; a job RUN may belong to a family, and
+/// that is what `JobRun.family_id` is for. Giving this table a `family_id`
+/// would mean either one registry row per family (60,000 rows describing one
+/// piece of code) or a NULL that means nothing.
+///
+/// The row is the LEASE as well as the schedule. `locked_by`/`locked_at` are
+/// claimed by a conditional UPDATE — the same primitive
+/// `SQL_CLAIM_OUTBOX_BATCH` uses — so two replicas ticking at the same
+/// millisecond cannot both run the job, and a replica that dies mid-run
+/// releases its claim by the lease going stale rather than by anything having
+/// to notice it died.
+model ScheduledJob {
+  /// The code-side identifier. Primary key on purpose: a job is named, not
+  /// numbered, and the name is what an operator types.
+  name       String  @id @db.VarChar(60)
+  /// PLATFORM (one execution covers every tenant) | FAMILY (the sweep fans out
+  /// to one execution per family, on that family's calendar).
+  scope      String  @db.VarChar(20)
+  /// How often the SWEEP runs. For a FAMILY job this is the granularity at
+  /// which families are re-checked against their own local clock, NOT the
+  /// cadence at which any one family is processed — that is once per family
+  /// business day, enforced by `job_runs`' unique key.
+  cadenceSeconds Int  @map("cadence_seconds")
+  /// FAMILY jobs only: the family-LOCAL hour (0-23) after which the previous
+  /// business day is considered closed and may be rolled over. NULL for
+  /// PLATFORM jobs.
+  localHour  Int?    @map("local_hour") @db.SmallInt
+  enabled    Boolean @default(true)
+
+  nextRunAt      DateTime  @default(now()) @map("next_run_at")
+  lastStartedAt  DateTime? @map("last_started_at")
+  lastFinishedAt DateTime? @map("last_finished_at")
+  /// SUCCEEDED | FAILED — the visible failure state requirement §3.
+  lastStatus     String?   @map("last_status") @db.VarChar(20)
+  lastError      String?   @map("last_error") @db.VarChar(500)
+  lastDurationMs Int?      @map("last_duration_ms")
+  lastAffectedRows Int?    @map("last_affected_rows")
+  /// Drives the exponential backoff AND is the alert signal: a job whose
+  /// consecutive failure count is climbing is broken even while the process is
+  /// healthy.
+  consecutiveFailures Int  @default(0) @map("consecutive_failures")
+
+  lockedBy   String?   @map("locked_by") @db.VarChar(60)
+  lockedAt   DateTime? @map("locked_at")
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  runs JobRun[]
+
+  @@index([enabled, nextRunAt])
+  @@map("scheduled_jobs")
+}
+
+/// THE RUN HISTORY — started/finished/failed, duration, affected rows.
+/// Requirement §3 "observable", as a queryable table rather than as log lines
+/// nobody can aggregate.
+///
+/// TENANCY: PLATFORM_ANNOTATED. `family_id IS NULL` means "a platform-wide
+/// execution not attributable to any one household" (the retention sweep, the
+/// dead-letter gauge) and such rows are invisible to every tenant — only
+/// SystemContext reads them. A FAMILY-scoped run stamps the tenant, because
+/// the runner re-enters `runWithTenant({ familyId })` before executing it, in
+/// exactly the way `OutboxRelay.dispatch` does.
+///
+/// IDEMPOTENCY IS A DATABASE CONSTRAINT, NOT A CHECK IN CODE
+/// (CONTEXT §3 principle 6). `@@unique([jobName, familyId, businessDate])` is
+/// what makes "run the Cairo family's daily rollover for 2026-01-15" happen
+/// exactly once no matter how many sweeps see it as due, how many replicas are
+/// running, or how many times an operator presses the manual trigger.
+/// PostgreSQL treats NULLs as distinct in a unique index, so PLATFORM runs
+/// (both columns NULL) are free to accumulate one row per execution — which is
+/// precisely the history an operator wants for those.
+///
+/// WHAT IS DELIBERATELY NOT IN THIS TABLE: the deleted content. `details` holds
+/// per-target COUNTS ({"notifications": 412}) and never a row, an id, a body,
+/// an email or a child's name. A retention log that records what it deleted has
+/// re-created the data it was asked to destroy.
+model JobRun {
+  id       String  @id @default(uuid()) @db.Uuid
+  familyId String? @map("family_id") @db.Uuid
+  jobName  String  @map("job_name") @db.VarChar(60)
+  /// The family business date this run CLOSES. `@db.Date`, stored as UTC
+  /// midnight and interpreted on the family's calendar — the storage
+  /// convention `FamilyDateService.toDateColumn` documents. NULL for PLATFORM
+  /// runs, which close no calendar day.
+  businessDate DateTime? @map("business_date") @db.Date
+
+  /// RUNNING | SUCCEEDED | FAILED
+  status   String   @db.VarChar(20)
+  /// Increments on every retry of the same (job, family, businessDate).
+  attempt  Int      @default(1)
+  /// Which process executed it — the same shape as `outbox_messages.locked_by`.
+  workerId String   @map("worker_id") @db.VarChar(60)
+  /// MANUAL when an operator pressed the button, SCHEDULE otherwise. An audit
+  /// question ("who caused this delete?") that the run history can answer.
+  trigger  String   @default("SCHEDULE") @db.VarChar(20)
+
+  startedAt    DateTime  @default(now()) @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+  durationMs   Int?      @map("duration_ms")
+  affectedRows Int       @default(0) @map("affected_rows")
+  /// COUNTS ONLY. Never content. See the model docstring.
+  details      Json?
+  error        String?   @db.VarChar(1000)
+
+  family Family?      @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  job    ScheduledJob @relation(fields: [jobName], references: [name], onDelete: Cascade)
+
+  @@unique([jobName, familyId, businessDate])
+  @@index([jobName, startedAt])
+  @@index([familyId, jobName])
+  @@index([status, startedAt])
+  @@map("job_runs")
 }

@@ -151,6 +151,17 @@ export const PLATFORM_ANNOTATED_MODELS: ReadonlySet<TenantModelName> = new Set([
   'AnalyticsEvent',
   // A support request can arrive from someone who is not logged in.
   'SupportRequest',
+  // PHASE C P4 (scheduler). A run of `data-retention-sweep` covers every
+  // household at once and belongs to none of them, so `family_id IS NULL` is
+  // the honest value and the row must NOT be readable by a tenant — a family
+  // learning that a platform sweep deleted 412,000 rows tells it about other
+  // families. A run of `family-daily-rollover` DOES belong to one household:
+  // the runner re-enters `runWithTenant({ familyId })` before executing it, so
+  // the extension stamps the tenant on the insert exactly as it would for an
+  // HTTP request, and that family (and only that family) can read its own
+  // rollover history. Both meanings in one table is precisely what this class
+  // is for.
+  'JobRun',
 ]);
 
 /**
@@ -177,6 +188,10 @@ export const GLOBAL_MODELS: ReadonlyMap<TenantModelName, string> = new Map([
   ['PlanDefinition', 'Global price/feature catalogue. Read-only for tenants.'],
   ['BadgeDefinition', 'Global badge catalogue. Ownership lives in ChildBadgeAward, which IS tenant-scoped.'],
   ['FeatureFlag', 'Platform configuration. Per-family targeting is a value inside `enabled_family_ids`, not a row-level tenant.'],
+  [
+    'ScheduledJob',
+    'PHASE C P4: the job REGISTRY — one row per named piece of code, holding its cadence, its enabled flag and its lease. Exactly the FeatureFlag case: platform configuration owned by the deployment, not by a household. Giving it a family_id would mean either one registry row per family (sixty thousand rows describing one job) or a NULL that means nothing. The per-family half of a scheduled job lives in JobRun.family_id, which IS tenant-annotated.',
+  ],
   [
     'Organization',
     'SECOND, PARALLEL TENANT AXIS (B2B). schema.prisma states the constraint explicitly: zero FK from these tables into Family and zero FK from Family into them. They are keyed on `organization_id`, not `family_id`, and are unreachable from any family-scoped route today. Scoping them to a family would be wrong, not merely unnecessary — see F2 report for the deliberate decision and the follow-up it implies.',

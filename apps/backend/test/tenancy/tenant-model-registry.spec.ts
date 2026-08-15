@@ -65,8 +65,13 @@ describe('tenant model registry', () => {
   // server-owned question bank that closes PA-B-017), `QuizAssignment` and
   // `AchievementEvidence` (both STRICT — the second is a recording of a
   // child's voice and STRICT is the only defensible class for it).
-  it('the schema still has 73 models — the number this classification was built against', () => {
-    expect(prismaModels).toHaveLength(73);
+  // PHASE C P4: 73 -> 75. Migration 0011 adds `ScheduledJob` (GLOBAL — the job
+  // REGISTRY, platform configuration owned by the deployment, exactly the
+  // FeatureFlag case) and `JobRun` (PLATFORM_ANNOTATED — a platform-wide sweep
+  // has `family_id IS NULL` and must be invisible to tenants, while a
+  // family-scoped rollover stamps the household that owns it).
+  it('the schema still has 75 models — the number this classification was built against', () => {
+    expect(prismaModels).toHaveLength(75);
   });
 
   it.each([...STRICT_TENANT_MODELS])(
@@ -121,10 +126,15 @@ describe('tenant model registry', () => {
   // platform sample bank every family draws from, the same mechanism
   // `RewardRule` has used since Sprint 25. GLOBAL is unchanged at 12: B5 adds
   // no un-tenanted table.
+  // PHASE C P4: STRICT is unchanged at 54 — the scheduler adds no strictly
+  // tenant-scoped table. SHARED_NULL+PLATFORM 6 -> 7 (`JobRun`) and GLOBAL
+  // 12 -> 13 (`ScheduledJob`). Bumping these numbers is the intended workflow:
+  // the two tests above still fail for a model added WITHOUT a classification,
+  // so the census cannot be satisfied by editing this line alone.
   it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008', () => {
     expect(STRICT_TENANT_MODELS.size).toBe(54);
-    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(6);
+    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(7);
     expect(SELF_TENANT_MODELS.size).toBe(1);
-    expect(GLOBAL_MODELS.size).toBe(12);
+    expect(GLOBAL_MODELS.size).toBe(13);
   });
 });

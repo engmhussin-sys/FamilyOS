@@ -9,6 +9,7 @@ import { AppModule } from './app.module';
 import { applyGlobalHttpPipeline } from './common/http/global-pipeline';
 import { configureTrustProxy } from './common/http/trust-proxy';
 import { OutboxRelay } from './modules/events/application/outbox.relay';
+import { SchedulerService } from './modules/scheduler/application/scheduler.service';
 
 /**
  * Sprint 4 (Observability) — CLOSES A REAL GAP: before this, a real
@@ -84,6 +85,15 @@ async function bootstrap(): Promise<void> {
   // `enableShutdownHooks()` above already calls its `onModuleDestroy`, which
   // clears the timer, so SIGTERM stops the poller before Prisma disconnects.
   app.get(OutboxRelay).start();
+
+  // PHASE C P4 (PA-B-031): the scheduler, started HERE and for the identical
+  // reason. Before this line, `DataRetentionEnforcementService.enforceAll()`
+  // and `HabitEngineService.markMissedHabits()` had zero production callers —
+  // retention was a policy document with an unexecuted implementation beneath
+  // it, which Phase B classified as a compliance condition rather than a gap.
+  // Every replica may call this; the `scheduled_jobs` lease decides which one
+  // actually runs each job.
+  app.get(SchedulerService).start();
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);

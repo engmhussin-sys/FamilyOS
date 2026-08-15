@@ -65,7 +65,26 @@ export type SystemReason =
    * therefore cannot read another family's rows even though the relay that
    * woke it could see them all.
    */
-  | 'OUTBOX_RELAY';
+  | 'OUTBOX_RELAY'
+  /**
+   * PHASE C P4 (PA-B-031). The scheduler's own bookkeeping: claiming a
+   * `scheduled_jobs` lease, enumerating the families a FAMILY-scoped job must
+   * fan out to, and writing the platform half of `job_runs`. No per-request
+   * tenant exists on a timer tick, exactly as with `OUTBOX_RELAY`.
+   *
+   * The narrowness is the control, and it is the same narrowness: the bypass
+   * covers the CLAIM, the FAN-OUT ENUMERATION and the PLATFORM run row. The
+   * moment a family-scoped job body is about to execute, the runner enters
+   * `runWithTenant({ familyId })`, so `markMissedHabits` and everything it
+   * reaches run under the ordinary tenant extension with deny-by-default
+   * intact. A rollover cannot touch another household's habits even though the
+   * loop that scheduled it could see every household.
+   *
+   * NOTE that the RETENTION job body deliberately does NOT re-enter a tenant:
+   * a retention sweep is cross-tenant by definition and runs under
+   * `DATA_RETENTION_JOB`, the reason that already existed for exactly it.
+   */
+  | 'SCHEDULED_JOB';
 
 export interface SystemContext {
   readonly kind: 'SYSTEM';

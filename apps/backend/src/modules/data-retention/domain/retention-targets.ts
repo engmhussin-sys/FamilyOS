@@ -256,6 +256,18 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
     rationale:
       'The event log grows one row per device event forever. THE PREDICATE IS THE WHOLE SAFETY ARGUMENT: `outbox_messages.domain_event_id` is ON DELETE CASCADE, so deleting a domain event with an undelivered message attached destroys a delivery that was still going to happen — silently, and exactly for the events that are already in trouble. The NOT EXISTS makes an event deletable only once every message derived from it is PUBLISHED. Ninety days also keeps the replay-protection window (`domain_events (family_id, idempotency_key)`) far wider than any client retry.',
   },
+  {
+    key: 'job_runs',
+    table: 'job_runs',
+    timeColumn: 'started_at',
+    retentionDays: 90,
+    mechanism: 'HARD_DELETE',
+    tenantScoped: true,
+    decision: 'ENGINEERING_DEFAULT',
+    extraPredicate: `"status" <> 'RUNNING'`,
+    rationale:
+      "THE SCHEDULER'S OWN HISTORY, swept by the scheduler. A scheduler introduced to enforce retention that then creates an unbounded table would be committing the exact defect it was built to fix, and 90 days of run history is far more than the operational question it answers («did last night's sweep run, and what did it delete?»). RUNNING rows are excluded so a slow job in flight cannot have its own claim row deleted underneath it. Deleting a SUCCEEDED row does release the once-per-business-day unique key for that day — which is harmless twice over: 90 days is longer than any catch-up window `closableBusinessDate` can produce, and every job body is independently idempotent anyway.",
+  },
 ];
 
 /** The tables this schedule covers, for the coverage figure the report quotes. */
