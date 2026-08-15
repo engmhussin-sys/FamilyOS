@@ -786,14 +786,31 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
     it('the claim is safe under concurrent workers — SKIP LOCKED hands each row to one of them', async () => {
       await resetChildState(A);
       const device = await newDevice(A);
-      // Five distinct habit completions, one per day, so five distinct keys.
+      // CHANGED IN B1 (PA-B-003). This used to manufacture five distinct keys by
+      // sending five different `localDate` values from the client while the
+      // events were 60 SECONDS apart — which is the exploit itself, written as
+      // a fixture. The server now derives the day from `occurredAt`, so five
+      // events one minute apart are ONE day and therefore one key.
+      //
+      // Five distinct keys now come from five distinct HABITS, which is a thing
+      // a device cannot fabricate: each habit id is checked for existence and
+      // ownership before its completion row is written.
+      const habitIds: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const created = await request(http)
+          .post(`/life-intelligence/habits/${A.childId}`)
+          .set({ Authorization: `Bearer ${A.parentToken}` })
+          .send({ title: `F3 Concurrent Habit ${i}`, category: 'LEARNING' });
+        habitIds.push(created.body.id);
+      }
+
       await postBatch(
         device.token,
-        [0, 1, 2, 3, 4].map((i) =>
+        habitIds.map((habitId, i) =>
           habitEvent(A, {
             clientEventId: `concurrent:seq:${i}`,
-            localDate: new Date(NOON.getTime() - i * DAY_MS).toISOString().slice(0, 10),
             occurredAt: new Date(NOON.getTime() - i * 60_000),
+            payload: { habitId },
           }),
         ),
       );
@@ -898,15 +915,24 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
 
   describe('notification fatigue rules genuinely suppress', () => {
     /** Grants a reward for a fresh day and returns the notification delta. */
+    /**
+     * CHANGED IN B1 (PA-B-003). `dayOffset` used to move only the client's
+     * `localDate` while `occurredAt` moved by SECONDS — a different day
+     * asserted by the device, on the same real instant. That is exactly the
+     * replay the sprint closes, so it no longer produces a second key.
+     *
+     * `occurredAt` now moves by whole days, which is what "a different day"
+     * means to a server that derives the date. It stays inside the 48h past
+     * bound `validate()` enforces, so `dayOffset` is usable for 0 and 1 — which
+     * is all these fatigue cases need.
+     */
     async function grantOnDay(t: Tenant, dayOffset: number): Promise<number> {
       const before = await notificationCount(t);
       const device = await newDevice(t);
-      const day = new Date(NOON.getTime() - dayOffset * DAY_MS).toISOString().slice(0, 10);
       await postBatch(device.token, [
         habitEvent(t, {
           clientEventId: `fatigue:${dayOffset}:${Date.now()}`,
-          localDate: day,
-          occurredAt: new Date(NOON.getTime() - dayOffset * 1000),
+          occurredAt: new Date(NOON.getTime() - dayOffset * DAY_MS),
         }),
       ]);
       await drainOutbox();
@@ -1142,6 +1168,7 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
     });
 
     it('rejects one bad event without taking down its valid siblings', async () => {
+      await resetChildState(B);
       const res = await postBatch(device.token, [
         {
           clientEventId: 'mixed:unknown',
@@ -1165,7 +1192,11 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
           clientEventId: 'mixed:good',
           type: 'HABIT_COMPLETED',
           occurredAt: new Date().toISOString(),
-          localDate: '2026-01-05',
+          // CHANGED IN B1: this used to carry `localDate: '2026-01-05'`, an
+          // arbitrary client date that guaranteed a fresh key. The date is now
+          // derived, so today's completion of B's habit is the SAME key as the
+          // one an earlier case in this describe already accepted — hence the
+          // reset, which is honest about why a fresh key exists.
           payload: { habitId: B.habitId },
         },
       ]);
@@ -1205,10 +1236,13 @@ describeIfDb('F3 — event pipeline end to end (real PostgreSQL, real Redis, rea
     });
 
     it('replays the whole batch from the Idempotency-Key cache without re-processing', async () => {
+      // CHANGED IN B1: the fixture used to guarantee a fresh idempotency key
+      // with `localDate: '2026-02-02'`. Client dates no longer create keys, so
+      // the freshness now comes from resetting the tenant's event state — which
+      // is what the test always actually needed.
+      await resetChildState(B);
       const key = `f3-batch-${Date.now()}`;
-      const events = [
-        habitEvent(B, { clientEventId: 'batchreplay:1', localDate: '2026-02-02' }),
-      ];
+      const events = [habitEvent(B, { clientEventId: 'batchreplay:1' })];
 
       const first = await postBatch(device.token, events, key);
       expect(first.body.data.accepted).toBe(1);

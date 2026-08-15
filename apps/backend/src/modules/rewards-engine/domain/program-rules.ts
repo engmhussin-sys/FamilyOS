@@ -19,6 +19,11 @@
  * NON-PUNITIVE (CONTEXT §3 principle 7): every message below is a statement of
  * fact plus a way forward. There is no «ممنوع» and no «تجاوزت».
  */
+import {
+  addBusinessDays,
+  businessAgeInYears,
+  getBusinessDate,
+} from '../../../common/time/family-date';
 import type { ProgramDifficulty, ProgramFrequency } from '../../../shared/rewards/program-taxonomy';
 
 export interface ProgramRuleContext {
@@ -113,25 +118,40 @@ export function checkProgramEligibility(input: ProgramEligibilityInput): RuleVio
   return null;
 }
 
-/** Whole years, floored, on the family-local calendar day. */
-export function ageInYears(dateOfBirth: Date, asOf: Date): number {
-  let years = asOf.getUTCFullYear() - dateOfBirth.getUTCFullYear();
-  const beforeBirthday =
-    asOf.getUTCMonth() < dateOfBirth.getUTCMonth() ||
-    (asOf.getUTCMonth() === dateOfBirth.getUTCMonth() && asOf.getUTCDate() < dateOfBirth.getUTCDate());
-  if (beforeBirthday) years -= 1;
-  return Math.max(0, years);
+/**
+ * B2 (PA-B-001). All three functions below took a `Date` and answered in UTC.
+ * They now take the family's IANA zone as an explicit, REQUIRED argument — not
+ * an optional one with a UTC default, because an optional timezone is a
+ * timezone that will be omitted, and the omission is the bug.
+ */
+
+/** Whole years, floored, on the family's calendar day. */
+export function ageInYears(dateOfBirth: Date, asOf: Date, timeZone: string): number {
+  return businessAgeInYears(dateOfBirth, asOf, timeZone);
 }
 
-/** `YYYY-MM-DD`, UTC. The family-local date is a known open risk (see the
- * report's `افتراضات ومخاطر مفتوحة`); the server is single-timezone today and
- * pretending otherwise here would hide that. */
-export function localDateString(d: Date): string {
-  return d.toISOString().slice(0, 10);
+/**
+ * `YYYY-MM-DD` on the family's calendar.
+ *
+ * The previous implementation was `d.toISOString().slice(0, 10)` with a comment
+ * conceding that the family-local date was "a known open risk" and that
+ * "pretending otherwise here would hide that". The concession was honest and
+ * the consequence was real: this one function is the root of `maxPerDay`, so a
+ * child in Cairo completing a program at 00:30 was counted against YESTERDAY's
+ * limit and blocked, and the same child at 21:30 could complete TOMORROW's.
+ */
+export function localDateString(d: Date, timeZone: string): string {
+  return getBusinessDate(d, timeZone);
 }
 
-/** The 7-day window `maxPerWeek` is counted over, as `YYYY-MM-DD` bounds. */
-export function weekWindow(now: Date): { from: string; to: string } {
-  const from = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
-  return { from: localDateString(from), to: localDateString(now) };
+/**
+ * The 7-day window `maxPerWeek` is counted over, as `YYYY-MM-DD` bounds.
+ *
+ * B2: the window used to be `now - 6*86_400_000`, i.e. six times twenty-four
+ * hours. Across a DST transition that is not six days. It is now six CALENDAR
+ * days back from today's business date, which is what "this week" means.
+ */
+export function weekWindow(now: Date, timeZone: string): { from: string; to: string } {
+  const to = getBusinessDate(now, timeZone);
+  return { from: addBusinessDays(to, -6), to };
 }

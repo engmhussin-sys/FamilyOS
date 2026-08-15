@@ -5,6 +5,8 @@ import { PrismaLearningRepository } from '../../infrastructure/repositories/pris
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { ICreateLearningGoalInput, ICreateLearningSessionInput, ILearningGoal, ILearningProgressSummary, ILearningSession } from '../../domain/learning.types';
 import { computeCurrentStreak } from './streak-calculator';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate, isBusinessDate } from '../../../../common/time/family-date';
 
 const PROGRESS_WINDOW_DAYS = 30;
 const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100];
@@ -48,6 +50,7 @@ export class LearningEngineService {
   constructor(
     private readonly repository: PrismaLearningRepository,
     private readonly childrenService: ChildrenService,
+    private readonly familyDate: FamilyDateService,
     @Inject(REWARD_TRIGGER_WRITER) private readonly rewardTrigger: IRewardTriggerWriter,
   ) {}
 
@@ -61,15 +64,34 @@ export class LearningEngineService {
     return this.repository.listActiveGoals(childId);
   }
 
-  async logSession(childId: string, familyId: string, input: Omit<ICreateLearningSessionInput, 'childId'>): Promise<ILearningSession> {
+  /**
+   * B1 (PA-B-004) + B2. `input.date` used to be a device-supplied string that
+   * went straight into the reward idempotency key
+   * (`education-session:{child}:{subject}:{date}`) — the same replay exploit as
+   * PA-B-003, on a route outside `/events/batch` and outside its throttler.
+   * `actor` now decides whether it is honoured at all, exactly as in
+   * `HabitEngineService.completeHabit`, and DEVICE is the default.
+   */
+  async logSession(
+    childId: string,
+    familyId: string,
+    input: Omit<ICreateLearningSessionInput, 'childId'>,
+    actor: 'PARENT' | 'DEVICE' = 'DEVICE',
+  ): Promise<ILearningSession> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    const session = await this.repository.createSession({ ...input, childId });
+
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const todayStr = getBusinessDate(new Date(), timeZone);
+    const sessionDateStr = this.resolveSessionDate(input.date, todayStr, actor, timeZone);
+    // The resolved business date replaces whatever the caller sent. The
+    // repository anchors it with `new Date(input.date)`, and a bare
+    // `YYYY-MM-DD` parses as UTC midnight — the `@db.Date` storage convention.
+    const session = await this.repository.createSession({ ...input, childId, date: sessionDateStr });
 
     // Sprint 16.3 Priority 2 — CLOSES A REAL GAP: best-effort, same
     // discipline as every other engine — a Reward Rules failure must
     // never block the session log itself, which already succeeded above.
     try {
-      const sessionDateStr = new Date(input.date).toISOString().slice(0, 10);
       await this.rewardTrigger.trigger(childId, familyId, {
         engine: 'learning',
         type: 'EDUCATION_TASK_COMPLETED',
@@ -82,9 +104,8 @@ export class LearningEngineService {
         idempotencyKey: `education-session:${childId}:${input.subject}:${sessionDateStr}`,
       });
 
-      const since = this.daysAgo(30);
+      const since = this.daysAgo(30, timeZone);
       const sessionDates = await this.repository.findDistinctSessionDates(childId, since);
-      const todayStr = this.daysAgo(0).toISOString().slice(0, 10);
       const streakDays = computeCurrentStreak(sessionDates, todayStr);
       if (STREAK_MILESTONES.includes(streakDays)) {
         await this.rewardTrigger.trigger(childId, familyId, {
@@ -107,22 +128,35 @@ export class LearningEngineService {
   async getProgressSummary(childId: string, familyId: string): Promise<ILearningProgressSummary> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const since = this.daysAgo(PROGRESS_WINDOW_DAYS);
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const since = this.daysAgo(PROGRESS_WINDOW_DAYS, timeZone);
     const totalSessions = await this.repository.countSessionsInWindow(childId, since);
     const totalMinutes = await this.repository.sumSessionMinutesInWindow(childId, since);
     const averageAssessmentScore = await this.repository.averageAssessmentScoreInWindow(childId, since);
 
     const sessionDates = await this.repository.findDistinctSessionDates(childId, since);
-    const todayStr = this.daysAgo(0).toISOString().slice(0, 10);
-    const streakDays = computeCurrentStreak(sessionDates, todayStr);
+    const streakDays = computeCurrentStreak(sessionDates, getBusinessDate(new Date(), timeZone));
 
     return { childId, windowDays: PROGRESS_WINDOW_DAYS, totalSessions, totalMinutes, averageAssessmentScore, streakDays };
   }
 
-  private daysAgo(days: number): Date {
-    const now = new Date();
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    d.setUTCDate(d.getUTCDate() - days);
-    return d;
+  private daysAgo(days: number, timeZone: string): Date {
+    return FamilyDateService.toDateColumn(
+      FamilyDateService.addDays(getBusinessDate(new Date(), timeZone), -days),
+    );
+  }
+
+  /** B1 (PA-B-004): the same bounded-back-fill rule the Habit engine applies. */
+  private resolveSessionDate(
+    dateStr: string | undefined,
+    todayStr: string,
+    actor: 'PARENT' | 'DEVICE',
+    timeZone: string,
+  ): string {
+    if (actor !== 'PARENT' || dateStr === undefined) return todayStr;
+    const requested = isBusinessDate(dateStr) ? dateStr : getBusinessDate(new Date(dateStr), timeZone);
+    if (requested > todayStr) return todayStr;
+    const earliest = FamilyDateService.addDays(todayStr, -PROGRESS_WINDOW_DAYS);
+    return requested < earliest ? earliest : requested;
   }
 }

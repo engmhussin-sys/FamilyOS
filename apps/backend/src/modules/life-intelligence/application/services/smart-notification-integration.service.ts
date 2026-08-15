@@ -5,6 +5,8 @@ import { NOTIFICATION_REPOSITORY, type INotificationRepository } from '../../../
 import { FamilyCommunicationService } from './family-communication.service';
 import { evaluateSmartNotificationCandidates, type ISmartNotificationSignals } from './smart-notification-decision-engine';
 import { evaluateFatigue, type ICandidateNotification, type IRecentNotification } from './notification-fatigue-guard';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessTimeHHMM, getStartOfBusinessDay } from '../../../../common/time/family-date';
 
 export interface INotificationOutcome {
   type: string;
@@ -48,6 +50,7 @@ export class SmartNotificationIntegrationService {
     @Inject(NOTIFICATION_REPOSITORY) private readonly notificationRepository: INotificationRepository,
     @Inject(RUNTIME_ALERT_REPOSITORY) private readonly runtimeAlertRepository: IRuntimeAlertRepository,
     private readonly familyCommunication: FamilyCommunicationService,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   /** The signal-batch entry point (Sprint 16.1 Phase 3, unchanged
@@ -114,9 +117,18 @@ export class SmartNotificationIntegrationService {
     history: IRecentNotification[],
   ): Promise<INotificationOutcome> {
     const now = new Date();
-    const currentLocalTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    // B2 (PA-B-002), THE SERVER-LOCAL CLASS. This line was
+    // `now.getHours()` — the CONTAINER's wall clock, not UTC and not the
+    // family's. The default quiet-hours policy is 21:00-07:00; evaluated
+    // against UTC for a Cairo family in summer that is 00:00-10:00 LOCAL, so
+    // notifications were muted through the whole morning and allowed through
+    // the three hours before local bedtime. The feature was not merely
+    // imprecise, it was inverted exactly where it matters.
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const currentLocalTime = getBusinessTimeHHMM(now, timeZone);
+    const businessDayStart = getStartOfBusinessDay(now, timeZone);
 
-    const decision = evaluateFatigue(candidate, history, now, currentLocalTime);
+    const decision = evaluateFatigue(candidate, history, now, currentLocalTime, businessDayStart);
 
     if (!decision.allowed) {
       // QUIET_HOURS means "still valid, just not right now" —

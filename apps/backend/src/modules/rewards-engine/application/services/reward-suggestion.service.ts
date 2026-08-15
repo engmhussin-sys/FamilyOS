@@ -12,6 +12,7 @@ import { findSurah } from '../../../../shared/rewards/quran';
 import { describeTargetSpec } from '../../../../shared/rewards/target-spec';
 import { ageInYears } from '../../domain/program-rules';
 import { PrismaRewardProgramRepository } from '../../infrastructure/repositories/prisma-reward-program.repository';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { RewardProgramService } from './reward-program.service';
 import type { CreateRewardProgramDto } from '../dto/reward-program.dto';
 
@@ -54,6 +55,7 @@ export class RewardSuggestionService {
     private readonly repo: PrismaRewardProgramRepository,
     private readonly programs: RewardProgramService,
     @Inject(AI_PROVIDER) private readonly ai: IAIProvider,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   /**
@@ -65,7 +67,11 @@ export class RewardSuggestionService {
       throw new NotFoundException({ code: 'CHILD_NOT_FOUND', messageAr: 'الطفل غير موجود.' });
     }
 
-    const age = ageInYears(new Date(child.dateOfBirth), now);
+    // B2: the suggestion engine reads the same calendar as the engine that
+    // will enforce `minAge` if the parent accepts a draft — otherwise a child
+    // could be offered a program on the day they turn eligible and then be
+    // refused it, or the reverse.
+    const age = ageInYears(new Date(child.dateOfBirth), now, await this.familyDate.timeZoneOf(familyId));
     const existing = await this.repo.listProgramsForChild(childId);
     const usedCategories = new Set<string>(existing.map((p: any) => String(p.category)));
 

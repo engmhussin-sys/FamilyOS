@@ -9,6 +9,7 @@ import { ChildrenService } from '../../src/modules/children/application/services
 import { HealthEngineService } from '../../src/modules/life-intelligence/application/services/health-engine.service';
 import { HabitEngineService } from '../../src/modules/life-intelligence/application/services/habit-engine.service';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe('SmartTaskEngineService', () => {
   const repositoryMock = { createMany: jest.fn(), listForChildOnDate: jest.fn(), findById: jest.fn(), updateStatus: jest.fn() };
@@ -28,6 +29,8 @@ describe('SmartTaskEngineService', () => {
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: HealthEngineService, useValue: healthEngineMock },
         { provide: HabitEngineService, useValue: habitEngineMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(SmartTaskEngineService);
@@ -183,6 +186,8 @@ describe('LearningEngineService', () => {
         { provide: PrismaLearningRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(LearningEngineService);

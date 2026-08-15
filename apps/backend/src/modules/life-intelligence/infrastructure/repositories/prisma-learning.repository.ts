@@ -63,6 +63,8 @@ export class PrismaLearningRepository {
       select: { date: true },
       distinct: ['date'],
     });
+    // B2, DELIBERATELY TIMEZONE-FREE: `LearningSession.date` is a `@db.Date`
+    // already holding a business date. See PrismaHabitRepository for the rule.
     return rows.map((r: { date: Date }) => r.date.toISOString().slice(0, 10));
   }
 

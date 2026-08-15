@@ -6,6 +6,8 @@ import { ISmartTask, ISmartTaskContext } from '../../domain/smart-task.types';
 import { generateSmartTasks } from './smart-task-rules';
 import { HealthEngineService } from './health-engine.service';
 import { HabitEngineService } from './habit-engine.service';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate } from '../../../../common/time/family-date';
 
 /**
  * Architecture 1.0 §3/§5: AI-generated, context-driven, DYNAMIC
@@ -40,6 +42,7 @@ export class SmartTaskEngineService {
     private readonly childrenService: ChildrenService,
     private readonly healthEngine: HealthEngineService,
     private readonly habitEngine: HabitEngineService,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   async generateForToday(childId: string, familyId: string, context: Omit<ISmartTaskContext, 'childId'>): Promise<number> {
@@ -48,7 +51,7 @@ export class SmartTaskEngineService {
     const suggestions = generateSmartTasks({ ...context, childId });
     if (suggestions.length === 0) return 0;
 
-    return this.repository.createMany(childId, suggestions, this.today(), context as unknown as Record<string, unknown>);
+    return this.repository.createMany(childId, suggestions, await this.todayColumn(familyId), context as unknown as Record<string, unknown>);
   }
 
   /** CLOSES A REAL DESIGN FLAW — see this class's own docstring.
@@ -94,7 +97,7 @@ export class SmartTaskEngineService {
 
   async listForToday(childId: string, familyId: string): Promise<ISmartTask[]> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    return this.repository.listForChildOnDate(childId, this.today());
+    return this.repository.listForChildOnDate(childId, await this.todayColumn(familyId));
   }
 
   async decide(taskId: string, childId: string, familyId: string, status: 'ACCEPTED' | 'DISMISSED' | 'COMPLETED'): Promise<void> {
@@ -108,8 +111,12 @@ export class SmartTaskEngineService {
     await this.repository.updateStatus(taskId, status);
   }
 
-  private today(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  /** B2: a Smart Task generated "for today" and one listed "for today" must
+   * mean the same day, and that day is the family's — otherwise the Child App's
+   * Today screen goes empty for three hours after local midnight while the
+   * generator has already moved on. */
+  private async todayColumn(familyId: string): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(getBusinessDate(new Date(), tz));
   }
 }

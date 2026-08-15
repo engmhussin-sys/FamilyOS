@@ -71,12 +71,31 @@ export interface IFatigueDecision {
  * explicitly (not read from Date.now() internally) — keeps this
  * function pure and deterministic, fully testable without faking the
  * system clock.
+ *
+ * B2 (PA-B-002), THE SERVER-LOCAL CLASS. `businessDayStart` is new and
+ * REQUIRED, and its absence was a real defect of a DIFFERENT kind from the UTC
+ * bugs elsewhere in this sprint.
+ *
+ * The daily and per-category caps used to bound "today" with
+ * `new Date(now); todayStart.setHours(0, 0, 0, 0)`. `setHours` reads the
+ * CONTAINER's timezone. `process.env.TZ` is unset in this image, so it happens
+ * to equal UTC — today, on this host, by accident. Deploy the same image to a
+ * host configured for `Africa/Cairo` and every family's daily cap silently
+ * resets at a different moment, with no code change and no way to tell from the
+ * code that it had happened. That is not a timezone bug, it is a behaviour that
+ * has no definition.
+ *
+ * It is now a required parameter, computed by the caller from
+ * `Family.timezone`, so the day a cap counts over is a stated fact rather than
+ * an ambient property of the machine. It is required rather than defaulted for
+ * the same reason: a default would be silently accepted by the next call site.
  */
 export function evaluateFatigue(
   candidate: ICandidateNotification,
   recentHistory: IRecentNotification[],
   now: Date,
   currentLocalTimeHHMM: string,
+  businessDayStart: Date,
   policy: IFatiguePolicy = DEFAULT_FATIGUE_POLICY,
 ): IFatigueDecision {
   // CRITICAL bypasses quiet hours (escalation policy) but NOT
@@ -87,9 +106,7 @@ export function evaluateFatigue(
     return { allowed: false, blockedReason: 'QUIET_HOURS' };
   }
 
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-  const todayHistory = recentHistory.filter((n) => n.createdAt >= todayStart);
+  const todayHistory = recentHistory.filter((n) => n.createdAt >= businessDayStart);
 
   // Duplicate prevention: the exact same type sent within the last 5
   // minutes is treated as a duplicate (e.g. a retried request, a race
@@ -131,7 +148,14 @@ export function evaluateFatigue(
 
 /** Handles the overnight-wraparound case (e.g. 21:00-07:00) correctly
  * — a plain start<time<end comparison would be wrong whenever the
- * window crosses midnight. */
+ * window crosses midnight.
+ *
+ * B2: this logic was always right. What was wrong was `currentHHMM`, which the
+ * caller built from `now.getHours()` — the container's clock. With the default
+ * 21:00-07:00 policy evaluated against UTC, a Cairo family's quiet hours ran
+ * 00:00-10:00 LOCAL in summer: notifications silenced all morning and fully
+ * permitted in the three hours before local midnight. Inverted precisely at the
+ * boundary the feature exists to protect. */
 function isWithinQuietHours(currentHHMM: string, policy: IFatiguePolicy): boolean {
   const current = toMinutes(currentHHMM);
   const start = toMinutes(policy.quietHoursStart);

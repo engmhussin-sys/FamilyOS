@@ -6,6 +6,7 @@ import { ChildrenService } from '../../src/modules/children/application/services
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
 import { computeHydrationTargetMl } from '../../src/modules/life-intelligence/application/services/health-rules';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe('computeHydrationTargetMl (pure rule component)', () => {
   it('returns the correct band for a range of ages, including boundary values', () => {
@@ -58,6 +59,8 @@ describe('HealthEngineService', () => {
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(HealthEngineService);

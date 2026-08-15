@@ -65,7 +65,10 @@ export class LifeIntelligenceController {
     @Body() dto: CompleteHabitDto,
     @CurrentUser() user: IJwtPayload,
   ) {
-    return this.habitEngine.completeHabit(habitId, childId, user.familyId!, dto.date);
+    // B1 (PA-B-004): a PARENT session may back-date a completion — that is a
+    // real product need (logging a day the child forgot to tick). The engine
+    // still bounds it to [today-30, today].
+    return this.habitEngine.completeHabit(habitId, childId, user.familyId!, dto.date, 'PARENT');
   }
 
   @Get('habits/:childId/score')
@@ -180,7 +183,9 @@ export class LifeIntelligenceController {
   @Post('learning/:childId/sessions')
   @UseGuards(JwtAuthGuard)
   logLearningSession(@Param('childId') childId: string, @Body() dto: LogLearningSessionDto, @CurrentUser() user: IJwtPayload) {
-    return this.learningEngine.logSession(childId, user.familyId!, dto);
+    // B1 (PA-B-004): a parent session may back-date a session log; the engine
+    // bounds it to [today-30, today].
+    return this.learningEngine.logSession(childId, user.familyId!, dto, 'PARENT');
   }
 
   @Get('learning/:childId/progress')
@@ -402,7 +407,13 @@ export class LifeIntelligenceController {
   @UseGuards(DeviceJwtAuthGuard)
   async selfCompleteHabit(@Param('habitId') habitId: string, @Body() dto: CompleteHabitDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.habitEngine.completeHabit(habitId, childId, familyId, dto.date);
+    // B1 (PA-B-004). `dto.date` IS NOT PASSED. This route is reached with a
+    // DEVICE token, and the date it carried used to compose the reward
+    // idempotency key — the same exploit as PA-B-003, on a route that does not
+    // even pass through `DeviceEventsThrottlerGuard`. The day is derived from
+    // the family calendar; the field stays on the DTO only so the parent route
+    // above can keep using it.
+    return this.habitEngine.completeHabit(habitId, childId, familyId, undefined, 'DEVICE');
   }
 
   @Get('self/habits')
@@ -452,7 +463,8 @@ export class LifeIntelligenceController {
   @UseGuards(DeviceJwtAuthGuard)
   async selfLogLearningSession(@Body() dto: LogLearningSessionDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.learningEngine.logSession(childId, familyId, dto);
+    // B1 (PA-B-004): DEVICE token — `dto.date` is ignored, the day is derived.
+    return this.learningEngine.logSession(childId, familyId, dto, 'DEVICE');
   }
 
   /** CLOSES A REAL GAP: Smart Tasks had zero /self/* endpoint,

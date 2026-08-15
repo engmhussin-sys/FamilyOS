@@ -17,6 +17,8 @@ import {
 } from '../../domain/health.types';
 import { computeHydrationTargetMl } from './health-rules';
 import { computeCurrentStreak } from './streak-calculator';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate, getBusinessDayRange, isBusinessDate } from '../../../../common/time/family-date';
 
 /**
  * Architecture 1.0 \u00a73/\u00a75: merges what were three separate engines
@@ -32,6 +34,13 @@ import { computeCurrentStreak } from './streak-calculator';
  * - AI Provider: not used.
  * - Audit: no AuditLog entry, matching Habit Engine's own reasoning.
  * - Safety Validation: no AI/system-generated free-text copy exists here.
+ *
+ * B2 (PA-B-001): "today" here decided a child's daily hydration and activity
+ * GOALS, the idempotency keys of the grants that follow them, and both streaks.
+ * All of it was UTC. A Cairo child drinking their last glass at 22:00 local had
+ * it counted against the NEXT day's target, so today's goal never closed and
+ * tomorrow's opened three hours early. Every one of those decisions is now made
+ * on the family's calendar.
  */
 @Injectable()
 export class HealthEngineService {
@@ -40,6 +49,7 @@ export class HealthEngineService {
     private readonly childrenService: ChildrenService,
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
     @Inject(REWARD_TRIGGER_WRITER) private readonly rewardTrigger: IRewardTriggerWriter,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   async logNutrition(childId: string, familyId: string, input: Omit<ICreateNutritionLogInput, 'childId'>): Promise<INutritionLog> {
@@ -64,7 +74,9 @@ export class HealthEngineService {
 
     const log = await this.repository.createHydrationLog({ ...input, childId });
 
-    const { dayStart, dayEnd } = this.dayBounds(new Date());
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const todayStr = getBusinessDate(new Date(), timeZone);
+    const { start: dayStart, endExclusive: dayEnd } = getBusinessDayRange(todayStr, timeZone);
     const totalToday = await this.repository.sumHydrationMlOnDate(childId, dayStart, dayEnd);
     const target = computeHydrationTargetMl(this.ageYears(child.dateOfBirth));
 
@@ -103,7 +115,7 @@ export class HealthEngineService {
           engine: 'health',
           type: 'DAILY_GOAL_COMPLETED',
           payload: { metric: 'hydration', targetMl: target, totalMl: totalToday },
-          idempotencyKey: `daily-goal:hydration:${childId}:${this.today().toISOString().slice(0, 10)}`,
+          idempotencyKey: `daily-goal:hydration:${childId}:${todayStr}`,
         });
 
         // Streak milestone — only fires a SEPARATE event on real
@@ -111,10 +123,9 @@ export class HealthEngineService {
         // this codebase's own "Timeline gets curated moments, not
         // every daily tick" discipline (see this file's Timeline
         // writes elsewhere).
-        const since = this.daysAgo(30);
-        const dailyTotals = await this.repository.getDailyHydrationTotals(childId, since);
+        const since = this.daysAgo(30, timeZone);
+        const dailyTotals = await this.repository.getDailyHydrationTotals(childId, since, timeZone);
         const qualifyingDays = [...dailyTotals.entries()].filter(([, ml]) => ml >= target).map(([d]) => d);
-        const todayStr = this.today().toISOString().slice(0, 10);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
         if ([3, 7, 14, 30].includes(streakDays)) {
           // Sprint 16.1: idempotencyKey is childId+metric+streakDays —
@@ -143,8 +154,10 @@ export class HealthEngineService {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
     const log = await this.repository.createActivityLog({ ...input, childId });
 
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+
     if (input.socialContext === 'GROUP' || input.socialContext === 'TEAM') {
-      const since = this.daysAgo(30);
+      const since = this.daysAgo(30, timeZone);
       const groupCount = await this.repository.countGroupActivitiesInWindow(childId, since);
       // Same known, low-severity race condition as HabitEngineService's
       // identical pattern (see its own comment) — a rare, cosmetic
@@ -165,7 +178,8 @@ export class HealthEngineService {
     // logHydration's own exact milestone-crossing pattern, same
     // target (60 min/day) getDailyProgress already uses for its own
     // isAchieved field — same source of truth, not a second one.
-    const today = this.today();
+    const todayStr = getBusinessDate(new Date(), timeZone);
+    const today = FamilyDateService.toDateColumn(todayStr);
     const todayMinutes = await this.repository.sumActivityMinutesOnDate(childId, today);
     const activityTargetMinutes = 60;
     if (todayMinutes >= activityTargetMinutes && todayMinutes - input.durationMinutes < activityTargetMinutes) {
@@ -183,13 +197,12 @@ export class HealthEngineService {
           engine: 'health',
           type: 'DAILY_GOAL_COMPLETED',
           payload: { metric: 'activity', targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes },
-          idempotencyKey: `daily-goal:activity:${childId}:${today.toISOString().slice(0, 10)}`,
+          idempotencyKey: `daily-goal:activity:${childId}:${todayStr}`,
         });
 
-        const since = this.daysAgo(30);
+        const since = this.daysAgo(30, timeZone);
         const dailyTotals = await this.repository.getDailyActivityTotals(childId, since);
         const qualifyingDays = [...dailyTotals.entries()].filter(([, min]) => min >= activityTargetMinutes).map(([d]) => d);
-        const todayStr = today.toISOString().slice(0, 10);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
         if ([3, 7, 14, 30].includes(streakDays)) {
           await this.rewardTrigger.trigger(childId, familyId, {
@@ -216,8 +229,12 @@ export class HealthEngineService {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
     const child = await this.childrenService.getChildOrThrow(childId, familyId);
 
-    const date = dateStr ? new Date(dateStr) : this.today();
-    const { dayStart, dayEnd } = this.dayBounds(date);
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const dateStrBusiness = dateStr && isBusinessDate(dateStr)
+      ? dateStr
+      : getBusinessDate(dateStr ?? new Date(), timeZone);
+    const date = FamilyDateService.toDateColumn(dateStrBusiness);
+    const { start: dayStart, endExclusive: dayEnd } = getBusinessDayRange(dateStrBusiness, timeZone);
 
     const target = computeHydrationTargetMl(this.ageYears(child.dateOfBirth));
 
@@ -252,7 +269,7 @@ export class HealthEngineService {
 
     await this.repository.upsertHealthScore(childId, date, score, breakdown as unknown as Record<string, unknown>);
 
-    return { childId, date: date.toISOString().slice(0, 10), score, breakdown };
+    return { childId, date: dateStrBusiness, score, breakdown };
   }
 
   /** Sprint 15 (Health & Daily Habits Engine) — CLOSES A REAL GAP:
@@ -270,19 +287,20 @@ export class HealthEngineService {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
     const child = await this.childrenService.getChildOrThrow(childId, familyId);
 
-    const date = this.today();
-    const dateStr = date.toISOString().slice(0, 10);
-    const { dayStart, dayEnd } = this.dayBounds(date);
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const dateStr = getBusinessDate(new Date(), timeZone);
+    const date = FamilyDateService.toDateColumn(dateStr);
+    const { start: dayStart, endExclusive: dayEnd } = getBusinessDayRange(dateStr, timeZone);
     const target = computeHydrationTargetMl(this.ageYears(child.dateOfBirth));
     const activityTargetMinutes = 60; // same pediatric-guideline baseline as computeAndStoreHealthScore's own activityRatio
 
     const STREAK_WINDOW_DAYS = 30; // enough real history for a meaningful streak without an unbounded query
-    const since = this.daysAgo(STREAK_WINDOW_DAYS);
+    const since = this.daysAgo(STREAK_WINDOW_DAYS, timeZone);
 
     const [actualMl, activityMinutes, hydrationDailyTotals, activityDailyTotals] = await Promise.all([
       this.repository.sumHydrationMlOnDate(childId, dayStart, dayEnd),
       this.repository.sumActivityMinutesOnDate(childId, date),
-      this.repository.getDailyHydrationTotals(childId, since),
+      this.repository.getDailyHydrationTotals(childId, since, timeZone),
       this.repository.getDailyActivityTotals(childId, since),
     ]);
 
@@ -310,22 +328,12 @@ export class HealthEngineService {
     };
   }
 
-  private today(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  }
-
-  private daysAgo(days: number): Date {
-    const d = this.today();
-    d.setUTCDate(d.getUTCDate() - days);
-    return d;
-  }
-
-  private dayBounds(date: Date): { dayStart: Date; dayEnd: Date } {
-    const dayStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    const dayEnd = new Date(dayStart);
-    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
-    return { dayStart, dayEnd };
+  /** B2: lookback lower bound, as the UTC-midnight instant the day columns
+   * store — the calendar decision happens first, in `getBusinessDate`. */
+  private daysAgo(days: number, timeZone: string): Date {
+    return FamilyDateService.toDateColumn(
+      FamilyDateService.addDays(getBusinessDate(new Date(), timeZone), -days),
+    );
   }
 
   private ageYears(dateOfBirth: Date | string): number {

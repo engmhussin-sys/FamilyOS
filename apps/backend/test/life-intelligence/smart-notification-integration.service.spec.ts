@@ -5,6 +5,7 @@ import { NOTIFICATION_REPOSITORY } from '../../src/modules/notifications/applica
 import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
 import { FamilyCommunicationService } from '../../src/modules/life-intelligence/application/services/family-communication.service';
 import type { ISmartNotificationSignals } from '../../src/modules/life-intelligence/application/services/smart-notification-decision-engine';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A REAL GAP: the pure decision engines had zero real caller before this)', () => {
   const notificationRepoMock = { findRecentForChild: jest.fn() };
@@ -35,6 +36,8 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         { provide: NOTIFICATION_REPOSITORY, useValue: notificationRepoMock },
         { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertRepoMock },
         { provide: FamilyCommunicationService, useValue: familyCommunicationMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(SmartNotificationIntegrationService);

@@ -9,6 +9,7 @@ import { ConsentCheckService } from '../../src/modules/consent-check/application
 import { BaselineCalculatorService } from '../../src/modules/life-intelligence/application/services/baseline-calculator.service';
 import { PatternDetectionService } from '../../src/modules/life-intelligence/application/services/pattern-detection.service';
 import { AnomalyDetectionService } from '../../src/modules/life-intelligence/application/services/anomaly-detection.service';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe('DigitalWellbeingEngineService', () => {
   const repositoryMock = {
@@ -68,6 +69,8 @@ describe('DigitalWellbeingEngineService', () => {
         { provide: BaselineCalculatorService, useValue: baselineCalculatorMock },
         { provide: PatternDetectionService, useValue: patternDetectionMock },
         { provide: AnomalyDetectionService, useValue: anomalyDetectionMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(DigitalWellbeingEngineService);

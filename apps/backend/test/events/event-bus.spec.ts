@@ -25,8 +25,8 @@ import {
   composeIdempotencyKey,
   composeRewardGrantedKey,
   IDEMPOTENCY_KEY_MAX_LENGTH,
-  utcLocalDate,
 } from '../../src/shared/events/idempotency';
+import { getBusinessDate } from '../../src/common/time/family-date';
 import { currentTenant, runWithTenant } from '../../src/common/tenancy/tenant-context';
 
 const CHILD = '11111111-1111-4111-8111-111111111111';
@@ -198,9 +198,19 @@ describe('F3 — idempotency key composition (CONTEXT §3 principle 6)', () => {
     );
   });
 
-  it('utcLocalDate is the honest UTC fallback when a device sends no timezone', () => {
-    expect(utcLocalDate('2026-08-14T23:59:59.000Z')).toBe('2026-08-14');
-    expect(utcLocalDate(new Date('2026-08-15T00:00:00.000Z'))).toBe('2026-08-15');
+  /**
+   * CHANGED IN B1. This test used to assert `utcLocalDate`, the UTC fallback
+   * used when a device sent no timezone. That function is gone: "the day" is
+   * no longer a property the server can answer without a family calendar, and
+   * the UTC answer was wrong for 3 hours of every day in both launch markets.
+   * The replacement asserts the property that actually matters now — the SAME
+   * instant is a DIFFERENT business day in different families.
+   */
+  it('the business date is the FAMILY calendar day, not the UTC one', () => {
+    const instant = '2026-08-15T21:30:00.000Z';
+    expect(getBusinessDate(instant, 'UTC')).toBe('2026-08-15');
+    expect(getBusinessDate(instant, 'Africa/Cairo')).toBe('2026-08-16');
+    expect(getBusinessDate(instant, 'Asia/Riyadh')).toBe('2026-08-16');
   });
 });
 

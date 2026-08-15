@@ -5,6 +5,8 @@ import { PrismaFaithRepository } from '../../infrastructure/repositories/prisma-
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { IFaithPractice, IFaithPracticeLog, IFaithScoreBreakdown, ICreateFaithPracticeInput } from '../../domain/faith.types';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate, isBusinessDate } from '../../../../common/time/family-date';
 
 const SCORE_WINDOW_DAYS = 30;
 
@@ -26,6 +28,7 @@ export class FaithEngineService {
     private readonly childrenService: ChildrenService,
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
     @Inject(REWARD_TRIGGER_WRITER) private readonly rewardTrigger: IRewardTriggerWriter,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   async createPractice(childId: string, familyId: string, input: Omit<ICreateFaithPracticeInput, 'childId'>): Promise<IFaithPractice> {
@@ -35,7 +38,7 @@ export class FaithEngineService {
 
   async listPractices(childId: string, familyId: string): Promise<IFaithPractice[]> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    return this.repository.listActivePractices(childId);
+    return this.repository.listActivePractices(childId, await this.todayColumn(familyId));
   }
 
   async logPractice(
@@ -52,7 +55,15 @@ export class FaithEngineService {
       throw new NotFoundException('Faith practice not found');
     }
 
-    const date = dateStr ? new Date(dateStr) : this.today();
+    // B2: which day a Salah/Quran practice belongs to is a FAMILY calendar
+    // question — a dawn prayer logged at 04:00 in Cairo is 02:00 UTC of the
+    // same day, but the evening ones are the previous UTC day, so the old
+    // implementation split a single day's practices across two.
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const businessDate = dateStr && isBusinessDate(dateStr)
+      ? dateStr
+      : getBusinessDate(dateStr ?? new Date(), timeZone);
+    const date = FamilyDateService.toDateColumn(businessDate);
     const log = await this.repository.recordLog(practiceId, childId, date, progress);
 
     const totalLogsForPractice = await this.repository.countPracticeLogsTotal(practiceId);
@@ -92,7 +103,7 @@ export class FaithEngineService {
   async getScoreBreakdown(childId: string, familyId: string): Promise<IFaithScoreBreakdown> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const since = this.daysAgo(SCORE_WINDOW_DAYS);
+    const since = await this.daysAgo(familyId, SCORE_WINDOW_DAYS);
     const activePractices = await this.repository.countActivePractices(childId);
     const completedLogs = await this.repository.countLogsInWindow(childId, since);
     const totalPossible = activePractices * SCORE_WINDOW_DAYS;
@@ -106,14 +117,16 @@ export class FaithEngineService {
     };
   }
 
-  private today(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  /** Today on the family calendar, as the `@db.Date` column value. */
+  private async todayColumn(familyId: string): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(getBusinessDate(new Date(), tz));
   }
 
-  private daysAgo(days: number): Date {
-    const d = this.today();
-    d.setUTCDate(d.getUTCDate() - days);
-    return d;
+  private async daysAgo(familyId: string, days: number): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(
+      FamilyDateService.addDays(getBusinessDate(new Date(), tz), -days),
+    );
   }
 }

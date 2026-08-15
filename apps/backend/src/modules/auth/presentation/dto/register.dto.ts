@@ -1,5 +1,7 @@
 import { Equals, IsEmail, IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator';
 
+import { IsIanaTimeZone } from '../../../../common/time/is-iana-timezone.validator';
+
 export class RegisterDto {
   @IsEmail()
   @MaxLength(255)
@@ -27,8 +29,13 @@ export class RegisterDto {
   @Length(2, 100)
   familyName?: string;
 
+  /**
+   * B2: the family's calendar, set at the only moment a Family row is created.
+   * Validated as a real IANA zone (see `IsIanaTimeZone`); absent means the
+   * schema default, `"UTC"`.
+   */
   @IsOptional()
-  @IsString()
+  @IsIanaTimeZone()
   timezone?: string;
 
   @IsOptional()

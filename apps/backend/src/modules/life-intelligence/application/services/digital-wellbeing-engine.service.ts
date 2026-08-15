@@ -11,6 +11,8 @@ import { ConsentCheckService } from '../../../consent-check/application/consent-
 import { BaselineCalculatorService } from './baseline-calculator.service';
 import { PatternDetectionService } from './pattern-detection.service';
 import { AnomalyDetectionService } from './anomaly-detection.service';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate, getBusinessDayOfWeek } from '../../../../common/time/family-date';
 import {
   BehaviorPatternCode,
   IBehavioralSnapshotSummary,
@@ -60,6 +62,7 @@ export class DigitalWellbeingEngineService {
     private readonly baselineCalculator: BaselineCalculatorService,
     private readonly patternDetection: PatternDetectionService,
     private readonly anomalyDetection: AnomalyDetectionService,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   /** The daily batch upload — one call per device per day, carrying
@@ -121,7 +124,7 @@ export class DigitalWellbeingEngineService {
         sessionCount: input.sessionCount ?? null,
         averageSessionMinutes: input.averageSessionMinutes ?? null,
         longestSessionMinutes: input.longestSessionMinutes ?? null,
-        isWeekend: this.isWeekend(usageDate),
+        isWeekend: this.isWeekend(input.usageDate),
       },
       baseline,
     );
@@ -174,8 +177,20 @@ export class DigitalWellbeingEngineService {
     return appBreakdown.filter((a) => a.category === category).reduce((sum, a) => sum + a.minutes, 0);
   }
 
-  private isWeekend(date: Date): boolean {
-    const day = date.getUTCDay();
+  /**
+   * B2. The day-of-week now comes from `getBusinessDayOfWeek`, which reads a
+   * `YYYY-MM-DD` business date as a calendar day rather than re-deriving it
+   * from a `Date`'s UTC fields.
+   *
+   * STILL OPEN, AND STATED RATHER THAN QUIETLY FIXED: this returns
+   * Saturday/Sunday. The weekend in both launch markets is Friday/Saturday
+   * (Egypt and Saudi Arabia both). That is a PRODUCT definition, not a
+   * timezone defect, it changes which days a `WEEKEND_*` behaviour pattern
+   * fires on, and it is out of scope for B1+B2 — it is recorded in the
+   * report's `افتراضات ومخاطر مفتوحة`.
+   */
+  private isWeekend(businessDate: string): boolean {
+    const day = getBusinessDayOfWeek(businessDate, 'UTC');
     return day === 0 || day === 6;
   }
 
@@ -220,7 +235,7 @@ export class DigitalWellbeingEngineService {
   async getBehavioralSnapshotSummary(childId: string, familyId: string): Promise<IBehavioralSnapshotSummary | null> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const since = this.daysAgo(SNAPSHOT_WINDOW_DAYS);
+    const since = await this.daysAgo(familyId, SNAPSHOT_WINDOW_DAYS);
     const snapshots = await this.repository.findSnapshotsInWindow(childId, since);
 
     if (snapshots.length === 0) return null;
@@ -240,7 +255,7 @@ export class DigitalWellbeingEngineService {
 
   async getTopAppsToday(childId: string, familyId: string, deviceId: string): Promise<Array<{ packageName: string; minutes: number }>> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    return this.repository.getTopAppsToday(childId, deviceId, this.today());
+    return this.repository.getTopAppsToday(childId, deviceId, await this.todayColumn(familyId));
   }
 
   /** Sprint 14 — Parent Insights. Deterministic template, not an LLM
@@ -265,7 +280,7 @@ export class DigitalWellbeingEngineService {
         sessionCount: snapshot.sessionCount,
         averageSessionMinutes: snapshot.averageSessionMinutes,
         longestSessionMinutes: snapshot.longestSessionMinutes,
-        isWeekend: this.isWeekend(new Date(date)),
+        isWeekend: this.isWeekend(date),
       },
       baseline,
     );
@@ -306,14 +321,17 @@ export class DigitalWellbeingEngineService {
     return `Screen time was in line with this child's usual pattern today.`;
   }
 
-  private today(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  /** B2: `DailyBehavioralSnapshot.usageDate` is a `@db.Date` holding a business
+   * date, so "today" is the family's calendar day anchored at UTC midnight. */
+  private async todayColumn(familyId: string): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(getBusinessDate(new Date(), tz));
   }
 
-  private daysAgo(days: number): Date {
-    const d = this.today();
-    d.setUTCDate(d.getUTCDate() - days);
-    return d;
+  private async daysAgo(familyId: string, days: number): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(
+      FamilyDateService.addDays(getBusinessDate(new Date(), tz), -days),
+    );
   }
 }

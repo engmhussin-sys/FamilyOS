@@ -34,6 +34,7 @@ import {
   weekWindow,
 } from '../../domain/program-rules';
 import { PrismaRewardProgramRepository } from '../../infrastructure/repositories/prisma-reward-program.repository';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
 import type { SubmitAchievementDto } from '../dto/reward-program.dto';
 
 /**
@@ -68,7 +69,22 @@ export class AchievementService {
   constructor(
     private readonly repo: PrismaRewardProgramRepository,
     private readonly outbox: OutboxWriter,
+    private readonly familyDate: FamilyDateService,
   ) {}
+
+  /**
+   * B2 (PA-B-001). The family calendar this service decides days on.
+   *
+   * The tenant is read the same way the repository reads it — from the ambient
+   * context established by `TenantContextInterceptor` from a verified
+   * principal — so, exactly as the repository's own docstring puts it, there is
+   * no call site that could pass the wrong one. `maxPerDay`, `maxPerWeek`, the
+   * `AchievementRequest.localDate` column and the streak that freezes the
+   * multiplier are all decided on it.
+   */
+  private timeZone(familyId: string): Promise<string> {
+    return this.familyDate.timeZoneOf(familyId);
+  }
 
   // --- child paths ----------------------------------------------------------
 
@@ -87,8 +103,9 @@ export class AchievementService {
       throw new NotFoundException({ code: 'CHILD_NOT_FOUND', messageAr: 'الطفل غير موجود.' });
     }
 
-    const today = localDateString(now);
-    const week = weekWindow(now);
+    const timeZone = await this.timeZone(program.familyId);
+    const today = localDateString(now, timeZone);
+    const week = weekWindow(now, timeZone);
 
     const violation = checkProgramEligibility({
       program: {
@@ -102,7 +119,7 @@ export class AchievementService {
         childId: program.childId ?? null,
       },
       childId,
-      childAgeYears: ageInYears(new Date(child.dateOfBirth), now),
+      childAgeYears: ageInYears(new Date(child.dateOfBirth), now, timeZone),
       verifiedToday: await this.repo.countVerifiedBetween(programId, childId, today, today),
       verifiedThisWeek: await this.repo.countVerifiedBetween(programId, childId, week.from, week.to),
       openToday: await this.repo.countOpenOn(programId, childId, today),
@@ -123,7 +140,10 @@ export class AchievementService {
         programId,
         childId,
         status: 'IN_PROGRESS',
-        localDate: new Date(`${today}T00:00:00.000Z`),
+        // The `@db.Date` storage convention: a business date is persisted at
+        // UTC midnight and READ BACK as a family-local day. The calendar
+        // decision happened above, in `localDateString`.
+        localDate: FamilyDateService.toDateColumn(today),
         attemptNo,
         startedAt: now,
       });
@@ -378,7 +398,10 @@ export class AchievementService {
     now: Date,
   ): Promise<any> {
     const streakKind = CATEGORY_STREAK_KIND[program.category as ProgramCategory] ?? 'learning';
-    const localDate = localDateString(new Date(achievement.localDate));
+    // The stored `localDate` is already a business date at UTC midnight (see
+    // `start`), so it is read back as the day it is — NOT re-derived through a
+    // timezone, which would shift it by one for every family east of UTC.
+    const localDate = new Date(achievement.localDate).toISOString().slice(0, 10);
 
     // Recompute from the rows: the same input rows always give the same streak.
     const siblingPrograms = await this.repo.listPrograms({ category: program.category });
@@ -484,9 +507,10 @@ export class AchievementService {
       throw new NotFoundException({ code: 'CHILD_NOT_FOUND', messageAr: 'الطفل غير موجود.' });
     }
     const programs = await this.repo.listProgramsForChild(childId);
-    const today = localDateString(now);
-    const week = weekWindow(now);
-    const age = ageInYears(new Date(child.dateOfBirth), now);
+    const timeZone = await this.timeZone(child.familyId);
+    const today = localDateString(now, timeZone);
+    const week = weekWindow(now, timeZone);
+    const age = ageInYears(new Date(child.dateOfBirth), now, timeZone);
 
     const out: any[] = [];
     for (const p of programs) {
@@ -526,6 +550,11 @@ export class AchievementService {
   /** Per-kind streaks, RECOMPUTED from verified rows. There is no streak table
    * and deliberately so — see `streak-multiplier.ts`. */
   async streaksForChild(childId: string, now = new Date()): Promise<Record<string, number>> {
+    const child = await this.repo.findChild(childId);
+    if (!child) {
+      throw new NotFoundException({ code: 'CHILD_NOT_FOUND', messageAr: 'الطفل غير موجود.' });
+    }
+    const timeZone = await this.timeZone(child.familyId);
     const programs = await this.repo.listPrograms({});
     const byKind = new Map<string, string[]>();
     for (const p of programs) {
@@ -535,7 +564,7 @@ export class AchievementService {
       byKind.set(kind, list);
     }
 
-    const today = localDateString(now);
+    const today = localDateString(now, timeZone);
     const out: Record<string, number> = {};
     for (const [kind, ids] of byKind) {
       const dates = await this.repo.verifiedDates(childId, ids);

@@ -11,6 +11,7 @@ import { PairingOrchestratorService } from '../../src/modules/pairing/applicatio
 import { RiskEvaluationService } from '../../src/modules/pairing/application/services/risk-evaluation.service';
 import { BehavioralIntelligenceEngineService } from '../../src/modules/ai-core/application/services/behavioral-intelligence-engine.service';
 import { DigitalWellbeingEngineService } from '../../src/modules/life-intelligence/application/services/digital-wellbeing-engine.service';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
   const repositoryMock = { getSocialScoreInputs: jest.fn(), upsertProjection: jest.fn() };
@@ -54,6 +55,8 @@ describe('DigitalTwinService — Sprint 25 Safety/Behavior wiring', () => {
         { provide: RiskEvaluationService, useValue: riskEvaluationMock },
         { provide: BehavioralIntelligenceEngineService, useValue: behavioralEngineMock },
         { provide: DigitalWellbeingEngineService, useValue: digitalWellbeingMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(DigitalTwinService);

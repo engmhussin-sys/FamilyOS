@@ -26,7 +26,9 @@ import {
   isDomainEventType,
   type DomainEventType,
 } from '../../../shared/events/event-types';
-import { composeIdempotencyKey, utcLocalDate } from '../../../shared/events/idempotency';
+import { composeIdempotencyKey } from '../../../shared/events/idempotency';
+import { FamilyDateService } from '../../../common/time/family-date.service';
+import { getBusinessDate } from '../../../common/time/family-date';
 import { OutboxWriter, type PrismaLike } from './outbox.writer';
 import type { WireEventDto } from './dto/ingest-events.dto';
 
@@ -143,6 +145,24 @@ const TYPE_SPECS: Readonly<Partial<Record<DomainEventType, TypeSpec>>> = {
  *     manufacture a notification for a reward that never happened.
  *  4. Fail a whole batch for one bad event. docs/06 §6.5: one transaction per
  *     event, "one corrupt event does not take down 199 valid ones".
+ *  5. B1 (PA-B-003) — READ THE DAY FROM THE DEVICE. Rule 2 above closed the
+ *     front door and left the key under the mat: the key was composed
+ *     server-side, but one of its inputs — `localDate` — arrived on the wire,
+ *     was validated for SHAPE ONLY (`/^\d{4}-\d{2}-\d{2}$/`), and was never
+ *     compared to `occurredAt` or to any timezone. A device sending the same
+ *     habit completion 200 times with 200 different `localDate` values in one
+ *     batch produced 200 distinct keys, 200 ledger rows and 200 grants; at 12
+ *     batches/hour through `DeviceEventsThrottlerGuard` that is 2,400 grants an
+ *     hour from a single habit. The unique constraint held perfectly and was
+ *     worthless, because the attacker controlled the key.
+ *
+ *     The business date is now DERIVED: `occurredAt` (already validated against
+ *     the 48h/+5min clock-skew bounds by `validate()`) converted into
+ *     `Family.timezone`. `event.localDate` never reaches an idempotency key, a
+ *     domain row or a rule evaluation. It is retained ONLY as
+ *     `clientReportedLocalDate` inside the stored payload — a telemetry field
+ *     whose name makes its status unmistakable — so device clock skew stays
+ *     diagnosable. See `deriveBusinessDate` below.
  */
 @Injectable()
 export class EventIngestionService {
@@ -153,6 +173,7 @@ export class EventIngestionService {
     private readonly outbox: OutboxWriter,
     private readonly pairing: PairingOrchestratorService,
     private readonly redis: RedisService,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   async ingestBatch(params: {
@@ -185,6 +206,11 @@ export class EventIngestionService {
     // --- the tenant. From the device row, never from the payload. -----------
     const { childId, familyId } = await this.pairing.getChildAndFamilyIdForDevice(params.deviceId);
 
+    // B1/B2: the family's calendar, read ONCE per batch. Every event in the
+    // batch is dated against this zone, so a 200-event batch costs one lookup
+    // and every row in it agrees about what day it is.
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+
     // --- replay protection layer 2 (docs/06 §6.6): the whole round trip -----
     const cached = await this.readBatchReplay(familyId, params.deviceId, params.batchIdempotencyKey);
     if (cached) return cached;
@@ -198,6 +224,7 @@ export class EventIngestionService {
           familyId,
           deviceId: params.deviceId,
           serverNow,
+          timeZone,
           traceId: params.traceId ?? null,
         }),
       );
@@ -228,6 +255,7 @@ export class EventIngestionService {
     familyId: string;
     deviceId: string;
     serverNow: Date;
+    timeZone: string;
     traceId: string | null;
   }): Promise<EventResult> {
     const { event } = ctx;
@@ -240,7 +268,11 @@ export class EventIngestionService {
     if (!spec) return reject(event.clientEventId, 'EVENT_TYPE_NOT_DEVICE_INGESTIBLE');
 
     const occurredAt = new Date(event.occurredAt);
-    const localDate = event.localDate ?? utcLocalDate(occurredAt);
+    // B1 (PA-B-003). THE SINGLE MOST IMPORTANT LINE IN THIS FILE. The business
+    // date is a SERVER OUTPUT, computed from an occurrence time that `validate()`
+    // has already bounded to [-48h, +5min] of server time, projected onto the
+    // family's own calendar. `event.localDate` is not consulted.
+    const localDate = getBusinessDate(occurredAt, ctx.timeZone);
     const sourceId = spec.sourceIdField
       ? String(event.payload[spec.sourceIdField] ?? '')
       : `${ctx.childId}`;
@@ -259,9 +291,24 @@ export class EventIngestionService {
       hourBucket: occurredAt.toISOString().slice(0, 13),
     });
 
+    // B1: TELEMETRY, NOT AUTHORITY. The device's own opinion of the day and its
+    // zone is kept for one purpose — diagnosing clock skew and mis-set device
+    // timezones in the field — and is named so that no future reader can
+    // mistake it for the business date. `skewDays` is the measured disagreement
+    // between the device's calendar and the family's; a fleet-wide non-zero
+    // value is a real signal, and a single device reporting 200 different days
+    // in one batch now shows up here instead of in the ledger.
+    const clientTelemetry = buildClientDateTelemetry(event, localDate);
+    if (clientTelemetry.clientLocalDateSkewDays !== null && clientTelemetry.clientLocalDateSkewDays !== 0) {
+      this.logger.debug(
+        `ingest.client_date_skew type=${event.type} skewDays=${clientTelemetry.clientLocalDateSkewDays} — server date used.`,
+      );
+    }
+
     // The payload the SERVER stores — a CompletionEvent for completion types,
     // the client's own payload otherwise. Client-sent childId/deviceId/
     // idempotencyKey are overwritten, not merged: they are server-owned fields.
+    // So, now, is `localDate`.
     const storedPayload: Record<string, unknown> = spec.completionKind
       ? ({
           ...event.payload,
@@ -279,6 +326,11 @@ export class EventIngestionService {
           metadata: plainMetadata(event.payload.metadata),
         } satisfies CompletionEvent as unknown as Record<string, unknown>)
       : { ...event.payload, childId: ctx.childId, deviceId: ctx.deviceId, localDate };
+
+    // Merged AFTER the spread of `event.payload`, so a payload that tried to
+    // smuggle its own `clientReportedLocalDate` cannot forge the telemetry
+    // either. The business `localDate` above is already server-owned.
+    Object.assign(storedPayload, clientTelemetry, { businessTimezone: ctx.timeZone });
 
     try {
       const outcome = await this.prismaLike().$transaction(async (tx) => {
@@ -442,6 +494,45 @@ function reject(clientEventId: string, errorCode: EventRejectionCode): EventResu
     status: 'REJECTED',
     errorCode,
     messageAr: REJECTION_MESSAGE_AR[errorCode],
+  };
+}
+
+/**
+ * B1. What the device CLAIMED the day and the zone were, and by how many
+ * calendar days it disagreed with the server's answer.
+ *
+ * Three deliberate naming decisions, because this is the field a future
+ * engineer is most likely to misuse:
+ *   - `clientReportedLocalDate`, not `localDate`. The prefix is the warning.
+ *   - it lives in the payload next to the authoritative `localDate`, so any
+ *     diff between them is visible in one row rather than requiring a join.
+ *   - `clientLocalDateSkewDays` is precomputed, so an alert can be written
+ *     against a number instead of two strings.
+ *
+ * Nothing here is read by any rule, any key, or any query. It exists to answer
+ * "is this fleet's clock drifting?" and "did someone try this?".
+ */
+function buildClientDateTelemetry(
+  event: WireEventDto,
+  serverBusinessDate: string,
+): {
+  clientReportedLocalDate: string | null;
+  clientReportedTimezone: string | null;
+  clientLocalDateSkewDays: number | null;
+} {
+  const claimed = typeof event.localDate === 'string' ? event.localDate : null;
+  const skewDays =
+    claimed !== null
+      ? Math.round(
+          (Date.parse(`${claimed}T00:00:00.000Z`) -
+            Date.parse(`${serverBusinessDate}T00:00:00.000Z`)) /
+            86_400_000,
+        )
+      : null;
+  return {
+    clientReportedLocalDate: claimed,
+    clientReportedTimezone: typeof event.timezone === 'string' ? event.timezone : null,
+    clientLocalDateSkewDays: Number.isFinite(skewDays as number) ? skewDays : null,
   };
 }
 

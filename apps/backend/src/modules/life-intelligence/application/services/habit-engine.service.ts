@@ -6,6 +6,8 @@ import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-tim
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { IHabit, IHabitCompletion, IHabitScoreBreakdown, ICreateHabitInput } from '../../domain/habit.types';
 import { computeCurrentStreak } from './streak-calculator';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate, getBusinessTimeHHMM, isBusinessDate } from '../../../../common/time/family-date';
 
 const SCORE_WINDOW_DAYS = 30;
 const STREAK_LOOKBACK_DAYS = 30;
@@ -33,6 +35,19 @@ const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100];
  * and adds Missed Habit tracking (markMissedHabits/getMissedHabitsSignal)
  * — a real, previously-flagged gap from Sprint 15's own final report,
  * used strictly as a Coaching SIGNAL, never a punishment.
+ *
+ * B1+B2 (PA-B-001 · PA-B-004): every "today" in this file used to be UTC
+ * midnight, and `isPastScheduledEnd` used the CONTAINER's local clock — two
+ * different bugs in one class. Both now go through `FamilyDateService`, so a
+ * habit completed at 00:30 in Cairo counts for today rather than yesterday and
+ * a 21:00 scheduled window is 21:00 where the child lives.
+ *
+ * AND `dateStr` IS NO LONGER A DEVICE INPUT. `POST /self/habits/:id/complete`
+ * accepted `date` from the child's device and fed it into the reward
+ * idempotency key (`habit-completion:{habitId}:{date}`) — PA-B-004, the same
+ * exploit as PA-B-003 but outside `/events/batch` and outside its throttler.
+ * A back-dated completion is now a PARENT privilege: `completeHabit` takes an
+ * explicit `actor`, and a DEVICE actor's date is derived, never supplied.
  */
 @Injectable()
 export class HabitEngineService {
@@ -41,6 +56,7 @@ export class HabitEngineService {
     private readonly childrenService: ChildrenService,
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
     @Inject(REWARD_TRIGGER_WRITER) private readonly rewardTrigger: IRewardTriggerWriter,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   async createHabit(childId: string, familyId: string, input: Omit<ICreateHabitInput, 'childId'>): Promise<IHabit> {
@@ -50,10 +66,37 @@ export class HabitEngineService {
 
   async listHabits(childId: string, familyId: string): Promise<IHabit[]> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    return this.habitRepository.listActiveForChild(childId);
+    // B2: "is this habit already done today?" is answered on the family
+    // calendar, so the Child App's Today screen stops showing a completed
+    // habit as outstanding for the three hours after local midnight.
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const today = FamilyDateService.toDateColumn(getBusinessDate(new Date(), timeZone));
+    return this.habitRepository.listActiveForChild(childId, today);
   }
 
-  async completeHabit(habitId: string, childId: string, familyId: string, dateStr?: string): Promise<IHabitCompletion> {
+  /**
+   * B1 (PA-B-004). `actor` decides whether `dateStr` is even looked at.
+   *
+   *   'DEVICE' — the child's own app. The date is DERIVED from the family
+   *              calendar and `dateStr` is ignored entirely. This is what
+   *              closes the second entry point to the replay exploit: the
+   *              idempotency key below is `habit-completion:{habitId}:{day}`,
+   *              and a device that chose `{day}` chose the key.
+   *   'PARENT' — an authenticated parent session, which may legitimately
+   *              back-fill a missed day. Bounded to the last 30 days and never
+   *              into the future, so "back-fill" cannot become "mint 200 keys".
+   *
+   * The default is 'DEVICE' — the safe side — so a future call site that
+   * forgets to declare an actor gets the derived date rather than the
+   * caller-chosen one.
+   */
+  async completeHabit(
+    habitId: string,
+    childId: string,
+    familyId: string,
+    dateStr?: string,
+    actor: 'PARENT' | 'DEVICE' = 'DEVICE',
+  ): Promise<IHabitCompletion> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
     const habit = await this.habitRepository.findById(habitId);
@@ -65,7 +108,11 @@ export class HabitEngineService {
       throw new NotFoundException('Habit not found');
     }
 
-    const date = dateStr ? new Date(dateStr) : this.today();
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const now = new Date();
+    const todayStr = getBusinessDate(now, timeZone);
+    const businessDate = this.resolveCompletionDate(dateStr, todayStr, actor, timeZone);
+    const date = FamilyDateService.toDateColumn(businessDate);
 
     // Sprint 16 — CLOSES A REAL GAP: no distinction between on-time
     // and late completion existed. Only evaluated when completing
@@ -73,14 +120,14 @@ export class HabitEngineService {
     // concept relative to a window that has already fully elapsed
     // either way) and only when the habit actually has a scheduled
     // end time (habits with no scheduled window are never "late").
-    const isToday = date.getTime() === this.today().getTime();
-    const status = isToday && habit.scheduledEndTime && this.isPastScheduledEnd(habit.scheduledEndTime)
+    const isToday = businessDate === todayStr;
+    const status = isToday && habit.scheduledEndTime && this.isPastScheduledEnd(habit.scheduledEndTime, now, timeZone)
       ? 'COMPLETED_LATE' as const
       : 'COMPLETED' as const;
 
     const completion = await this.habitRepository.recordCompletion(habitId, childId, date, status);
 
-    const priorCompletions = await this.habitRepository.countCompletionsInWindow(childId, this.daysAgo(SCORE_WINDOW_DAYS));
+    const priorCompletions = await this.habitRepository.countCompletionsInWindow(childId, this.daysAgo(SCORE_WINDOW_DAYS, timeZone));
     // KNOWN, ASSESSED-LOW-SEVERITY RACE CONDITION (found in this
     // session's own review, documented not silently left): under
     // near-simultaneous concurrent requests (e.g. two different
@@ -135,10 +182,13 @@ export class HabitEngineService {
         engine: 'habit-builder',
         type: 'HABIT_COMPLETED',
         payload: { habitId, category: habit.category, isShared: habit.isShared, status },
-        idempotencyKey: `habit-completion:${habitId}:${date.toISOString().slice(0, 10)}`,
+        // B1: `businessDate` is a SERVER output — `Family.timezone` applied to
+        // the server clock, or a parent-authorised back-fill inside a bounded
+        // window. It is never the raw string a device sent.
+        idempotencyKey: `habit-completion:${habitId}:${businessDate}`,
       });
 
-      const since = this.daysAgo(STREAK_LOOKBACK_DAYS);
+      const since = this.daysAgo(STREAK_LOOKBACK_DAYS, timeZone);
       const dailyCompletions = await this.habitRepository.countCompletionsInWindow(childId, since);
       // Streak here is measured across ALL habits completed that day
       // (at least one), matching this engine's own "Habits Score is a
@@ -147,7 +197,6 @@ export class HabitEngineService {
       // extension this pass doesn't invent.
       if (dailyCompletions > 0) {
         const qualifyingDays = await this.getQualifyingCompletionDays(childId, since);
-        const todayStr = this.today().toISOString().slice(0, 10);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
         if (STREAK_MILESTONES.includes(streakDays)) {
           // Sprint 16.1: idempotencyKey is childId+metric+streakDays
@@ -180,8 +229,14 @@ export class HabitEngineService {
    * schedule. */
   async markMissedHabits(childId: string, familyId: string, dateStr?: string): Promise<number> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    const date = dateStr ? new Date(dateStr) : this.daysAgo(1);
-    return this.habitRepository.markMissedHabitsForDate(childId, date);
+    // B2: "yesterday" is yesterday ON THE FAMILY CALENDAR. Marking a habit
+    // MISSED is a judgement about a day that is over, and the old UTC version
+    // declared a Cairo child's evening missed while it was still that evening.
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const businessDate = dateStr && isBusinessDate(dateStr)
+      ? dateStr
+      : FamilyDateService.addDays(getBusinessDate(new Date(), timeZone), -1);
+    return this.habitRepository.markMissedHabitsForDate(childId, FamilyDateService.toDateColumn(businessDate));
   }
 
   /** Sprint 16 — Coaching-facing read: recent missed habits as a
@@ -190,7 +245,7 @@ export class HabitEngineService {
    * Coaching layer decides what tone/action, if any, this warrants. */
   async getMissedHabitsSignal(childId: string, familyId: string, windowDays = 7) {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    const since = this.daysAgo(windowDays);
+    const since = this.daysAgo(windowDays, await this.familyDate.timeZoneOf(familyId));
     return this.habitRepository.findMissedHabitsInWindow(childId, since);
   }
 
@@ -200,7 +255,8 @@ export class HabitEngineService {
   async getScoreBreakdown(childId: string, familyId: string): Promise<IHabitScoreBreakdown> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const since = this.daysAgo(SCORE_WINDOW_DAYS);
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    const since = this.daysAgo(SCORE_WINDOW_DAYS, timeZone);
     const activeHabitCount = await this.habitRepository.countActiveHabits(childId);
     const sharedHabitCount = await this.habitRepository.countActiveHabits(childId, true);
     const totalHabitDays = activeHabitCount * SCORE_WINDOW_DAYS;
@@ -213,8 +269,7 @@ export class HabitEngineService {
     // service's own completeHabit already uses for STREAK_ACHIEVED,
     // not a second implementation.
     const completionDates = await this.habitRepository.findDistinctCompletionDates(childId, since);
-    const todayStr = this.today().toISOString().slice(0, 10);
-    const streakDays = computeCurrentStreak(completionDates, todayStr);
+    const streakDays = computeCurrentStreak(completionDates, getBusinessDate(new Date(), timeZone));
 
     return {
       childId,
@@ -227,18 +282,47 @@ export class HabitEngineService {
     };
   }
 
-  /** "HH:MM" 24h comparison against the current local server time —
-   * an honest, documented approximation (server time, not the
-   * child's own device timezone, which this backend doesn't track
-   * per-request) rather than a false claim of timezone-perfect
-   * precision. */
-  private isPastScheduledEnd(scheduledEndTime: string): boolean {
+  /**
+   * B2, SERVER-LOCAL CLASS. `"HH:MM"` against the FAMILY's wall clock.
+   *
+   * This used to be `new Date().setHours(h, m, 0, 0)` — which reads the
+   * CONTAINER's timezone. That is neither UTC nor the family's, it is unset in
+   * this image (so it silently equals UTC today), and it would change the
+   * meaning of every habit's scheduled window the first time the service was
+   * deployed to a host configured differently. A behaviour that depends on an
+   * undocumented, unpinned environment variable is not a behaviour, and the
+   * comment that called it "an honest approximation" was describing a bug.
+   *
+   * Both sides of the comparison are now plain `HH:MM` strings on the family's
+   * calendar, so there is no `Date` arithmetic left to be wrong.
+   */
+  private isPastScheduledEnd(scheduledEndTime: string, now: Date, timeZone: string): boolean {
     const [hours, minutes] = scheduledEndTime.split(':').map(Number);
     if (Number.isNaN(hours) || Number.isNaN(minutes)) return false;
-    const now = new Date();
-    const scheduledEnd = new Date(now);
-    scheduledEnd.setHours(hours, minutes, 0, 0);
-    return now.getTime() > scheduledEnd.getTime();
+    const scheduledEnd = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    return getBusinessTimeHHMM(now, timeZone) > scheduledEnd;
+  }
+
+  /**
+   * B1 (PA-B-004). The only place a caller-supplied completion date is allowed
+   * in, and the bounds it must survive.
+   */
+  private resolveCompletionDate(
+    dateStr: string | undefined,
+    todayStr: string,
+    actor: 'PARENT' | 'DEVICE',
+    timeZone: string,
+  ): string {
+    if (actor !== 'PARENT' || dateStr === undefined) return todayStr;
+
+    const requested = isBusinessDate(dateStr) ? dateStr : getBusinessDate(new Date(dateStr), timeZone);
+    // Never the future: a future-dated completion is either a mistake or an
+    // attempt to pre-mint keys for days that have not happened.
+    if (requested > todayStr) return todayStr;
+    // Never further back than the scoring window; beyond that the completion
+    // affects no score and no streak, and only widens the key space.
+    const earliest = FamilyDateService.addDays(todayStr, -SCORE_WINDOW_DAYS);
+    return requested < earliest ? earliest : requested;
   }
 
   private async getQualifyingCompletionDays(childId: string, since: Date): Promise<string[]> {
@@ -252,14 +336,15 @@ export class HabitEngineService {
     return this.habitRepository.findDistinctCompletionDates(childId, since);
   }
 
-  private today(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  }
-
-  private daysAgo(days: number): Date {
-    const d = this.today();
-    d.setUTCDate(d.getUTCDate() - days);
-    return d;
+  /**
+   * B2: the lower bound of a lookback window, as an instant. The DATE is
+   * computed on the family calendar and only then anchored to the UTC midnight
+   * the `@db.Date` / timestamp columns store it at — a storage convention
+   * applied after the calendar decision, not instead of it.
+   */
+  private daysAgo(days: number, timeZone: string): Date {
+    return FamilyDateService.toDateColumn(
+      FamilyDateService.addDays(getBusinessDate(new Date(), timeZone), -days),
+    );
   }
 }

@@ -17,6 +17,26 @@
  * from the device token, the localDate, the source id). A device cannot choose
  * its own idempotency key, because a device that could choose it could also
  * choose a fresh one per retry and mint unlimited rewards.
+ *
+ * B1 (PA-B-003) — WHAT "SERVER-KNOWN" NOW ACTUALLY MEANS. Until B1 that
+ * paragraph was true of every input except one: `localDate` arrived from the
+ * child's device, shape-validated and nothing more, and five of the key shapes
+ * below embed it. Phase A verified the split by reading this table; so did this
+ * sprint, before touching anything:
+ *
+ *   EXPLOITABLE — the key carries `{day}`, so a chosen day was a chosen key:
+ *     HABIT_COMPLETED · DAILY_GOAL_COMPLETED · HYDRATION_GOAL_COMPLETED ·
+ *     ACTIVITY_GOAL_COMPLETED · SCREEN_TIME_THRESHOLD
+ *   STRUCTURALLY IMMUNE — no day component exists in the key at all:
+ *     EDUCATION_PROGRESS (`{milestone}`) · MEMORIZATION_COMPLETED (`{src}`) ·
+ *     TASK_COMPLETED (`{src}`) · STREAK_ACHIEVED (`{kind}:{milestone}`) ·
+ *     ACHIEVEMENT_VERIFIED (`{src}:x{multiplierBps}`, and the multiplier is
+ *     FROZEN onto the row rather than recomputed)
+ *
+ * `localDate` is now a SERVER OUTPUT everywhere: `getBusinessDate(occurredAt,
+ * Family.timezone)` from `src/common/time/family-date.ts`. No caller may pass a
+ * client-supplied value into `parts.localDate`. The five shapes above are
+ * replay-safe only while that holds, and that is the whole of the fix.
  */
 import type { CompletionKind } from './completion-event';
 import type { DomainEventType } from './event-types';
@@ -141,8 +161,16 @@ export function composeRewardGrantedKey(sourceIdempotencyKey: string): string {
   return clamp(`granted:${sourceIdempotencyKey}`);
 }
 
-/** UTC calendar date. Used when a device supplies no `localDate`/timezone. */
-export function utcLocalDate(iso: string | Date): string {
-  const d = typeof iso === 'string' ? new Date(iso) : iso;
-  return d.toISOString().slice(0, 10);
-}
+/**
+ * REMOVED IN B1: `utcLocalDate(iso)`.
+ *
+ * It was the fallback used when a device sent no `localDate`, and it was the
+ * second half of PA-B-001: it answered "which day?" in UTC, which is the wrong
+ * day for three hours out of every twenty-four in both launch markets. Leaving
+ * it exported would have left a one-import path back to the bug.
+ *
+ * Its replacement is `getBusinessDate(instant, timeZone)` in
+ * `src/common/time/family-date.ts`, which requires a timezone and therefore
+ * cannot be called by accident.
+ */
+

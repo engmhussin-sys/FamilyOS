@@ -150,6 +150,11 @@ export class PrismaRewardProgramRepository {
       where: { childId, status: 'VERIFIED', programId: { in: programIds } },
       select: { localDate: true },
     });
+    // B2, DELIBERATELY TIMEZONE-FREE: `AchievementRequest.local_date` is a
+    // `@db.Date` that already holds a business date — `AchievementService.start`
+    // computed it on the family calendar before writing. Reading a stored day
+    // back is `toISOString().slice(0, 10)`; re-projecting it through a timezone
+    // would shift every historical row by one for any family east of UTC.
     return rows.map((r: any) => new Date(r.localDate).toISOString().slice(0, 10));
   }
 

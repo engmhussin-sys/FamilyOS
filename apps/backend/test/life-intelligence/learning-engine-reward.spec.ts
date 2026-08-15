@@ -4,6 +4,7 @@ import { LearningEngineService } from '../../src/modules/life-intelligence/appli
 import { PrismaLearningRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-learning.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2, CLOSES A REAL GAP confirmed in Sprint 16.2's own E2E re-audit)", () => {
   const repositoryMock = {
@@ -34,6 +35,8 @@ describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2,
         { provide: PrismaLearningRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(LearningEngineService);

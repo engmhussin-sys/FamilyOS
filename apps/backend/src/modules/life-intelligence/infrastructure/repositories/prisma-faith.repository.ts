@@ -24,24 +24,19 @@ export class PrismaFaithRepository {
     return row ? this.toDomainPractice(row, false) : null;
   }
 
-  async listActivePractices(childId: string): Promise<IFaithPractice[]> {
+  /** B2: `todayDate` is the FAMILY's business day (see PrismaHabitRepository
+   * for the full reasoning). */
+  async listActivePractices(childId: string, todayDate: Date): Promise<IFaithPractice[]> {
     const [rows, todaysLogs] = await Promise.all([
       this.prisma.faithPractice.findMany({ where: { childId, isActive: true } }),
       // One query for all of today's logs, not one per practice.
       this.prisma.faithPracticeLog.findMany({
-        where: { childId, date: this.todayDateOnly() },
+        where: { childId, date: todayDate },
         select: { practiceId: true },
       }),
     ]);
     const completedPracticeIds = new Set(todaysLogs.map((l: { practiceId: string }) => l.practiceId));
     return rows.map((row: { id: string }) => this.toDomainPractice(row as any, completedPracticeIds.has(row.id)));
-  }
-
-  /** Matches FaithEngineService.today()'s own UTC-midnight convention
-   * exactly, so "today" here and "today" at write time always agree. */
-  private todayDateOnly(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   }
 
   async countActivePractices(childId: string): Promise<number> {

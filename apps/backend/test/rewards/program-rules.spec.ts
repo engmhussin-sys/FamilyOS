@@ -309,19 +309,49 @@ describe('checkProgramEligibility — the eleven rules, server-side', () => {
   });
 });
 
+/**
+ * CHANGED IN B2 (PA-B-001). Every assertion below previously passed a `Date`
+ * and got a UTC answer. The three helpers now REQUIRE an IANA zone, so the
+ * existing cases are re-expressed with `'UTC'` — proving the migration changed
+ * no behaviour for a UTC family — and new cases prove it changed the behaviour
+ * that was wrong.
+ */
 describe('date helpers', () => {
   it('computes whole years and handles a birthday not yet reached', () => {
-    expect(ageInYears(new Date('2015-04-01'), new Date('2026-06-15'))).toBe(11);
-    expect(ageInYears(new Date('2015-12-01'), new Date('2026-06-15'))).toBe(10);
+    expect(ageInYears(new Date('2015-04-01'), new Date('2026-06-15'), 'UTC')).toBe(11);
+    expect(ageInYears(new Date('2015-12-01'), new Date('2026-06-15'), 'UTC')).toBe(10);
   });
 
   it('the week window is 7 days inclusive', () => {
-    const w = weekWindow(new Date('2026-06-15T12:00:00Z'));
+    const w = weekWindow(new Date('2026-06-15T12:00:00Z'), 'UTC');
     expect(w.to).toBe('2026-06-15');
     expect(w.from).toBe('2026-06-09');
   });
 
   it('formats YYYY-MM-DD', () => {
-    expect(localDateString(new Date('2026-06-15T23:59:00Z'))).toBe('2026-06-15');
+    expect(localDateString(new Date('2026-06-15T23:59:00Z'), 'UTC')).toBe('2026-06-15');
+  });
+
+  it('B2: the SAME instant is a different program day in Cairo, Riyadh and UTC', () => {
+    // 21:30Z is 00:30 the NEXT day in both launch markets in August.
+    const instant = new Date('2026-06-15T21:30:00Z');
+    expect(localDateString(instant, 'UTC')).toBe('2026-06-15');
+    expect(localDateString(instant, 'Africa/Cairo')).toBe('2026-06-16');
+    expect(localDateString(instant, 'Asia/Riyadh')).toBe('2026-06-16');
+  });
+
+  it('B2: the maxPerWeek window is 6 CALENDAR days back, not 6 x 86,400,000 ms', () => {
+    // Africa/Cairo's 2026 spring transition is 2026-04-24 (a 23-hour day).
+    // Millisecond arithmetic over this window lands on the wrong `from`.
+    const w = weekWindow(new Date('2026-04-27T10:00:00Z'), 'Africa/Cairo');
+    expect(w.to).toBe('2026-04-27');
+    expect(w.from).toBe('2026-04-21');
+  });
+
+  it('B2: age is decided on the family calendar, so a birthday is not a day late', () => {
+    // 21:30Z on the 15th is already the 16th in Cairo — the child's birthday.
+    const instant = new Date('2026-06-15T21:30:00Z');
+    expect(ageInYears(new Date('2015-06-16'), instant, 'Africa/Cairo')).toBe(11);
+    expect(ageInYears(new Date('2015-06-16'), instant, 'UTC')).toBe(10);
   });
 });

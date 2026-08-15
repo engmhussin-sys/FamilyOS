@@ -8,6 +8,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { RedisModule } from './common/redis/redis.module';
+import { TimeModule } from './common/time/time.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { TenantContextInterceptor } from './common/tenancy/tenant-context.interceptor';
 import { AuthModule } from './modules/auth/auth.module';
@@ -67,6 +68,10 @@ import { RewardsEngineModule } from './modules/rewards-engine/rewards-engine.mod
     }),
     PrismaModule,
     RedisModule,
+    // B2 (PA-B-001). @Global, imported right after PrismaModule because it
+    // depends on PrismaService and every engine below depends on it: it is the
+    // ONE implementation of "which calendar day is it for this family".
+    TimeModule,
     AuthModule,
     ChildrenModule,
     ScreenTimeModule,

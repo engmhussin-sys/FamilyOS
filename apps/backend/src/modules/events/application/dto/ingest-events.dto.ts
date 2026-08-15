@@ -48,11 +48,37 @@ export class WireEventDto {
   @IsInt()
   schemaVersion?: number;
 
+  /**
+   * TELEMETRY ONLY (B1). The device's own idea of its zone. Stored as
+   * `clientReportedTimezone`; it dates nothing. The family's calendar is
+   * `Family.timezone`, and one family has one calendar.
+   */
   @IsOptional()
   @IsString()
   @MaxLength(60)
   timezone?: string;
 
+  /**
+   * TELEMETRY ONLY (B1, closes PA-B-003). THIS FIELD IS NOT THE BUSINESS DATE
+   * AND MUST NEVER BECOME ONE AGAIN.
+   *
+   * It used to be. It was validated for SHAPE ONLY and then flowed straight
+   * into `composeIdempotencyKey`. Because the attacker chose it, the attacker
+   * chose the key: 200 different values in one 200-event batch produced 200
+   * grants for a single habit completion, and 2,400/hour through the
+   * per-device throttler. The unique constraint was intact throughout — it was
+   * guarding a lock whose key the caller was handed.
+   *
+   * The server now derives the business date from `occurredAt` (already
+   * bounded to -48h/+5min by `EventIngestionService.validate`) projected onto
+   * `Family.timezone`. This value survives only as `clientReportedLocalDate`
+   * in the stored payload, for clock-skew diagnostics.
+   *
+   * It is still ACCEPTED rather than rejected on purpose: ignoring an input is
+   * a backward-compatible change that keeps every already-deployed agent
+   * working and keeps the skew signal flowing; refusing it would break them
+   * and blind us at the same time.
+   */
   @IsOptional()
   @IsString()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'localDate must be YYYY-MM-DD.' })
