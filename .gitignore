@@ -65,3 +65,7 @@ Thumbs.db
 # a git history. `EVIDENCE_STORAGE_ROOT` overrides the location; this is the
 # default `LocalDiskEvidenceStorage` uses, and the e2e suite really writes here.
 apps/backend/.evidence-store/
+
+# Phase C — the Flutter static-preflight scripts are plain Python; their
+# bytecode cache is a build artifact of running them, not source.
+scripts/__pycache__/
