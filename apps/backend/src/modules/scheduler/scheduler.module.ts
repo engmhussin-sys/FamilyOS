@@ -4,6 +4,7 @@ import { TimeModule } from '../../common/time/time.module';
 import { DataRetentionModule } from '../data-retention/data-retention.module';
 import { EventsModule } from '../events/events.module';
 import { LifeIntelligenceModule } from '../life-intelligence/life-intelligence.module';
+import { JobObservability } from './application/job-observability.service';
 import { JobRegistry } from './application/job-registry.service';
 import { JobRunner } from './application/job-runner.service';
 import { SchedulerService } from './application/scheduler.service';
@@ -11,6 +12,7 @@ import { DeadLetterAlertJob } from './application/jobs/dead-letter-alert.job';
 import { ExpiredTokenSweepJob } from './application/jobs/expired-token-sweep.job';
 import { FamilyDailyRolloverJob } from './application/jobs/family-daily-rollover.job';
 import { RetentionSweepJob } from './application/jobs/retention-sweep.job';
+import { SchedulerOperationsController } from './presentation/controllers/scheduler-operations.controller';
 
 /**
  * PHASE C P4 (PA-B-031) — THE SCHEDULER.
@@ -38,6 +40,7 @@ import { RetentionSweepJob } from './application/jobs/retention-sweep.job';
  */
 @Module({
   imports: [TimeModule, DataRetentionModule, LifeIntelligenceModule, EventsModule],
+  controllers: [SchedulerOperationsController],
   providers: [
     RetentionSweepJob,
     ExpiredTokenSweepJob,
@@ -45,8 +48,9 @@ import { RetentionSweepJob } from './application/jobs/retention-sweep.job';
     FamilyDailyRolloverJob,
     JobRegistry,
     JobRunner,
+    JobObservability,
     SchedulerService,
   ],
-  exports: [SchedulerService, JobRunner, JobRegistry],
+  exports: [SchedulerService, JobRunner, JobObservability, JobRegistry],
 })
 export class SchedulerModule {}
