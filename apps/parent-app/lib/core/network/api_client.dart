@@ -98,6 +98,24 @@ class ApiClient {
     return _unwrap(() => _dio.get(path, queryParameters: queryParameters));
   }
 
+  /// B6 ADDITIVE: [get] wraps a non-Map body as `{'data': body}`, which every
+  /// existing array-returning caller then unpacks by hand. The F4 surface has
+  /// nine array endpoints, so this returns the list directly instead of making
+  /// nine call sites repeat the same cast. Same interceptor path, same
+  /// refresh-and-retry, same error translation — only the return shape differs.
+  Future<List<dynamic>> getList(String path, {Map<String, dynamic>? queryParameters}) async {
+    final result = await _unwrap(() => _dio.get(path, queryParameters: queryParameters));
+    final data = result['data'];
+    if (data is List) return data;
+    // A Map body where a List was expected is a real contract break, not
+    // something to paper over with an empty list.
+    throw ApiException(
+      'Expected a JSON array from $path.',
+      messageAr: 'وصل ردٌّ غير متوقَّع من الخادم.',
+      code: 'CLIENT_UNEXPECTED_SHAPE',
+    );
+  }
+
   Future<Map<String, dynamic>> post(String path, {Object? data, bool skipAuth = false}) async {
     return _unwrap(() => _dio.post(path, data: data, options: Options(extra: {'skipAuth': skipAuth})));
   }
@@ -121,15 +139,61 @@ class ApiClient {
       return response.data is Map<String, dynamic> ? response.data as Map<String, dynamic> : {'data': response.data};
     } on DioException catch (e) {
       if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.receiveTimeout) {
-        throw ApiException('The request took too long. Check your connection and try again.');
+        throw ApiException(
+          'The request took too long. Check your connection and try again.',
+          messageAr: 'استغرق الطلب وقتًا طويلًا. تحقّق من اتصالك وحاول مجددًا.',
+          code: 'CLIENT_TIMEOUT',
+        );
       }
       if (e.type == DioExceptionType.connectionError) {
-        throw ApiException('No internet connection.');
+        throw ApiException(
+          'No internet connection.',
+          messageAr: 'لا يوجد اتصال بالإنترنت.',
+          code: 'CLIENT_OFFLINE',
+        );
       }
-      final body = e.response?.data;
-      final message = (body is Map && body['message'] != null) ? body['message'].toString() : 'Network error.';
-      final correlationId = (body is Map) ? body['correlationId']?.toString() : null;
-      throw ApiException(message, statusCode: e.response?.statusCode, correlationId: correlationId);
+      throw _fromErrorEnvelope(e);
     }
+  }
+
+  /// B6 — READS THE B3 GLOBAL ERROR CONTRACT.
+  ///
+  /// The three fields B3 added (`code`, `messageAr`, `details` — plus
+  /// `requestId`, which carries the same value as the pre-existing
+  /// `correlationId`) were on the wire from commit `f57639c` onwards and no
+  /// client read any of them. That is the whole of audit PA-M-002's remaining
+  /// half: the Arabic non-punitive sentence existed, was tested, was
+  /// serialised, and was thrown away one layer before a human.
+  ///
+  /// DEFENSIVE ON PURPOSE. Nothing here assumes the envelope is present: an
+  /// error from a proxy, a 502 HTML page, or any pre-B3 route still produces a
+  /// usable [ApiException] with `messageAr == null`, which `ApiFailure`
+  /// renders by falling back to `message`.
+  ApiException _fromErrorEnvelope(DioException e) {
+    final body = e.response?.data;
+    if (body is! Map) {
+      return ApiException(
+        e.message ?? 'Network error.',
+        statusCode: e.response?.statusCode,
+      );
+    }
+
+    // `message` is a String for a hand-thrown exception and a String[] for a
+    // ValidationPipe failure — B3 preserved both shapes deliberately.
+    final rawMessage = body['message'];
+    final message = rawMessage is List
+        ? rawMessage.join(' ')
+        : (rawMessage?.toString() ?? 'Network error.');
+
+    final rawDetails = body['details'];
+    return ApiException(
+      message,
+      statusCode: e.response?.statusCode,
+      correlationId: body['correlationId']?.toString(),
+      requestId: body['requestId']?.toString() ?? body['correlationId']?.toString(),
+      code: body['code']?.toString(),
+      messageAr: body['messageAr']?.toString(),
+      details: rawDetails is Map ? Map<String, dynamic>.from(rawDetails) : null,
+    );
   }
 }

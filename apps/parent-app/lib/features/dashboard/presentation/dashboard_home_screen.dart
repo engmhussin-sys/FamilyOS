@@ -16,6 +16,10 @@ import '../../life_intelligence/presentation/faith_progress_screen.dart';
 import '../../life_intelligence/presentation/family_store_screen.dart';
 import '../../life_intelligence/presentation/coaching_screen.dart';
 import '../../life_intelligence/presentation/wellbeing_screen.dart';
+import '../../rewards/presentation/child_rewards_screen.dart';
+import '../../rewards/presentation/programs_list_screen.dart';
+import '../../rewards/presentation/suggestions_screen.dart';
+import '../../../core/design_system/design_system.dart';
 
 class DashboardHomeScreen extends ConsumerStatefulWidget {
   const DashboardHomeScreen({super.key});
@@ -29,6 +33,11 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   List<dynamic>? _devices;
   int _unreadCount = 0;
   int _pendingApprovalsCount = 0;
+  /// B6: the number of ACHIEVEMENTS waiting on this parent — a different
+  /// queue from `_pendingApprovalsCount`, which counts pending MESSAGES
+  /// (`/life-intelligence/communication/pending`). Audit P12 called out
+  /// that the two had been conflated by name.
+  int _pendingGoalReviewCount = 0;
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -83,6 +92,16 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
       if (mounted) setState(() => _pendingApprovalsCount = pending.length);
     } catch (_) {
       // Best-effort — the dashboard already rendered successfully above.
+    }
+
+    // B6 — same partial-failure discipline: the goal-review count is its own
+    // fetch with its own catch, so an F4 outage cannot blank a dashboard
+    // that has already rendered.
+    try {
+      final reviews = await ref.read(rewardProgramsRepositoryProvider).listPendingAchievements();
+      if (mounted) setState(() => _pendingGoalReviewCount = reviews.length);
+    } catch (_) {
+      // Best-effort.
     }
   }
 
@@ -151,6 +170,8 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
                     alertsCount: _unreadCount,
                     t: t,
                   ),
+                  const SizedBox(height: 16),
+                  _GoalsHubCard(t: t, pendingReviews: _pendingGoalReviewCount),
                   const SizedBox(height: 16),
                   if (_children != null && _children!.isEmpty)
                     _FirstChildEmptyState(t: t)
@@ -331,9 +352,51 @@ class _ChildCard extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // B6 — GROWTH FIRST. The two goal entries lead this sheet
+            // deliberately: the product's thesis is that a parent opens this
+            // app to set and reward a goal, and only then to look at a
+            // monitoring surface.
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: Text(t('goalsHub.childGoals')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ProgramsListScreen(childId: childId, childName: childName),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.emoji_events_outlined),
+              title: Text(t('goalsHub.childRewards')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ChildRewardsScreen(childId: childId, childName: childName),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.lightbulb_outline_rounded),
+              title: Text(t('suggestions.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SuggestionsScreen(childId: childId, childName: childName),
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.auto_awesome_outlined),
               title: Text(t('digitalTwin.title')),
@@ -434,6 +497,7 @@ class _ChildCard extends StatelessWidget {
               },
             ),
           ],
+        ),
         ),
       ),
     );
@@ -539,6 +603,59 @@ class _QuickActions extends ConsumerWidget {
           child: Text(t('settings.logout')),
         ),
       ],
+    );
+  }
+}
+
+
+/// B6 — THE PRODUCT'S FRONT DOOR ON THE PARENT SIDE.
+///
+/// Before this card, the F4 Smart Reward Engine had no entry point in any
+/// app: 23 live endpoints, zero consumers (audit PA-M-001, ⛔ Critical).
+/// Everything the parent does in the flagship journey starts here —
+/// create a goal, review what a child submitted, hand over a reward.
+///
+/// It is placed directly under the family summary, ABOVE the per-child
+/// monitoring cards, because that ordering is the product's thesis:
+/// growth first, monitoring second.
+class _GoalsHubCard extends StatelessWidget {
+  const _GoalsHubCard({required this.t, required this.pendingReviews});
+
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+  final int pendingReviews;
+
+  @override
+  Widget build(BuildContext context) {
+    return DsCard(
+      accent: DsColor.accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(t('goalsHub.title'), style: DsText.sectionTitle(context)),
+          DsSpace.gapXs,
+          Text(t('goalsHub.subtitle'), style: DsText.caption(context)),
+          DsSpace.gapLg,
+          DsPrimaryButton(
+            label: t('goalsHub.openGoals'),
+            icon: Icons.flag_outlined,
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.goals),
+          ),
+          DsSpace.gapMd,
+          DsSecondaryButton(
+            label: pendingReviews > 0
+                ? t('goalsHub.reviewQueueWithCount', options: {'count': pendingReviews})
+                : t('goalsHub.reviewQueue'),
+            icon: Icons.fact_check_outlined,
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.goalReviewQueue),
+          ),
+          DsSpace.gapMd,
+          DsSecondaryButton(
+            label: t('goalsHub.fulfilments'),
+            icon: Icons.redeem_outlined,
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.fulfilments),
+          ),
+        ],
+      ),
     );
   }
 }

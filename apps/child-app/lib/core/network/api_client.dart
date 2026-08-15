@@ -169,12 +169,54 @@ class ApiClient {
     }
   }
 
+  /// B6 — READS THE B3 GLOBAL ERROR CONTRACT.
+  ///
+  /// The English `message` extraction below is byte-for-byte the behaviour
+  /// that was here before (including the `List` join for a ValidationPipe
+  /// body); everything after it is new. That ordering matters: `messageAr`
+  /// is ADDED, `message` is not replaced, so any caller still reading
+  /// `.message` behaves identically to before this commit.
+  ///
+  /// The transport cases (`connectionError`, timeouts) get their own codes
+  /// and their own Arabic sentences, because a child who is simply offline
+  /// must not be shown a server error — and because the server, by
+  /// definition, sent nothing to translate.
   ApiException _toApiException(DioException e) {
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.sendTimeout) {
+      return ApiException(
+        'The request took too long.',
+        0,
+        code: 'CLIENT_TIMEOUT',
+        messageAr: 'الاتصال بطيء شوية. جرّب تاني بعد لحظة.',
+      );
+    }
+    if (e.type == DioExceptionType.connectionError) {
+      return ApiException(
+        'No internet connection.',
+        0,
+        code: 'CLIENT_OFFLINE',
+        messageAr: 'مفيش إنترنت دلوقتي. هنكمّل أول ما يرجع.',
+      );
+    }
+
     final statusCode = e.response?.statusCode ?? 0;
     final data = e.response?.data;
     final message = (data is Map && data['message'] != null)
         ? (data['message'] is List ? (data['message'] as List).join(' ') : data['message'].toString())
         : e.message ?? 'Request failed.';
-    return ApiException(message, statusCode);
+    if (data is! Map) {
+      return ApiException(message, statusCode);
+    }
+    final rawDetails = data['details'];
+    return ApiException(
+      message,
+      statusCode,
+      code: data['code']?.toString(),
+      messageAr: data['messageAr']?.toString(),
+      requestId: data['requestId']?.toString() ?? data['correlationId']?.toString(),
+      details: rawDetails is Map ? Map<String, dynamic>.from(rawDetails) : null,
+    );
   }
 }

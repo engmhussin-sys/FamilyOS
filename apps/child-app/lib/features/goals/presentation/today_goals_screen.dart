@@ -1,0 +1,198 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/design_system/design_system.dart';
+import '../../../core/di/providers.dart';
+import '../../../core/localization/locale_controller.dart';
+import '../../../core/widgets/sparky_mascot.dart';
+import '../domain/child_goal.dart';
+import 'goal_detail_screen.dart';
+
+/// أهداف اليوم — **THE CHILD'S FIRST SCREEN** as of B7.
+///
+/// THIS SCREEN IS THE ANSWER TO AUDIT PA-M-041 (🔴 High).
+///
+/// The finding, verbatim: «الشاشة الأولى التي يراها الطفل اسمها "حالة
+/// الجهاز" وتعرض: نبض الاتصال، حالة التشغيل، التشخيص، الأذونات،
+/// الإمكانيات، استخدام الذاكرة، نسبة البطارية … هذا console مراقبة، لا
+/// مدرّب.» A child opened this product and was shown a diagnostics console
+/// with their growth and rewards demoted to two buttons in the middle of it.
+/// That inverts the entire wedge stated in CONTEXT §1 — the child app is
+/// supposed to be a product a child WANTS to open.
+///
+/// The fix is structural, not cosmetic: `DeviceHomeScreen` is no longer the
+/// paired-state landing screen (`app.dart` now lands on `ChildHomeShell`),
+/// and everything it showed — permissions, capabilities, memory, battery,
+/// enforcement status — now lives behind a single quiet icon in the app
+/// bar. Nothing was deleted. It was demoted.
+class TodayGoalsScreen extends ConsumerWidget {
+  const TodayGoalsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(localeControllerProvider);
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
+    final state = ref.watch(todayGoalsControllerProvider);
+    final controller = ref.read(todayGoalsControllerProvider.notifier);
+
+    return RefreshIndicator(
+      onRefresh: controller.load,
+      child: KidStateView<List<TodayGoal>>(
+        state: state,
+        arabic: locale.isRtl,
+        loadingLabel: t('today.loading'),
+        emptyTitle: t('today.emptyTitle'),
+        emptyBody: t('today.emptyBody'),
+        errorTitle: t('today.errorTitle'),
+        retryLabel: t('common.retry'),
+        onRetry: controller.load,
+        emptyActionLabel: t('common.retry'),
+        onEmptyAction: controller.load,
+        builder: (context, goals) {
+          final ready = goals.where((g) => g.available).length;
+          return ListView(
+            padding: KidSpace.screen,
+            children: [
+              _Greeting(readyCount: ready, total: goals.length),
+              KidSpace.gapLg,
+              for (final goal in goals) GoalCard(goal: goal, onRefresh: controller.load),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _Greeting extends ConsumerWidget {
+  const _Greeting({required this.readyCount, required this.total});
+
+  final int readyCount;
+  final int total;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = ref.watch(localeControllerProvider.notifier).t;
+    return Row(
+      children: [
+        SparkyMascot(
+          mood: readyCount > 0 ? SparkyMood.happy : SparkyMood.neutral,
+          size: 64,
+        ),
+        KidSpace.hGapMd,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(t('today.title'), style: KidText.screenTitle(context)),
+              KidSpace.gapXs,
+              Text(
+                readyCount > 0
+                    ? t('today.readyCount', options: {'count': readyCount})
+                    : t('today.allDoneForNow'),
+                style: KidText.caption(context),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One goal, as a child reads it: the Arabic target, how long, what they
+/// get. Nothing about verification methods, nothing about programs, nothing
+/// about ids.
+class GoalCard extends ConsumerWidget {
+  const GoalCard({super.key, required this.goal, required this.onRefresh});
+
+  final TodayGoal goal;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = ref.watch(localeControllerProvider.notifier).t;
+    final reason = goal.unavailableReason;
+
+    return KidCard(
+      dimmed: !goal.available,
+      accent: goal.available ? KidColor.primary : null,
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => GoalDetailScreen(goal: goal)),
+        );
+        await onRefresh();
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            goal.targetSummaryAr.isEmpty
+                ? t('category.${goal.category}')
+                : goal.targetSummaryAr,
+            style: KidText.cardTitle(context),
+          ),
+          KidSpace.gapSm,
+          Wrap(
+            spacing: KidSpace.sm,
+            runSpacing: KidSpace.xs,
+            children: [
+              KidBadge(
+                label: t('common.minutesValue', options: {'count': goal.durationMinutes}),
+                icon: Icons.schedule_rounded,
+              ),
+              KidBadge(
+                label: goal.reward.isPoints
+                    ? t('today.pointsReward', options: {'count': goal.reward.amount})
+                    : goal.reward.isScreenTime
+                        ? t('today.screenTimeReward', options: {'count': goal.reward.amount})
+                        : t('rewardType.${goal.reward.type}'),
+                icon: Icons.star_rounded,
+                color: KidColor.highlight,
+              ),
+            ],
+          ),
+          KidSpace.gapMd,
+          if (goal.available)
+            KidBadge(
+              label: t('today.readyNow'),
+              icon: Icons.play_circle_outline_rounded,
+              color: KidColor.done,
+            )
+          else if (reason != null)
+            // THE NON-PUNITIVE LINE, STRAIGHT FROM THE SERVER.
+            // «أكملت هذا البرنامج مرة اليوم — وهذا هو الحد اليومي. نراك
+            // غدًا!» is what F4 wrote; this widget renders it and adds
+            // nothing. No lock icon, no strikethrough, no red.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(KidSpace.md),
+              decoration: BoxDecoration(
+                color: KidColor.notNow.withOpacity(0.16),
+                borderRadius: KidRadius.controlBorder,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    reason.isDoneForToday
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.watch_later_outlined,
+                    size: 20,
+                    color: KidColor.ink,
+                  ),
+                  KidSpace.hGapSm,
+                  Expanded(
+                    child: Text(
+                      reason.messageAr.isEmpty ? t('today.notNow') : reason.messageAr,
+                      style: KidText.caption(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}

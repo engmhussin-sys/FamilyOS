@@ -25,6 +25,15 @@ import '../../plugins/screen_time/application/digital_wellbeing_service.dart';
 import '../../plugins/screen_time/application/critical_event_coordinator.dart';
 import '../../features/onboarding/application/onboarding_consent_store.dart';
 import '../../features/onboarding/application/oem_background_service.dart';
+import '../../features/goals/api/achievements_api.dart';
+import '../../features/goals/application/goal_session_controller.dart';
+import '../../features/goals/application/progress_controller.dart';
+import '../../features/goals/application/today_goals_controller.dart';
+import '../../features/goals/data/achievements_repository.dart';
+import '../../features/goals/domain/child_achievement.dart';
+import '../../features/goals/domain/child_goal.dart';
+import '../../features/goals/domain/child_rewards.dart';
+import '../state/ui_state.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -192,4 +201,53 @@ final onboardingConsentStoreProvider = Provider<OnboardingConsentStore>((ref) {
 /// every other native-facing service here.
 final oemBackgroundServiceProvider = Provider<OemBackgroundService>((ref) {
   return OemBackgroundService(ref.watch(agentPlatformChannelProvider));
+});
+
+// ---------------------------------------------------------------------------
+// B7 — THE F4 CHILD SURFACE (Smart Learning & Reward)
+//
+// Six endpoints, all previously unconsumed (audit PA-M-001, ⛔ Critical).
+// Wired onto the EXISTING `apiClientProvider`: same device-token auth, same
+// coordinated single refresh on 401, same B3 error-envelope parsing. No
+// second HTTP client exists in this app and none was added.
+// ---------------------------------------------------------------------------
+
+final childAchievementsApiProvider = Provider<ChildAchievementsApi>((ref) {
+  return ChildAchievementsApi(ref.watch(apiClientProvider));
+});
+
+final childAchievementsRepositoryProvider = Provider<ChildAchievementsRepository>((ref) {
+  return ChildAchievementsRepository(ref.watch(childAchievementsApiProvider));
+});
+
+/// Today's goals — the child's first screen.
+final todayGoalsControllerProvider =
+    StateNotifierProvider<TodayGoalsController, UiState<List<TodayGoal>>>((ref) {
+  return TodayGoalsController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+final myAttemptsControllerProvider =
+    StateNotifierProvider.autoDispose<MyAttemptsController, UiState<List<MyAttempt>>>((ref) {
+  return MyAttemptsController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+/// ONE SESSION PER GOAL, keyed by the goal itself.
+///
+/// `autoDispose` is deliberate and load-bearing here: it is what stops a
+/// `ForegroundStopwatch` (and its 1-second `Timer`) from outliving the
+/// screen that owns it. `GoalSessionController.dispose` cancels the ticker
+/// and detaches the `WidgetsBindingObserver`.
+final goalSessionControllerProvider = StateNotifierProvider.autoDispose
+    .family<GoalSessionController, GoalSessionState, TodayGoal>((ref, goal) {
+  return GoalSessionController(ref.watch(childAchievementsRepositoryProvider), goal);
+});
+
+final progressControllerProvider =
+    StateNotifierProvider<ProgressController, UiState<ProgressSnapshot>>((ref) {
+  return ProgressController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+final childRewardsControllerProvider =
+    StateNotifierProvider<ChildRewardsController, UiState<ChildRewardsSnapshot>>((ref) {
+  return ChildRewardsController(ref.watch(childAchievementsRepositoryProvider));
 });

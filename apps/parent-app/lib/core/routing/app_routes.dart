@@ -19,4 +19,16 @@ class AppRoutes {
   static const manageConsents = '/manage-consents';
   static const deleteAccount = '/delete-account';
   static const redeemCode = '/redeem-code';
+
+  // --- B6: the F4 Smart Reward Engine surface ---
+  // Only the three ARGUMENT-FREE destinations are named routes. The
+  // id-scoped screens (program detail, achievement review, a child's
+  // rewards, suggestions) are pushed with a MaterialPageRoute carrying
+  // real constructor arguments — this app has no typed-arguments router,
+  // and squeezing ids through `settings.arguments` as an untyped Object is
+  // exactly the kind of stringly-typed navigation that produces runtime
+  // casts nothing can check without an analyzer.
+  static const goals = '/goals';
+  static const goalReviewQueue = '/goal-review-queue';
+  static const fulfilments = '/fulfilments';
 }

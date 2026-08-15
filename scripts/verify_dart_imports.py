@@ -144,6 +144,202 @@ def line_of(src: str, index: int) -> int:
     return src.count("\n", 0, index) + 1
 
 
+# ---------------------------------------------------------------------------
+# B6+B7 EXTENSION 1 — DELIMITER BALANCE, via a real (small) Dart lexer.
+#
+# WHY THIS WAS ADDED. B6/B7 adds ~5,800 lines of Dart to a repository where
+# `dart analyze` has never run once (audit PA-M-014) and cannot run here
+# (no SDK, pub.dev 403). The single most likely way that much new widget
+# code breaks `flutter build apk` is an unbalanced `)` or `}` in a deeply
+# nested widget tree — and that is the one class of error a script CAN
+# decide without a compiler.
+#
+# WHY A LEXER AND NOT A COUNTER. A naive counter is wrong on this codebase
+# in a way that produces confident false positives: Dart allows the SAME
+# quote character inside a string interpolation, and this repo does it —
+# `'${t('rewardType.$type')} - ${spec.amount}'` is a real line in
+# program_wizard_screen.dart. Any scanner that treats the second `'` as a
+# string terminator desynchronises for the rest of the file.
+#
+# So this tracks a MODE STACK: code -> string -> interpolation-code ->
+# string ... to arbitrary depth, handling raw strings (r'...'), triple
+# quotes, escapes, `$identifier` and `${expression}`.
+#
+# WHAT A PASS DOES AND DOES NOT PROVE. It proves every file's brackets pair
+# up and every string literal terminates. It does NOT prove the code type
+# checks, that null-safety holds, or that a widget constructor exists. It
+# removes one specific, high-probability failure mode; it is not a compiler.
+# ---------------------------------------------------------------------------
+
+OPENERS = {"(": ")", "[": "]", "{": "}"}
+CLOSERS = {")": "(", "]": "[", "}": "{"}
+
+
+class BalanceProblem:
+    def __init__(self, path, line, message):
+        self.path = path
+        self.line = line
+        self.message = message
+
+
+def check_delimiters(path: str, src: str) -> list:
+    """Return a list of BalanceProblem for one Dart source file."""
+    problems = []
+    n = len(src)
+    i = 0
+    line = 1
+
+    # Each frame is either ("code", opener_stack) or
+    # ("string", quote, is_raw, is_triple).
+    # The interpolation depth counter lives on the code frame so a `}` that
+    # closes `${` can be told apart from a `}` that closes a block.
+    frames = [["code", [], False]]  # kind, stack, is_interpolation
+
+    def cur():
+        return frames[-1]
+
+    while i < n:
+        ch = src[i]
+        if ch == "\n":
+            line += 1
+            i += 1
+            continue
+
+        kind = cur()[0]
+
+        if kind == "code":
+            # comments
+            if ch == "/" and i + 1 < n and src[i + 1] == "/":
+                j = src.find("\n", i)
+                i = n if j == -1 else j
+                continue
+            if ch == "/" and i + 1 < n and src[i + 1] == "*":
+                j = src.find("*/", i + 2)
+                if j == -1:
+                    problems.append(BalanceProblem(path, line, "unterminated /* block comment"))
+                    break
+                line += src.count("\n", i, j)
+                i = j + 2
+                continue
+
+            # string start (with optional r prefix)
+            is_raw = False
+            start = i
+            if ch == "r" and i + 1 < n and src[i + 1] in "'\"":
+                is_raw = True
+                i += 1
+                ch = src[i]
+            if ch in "'\"":
+                quote = ch
+                is_triple = src.startswith(quote * 3, i)
+                i += 3 if is_triple else 1
+                frames.append(["string", quote, is_raw, is_triple])
+                continue
+            if is_raw:
+                i = start  # not a string after all; fall through as identifier
+                ch = src[i]
+
+            if ch in OPENERS:
+                cur()[1].append((ch, line))
+                i += 1
+                continue
+            if ch in CLOSERS:
+                stack = cur()[1]
+                if not stack:
+                    if ch == "}" and cur()[2]:
+                        # closes the ${ ... } interpolation: back to the string
+                        frames.pop()
+                        i += 1
+                        continue
+                    problems.append(BalanceProblem(path, line, "unmatched '%s'" % ch))
+                    i += 1
+                    continue
+                opener, opened_at = stack.pop()
+                if OPENERS[opener] != ch:
+                    problems.append(
+                        BalanceProblem(
+                            path,
+                            line,
+                            "'%s' closes '%s' opened at line %d" % (ch, opener, opened_at),
+                        )
+                    )
+                i += 1
+                continue
+
+            i += 1
+            continue
+
+        # --- inside a string literal ---
+        _, quote, is_raw, is_triple = cur()
+        if not is_raw and ch == "\\":
+            i += 2
+            continue
+        if src.startswith(quote * 3, i) and is_triple:
+            frames.pop()
+            i += 3
+            continue
+        if ch == quote and not is_triple:
+            frames.pop()
+            i += 1
+            continue
+        if ch == "\n" and not is_triple:
+            problems.append(BalanceProblem(path, line, "newline inside a single-line string"))
+            frames.pop()
+            i += 1
+            line += 1
+            continue
+        if not is_raw and ch == "$" and i + 1 < n:
+            if src[i + 1] == "{":
+                frames.append(["code", [], True])
+                i += 2
+                continue
+            # `$identifier` — consume it so a following quote is not confused
+            j = i + 1
+            while j < n and (src[j].isalnum() or src[j] == "_"):
+                j += 1
+            i = j
+            continue
+        i += 1
+
+    # anything still open at EOF
+    for frame in frames:
+        if frame[0] == "string":
+            problems.append(BalanceProblem(path, line, "unterminated string literal"))
+        else:
+            for opener, opened_at in frame[1]:
+                problems.append(
+                    BalanceProblem(path, line, "'%s' opened at line %d is never closed" % (opener, opened_at))
+                )
+    return problems
+
+
+# ---------------------------------------------------------------------------
+# B6+B7 EXTENSION 2 — DEPENDENCY FINGERPRINT.
+#
+# F1's own report named "adding a dependency without being able to run
+# `flutter pub get`" as its highest self-inflicted risk, and PA-M-016 (no
+# `pubspec.lock`) means a new caret constraint resolves to whatever is
+# newest on CI day. So the dependency set is printed EXPLICITLY on every
+# run and compared against the recorded baseline below: a silent addition
+# becomes a loud diff.
+# ---------------------------------------------------------------------------
+
+# Recorded at B6+B7. Update this deliberately, never incidentally.
+EXPECTED_DEPS = {
+    "child_app": {
+        "flutter", "flutter_localizations", "shared_preferences", "flutter_riverpod",
+        "dio", "flutter_secure_storage", "google_fonts", "sentry_flutter",
+        "flutter_test", "mockito", "build_runner", "lints",
+    },
+    "parent_app": {
+        "flutter", "flutter_localizations", "shared_preferences", "flutter_riverpod",
+        "dio", "flutter_secure_storage", "connectivity_plus", "google_fonts",
+        "sentry_flutter", "firebase_core", "firebase_messaging",
+        "flutter_test", "mockito", "build_runner", "lints",
+    },
+}
+
+
 def main() -> int:
     root = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
     apps = find_apps(root)
@@ -242,11 +438,48 @@ def main() -> int:
     dump("UNDECLARED package: dependency (not in pubspec.yaml)", undeclared_pkg)
     dump("PART/PART-OF mismatch", part_of_problems)
 
+    # --- B6+B7 EXTENSION 1: delimiter balance -----------------------------
+    balance_problems = []
+    for path in dart_files:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            balance_problems.extend(check_delimiters(path, fh.read()))
+
+    print(f"DELIMITER/STRING BALANCE problems: {len(balance_problems)}")
+    for problem in balance_problems:
+        print(f"  {os.path.relpath(problem.path, root)}:{problem.line}  {problem.message}")
+    if balance_problems:
+        print()
+
+    # --- B6+B7 EXTENSION 2: dependency fingerprint ------------------------
+    dep_problems = []
+    print("DEPENDENCY FINGERPRINT (a silent addition must be a loud diff):")
+    for app_root, meta in sorted(apps.items()):
+        name = meta["name"]
+        actual = set(meta["deps"])
+        expected = EXPECTED_DEPS.get(name)
+        print(f"  {name}: {len(actual)} declared")
+        if expected is None:
+            print(f"      no baseline recorded for '{name}'")
+            continue
+        added = sorted(actual - expected)
+        removed = sorted(expected - actual)
+        if added:
+            dep_problems.append((name, "ADDED", added))
+            print(f"      ADDED (not in baseline):   {added}")
+        if removed:
+            dep_problems.append((name, "REMOVED", removed))
+            print(f"      REMOVED (was in baseline): {removed}")
+        if not added and not removed:
+            print("      identical to the recorded baseline")
+    print()
+
     problems = (
         len(unresolved_rel)
         + len(unresolved_pkg_self)
         + len(undeclared_pkg)
         + len(part_of_problems)
+        + len(balance_problems)
+        + len(dep_problems)
     )
     print(f"TOTAL PROBLEMS: {problems}")
     return 0 if problems == 0 else 1

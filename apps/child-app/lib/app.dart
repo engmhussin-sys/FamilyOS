@@ -7,15 +7,22 @@ import 'core/di/providers.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/theme/kid_theme.dart';
 import 'features/pairing/presentation/pairing_screen.dart';
-import 'features/device_status/presentation/device_home_screen.dart';
+import 'features/goals/presentation/child_home_shell.dart';
 import 'features/onboarding/presentation/prominent_disclosure_screen.dart';
 
-/// Sprint 4 update: the paired-state landing screen is now
-/// DeviceHomeScreen (permission checklist + capability sync), replacing
-/// Step 1's bare platform-channel diagnostic screen — still within the
-/// standing "onboarding/diagnostic screens only" scope, since
-/// DeviceHomeScreen IS the onboarding/diagnostic screen for a paired
-/// device, not a new feature surface.
+/// B7 — THE PAIRED-STATE LANDING SCREEN IS NOW `ChildHomeShell`.
+///
+/// It was `DeviceHomeScreen`, and audit PA-M-041 (🔴 High) named that as a
+/// product-level defect rather than a cosmetic one: «الشاشة الأولى التي
+/// يراها الطفل اسمها "حالة الجهاز" … هذا console مراقبة، لا مدرّب».
+/// A child opened this app and was shown heartbeat, diagnostics,
+/// permissions, capabilities, memory usage and battery percent.
+///
+/// The Sprint 4 note this comment replaces was honest about its own scope
+/// ("onboarding/diagnostic screens only") — that scope simply expired the
+/// moment F4 gave the child something to actually do. Today's goal is now
+/// the first thing a paired child sees; `DeviceHomeScreen` is unchanged and
+/// lives one tap away behind the settings icon in `ChildHomeShell`.
 class ChildAgentApp extends ConsumerWidget {
   const ChildAgentApp({super.key});
 
@@ -280,6 +287,6 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
     if (_isPaired == false) {
       return PairingScreen(onPaired: _onPaired);
     }
-    return const DeviceHomeScreen();
+    return const ChildHomeShell();
   }
 }

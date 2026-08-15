@@ -27,6 +27,9 @@ import 'features/family/presentation/manage_consents_screen.dart';
 import 'features/settings/presentation/delete_account_screen.dart';
 import 'features/billing/presentation/redeem_code_screen.dart';
 import 'core/observability/crash_reporting.dart';
+import 'features/rewards/presentation/fulfilments_screen.dart';
+import 'features/rewards/presentation/pending_achievements_screen.dart';
+import 'features/rewards/presentation/programs_list_screen.dart';
 
 void main() {
   // F2 (audit MA-004) — identical guard to the child app's main(), for the
@@ -129,6 +132,11 @@ class ParentApp extends ConsumerWidget {
         AppRoutes.manageConsents: (_) => const ManageConsentsScreen(),
         AppRoutes.deleteAccount: (_) => const DeleteAccountScreen(),
         AppRoutes.redeemCode: (_) => const RedeemCodeScreen(),
+        // B6 — the F4 surface. Family-wide by default; the child-scoped
+        // variants are pushed with constructor arguments instead.
+        AppRoutes.goals: (_) => const ProgramsListScreen(),
+        AppRoutes.goalReviewQueue: (_) => const PendingAchievementsScreen(),
+        AppRoutes.fulfilments: (_) => const FulfilmentsScreen(),
       },
     );
   }

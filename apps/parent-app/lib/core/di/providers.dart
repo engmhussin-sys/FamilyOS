@@ -19,6 +19,18 @@ import '../../features/support/api/support_api.dart';
 import '../../features/family/api/consent_api.dart';
 import '../../features/settings/api/account_api.dart';
 import '../../features/billing/api/campaign_api.dart';
+import '../../features/rewards/api/reward_programs_api.dart';
+import '../../features/rewards/application/achievements_controller.dart';
+import '../../features/rewards/application/catalogue_controller.dart';
+import '../../features/rewards/application/child_rewards_controller.dart';
+import '../../features/rewards/application/fulfilments_controller.dart';
+import '../../features/rewards/application/program_draft_controller.dart';
+import '../../features/rewards/application/programs_controller.dart';
+import '../../features/rewards/application/suggestions_controller.dart';
+import '../../features/rewards/data/reward_programs_repository.dart';
+import '../../features/rewards/domain/program_catalogue.dart';
+import '../../features/rewards/domain/reward_program.dart';
+import '../state/ui_state.dart';
 
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) => const FlutterSecureStorage());
 
@@ -55,4 +67,93 @@ final campaignApiProvider = Provider<CampaignApi>((ref) => CampaignApi(ref.watch
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
   (ref) => AuthController(ref.watch(authApiProvider), ref.watch(sessionStorageProvider)),
+);
+
+// ---------------------------------------------------------------------------
+// B6 — THE F4 SMART REWARD ENGINE SURFACE
+//
+// Wired into the EXISTING container, on the EXISTING `apiClientProvider`.
+// No second HTTP client, no second auth path, no second refresh loop: the
+// 17 parent endpoints below inherit the coordinated-single-refresh-on-401
+// and the B3 error-envelope parsing that `ApiClient` already owns.
+// ---------------------------------------------------------------------------
+
+final rewardProgramsApiProvider = Provider<RewardProgramsApi>(
+  (ref) => RewardProgramsApi(ref.watch(apiClientProvider)),
+);
+
+final rewardProgramsRepositoryProvider = Provider<RewardProgramsRepository>(
+  (ref) => RewardProgramsRepository(
+    ref.watch(rewardProgramsApiProvider),
+    // Reused, not rebuilt: the points balance already has a client.
+    ref.watch(lifeIntelligenceApiProvider),
+  ),
+);
+
+/// Reference data for the whole create flow, fetched once per app session.
+final catalogueControllerProvider =
+    StateNotifierProvider<CatalogueController, UiState<ProgramCatalogue>>(
+  (ref) => CatalogueController(ref.watch(rewardProgramsRepositoryProvider)),
+);
+
+/// The 114 surahs. `autoDispose` is deliberately NOT used: this is
+/// immutable reference data identical for every family, so re-fetching it
+/// each time the wizard reaches step 3 would be pure waste.
+final surahControllerProvider =
+    StateNotifierProvider<SurahController, UiState<List<QuranSurah>>>(
+  (ref) => SurahController(ref.watch(rewardProgramsRepositoryProvider)),
+);
+
+/// The create wizard. `autoDispose` so leaving the flow really does discard
+/// the draft — a half-finished goal must not silently reappear a week later.
+final programWizardControllerProvider =
+    StateNotifierProvider.autoDispose<ProgramWizardController, ProgramWizardState>(
+  (ref) => ProgramWizardController(ref.watch(rewardProgramsRepositoryProvider)),
+);
+
+/// The assigned-goals list. Family-wide when the argument is null.
+final programsControllerProvider = StateNotifierProvider.autoDispose
+    .family<ProgramsController, UiState<List<RewardProgram>>, String?>(
+  (ref, childId) => ProgramsController(ref.watch(rewardProgramsRepositoryProvider), childId),
+);
+
+final programDetailControllerProvider = StateNotifierProvider.autoDispose
+    .family<ProgramDetailController, ProgramDetailState, String>(
+  (ref, programId) => ProgramDetailController(ref.watch(rewardProgramsRepositoryProvider), programId),
+);
+
+/// The REAL approval queue — SUBMITTED + PENDING_PARENT achievements.
+/// Not to be confused with `pending_approvals_screen.dart`, which lists
+/// pending MESSAGES from a different module entirely (audit P12).
+final pendingAchievementsControllerProvider = StateNotifierProvider.autoDispose<
+    PendingAchievementsController, UiState<List<PendingReviewItem>>>(
+  (ref) => PendingAchievementsController(ref.watch(rewardProgramsRepositoryProvider)),
+);
+
+final achievementReviewControllerProvider = StateNotifierProvider.autoDispose
+    .family<AchievementReviewController, AchievementReviewState, String>(
+  (ref, achievementId) =>
+      AchievementReviewController(ref.watch(rewardProgramsRepositoryProvider), achievementId),
+);
+
+final fulfilmentsControllerProvider =
+    StateNotifierProvider.autoDispose<FulfilmentsController, FulfilmentsState>(
+  (ref) => FulfilmentsController(ref.watch(rewardProgramsRepositoryProvider)),
+);
+
+final childRewardsControllerProvider = StateNotifierProvider.autoDispose
+    .family<ChildRewardsController, ChildRewardsState, String>(
+  (ref, childId) => ChildRewardsController(ref.watch(rewardProgramsRepositoryProvider), childId),
+);
+
+final suggestionsControllerProvider = StateNotifierProvider.autoDispose
+    .family<SuggestionsController, SuggestionsState, String>(
+  (ref, childId) => SuggestionsController(ref.watch(rewardProgramsRepositoryProvider), childId),
+);
+
+/// The family's children, for the wizard's first step and every
+/// child-scoped screen. Reuses `GET /children` through the existing
+/// DashboardApi rather than adding a second caller of the same route.
+final familyChildrenProvider = FutureProvider.autoDispose<List<dynamic>>(
+  (ref) => ref.watch(dashboardApiProvider).getChildren(),
 );
