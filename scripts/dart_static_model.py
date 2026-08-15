@@ -496,12 +496,23 @@ _TYPE_RE = re.compile(
     r"(?P<name>[A-Za-z_]\w*)",
     re.M,
 )
+# A TOP-LEVEL declaration starts in column 0. Both patterns below use
+# HORIZONTAL whitespace only ([ \t]) in their optional type prefix — `\s`
+# matches newlines, which let `^(?:[\w\s...]+?\s+)?name\(` start at a blank
+# line and reach an INDENTED `Foo(` several lines down. The effect was
+# silent and expensive: every widget constructed inside a `main()` body was
+# recorded as a top-level function, those names then counted as local
+# shadowing, and the constructor checks abstained on 56 real call sites
+# instead of checking them.
 _TOP_FN_RE = re.compile(
-    r"^(?:[\w<>,\s\?\[\]\.]+?\s+)?(?P<name>[a-zA-Z_]\w*)\s*(?:<[^(){};]*>)?\(", re.M
+    r"^(?![ \t])(?:[\w<>,\?\[\]\. \t]+?[ \t]+)?"
+    r"(?P<name>[a-zA-Z_]\w*)[ \t]*(?:<[^(){};\n]*>)?\(",
+    re.M,
 )
 _TOP_VAR_RE = re.compile(
-    r"^(?:const|final|late\s+final|late|var)\s+(?:[\w<>,\s\?\[\]\.]+\s+)?"
-    r"(?P<name>[a-zA-Z_]\w*)\s*(?:=|;)",
+    r"^(?:const|final|late[ \t]+final|late|var)[ \t]+"
+    r"(?:[\w<>,\?\[\]\. \t]+[ \t]+)?"
+    r"(?P<name>[a-zA-Z_]\w*)[ \t]*(?:=|;)",
     re.M,
 )
 
