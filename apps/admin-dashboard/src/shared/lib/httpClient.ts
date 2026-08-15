@@ -3,10 +3,22 @@ import type { ApiErrorBody, TokenPair } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
+/**
+ * B3: `message` and `statusCode` keep their exact previous meaning — every
+ * existing `catch (e) { e.message }` still works untouched. `code`, `messageAr`,
+ * `requestId` and `details` are ADDITIVE: branch on `code` (never on prose),
+ * show `messageAr` in an Arabic locale, quote `requestId` in a support ticket.
+ * All four are optional because a non-JSON failure (a proxy 502, a dropped
+ * connection) still produces an ApiError carrying none of them.
+ */
 export class ApiError extends Error {
   constructor(
     message: string,
     public readonly statusCode: number,
+    public readonly code?: string,
+    public readonly messageAr?: string,
+    public readonly requestId?: string,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -46,7 +58,16 @@ async function rawRequest<T>(path: string, options: RequestOptions = {}): Promis
     const message = Array.isArray(errorBody.message)
       ? errorBody.message.join(' ')
       : (errorBody.message ?? 'Request failed.');
-    throw new ApiError(message, response.status);
+    throw new ApiError(
+      message,
+      response.status,
+      errorBody.code,
+      errorBody.messageAr,
+      // `requestId` and `correlationId` are the same value server-side; the
+      // fallback exists only for a response emitted before B3.
+      errorBody.requestId ?? errorBody.correlationId,
+      errorBody.details,
+    );
   }
 
   return data as T;

@@ -88,8 +88,27 @@ export interface ScreenTimePolicy {
   focusModeEnabled: boolean;
 }
 
+/**
+ * B3 — the backend's Global Error Contract
+ * (`apps/backend/src/common/errors/error-response.ts`).
+ *
+ * `message` and `statusCode` are unchanged and still always present, so nothing
+ * that already read this type breaks. The four fields below were ADDED by B3:
+ * before it, `{ code, messageAr }` bodies were erased by `GlobalExceptionFilter`
+ * and every client saw only `"Conflict Exception"` (PA-B-021).
+ *
+ * `code` is the field to branch on — never the prose. `messageAr` is the
+ * sentence to SHOW a user in an Arabic locale; `message` stays English.
+ * `requestId` is the same id the server logged and the same one the events API
+ * returns as `meta.requestId`, so it is what a support ticket should quote.
+ */
 export interface ApiErrorBody {
   message: string | string[];
   statusCode: number;
   error?: string;
+  code?: string;
+  messageAr?: string;
+  details?: Record<string, unknown>;
+  requestId?: string;
+  correlationId?: string;
 }

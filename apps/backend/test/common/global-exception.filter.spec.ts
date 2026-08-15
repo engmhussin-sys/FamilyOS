@@ -1,4 +1,10 @@
-import { ArgumentsHost, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import * as Sentry from '@sentry/node';
 import { GlobalExceptionFilter } from '../../src/common/filters/global-exception.filter';
 
@@ -78,6 +84,102 @@ describe('GlobalExceptionFilter', () => {
     filter.catch(new NotFoundException(), host);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ correlationId: 'unknown' }));
+  });
+
+  /**
+   * B3 / PA-B-021. These are the assertions whose absence let the defect ship:
+   * the filter used to test `'message' in body`, find none on a
+   * `{ code, messageAr }` body, and fall back to `exception.message` — which
+   * Nest derives from the class name. `Runtime Tested` capture of the old
+   * behaviour, at commit f2e537f:
+   *
+   *   GET /api/v1/error-probe/daily-limit -> 409
+   *   {"statusCode":409,"message":"Conflict Exception","correlationId":"unknown",…}
+   *
+   * If any of these go red, that response is back.
+   */
+  describe('B3 — REGRESSION GUARD: `code` and `messageAr` must reach the client', () => {
+    it('never drops `code` from a `{ code, messageAr }` body', () => {
+      const filter = new GlobalExceptionFilter();
+      const { host, res } = buildHost();
+
+      filter.catch(
+        new ConflictException({ code: 'MAX_PER_DAY_REACHED', messageAr: 'أكملت هذا البرنامج مرة اليوم.' }),
+        host,
+      );
+
+      expect(res.json.mock.calls[0][0].code).toBe('MAX_PER_DAY_REACHED');
+    });
+
+    it('never drops `messageAr` from a `{ code, messageAr }` body', () => {
+      const filter = new GlobalExceptionFilter();
+      const { host, res } = buildHost();
+
+      filter.catch(
+        new ConflictException({ code: 'MAX_PER_DAY_REACHED', messageAr: 'أكملت هذا البرنامج مرة اليوم.' }),
+        host,
+      );
+
+      expect(res.json.mock.calls[0][0].messageAr).toBe('أكملت هذا البرنامج مرة اليوم.');
+    });
+
+    it('NEVER returns Nest’s class-derived "Conflict Exception" as the message', () => {
+      const filter = new GlobalExceptionFilter();
+      const { host, res } = buildHost();
+
+      filter.catch(new ConflictException({ code: 'ATTEMPT_ALREADY_OPEN', messageAr: 'لديك محاولة مفتوحة.' }), host);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.message).not.toBe('Conflict Exception');
+      expect(JSON.stringify(body)).not.toContain('Conflict Exception');
+    });
+
+    it('emits `code` and a non-empty `messageAr` for EVERY exception class, including ones that carry neither', () => {
+      const filter = new GlobalExceptionFilter();
+      const cases: unknown[] = [
+        new BadRequestException('limitMinutes is required when ruleType is TIME_LIMIT'),
+        new NotFoundException(),
+        new ForbiddenException('You do not have permission to invite members to this organization.'),
+        new ConflictException({ code: 'PROGRAM_EXPIRED', messageAr: 'انتهت مدة هذا البرنامج.' }),
+        new Error('anything at all'),
+        'a thrown string',
+      ];
+
+      for (const thrown of cases) {
+        const { host, res } = buildHost();
+        filter.catch(thrown, host);
+        const body = res.json.mock.calls[0][0];
+        expect(typeof body.code).toBe('string');
+        expect(body.code.length).toBeGreaterThan(0);
+        expect(typeof body.messageAr).toBe('string');
+        expect(body.messageAr.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('`requestId` is the SAME value as `correlationId` — one id, correlating with the log line', () => {
+      const filter = new GlobalExceptionFilter();
+      const { host, res } = buildHost('trace-777');
+
+      filter.catch(new NotFoundException(), host);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.requestId).toBe('trace-777');
+      expect(body.requestId).toBe(body.correlationId);
+    });
+
+    it('a 500 carries no stack, no raw message and an empty `details`', () => {
+      const filter = new GlobalExceptionFilter();
+      const { host, res } = buildHost();
+
+      filter.catch(new Error('SELECT * FROM users; password=hunter2'), host);
+
+      const body = res.json.mock.calls[0][0];
+      expect(body.code).toBe('INTERNAL_ERROR');
+      expect(body.details).toEqual({});
+      expect(body.stack).toBeUndefined();
+      expect(JSON.stringify(body)).not.toContain('hunter2');
+      expect(JSON.stringify(body)).not.toContain('SELECT');
+    });
   });
 
   describe('Sentry reporting (Sprint 4 — Observability)', () => {

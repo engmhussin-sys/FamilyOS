@@ -90,4 +90,74 @@ describe('httpClient', () => {
     await expect(httpClient('/some-path')).rejects.toBeInstanceOf(ApiError);
     expect(fetchMock).toHaveBeenCalledTimes(1); // no refresh attempt
   });
+
+  /**
+   * B3 — the backend's Global Error Contract. Before it, `GlobalExceptionFilter`
+   * erased `code` and `messageAr`, so this client only ever saw
+   * `{"message":"Conflict Exception"}` (PA-B-021). These assert the dashboard
+   * now carries the new fields through AND that nothing about the old contract
+   * changed for the components already reading `.message` / `.statusCode`.
+   */
+  describe('B3 — the global error contract', () => {
+    it('surfaces code, messageAr, requestId and details on the thrown ApiError', async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        jsonResponse(409, {
+          statusCode: 409,
+          code: 'MAX_PER_DAY_REACHED',
+          message: 'This action has already been done, or is not available right now.',
+          messageAr: 'أكملت هذا البرنامج مرة اليوم — وهذا هو الحد اليومي. نراك غدًا!',
+          details: {},
+          requestId: 'f0e1d2c3-0000-4000-8000-000000000001',
+          correlationId: 'f0e1d2c3-0000-4000-8000-000000000001',
+        }),
+      );
+
+      const err = (await httpClient('/reward-programs/1/start', { method: 'POST' }).catch(
+        (e: unknown) => e,
+      )) as ApiError;
+
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.code).toBe('MAX_PER_DAY_REACHED');
+      expect(err.messageAr).toBe('أكملت هذا البرنامج مرة اليوم — وهذا هو الحد اليومي. نراك غدًا!');
+      expect(err.requestId).toBe('f0e1d2c3-0000-4000-8000-000000000001');
+      expect(err.details).toEqual({});
+      // BACKWARD COMPATIBILITY: unchanged for every component already using it.
+      expect(err.statusCode).toBe(409);
+      expect(err.message).toBe('This action has already been done, or is not available right now.');
+    });
+
+    it('still joins a `string[]` message — the DTO-validation shape is unchanged', async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        jsonResponse(400, {
+          statusCode: 400,
+          code: 'VALIDATION_FAILED',
+          message: ['firstName should not be empty', 'dateOfBirth must be a valid ISO 8601 date string'],
+          messageAr: 'تعذّر قبول بعض الحقول المُرسلة. راجعها ثم أعد المحاولة.',
+          details: { fields: [{ field: 'firstName', constraints: ['isNotEmpty'] }] },
+          requestId: 'r-2',
+        }),
+      );
+
+      const err = (await httpClient('/children', { method: 'POST' }).catch((e: unknown) => e)) as ApiError;
+
+      expect(err.message).toBe(
+        'firstName should not be empty dateOfBirth must be a valid ISO 8601 date string',
+      );
+      expect(err.code).toBe('VALIDATION_FAILED');
+      expect((err.details as { fields: { field: string }[] }).fields[0].field).toBe('firstName');
+    });
+
+    it('degrades safely when a response predates B3 or carries none of the new fields', async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        jsonResponse(502, { message: 'Bad Gateway', statusCode: 502 }),
+      );
+
+      const err = (await httpClient('/anything').catch((e: unknown) => e)) as ApiError;
+
+      expect(err.message).toBe('Bad Gateway');
+      expect(err.code).toBeUndefined();
+      expect(err.messageAr).toBeUndefined();
+      expect(err.requestId).toBeUndefined();
+    });
+  });
 });

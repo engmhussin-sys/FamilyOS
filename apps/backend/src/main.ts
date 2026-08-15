@@ -1,13 +1,12 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import compression from 'compression';
 import * as Sentry from '@sentry/node';
 
 import { AppModule } from './app.module';
-import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { applyGlobalHttpPipeline } from './common/http/global-pipeline';
 import { configureTrustProxy } from './common/http/trust-proxy';
 import { OutboxRelay } from './modules/events/application/outbox.relay';
 
@@ -59,33 +58,14 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
 
-  // Global validation: every DTO is validated against its class-validator
-  // decorators before it ever reaches a controller method. `whitelist`
-  // strips unknown properties instead of accepting them — the backend
-  // never trusts client input beyond what a DTO explicitly declares.
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
-
-  // Sprint 9: every error response gets the same shape, and 5xx errors
-  // never leak an internal message/stack to the client — see the
-  // filter's own docstring.
-  app.useGlobalFilters(new GlobalExceptionFilter());
-  // Sprint 9: one structured JSON log line per request — see the
-  // interceptor's own docstring for exactly what is and isn't logged.
-  app.useGlobalInterceptors(new LoggingInterceptor());
-
-  app.setGlobalPrefix('api/v1', {
-    // Health checks are probed by infrastructure (Docker/Railway), which
-    // does not know or care about this API's versioned prefix — excluded
-    // so `/health/live` and `/health/ready` work at the bare path.
-    exclude: ['health/live', 'health/ready'],
-  });
+  // B3 (PA-B-022): the four things that shape the JSON a real client receives —
+  // the strict ValidationPipe (with B3's structured `VALIDATION_FAILED`
+  // exception factory), the GlobalExceptionFilter, the LoggingInterceptor and
+  // the `api/v1` prefix — now live in ONE function, shared with the e2e
+  // suites. They used to be inlined here and re-approximated (loosely, and
+  // WITHOUT the filter) inside each e2e spec, which is precisely how PA-B-021
+  // shipped past 45 green assertions. See `common/http/global-pipeline.ts`.
+  applyGlobalHttpPipeline(app);
 
   // Sprint 9: SIGTERM/SIGINT now trigger Nest's shutdown lifecycle
   // (OnModuleDestroy on PrismaService/RedisService, etc.) — without this,
