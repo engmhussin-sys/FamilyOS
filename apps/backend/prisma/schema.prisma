@@ -60,6 +60,11 @@ enum FamilyRole {
 
 enum SubscriptionPlan {
   FREE
+  /// PHASE D. CONTEXT §6 names four consumer tiers — Free / Basic / Premium /
+  /// Family — and this enum was missing the second one. ADDED, not renamed:
+  /// `ALTER TYPE ... ADD VALUE` is safe on a table that has rows; a rename is
+  /// not, and 2,476 passing tests depend on the four values below.
+  BASIC
   PREMIUM
   FAMILY
   ENTERPRISE
@@ -69,12 +74,27 @@ enum SubscriptionPlan {
 /// pre-existing SubscriptionPlan enum above (which stays as Family's
 /// cached-current-tier field, same pattern as Device.trustLevel) rather
 /// than renamed/merged, avoiding a breaking change to an already-used field.
+/// PHASE D adds the three lifecycle states the brief names that this database
+/// could not represent. It does NOT rename `TRIALING` -> `TRIAL` or
+/// `CANCELED` -> `CANCELLED`: the brief's vocabulary is owned by
+/// `src/modules/billing/domain/subscription-status.ts`, which holds the ONE
+/// bidirectional mapping and is proven total by test. See the PHASE D section
+/// at the bottom of this file.
 enum SubscriptionStatus {
   TRIALING
   ACTIVE
   PAST_DUE
   CANCELED
   EXPIRED
+  /// PHASE D. The state Fawry makes unavoidable: the customer has a payment
+  /// reference and has not paid yet. NOT entitlement-bearing.
+  PENDING
+  /// PHASE D. Payment failed or the term lapsed, and the household keeps FULL
+  /// access for a configured window (Q17: 7 days) with a non-punitive notice.
+  GRACE_PERIOD
+  /// PHASE D. A completed refund. Terminal, and distinct from CANCELED: money
+  /// went back, so entitlement is revoked immediately rather than at period end.
+  REFUNDED
 }
 
 enum InvoiceStatus {
@@ -97,6 +117,11 @@ enum PaymentProvider {
   /// own docstring.
   APPLE_IAP
   GOOGLE_PLAY
+  /// PHASE D. The Saudi card/mada-capable gateway. CONTEXT §2 names Moyasar
+  /// or Tap; `00-Company-Response.md` Q16 leaves the final pick to two
+  /// commercial offers. The ADAPTER is written against the interface either
+  /// way — see `HUMAN DECISION REQUIRED #4` in the Phase D report.
+  MOYASAR
 }
 
 enum DevicePlatform {
@@ -346,6 +371,7 @@ model Family {
   aiAlerts AiAlert[]
   aiMemoryEntries AiMemoryEntry[]
   notifications Notification[]
+  notificationDeliveries NotificationDelivery[]
   habits Habit[]
   habitCompletions HabitCompletion[]
   rewardsAccounts RewardsAccount[]
@@ -391,6 +417,14 @@ model Family {
 
   // -- PHASE C P4 (scheduler): one row per family-scoped job execution. --
   jobRuns JobRun[]
+
+  // -- PHASE D (commercial subscription & payments) --
+  trial                Trial?
+  providerAccountLinks ProviderAccountLink[]
+  paymentTransactions  PaymentTransaction[]
+  refunds              Refund[]
+  entitlements         Entitlement[]
+  paymentWebhookEvents PaymentWebhookEvent[]
 
   @@map("families")
 }
@@ -449,6 +483,7 @@ model Child {
   aiRiskScores        AiRiskScore[]
   aiAlerts            AiAlert[]
   notifications       Notification[]
+  notificationDeliveries NotificationDelivery[]
   aiMemoryEntries     AiMemoryEntry[]
   habits              Habit[]
   habitCompletions    HabitCompletion[]
@@ -1149,12 +1184,47 @@ model Subscription {
   /// simply overwrites this value) — those are real, separate
   /// product decisions this migration does not make.
   pendingDiscountPercent Int?               @map("pending_discount_percent")
+
+  // ---- PHASE D additions. All nullable; every pre-Phase-D row stays valid. ----
+  /// ISO-3166-1 alpha-2. Which market's price list this subscription was sold
+  /// from. NULL on rows created before Phase D.
+  countryCode            String?            @map("country_code") @db.VarChar(2)
+  /// ISO-4217, frozen at purchase. A family that bought in EGP is billed in
+  /// EGP even if it later moves country — changing the currency of a live
+  /// subscription is a re-purchase, not an UPDATE.
+  currencyCode           String?            @map("currency_code") @db.VarChar(3)
+  billingPeriod          BillingPeriod?     @map("billing_period")
+  /// The exact `subscription_prices` row this was sold at. Lets a price change
+  /// be rolled out without silently re-pricing live subscriptions.
+  subscriptionPriceId    String?            @map("subscription_price_id") @db.Uuid
+  /// End of the non-punitive grace window (Q17: 7 days after failure/expiry).
+  gracePeriodEndsAt      DateTime?          @map("grace_period_ends_at")
+  /// Whether the provider will attempt another charge. FALSE for Egypt's
+  /// manual-renewal design and for a cancelled store subscription that has
+  /// not yet expired.
+  autoRenewing           Boolean            @default(false) @map("auto_renewing")
+  /// Apple `originalTransactionId` / Google `purchaseToken` — the durable
+  /// lineage key a store uses across renewals, which is NOT the same thing as
+  /// `provider_subscription_id` (Stripe's `sub_...`).
+  providerOriginalTransactionId String?     @map("provider_original_transaction_id") @db.VarChar(200)
+  /// Apple productId / Google basePlanId this subscription currently resolves to.
+  providerProductId      String?            @map("provider_product_id") @db.VarChar(120)
+  /// THE OUT-OF-ORDER GUARD. `00-Company-Response.md` Q17: «the older event
+  /// does not overwrite the newer». Every webhook handler compares the
+  /// provider's own signed timestamp against this column and drops anything
+  /// not strictly newer. Arrival order is not causal order.
+  lastProviderEventAt    DateTime?          @map("last_provider_event_at")
+
   createdAt              DateTime           @default(now()) @map("created_at")
   updatedAt              DateTime           @updatedAt @map("updated_at")
 
   family   Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
   invoices Invoice[]
 
+  paymentTransactions PaymentTransaction[]
+  entitlements        Entitlement[]
+
+  @@index([providerOriginalTransactionId])
   @@map("subscriptions")
 }
 
@@ -1169,12 +1239,34 @@ model Invoice {
   issuedAt          DateTime      @default(now()) @map("issued_at")
   paidAt            DateTime?     @map("paid_at")
 
+  // ---- PHASE D additions. All nullable; every pre-Phase-D row stays valid. ----
+  /// Human-facing document number. Sequential per family, allocated by the
+  /// database (see `next_invoice_number()` in migration 0012) so two
+  /// concurrent issuances cannot produce the same number.
+  invoiceNumber     String?       @map("invoice_number") @db.VarChar(40)
+  countryCode       String?       @map("country_code") @db.VarChar(2)
+  billingPeriod     BillingPeriod? @map("billing_period")
+  /// FROZEN AT ISSUANCE. A VAT rate change must not retroactively alter a
+  /// document that has already been given to a customer and a tax authority.
+  vatBasisPoints    Int?          @map("vat_basis_points")
+  subtotalMinor     Int?          @map("subtotal_minor")
+  vatMinor          Int?          @map("vat_minor")
+  /// Gross total, in minor units. `amount_cents` above is retained unchanged
+  /// for every existing reader; for Phase D rows the two agree.
+  totalMinor        Int?          @map("total_minor")
+  provider          PaymentProvider?
+  paymentTransactionId String?    @map("payment_transaction_id") @db.Uuid
+
   subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+
+  @@unique([invoiceNumber])
   @@index([subscriptionId])
   @@index([familyId])
+  @@index([paymentTransactionId])
   @@map("invoices")
 }
 
@@ -2993,4 +3085,496 @@ model JobRun {
   @@index([familyId, jobName])
   @@index([status, startedAt])
   @@map("job_runs")
+}
+
+// ============================================================
+// PHASE D (PC-D-005) — QUIET-HOURS DEFERRAL
+// ============================================================
+
+/// PHASE D (`PC-D-005`) — THE ROW WHOSE ABSENCE WAS THE DEFECT.
+///
+/// `SmartNotificationIntegrationService` returned `decision: 'DEFER'` and wrote
+/// nothing. There was no table, no queue and no redelivery, so «deferred» and
+/// «lost» were the same state — and with the default quiet-hours policy of
+/// 21:00–07:00 that state covered 41.6% of every day, including the hours a
+/// reward is most often earned.
+///
+/// This model is the durable half of the fix. One row per notification the
+/// system has ACCEPTED but not yet DELIVERED, carrying:
+///   - `scheduledFor`   — computed by `FamilyDateService.nextLocalTimeAfter`
+///                        from `Family.timezone`, i.e. the end of THIS family's
+///                        quiet hours, read from tzdata at the target instant.
+///   - `sourceEventId`  — the producer's causal key, carried UNCHANGED into
+///                        `notifications.source_event_id` at release. This is
+///                        what makes B9's idempotency survive defer → deliver.
+///   - `state`          — visible, with a terminal `DEAD` that an operator can
+///                        query. Phase C's outbox lesson, applied to the other
+///                        delivery path.
+///
+/// TENANCY: STRICT_TENANT, the same class as `Notification` itself.
+model NotificationDelivery {
+  familyId String  @map("family_id") @db.Uuid
+  id       String  @id @default(uuid()) @db.Uuid
+  childId  String? @map("child_id") @db.Uuid
+
+  type            String  @db.VarChar(60)
+  /// The `NOTIFICATION_CLASSES` category — the axis the per-category cap counts
+  /// on at delivery time. Denormalised on purpose: the cap must be enforceable
+  /// from this row alone, without re-deriving the classification months later
+  /// from a table that may have changed.
+  category        String  @db.VarChar(30)
+  priority        String  @default("NORMAL") @db.VarChar(20)
+  targetAudience  String  @map("target_audience") @db.VarChar(10)
+  title           String  @db.VarChar(200)
+  body            String  @db.VarChar(500)
+  sourceEventId   String  @map("source_event_id") @db.VarChar(200)
+
+  /// PENDING | DELIVERING | DELIVERED | SUPPRESSED | DEAD — closed by a CHECK
+  /// constraint in migration 0014, not only by a TypeScript union.
+  state            String    @default("PENDING") @db.VarChar(20)
+  /// Why it was held in the first place (`QUIET_HOURS` today).
+  deferReason      String    @map("defer_reason") @db.VarChar(40)
+  /// Why it will never be delivered. NOT NULL whenever state is SUPPRESSED or
+  /// DEAD, enforced by a CHECK — a resolved row that does not say why is the
+  /// silent drop this phase removes.
+  resolutionReason String?   @map("resolution_reason") @db.VarChar(40)
+
+  scheduledFor DateTime @map("scheduled_for")
+  businessDate DateTime @map("business_date") @db.Date
+
+  attemptCount  Int       @default(0) @map("attempt_count")
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  lastError     String?   @map("last_error") @db.VarChar(500)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  deliveredAt DateTime? @map("delivered_at")
+  lockedBy    String?   @map("locked_by") @db.VarChar(60)
+  lockedAt    DateTime? @map("locked_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// The deferral half of B9's constraint. `notifications` protects the
+  /// DELIVERED row; this protects the PENDING one, so a redelivery inside the
+  /// quiet window cannot inflate the morning digest with a duplicate that the
+  /// downstream index would only have refused after it had been counted.
+  @@unique([familyId, sourceEventId])
+  @@index([state, scheduledFor])
+  @@index([familyId, state, scheduledFor])
+  @@index([createdAt])
+  @@map("notification_deliveries")
+}
+
+// ============================================================
+// PHASE D — COMMERCIAL SUBSCRIPTION & PAYMENT ARCHITECTURE
+//
+// Everything below is ADDITIVE. Zero existing model is rewritten. The only
+// edits to pre-existing declarations are: three new values on
+// `SubscriptionStatus` (PENDING, GRACE_PERIOD, REFUNDED), one new value on
+// `SubscriptionPlan` (BASIC), one new value on `PaymentProvider` (MOYASAR),
+// eight nullable columns on `Subscription`, six nullable columns on `Invoice`,
+// and back-relations on `Family`. All of those are additive in PostgreSQL
+// terms (`ALTER TYPE ... ADD VALUE`, `ADD COLUMN` nullable), which is what
+// makes migration 0012 safe on a database that already has rows.
+//
+// STATUS VOCABULARY, STATED PLAINLY. The brief names eight subscription
+// statuses: PENDING · ACTIVE · PAST_DUE · CANCELLED · EXPIRED · REFUNDED ·
+// TRIAL · GRACE_PERIOD. Five of them already exist in this database under
+// two US spellings that predate Phase D (`TRIALING`, `CANCELED`). Renaming a
+// PostgreSQL enum value that 2,476 passing tests and every existing row
+// depend on is a breaking change bought for nothing, so the DB keeps its
+// spellings and `src/modules/billing/domain/subscription-status.ts` owns the
+// ONE bidirectional mapping to the brief's vocabulary. There is exactly one
+// mapping site, and a test asserts it is total in both directions.
+//
+// TENANCY (F2): every table below that can belong to a household carries
+// `family_id uuid NOT NULL` from the moment it is created and is registered
+// STRICT in `tenant-model-registry.ts`. `Country`, `Currency` and
+// `SubscriptionPrice` are GLOBAL platform catalogues with a written reason,
+// exactly like `PlanDefinition`. `PaymentWebhookEvent` is
+// PLATFORM_ANNOTATED: a provider's webhook is received and its signature
+// verified BEFORE any family is known — that is the whole point of not
+// trusting the payload — so `family_id IS NULL` is the honest value for the
+// window between receipt and resolution, and such a row must not be readable
+// by a tenant.
+//
+// APPEND-ONLY: `payment_transactions`, `refunds`, `invoices` and
+// `payment_webhook_events` are protected by DELETE-blocking triggers and by
+// an UPDATE trigger that rejects any change to a monetary field or a
+// backwards status transition. Migration 0012 installs them. The discipline
+// is the reward ledger's, not a convention: the database refuses, the
+// application does not merely decline to ask.
+// ============================================================
+
+/// How often a subscription bills. A TABLE-less enum on purpose: unlike the
+/// reward taxonomy this is a closed set that the payment providers themselves
+/// close (Apple and Google both offer a fixed period ladder).
+enum BillingPeriod {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+/// Whether the configured price already contains VAT (the norm for consumer
+/// pricing in both launch markets) or has it added at checkout.
+enum VatMode {
+  INCLUSIVE
+  EXCLUSIVE
+}
+
+enum PaymentTransactionStatus {
+  /// Money not yet moved. Fawry's whole model: the customer is given a
+  /// reference and may pay days later.
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  CHARGEBACK
+}
+
+enum RefundStatus {
+  PENDING
+  COMPLETED
+  DECLINED
+  /// Apple's REFUND_REVERSED: a refund the customer disputed and lost.
+  REVERSED
+}
+
+enum EntitlementStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum WebhookOutcome {
+  RECEIVED
+  PROCESSED
+  /// Understood, deliberately not acted on (an event type we do not model).
+  IGNORED
+  REJECTED_SIGNATURE
+  REJECTED_VALIDATION
+  /// Seen before. The dedupe constraint fired; nothing was re-applied.
+  DUPLICATE
+  FAILED
+}
+
+/// GLOBAL (tenancy): the launch-market catalogue. One row per country we sell
+/// in. VAT IS A COLUMN, not a constant in code — «VAT/tax is configurable per
+/// country» is the requirement, and 14% (EG) vs 15% (SA) is exactly the kind
+/// of number that changes by decree between two releases.
+model Country {
+  /// ISO-3166-1 alpha-2.
+  code                  String   @id @db.VarChar(2)
+  nameEn                String   @map("name_en") @db.VarChar(80)
+  nameAr                String   @map("name_ar") @db.VarChar(80)
+  currencyCode          String   @map("currency_code") @db.VarChar(3)
+  /// BASIS POINTS, not a float. 1400 = 14.00%. Money arithmetic in this
+  /// module never touches IEEE-754.
+  vatBasisPoints        Int      @map("vat_basis_points")
+  /// The default for prices in this country; a price row may override it.
+  vatMode               VatMode  @default(INCLUSIVE) @map("vat_mode")
+  /// Which provider a family in this country is offered by default. Data,
+  /// not code — Egypt today is PAYMOB, and changing that is an UPDATE.
+  defaultProvider       PaymentProvider @default(MANUAL) @map("default_provider")
+  isActive              Boolean  @default(true) @map("is_active")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  currency Currency            @relation(fields: [currencyCode], references: [code])
+  prices   SubscriptionPrice[]
+
+  @@index([isActive])
+  @@map("countries")
+}
+
+/// GLOBAL (tenancy): ISO-4217 reference data. `minorUnits` exists because
+/// «cents» is not universal — a system that hardcodes 100 is wrong for KWD
+/// (1000) and for JPY (1), and both markets border currencies that are.
+model Currency {
+  code       String   @id @db.VarChar(3)
+  symbolEn   String   @map("symbol_en") @db.VarChar(8)
+  symbolAr   String   @map("symbol_ar") @db.VarChar(8)
+  /// 10^minorUnits minor units per major unit. EGP = 2, SAR = 2.
+  minorUnits Int      @default(2) @map("minor_units")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  countries Country[]
+  prices    SubscriptionPrice[]
+
+  @@map("currencies")
+}
+
+/// GLOBAL (tenancy): THE price list. Same class and same reasoning as
+/// `PlanDefinition`, which it extends rather than replaces: `PlanDefinition`
+/// answers «what does this tier grant», this table answers «what does it cost
+/// HERE, in THIS currency, for THIS period».
+///
+/// «Prices are centrally configured, never hardcoded across the app» is
+/// enforced structurally: `PricingService` is the only reader, every caller
+/// goes through it, and `PlanDefinition.priceCents` — the single hardcoded
+/// USD number Phase C shipped — is left in place only as the legacy fallback
+/// it always was, with a CI-visible deprecation note.
+model SubscriptionPrice {
+  id            String           @id @default(uuid()) @db.Uuid
+  planTier      SubscriptionPlan @map("plan_tier")
+  countryCode   String           @map("country_code") @db.VarChar(2)
+  currencyCode  String           @map("currency_code") @db.VarChar(3)
+  billingPeriod BillingPeriod    @map("billing_period")
+  /// The amount a customer is charged, in MINOR units of `currencyCode`,
+  /// interpreted according to `vatMode`. 9900 with EGP+INCLUSIVE = 99.00 EGP
+  /// with VAT already inside.
+  amountMinor   Int              @map("amount_minor")
+  vatMode       VatMode          @map("vat_mode")
+  /// The store product identifier this price maps to, when the purchase
+  /// channel is a store. Apple productId / Google basePlanId. NULL for
+  /// direct-checkout channels, which price from this row directly.
+  storeProductId String?         @map("store_product_id") @db.VarChar(120)
+  isActive      Boolean          @default(true) @map("is_active")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  country  Country  @relation(fields: [countryCode], references: [code])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  /// ONE live price per (tier, country, period). The unique constraint is the
+  /// reason two rows cannot disagree about what a Premium monthly costs in
+  /// Egypt — a class of bug no amount of application care prevents.
+  @@unique([planTier, countryCode, billingPeriod])
+  @@index([countryCode, isActive])
+  @@index([storeProductId])
+  @@map("subscription_prices")
+}
+
+/// STRICT (tenancy). The trial as an ENTITY rather than a nullable column on
+/// `Subscription`. It has to be one: «one trial per family, ever» is a
+/// lifetime fact that must survive the subscription row being cancelled,
+/// deleted-and-recreated, or moved to another provider. The `family_id`
+/// UNIQUE constraint IS the once-per-family rule — not an application check,
+/// which is a race (CONTEXT §3.6).
+model Trial {
+  id          String           @id @default(uuid()) @db.Uuid
+  familyId    String           @unique @map("family_id") @db.Uuid
+  planTier    SubscriptionPlan @map("plan_tier")
+  startedAt   DateTime         @default(now()) @map("started_at")
+  endsAt      DateTime         @map("ends_at")
+  /// 'SIGNUP' | 'CAMPAIGN:<id>' | 'MANUAL:<userId>' — provenance, for the
+  /// day someone asks why this household got 30 days.
+  source      String           @default("SIGNUP") @db.VarChar(60)
+  convertedAt DateTime?        @map("converted_at")
+  cancelledAt DateTime?        @map("cancelled_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([endsAt])
+  @@map("trials")
+}
+
+/// STRICT (tenancy). Binds a STORE account to a household.
+///
+/// This table is the answer to «cross-tenant attempt rejected». Apple hands us
+/// an `appAccountToken` (a UUID the app sets at purchase time) and Google an
+/// `obfuscatedExternalAccountId`; both are OPAQUE to the store and are the
+/// only durable link between a verified purchase and one of our tenants. A
+/// purchase whose account reference resolves to family B can never be applied
+/// to family A, because the resolution goes through this table's UNIQUE
+/// constraint and not through anything the client sent.
+model ProviderAccountLink {
+  id                 String          @id @default(uuid()) @db.Uuid
+  familyId           String          @map("family_id") @db.Uuid
+  provider           PaymentProvider
+  /// Apple `appAccountToken` / Google `obfuscatedExternalAccountId` /
+  /// gateway customer id.
+  providerAccountRef String          @map("provider_account_ref") @db.VarChar(120)
+  linkedAt           DateTime        @default(now()) @map("linked_at")
+  revokedAt          DateTime?       @map("revoked_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountRef])
+  @@index([familyId, provider])
+  @@map("provider_account_links")
+}
+
+/// STRICT (tenancy). APPEND-ONLY financial fact.
+///
+/// One row per money-movement event the provider told us about AND we
+/// verified server-side. Never written from a client request body: the
+/// amounts here come from Apple's signed JWS, Google's Developer API
+/// response, or the gateway's server-to-server callback — never from
+/// `req.body.amount`.
+///
+/// IMMUTABILITY IS A TRIGGER, NOT A CONVENTION. `payment_transactions_no_delete`
+/// blocks DELETE outright; `payment_transactions_immutable_money` rejects any
+/// UPDATE that changes provider, providerTransactionId, currency, or any
+/// amount column, and rejects a status transition that is not in the allowed
+/// lattice. See migration 0012.
+model PaymentTransaction {
+  id                            String                   @id @default(uuid()) @db.Uuid
+  familyId                      String                   @map("family_id") @db.Uuid
+  subscriptionId                String?                  @map("subscription_id") @db.Uuid
+  provider                      PaymentProvider
+  /// The provider's identifier for THIS transaction. Apple `transactionId`,
+  /// Google `orderId`, Paymob transaction id, Fawry reference number.
+  providerTransactionId         String                   @map("provider_transaction_id") @db.VarChar(160)
+  /// The provider's identifier for the SUBSCRIPTION LINEAGE this transaction
+  /// belongs to. Apple `originalTransactionId`, Google `purchaseToken`.
+  providerOriginalTransactionId String?                  @map("provider_original_transaction_id") @db.VarChar(200)
+  /// Apple productId / Google basePlanId / our own price id — whatever the
+  /// provider called the thing that was bought.
+  productRef                    String?                  @map("product_ref") @db.VarChar(120)
+  planTier                      SubscriptionPlan?        @map("plan_tier")
+  billingPeriod                 BillingPeriod?           @map("billing_period")
+  countryCode                   String?                  @map("country_code") @db.VarChar(2)
+  currency                      String                   @db.VarChar(3)
+  /// What the customer paid, in minor units. VAT INCLUDED.
+  grossAmountMinor              Int                      @map("gross_amount_minor")
+  /// The VAT component of `grossAmountMinor`, computed from the COUNTRY's
+  /// rate at the time of the transaction and frozen here. Financial history
+  /// does not move when a tax rate changes.
+  vatAmountMinor                Int                      @default(0) @map("vat_amount_minor")
+  netAmountMinor                Int                      @map("net_amount_minor")
+  status                        PaymentTransactionStatus
+  /// THE defence against double-crediting, enforced by the unique index
+  /// below and never by an application "check then insert".
+  idempotencyKey                String                   @map("idempotency_key") @db.VarChar(200)
+  /// The provider's own timestamp for the event. Ordering is decided by
+  /// THIS, never by arrival order — webhooks arrive out of order and an
+  /// older event must not overwrite a newer one (Q17).
+  occurredAt                    DateTime                 @map("occurred_at")
+  verifiedAt                    DateTime?                @map("verified_at")
+  /// SHA-256 of the exact bytes we verified. Lets a dispute be re-checked
+  /// without this table storing a receipt, a card number, or an email.
+  verifiedPayloadDigest         String?                  @map("verified_payload_digest") @db.VarChar(64)
+  /// Sandbox purchases are recorded and are NEVER entitlement-bearing in a
+  /// production environment. Apple `environment`, Google `testPurchase`.
+  isSandbox                     Boolean                  @default(false) @map("is_sandbox")
+  createdAt                     DateTime                 @default(now()) @map("created_at")
+
+  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  refunds      Refund[]
+  invoices     Invoice[]
+
+  /// The provider can only tell us about a transaction once. A redelivered
+  /// webhook hits this and is a no-op.
+  @@unique([provider, providerTransactionId])
+  /// Our own idempotency key, tenant-scoped. Two different code paths that
+  /// derive the same key for the same household credit the household once.
+  @@unique([familyId, idempotencyKey])
+  @@index([familyId, occurredAt])
+  @@index([subscriptionId])
+  @@index([providerOriginalTransactionId])
+  @@map("payment_transactions")
+}
+
+/// STRICT (tenancy). APPEND-ONLY. A refund is never an UPDATE of the payment
+/// it reverses — it is its own fact, with its own provider identifier and its
+/// own idempotency key, pointing at the transaction it reverses.
+model Refund {
+  id                   String       @id @default(uuid()) @db.Uuid
+  familyId             String       @map("family_id") @db.Uuid
+  paymentTransactionId String       @map("payment_transaction_id") @db.Uuid
+  provider             PaymentProvider
+  providerRefundId     String?      @map("provider_refund_id") @db.VarChar(160)
+  amountMinor          Int          @map("amount_minor")
+  currency             String       @db.VarChar(3)
+  reason               String?      @db.VarChar(300)
+  status               RefundStatus
+  idempotencyKey       String       @map("idempotency_key") @db.VarChar(200)
+  occurredAt           DateTime     @map("occurred_at")
+  createdAt            DateTime     @default(now()) @map("created_at")
+
+  family             Family             @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  paymentTransaction PaymentTransaction @relation(fields: [paymentTransactionId], references: [id], onDelete: Restrict)
+
+  @@unique([familyId, idempotencyKey])
+  @@index([paymentTransactionId])
+  @@index([familyId, occurredAt])
+  @@map("refunds")
+}
+
+/// STRICT (tenancy). THE ANSWER TO «AM I ALLOWED TO USE THIS».
+///
+/// Feature access anywhere in this application resolves through a row in this
+/// table, never through «which provider paid». `source` records the channel
+/// for accounting and for the refund rule («a Play purchase is refunded only
+/// through Play») — it is INFORMATION, and no business-logic branch reads it
+/// to decide access.
+///
+/// One live row per (family, feature): the unique constraint makes the grant
+/// an idempotent UPSERT, so a redelivered renewal webhook extends
+/// `valid_until` instead of creating a second, contradictory grant. Revocation
+/// sets `status` and `revoked_at`; the row itself is never deleted, because
+/// «this household lost access on 3 March and here is why» is exactly the
+/// question a support ticket asks.
+model Entitlement {
+  id             String            @id @default(uuid()) @db.Uuid
+  familyId       String            @map("family_id") @db.Uuid
+  /// A member of `EntitlementKey` — the fixed vocabulary in
+  /// `billing.types.ts`. An unrecognised key fails safe: not entitled.
+  featureKey     String            @map("feature_key") @db.VarChar(60)
+  planTier       SubscriptionPlan  @map("plan_tier")
+  /// WHICH CHANNEL granted it. Informational. See the model docstring.
+  source         PaymentProvider
+  subscriptionId String?           @map("subscription_id") @db.Uuid
+  status         EntitlementStatus @default(ACTIVE)
+  validFrom      DateTime          @map("valid_from")
+  /// NULL = open-ended (a manual grant). Otherwise the instant access lapses
+  /// unless a renewal extends it.
+  validUntil     DateTime?         @map("valid_until")
+  revokedAt      DateTime?         @map("revoked_at")
+  revokedReason  String?           @map("revoked_reason") @db.VarChar(200)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@unique([familyId, featureKey])
+  @@index([familyId, status])
+  @@index([validUntil])
+  @@map("entitlements")
+}
+
+/// PLATFORM_ANNOTATED (tenancy) — see the section docstring for why
+/// `family_id` is nullable here and nowhere else in Phase D.
+///
+/// The dedupe table. Every provider callback is INSERTed here first, with
+/// `ON CONFLICT DO NOTHING`; a conflict means «seen before» and the handler
+/// returns 200 immediately without re-applying anything. This is the pattern
+/// `consumed_messages` already uses for the domain event bus, applied to the
+/// money path.
+///
+/// `payload_digest` is a SHA-256, not the payload. A webhook body contains a
+/// customer email and a receipt; this table is queried by support staff.
+model PaymentWebhookEvent {
+  id                String          @id @default(uuid()) @db.Uuid
+  familyId          String?         @map("family_id") @db.Uuid
+  provider          PaymentProvider
+  /// Apple `notificationUUID`, Google Pub/Sub `messageId`, Paymob
+  /// transaction id, Fawry `merchantRefNumber`. The provider's own idea of
+  /// «this event», which is what makes redelivery detectable.
+  providerEventId   String          @map("provider_event_id") @db.VarChar(200)
+  eventType         String          @map("event_type") @db.VarChar(80)
+  eventSubtype      String?         @map("event_subtype") @db.VarChar(80)
+  signatureVerified Boolean         @default(false) @map("signature_verified")
+  outcome           WebhookOutcome  @default(RECEIVED)
+  payloadDigest     String          @map("payload_digest") @db.VarChar(64)
+  /// The PROVIDER's timestamp. Out-of-order delivery is resolved against
+  /// this, never against `received_at`.
+  providerSignedAt  DateTime?       @map("provider_signed_at")
+  receivedAt        DateTime        @default(now()) @map("received_at")
+  processedAt       DateTime?       @map("processed_at")
+  failureReason     String?         @map("failure_reason") @db.VarChar(400)
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, providerEventId])
+  @@index([provider, receivedAt])
+  @@index([outcome, receivedAt])
+  @@map("payment_webhook_events")
 }

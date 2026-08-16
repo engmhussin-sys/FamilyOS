@@ -56,6 +56,11 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   'AiAlert',
   'AiMemoryEntry',
   'Notification',
+  // PHASE D (PC-D-005): a notification held for the end of a family's quiet
+  // hours. Same class as `Notification` for the same reason — the row is one
+  // household's business, is meaningless outside it, and is read back by that
+  // household's own release path from inside `runWithTenant`.
+  'NotificationDelivery',
   'Habit',
   'HabitCompletion',
   'RewardsAccount',
@@ -112,6 +117,24 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   // child's voice — and STRICT is the only defensible class for it.
   'QuizAssignment',
   'AchievementEvidence',
+
+  // -- PHASE D (commercial subscription & payments) --
+  // Created STRICT in migration 0013 with `family_id uuid NOT NULL` from the
+  // first row, so — as in 0005 and 0006 — there is no backfill, no orphan case
+  // and no nullable window.
+  //
+  // The tenant of a payment is NOT taken from the request. For a store
+  // purchase it is resolved from `provider_account_links`, whose UNIQUE
+  // `(provider, provider_account_ref)` maps the store's opaque account token to
+  // exactly one household; for a gateway callback it is resolved from the
+  // merchant order we ourselves created before redirecting the customer. In
+  // both cases the family is derived from state WE wrote, never from the
+  // payload the provider (or an attacker imitating one) sent.
+  'Trial',
+  'ProviderAccountLink',
+  'PaymentTransaction',
+  'Refund',
+  'Entitlement',
 ]);
 
 /**
@@ -162,6 +185,17 @@ export const PLATFORM_ANNOTATED_MODELS: ReadonlySet<TenantModelName> = new Set([
   // rollover history. Both meanings in one table is precisely what this class
   // is for.
   'JobRun',
+  // PHASE D. A provider's webhook is RECEIVED, and its signature VERIFIED,
+  // before any family is known — that is precisely what "never trust the
+  // payload" means: we write the dedupe row first (so a redelivery is already
+  // a no-op if we crash mid-handler), then resolve the tenant from state we
+  // ourselves wrote. `family_id IS NULL` is therefore the honest value for the
+  // window between receipt and resolution, and for every event that never
+  // resolves — a webhook for a purchase that belongs to no household of ours,
+  // which is exactly the row an operator most needs to be able to read. Such a
+  // row must NOT be visible to a tenant: it is another merchant's traffic, or
+  // an attack, and either way it is not this family's business.
+  'PaymentWebhookEvent',
 ]);
 
 /**
@@ -186,6 +220,18 @@ export const GLOBAL_MODELS: ReadonlyMap<TenantModelName, string> = new Map([
     'Auth artefact looked up by a secret SHA-256 hash before a tenant is known. The hash is the capability; a tenant filter would add nothing.',
   ],
   ['PlanDefinition', 'Global price/feature catalogue. Read-only for tenants.'],
+  [
+    'Country',
+    'PHASE D: the launch-market catalogue — ISO code, currency, and the VAT rate set by that country\'s tax authority. Facts of law, owned by the deployment, identical for every household. Exactly the PlanDefinition case.',
+  ],
+  [
+    'Currency',
+    'PHASE D: ISO-4217 reference data (symbol, minor-unit exponent). It is not tenant data under any reading, and scoping it to a family would mean a family could not render its own price.',
+  ],
+  [
+    'SubscriptionPrice',
+    'PHASE D: THE price list — what each tier costs per country, currency and billing period. The catalogue is platform-owned and identical for every family; what a household actually BOUGHT lives on `subscriptions` and `payment_transactions`, both of which ARE tenant-scoped. Making this STRICT would mean one price-list row per household (sixty thousand rows describing one price) and would make a price change a data migration.',
+  ],
   ['BadgeDefinition', 'Global badge catalogue. Ownership lives in ChildBadgeAward, which IS tenant-scoped.'],
   ['FeatureFlag', 'Platform configuration. Per-family targeting is a value inside `enabled_family_ids`, not a row-level tenant.'],
   [
