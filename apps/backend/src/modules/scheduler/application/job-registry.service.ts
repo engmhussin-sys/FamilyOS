@@ -4,6 +4,7 @@ import type { JobDefinition } from '../domain/job.types';
 import { DeadLetterAlertJob } from './jobs/dead-letter-alert.job';
 import { ExpiredTokenSweepJob } from './jobs/expired-token-sweep.job';
 import { FamilyDailyRolloverJob } from './jobs/family-daily-rollover.job';
+import { NotificationDeliverySweepJob } from './jobs/notification-delivery-sweep.job';
 import { RetentionSweepJob } from './jobs/retention-sweep.job';
 
 /**
@@ -29,12 +30,14 @@ export class JobRegistry {
     expiredTokenSweep: ExpiredTokenSweepJob,
     deadLetterAlert: DeadLetterAlertJob,
     familyDailyRollover: FamilyDailyRolloverJob,
+    notificationDeliverySweep: NotificationDeliverySweepJob,
   ) {
     const definitions: JobDefinition[] = [
       retentionSweep.definition(),
       expiredTokenSweep.definition(),
       deadLetterAlert.definition(),
       familyDailyRollover.definition(),
+      notificationDeliverySweep.definition(),
     ];
 
     const map = new Map<string, JobDefinition>();

@@ -11,6 +11,7 @@ import { SchedulerService } from './application/scheduler.service';
 import { DeadLetterAlertJob } from './application/jobs/dead-letter-alert.job';
 import { ExpiredTokenSweepJob } from './application/jobs/expired-token-sweep.job';
 import { FamilyDailyRolloverJob } from './application/jobs/family-daily-rollover.job';
+import { NotificationDeliverySweepJob } from './application/jobs/notification-delivery-sweep.job';
 import { RetentionSweepJob } from './application/jobs/retention-sweep.job';
 import { SchedulerOperationsController } from './presentation/controllers/scheduler-operations.controller';
 
@@ -46,6 +47,7 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
     ExpiredTokenSweepJob,
     DeadLetterAlertJob,
     FamilyDailyRolloverJob,
+    NotificationDeliverySweepJob,
     JobRegistry,
     JobRunner,
     JobObservability,

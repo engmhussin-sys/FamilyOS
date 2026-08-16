@@ -82,7 +82,11 @@ export type NotificationProducer =
   | 'levelup'
   | 'signal'
   | 'wellbeing'
-  | 'runtime';
+  | 'runtime'
+  /** PHASE D — the quiet-hours digest. Producer 8, and naming it here rather
+   * than letting it default is exactly the compile-time event this union exists
+   * to force; `forQuietHoursDigest` below states the composition it chose. */
+  | 'digest';
 
 function clamp(key: string): string {
   return key.length <= NOTIFICATION_SOURCE_KEY_MAX_LENGTH
@@ -146,6 +150,29 @@ export function forRecurringSignal(
 ): string {
   const bucket = Math.floor(now.getTime() / windowMs);
   return clamp(`${producer}:${segment(childId)}:${segment(discriminator)}:w${bucket}`);
+}
+
+/**
+ * PHASE D (`PC-D-005`) — THE FOURTH FORM: the quiet-hours digest.
+ *
+ * A digest is caused by neither an event, nor an entity, nor a repeating
+ * observation. It is caused by A DAY ENDING for A HOUSEHOLD, which is why its
+ * key is `(business date, audience)` and nothing else:
+ *
+ *   ONE DIGEST PER FAMILY PER BUSINESS DAY PER AUDIENCE, as a database
+ *   constraint rather than as a count the release path has to get right. If a
+ *   sweep is run twice — an operator pressing «Run now», a replica retrying
+ *   after a crash mid-release, two ticks overlapping — the second insert
+ *   collides with `notifications (family_id, source_event_id, user_id)` and is
+ *   refused. Without that, the anti-flood mechanism would itself be capable of
+ *   producing the flood.
+ *
+ * The family is NOT in the key because `family_id` is already the first column
+ * of that unique index; putting it in the string as well would make the key
+ * longer and no more unique.
+ */
+export function forQuietHoursDigest(businessDate: string, audience: 'PARENT' | 'CHILD'): string {
+  return clamp(`digest:${segment(businessDate)}:${segment(audience)}`);
 }
 
 /**

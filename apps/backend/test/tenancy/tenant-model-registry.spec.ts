@@ -70,8 +70,16 @@ describe('tenant model registry', () => {
   // FeatureFlag case) and `JobRun` (PLATFORM_ANNOTATED — a platform-wide sweep
   // has `family_id IS NULL` and must be invisible to tenants, while a
   // family-scoped rollover stamps the household that owns it).
-  it('the schema still has 75 models — the number this classification was built against', () => {
-    expect(prismaModels).toHaveLength(75);
+  // PHASE D: 75 -> 85, and the ten are two independent pieces of work landing
+  // on the same branch. ONE is the notification deferral (`NotificationDelivery`,
+  // migration 0014, STRICT — a notification held until the end of a household's
+  // quiet hours belongs to that household and to nobody else). NINE are the
+  // commercial subscription and payments domain (migrations 0012-0013). Both
+  // are recorded here rather than one of them being folded silently into the
+  // other's number, because this census exists precisely so that a model
+  // arriving without a classification is a failing test rather than a surprise.
+  it('the schema still has 85 models — the number this classification was built against', () => {
+    expect(prismaModels).toHaveLength(85);
   });
 
   it.each([...STRICT_TENANT_MODELS])(
@@ -131,10 +139,16 @@ describe('tenant model registry', () => {
   // 12 -> 13 (`ScheduledJob`). Bumping these numbers is the intended workflow:
   // the two tests above still fail for a model added WITHOUT a classification,
   // so the census cannot be satisfied by editing this line alone.
-  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008', () => {
-    expect(STRICT_TENANT_MODELS.size).toBe(54);
-    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(7);
+  // PHASE D: STRICT 54 -> 60. ONE of the six is `NotificationDelivery`
+  // (migration 0014, CREATED `family_id uuid NOT NULL` — no backfill, so no
+  // orphan case ever existed for it); the other five are the commercial
+  // payments tables from migration 0013. SHARED_NULL+PLATFORM 7 -> 8 and
+  // GLOBAL 13 -> 16 come entirely from that same commercial work — the
+  // notification deferral adds no platform-level and no un-tenanted table.
+  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008 + 1 from 0014 + 5 from 0013', () => {
+    expect(STRICT_TENANT_MODELS.size).toBe(60);
+    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(8);
     expect(SELF_TENANT_MODELS.size).toBe(1);
-    expect(GLOBAL_MODELS.size).toBe(13);
+    expect(GLOBAL_MODELS.size).toBe(16);
   });
 });

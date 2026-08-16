@@ -28,6 +28,7 @@ import { PrismaCommunicationRepository } from './infrastructure/repositories/pri
 import { PrismaDigitalTwinRepository } from './infrastructure/repositories/prisma-digital-twin.repository';
 import { PrismaDigitalWellbeingRepository } from './infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { DigitalWellbeingEngineService } from './application/services/digital-wellbeing-engine.service';
+import { QuietHoursReleaseService } from './application/services/quiet-hours-release.service';
 import { SmartNotificationIntegrationService } from './application/services/smart-notification-integration.service';
 import { BaselineCalculatorService } from './application/services/baseline-calculator.service';
 import { PatternDetectionService } from './application/services/pattern-detection.service';
@@ -102,6 +103,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     FamilyInsightService,
     DigitalWellbeingEngineService,
     SmartNotificationIntegrationService,
+    QuietHoursReleaseService,
     BaselineCalculatorService,
     PatternDetectionService,
     AnomalyDetectionService,
@@ -133,6 +135,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
     FamilyInsightService,
     DigitalWellbeingEngineService,
     SmartNotificationIntegrationService,
+    QuietHoursReleaseService,
     RewardRuleService,
     LIFE_TIMELINE_WRITER,
     REWARD_TRIGGER_WRITER,

@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 
 import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
 import { NOTIFICATION_REPOSITORY } from '../../src/modules/notifications/application/ports/notification.repository.port';
+import { NOTIFICATION_DELIVERY_REPOSITORY } from '../../src/modules/notifications/application/ports/notification-delivery.repository.port';
 import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
 import { FamilyCommunicationService } from '../../src/modules/life-intelligence/application/services/family-communication.service';
 import type { ISmartNotificationSignals } from '../../src/modules/life-intelligence/application/services/smart-notification-decision-engine';
@@ -16,6 +17,10 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
   // a truthy message by default so «delivered» stays the default in every test
   // that is not about deduplication.
   const familyCommunicationMock = { draftAiMessageIfAbsent: jest.fn() };
+  // PHASE D (PC-D-005) — the deferral queue. `DEFER` used to be a string this
+  // service returned and nothing more; it now writes a row, so the service has
+  // a dependency it did not have and this mock is where a test observes it.
+  const deferralRepoMock = { enqueue: jest.fn() };
 
   let service: SmartNotificationIntegrationService;
 
@@ -39,11 +44,15 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
     // service reports as SUPPRESS/ALREADY_NOTIFIED.
     runtimeAlertRepoMock.createForFamilyOwner.mockResolvedValue(true);
     familyCommunicationMock.draftAiMessageIfAbsent.mockResolvedValue({ id: 'msg-1' });
+    // A truthy id means «a deferred row was written by this call»; `null` means
+    // `(family_id, source_event_id)` already had one.
+    deferralRepoMock.enqueue.mockResolvedValue('deferred-1');
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         SmartNotificationIntegrationService,
         { provide: NOTIFICATION_REPOSITORY, useValue: notificationRepoMock },
+        { provide: NOTIFICATION_DELIVERY_REPOSITORY, useValue: deferralRepoMock },
         { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertRepoMock },
         { provide: FamilyCommunicationService, useValue: familyCommunicationMock },
         // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
@@ -102,14 +111,133 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
     });
   });
 
-  describe('DEFER — the specific quiet-hours case', () => {
-    it('a candidate blocked ONLY by quiet hours is DEFERred, not SUPPRESSed', async () => {
+  /**
+   * PHASE D (`PC-D-005`) — WHAT THIS BLOCK USED TO ASSERT, AND WHY IT CHANGED.
+   *
+   * It asserted that a `HYDRATION_REMINDER` inside quiet hours came back
+   * `decision: 'DEFER'`. That assertion was TRUE and the behaviour behind it was
+   * the defect: `DEFER` was a string this service returned, with no row, no
+   * queue and no redelivery underneath it. The test passed for the entire life
+   * of the bug.
+   *
+   * Phase D makes «what happens at 23:00» a per-type decision
+   * (`shared/notifications/notification-class.ts`), so the block now asserts BOTH
+   * halves of that decision rather than one:
+   *
+   *   HYDRATION_REMINDER is SUPPRESS — its premise («you have been on your
+   *   device 90 minutes and are behind on water») is false by 07:00, so
+   *   deferring it would deliver a lie. Dropped, WITH A REASON.
+   *   REWARD_GRANTED is DEFER — and now really is: a row is written with a
+   *   scheduled delivery instant, which is the assertion that was impossible
+   *   to make before.
+   */
+  describe('PHASE D — the three quiet-hours behaviours, at the one gate', () => {
+    it('SUPPRESS class: a reminder whose premise expires overnight is dropped WITH A RECORDED REASON, and never enqueued', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T23:00:00')); // within default 21:00-07:00 quiet hours
 
       const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
 
-      expect(result).toEqual([{ type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'DEFER', reason: 'QUIET_HOURS' }]);
+      expect(result).toEqual([
+        {
+          type: 'HYDRATION_REMINDER',
+          targetAudience: 'CHILD',
+          decision: 'SUPPRESS',
+          reason: 'QUIET_HOURS_EXPIRES_OVERNIGHT',
+        },
+      ]);
       expect(familyCommunicationMock.draftAiMessageIfAbsent).not.toHaveBeenCalled();
+      // The point of the class: it is NOT held, so it cannot arrive stale.
+      expect(deferralRepoMock.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('DEFER class: a reward blocked ONLY by quiet hours is ENQUEUED with a scheduled instant — not merely labelled', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T23:00:00'));
+
+      const result = await service.notifyEvent(childId, familyId, {
+        type: 'REWARD_GRANTED',
+        priority: 'NORMAL',
+        title: 'مكافأة جديدة',
+        body: 'حصل طفلك على مكافأة جديدة اليوم.',
+        targetAudience: 'PARENT',
+        sourceEventId: 'evt:phase-d-defer-1',
+      });
+
+      expect(result).toEqual({
+        type: 'REWARD_GRANTED',
+        targetAudience: 'PARENT',
+        decision: 'DEFER',
+        reason: 'QUIET_HOURS',
+      });
+      expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
+
+      // THE ASSERTION THAT COULD NOT BE WRITTEN BEFORE PHASE D.
+      expect(deferralRepoMock.enqueue).toHaveBeenCalledTimes(1);
+      const enqueued = deferralRepoMock.enqueue.mock.calls[0][0];
+      expect(enqueued.sourceEventId).toBe('evt:phase-d-defer-1'); // carried UNCHANGED
+      expect(enqueued.deferReason).toBe('QUIET_HOURS');
+      expect(enqueued.category).toBe('REWARD');
+      expect(enqueued.scheduledFor).toBeInstanceOf(Date);
+      expect(enqueued.scheduledFor.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('DELIVER class: a safety-critical type goes out DURING quiet hours rather than being held', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T23:00:00'));
+
+      const result = await service.notifyEvent(childId, familyId, {
+        type: 'ACCESSIBILITY_DISABLED',
+        // NORMAL on purpose: the bypass must come from the TYPE's
+        // classification, not from the old implicit `priority === 'CRITICAL'`
+        // rule, or the matrix would be decorative.
+        priority: 'NORMAL',
+        title: 'Protection turned off',
+        body: 'Device protection was disabled.',
+        targetAudience: 'PARENT',
+        sourceEventId: 'runtime:phase-d-deliver-1',
+      });
+
+      expect(result.decision).toBe('SEND');
+      expect(runtimeAlertRepoMock.createForFamilyOwner).toHaveBeenCalledTimes(1);
+      expect(deferralRepoMock.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('a redelivered cause finds its own deferred row already waiting and reports ALREADY_DEFERRED, not a second enqueue', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T23:00:00'));
+      // `null` is what `ON CONFLICT (family_id, source_event_id) DO NOTHING`
+      // returns — the row exists, this call wrote nothing.
+      deferralRepoMock.enqueue.mockResolvedValue(null);
+
+      const result = await service.notifyEvent(childId, familyId, {
+        type: 'REWARD_GRANTED',
+        priority: 'NORMAL',
+        title: 'مكافأة جديدة',
+        body: 'حصل طفلك على مكافأة جديدة اليوم.',
+        targetAudience: 'PARENT',
+        sourceEventId: 'evt:phase-d-defer-1',
+      });
+
+      expect(result).toEqual({
+        type: 'REWARD_GRANTED',
+        targetAudience: 'PARENT',
+        decision: 'DEFER',
+        reason: 'ALREADY_DEFERRED',
+      });
+    });
+
+    it('an enqueue failure degrades to a REPORTED suppression rather than throwing at the reward path that caused it', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T23:00:00'));
+      deferralRepoMock.enqueue.mockRejectedValue(new Error('connection reset'));
+
+      const result = await service.notifyEvent(childId, familyId, {
+        type: 'REWARD_GRANTED',
+        priority: 'NORMAL',
+        title: 'مكافأة جديدة',
+        body: 'حصل طفلك على مكافأة جديدة اليوم.',
+        targetAudience: 'PARENT',
+        sourceEventId: 'evt:phase-d-defer-2',
+      });
+
+      expect(result.decision).toBe('SUPPRESS');
+      expect(result.reason).toBe('DEFER_ENQUEUE_FAILED');
     });
   });
 

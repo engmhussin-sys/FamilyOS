@@ -84,7 +84,27 @@ export type SystemReason =
    * a retention sweep is cross-tenant by definition and runs under
    * `DATA_RETENTION_JOB`, the reason that already existed for exactly it.
    */
-  | 'SCHEDULED_JOB';
+  | 'SCHEDULED_JOB'
+  /**
+   * PHASE D (`PC-D-005`). The quiet-hours release sweep, and it is the same
+   * shape as `OUTBOX_RELAY` for the same reason: a notification deferred to the
+   * end of a family's quiet hours is released on a timer tick, at which no
+   * per-request tenant exists.
+   *
+   * THE NARROWNESS IS THE CONTROL. This bypass covers exactly three statements,
+   * none of which touches a notification's CONTENT:
+   *   1. `SELECT DISTINCT family_id` — tenant ids only, so the sweep knows whom
+   *      to fan out to;
+   *   2. the cross-tenant PENDING/DEAD gauge, which returns counts and type
+   *      names and is by definition an alert rather than a household view;
+   *   3. the stale-lease reclaim, which spans tenants because a dead worker
+   *      held rows for whichever families it had claimed.
+   * The instant a family's rows are about to be read or delivered, the release
+   * service enters `runWithTenant({ familyId })`, so the claim, the fatigue
+   * re-evaluation and the delivery itself all run under the ordinary extension
+   * with deny-by-default intact.
+   */
+  | 'NOTIFICATION_RELEASE';
 
 export interface SystemContext {
   readonly kind: 'SYSTEM';

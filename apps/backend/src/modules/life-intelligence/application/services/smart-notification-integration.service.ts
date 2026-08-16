@@ -2,12 +2,30 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { RUNTIME_ALERT_REPOSITORY, type IRuntimeAlertRepository } from '../../../pairing/application/ports/runtime-alert.repository.port';
 import { NOTIFICATION_REPOSITORY, type INotificationRepository } from '../../../notifications/application/ports/notification.repository.port';
+import {
+  NOTIFICATION_DELIVERY_REPOSITORY,
+  type INotificationDeliveryRepository,
+} from '../../../notifications/application/ports/notification-delivery.repository.port';
 import { FamilyCommunicationService } from './family-communication.service';
 import { evaluateSmartNotificationCandidates, type ISmartNotificationSignals } from './smart-notification-decision-engine';
-import { evaluateFatigue, type ICandidateNotification, type IRecentNotification } from './notification-fatigue-guard';
+import {
+  DEFAULT_FATIGUE_POLICY,
+  evaluateFatigue,
+  type ICandidateNotification,
+  type IRecentNotification,
+} from './notification-fatigue-guard';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
-import { getBusinessTimeHHMM, getStartOfBusinessDay } from '../../../../common/time/family-date';
+import {
+  getBusinessDate,
+  getBusinessTimeHHMM,
+  getStartOfBusinessDay,
+  nextLocalTimeAfter,
+} from '../../../../common/time/family-date';
 import { forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
+import {
+  notificationCategoryOf,
+  quietHoursClassOf,
+} from '../../../../shared/notifications/notification-class';
 
 export interface INotificationOutcome {
   type: string;
@@ -66,6 +84,8 @@ export class SmartNotificationIntegrationService {
 
   constructor(
     @Inject(NOTIFICATION_REPOSITORY) private readonly notificationRepository: INotificationRepository,
+    @Inject(NOTIFICATION_DELIVERY_REPOSITORY)
+    private readonly deferralRepository: INotificationDeliveryRepository,
     @Inject(RUNTIME_ALERT_REPOSITORY) private readonly runtimeAlertRepository: IRuntimeAlertRepository,
     private readonly familyCommunication: FamilyCommunicationService,
     private readonly familyDate: FamilyDateService,
@@ -78,12 +98,14 @@ export class SmartNotificationIntegrationService {
     const candidates = evaluateSmartNotificationCandidates(signals);
     if (candidates.length === 0) return [];
 
-    const history = await this.fetchHistory(childId);
-    const outcomes: INotificationOutcome[] = [];
     // B9 — ONE `now` for the whole batch, so two candidates evaluated in the
     // same call cannot land in two different dedupe buckets because a
-    // millisecond passed between them.
+    // millisecond passed between them. PHASE D — and the history window is
+    // anchored to it too, so «the last 24 hours» means the last 24 hours
+    // before the instant being evaluated.
     const now = new Date();
+    const history = await this.fetchHistory(childId, now);
+    const outcomes: INotificationOutcome[] = [];
 
     for (const candidate of candidates) {
       // B9 — THE PERIODIC CLASS, composed here rather than by the caller
@@ -121,13 +143,33 @@ export class SmartNotificationIntegrationService {
    * throws for a delivery failure — logged, not propagated, so a
    * notification issue never blocks the real business event (a habit
    * completion, a reward grant) that triggered it. */
-  async notifyEvent(childId: string, familyId: string, candidate: IDeliverableNotification): Promise<INotificationOutcome> {
-    const history = await this.fetchHistory(childId);
-    return this.evaluateAndDeliver(childId, familyId, candidate, history, new Date());
+  async notifyEvent(
+    childId: string,
+    familyId: string,
+    candidate: IDeliverableNotification,
+    /**
+     * PHASE D — `now` IS A PARAMETER, exactly as it already is for
+     * `evaluateFatigue`, `closableBusinessDate` and every other decision in
+     * this codebase that has a right answer. Deferral turned this method into
+     * one of those: it now computes a persisted instant from the family's
+     * calendar, and a function that reads the clock inside itself cannot be
+     * proven correct across a midnight or a DST boundary without faking the
+     * system clock — which, for a path that also does real database I/O, means
+     * faking the timers the database driver needs. Defaulted, so no existing
+     * caller changes.
+     */
+    now: Date = new Date(),
+  ): Promise<INotificationOutcome> {
+    const history = await this.fetchHistory(childId, now);
+    return this.evaluateAndDeliver(childId, familyId, candidate, history, now);
   }
 
-  private async fetchHistory(childId: string): Promise<IRecentNotification[]> {
-    const since = new Date(Date.now() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000);
+  /** PHASE D (`PD-N-003`): the window is anchored to the `now` being evaluated,
+   * not to the wall clock. The two agree in production and disagree in every
+   * test and every replayed instant, which is precisely where a cap silently
+   * stops applying. */
+  private async fetchHistory(childId: string, now: Date): Promise<IRecentNotification[]> {
+    const since = new Date(now.getTime() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000);
     const rawHistory = await this.notificationRepository.findRecentForChild(childId, since);
     // Safe narrowing: every writer of Notification.priority uses this
     // exact union (schema's own open-string design means TypeScript
@@ -165,42 +207,201 @@ export class SmartNotificationIntegrationService {
     const decision = evaluateFatigue(candidate, history, now, currentLocalTime, businessDayStart);
 
     if (!decision.allowed) {
-      // QUIET_HOURS means "still valid, just not right now" —
-      // everything else means "this specific occurrence should not
-      // be sent at all."
-      const isDeferrable = decision.blockedReason === 'QUIET_HOURS';
+      // PHASE D (`PC-D-005`) — THE LINE THAT USED TO LOSE THE NOTIFICATION.
+      //
+      // This branch read `decision: isDeferrable ? 'DEFER' : 'SUPPRESS'` and
+      // then returned. `DEFER` wrote no row, enqueued nothing and scheduled
+      // nothing — it was a WORD. With the default 21:00-07:00 policy that word
+      // covered 41.6% of every day, and a reward the child genuinely earned
+      // inside that window was announced to nobody, ever.
+      //
+      // Everything except QUIET_HOURS is still a real suppression and still
+      // terminal: a cooldown, a duplicate or a cap means «this specific
+      // occurrence should not be sent at all», and holding it until morning
+      // would defeat the cap it was refused by.
+      if (decision.blockedReason !== 'QUIET_HOURS') {
+        return {
+          type: candidate.type,
+          targetAudience: candidate.targetAudience,
+          decision: 'SUPPRESS',
+          reason: decision.blockedReason,
+        };
+      }
+      return this.handleQuietHours(childId, familyId, candidate, timeZone, now);
+    }
+
+    // B9 — «the constraint refused it» is a real, reportable outcome, and it is
+    // a SUPPRESS rather than a SEND. Reporting SEND for a row the database
+    // rejected would put a lie in the log line `NotificationRewardConsumer`
+    // writes, and that log line is how the redelivery behaviour is observed in
+    // production. A delivery failure is likewise reported, not propagated — a
+    // notification problem must never block the reward grant that caused it.
+    return this.deliverEvaluated(childId, familyId, candidate);
+  }
+
+  /**
+   * PHASE D (`PC-D-005`) — THE THREE BEHAVIOURS, AT THE ONE GATE.
+   *
+   * The fatigue guard has just said «not now». What «not now» MEANS is a
+   * per-type product decision, and it lives in `notification-class.ts` as a
+   * table with a written justification per row rather than as a predicate over
+   * `priority` — because priority describes how loud a notification is, not
+   * whether the fact it carries survives the night. A `HYDRATION_REMINDER` and
+   * a `REWARD_GRANTED` are both NORMAL and their correct behaviours here are
+   * opposites.
+   *
+   *   DELIVER   safety-critical. Bypasses quiet hours and goes out now. The
+   *             list is three types long and every member is argued for in the
+   *             table; `test/notifications/notification-class.spec.ts` fails if
+   *             it grows without a justification.
+   *   SUPPRESS  the occurrence describes a MOMENT that will have passed by
+   *             morning. Dropped — but WITH ITS REASON RECORDED, which is the
+   *             entire difference between this and the defect.
+   *   DEFER     the default. A row in `notification_deliveries` with a
+   *             scheduled delivery instant computed on the FAMILY'S calendar,
+   *             released by the existing scheduler.
+   *
+   * IT NEVER THROWS. A deferral that fails to enqueue is logged and reported as
+   * a suppression with `DEFER_ENQUEUE_FAILED`, because this service's standing
+   * discipline is that a notification problem must never fail the reward grant
+   * or habit completion that triggered it.
+   */
+  private async handleQuietHours(
+    childId: string,
+    familyId: string,
+    candidate: IDeliverableNotification,
+    timeZone: string,
+    now: Date,
+  ): Promise<INotificationOutcome> {
+    const quietHoursClass = quietHoursClassOf(candidate.type, candidate.priority);
+
+    if (quietHoursClass === 'DELIVER') {
+      // Safety-critical: quiet hours do not apply, and the caps behind them do
+      // not either — this is the escalation policy the fatigue guard already
+      // encoded for CRITICAL, now stated by type instead of inferred.
+      this.logger.log(
+        `notification.quiet_hours_bypassed type=${candidate.type} audience=${candidate.targetAudience}`,
+      );
+      return this.deliverEvaluated(childId, familyId, candidate);
+    }
+
+    if (quietHoursClass === 'SUPPRESS') {
+      // DROPPED WITH A LOGGED REASON. The log line is the deliverable: a
+      // hydration nudge that is discarded because its premise expires overnight
+      // is a decision, and a decision that leaves no trace is indistinguishable
+      // from the bug.
+      this.logger.log(
+        `notification.quiet_hours_suppressed type=${candidate.type} audience=${candidate.targetAudience} reason=EXPIRES_OVERNIGHT`,
+      );
       return {
         type: candidate.type,
         targetAudience: candidate.targetAudience,
-        decision: isDeferrable ? 'DEFER' : 'SUPPRESS',
-        reason: decision.blockedReason,
+        decision: 'SUPPRESS',
+        reason: 'QUIET_HOURS_EXPIRES_OVERNIGHT',
       };
     }
 
+    // DEFER. The scheduled instant is the next time THIS FAMILY'S wall clock
+    // reads `quietHoursEnd`, read from tzdata at that instant — not `now + 9h`,
+    // not the container's clock, and not midnight-plus-seven (which does not
+    // exist on Africa/Cairo's spring-forward day).
     try {
-      const written = await this.deliver(childId, familyId, candidate);
-      // B9 — «the constraint refused it» is a real, reportable outcome, and it
-      // is a SUPPRESS rather than a SEND. Reporting SEND for a row the
-      // database rejected would put a lie in the log line
-      // `NotificationRewardConsumer` writes, and that log line is how the
-      // redelivery behaviour is observed in production.
+      const scheduledFor = nextLocalTimeAfter(now, DEFAULT_FATIGUE_POLICY.quietHoursEnd, timeZone);
+      const enqueuedId = await this.deferralRepository.enqueue({
+        familyId,
+        childId,
+        type: candidate.type,
+        category: notificationCategoryOf(candidate.type),
+        priority: candidate.priority,
+        targetAudience: candidate.targetAudience,
+        title: candidate.title,
+        body: candidate.body,
+        // THE CAUSAL KEY, CARRIED UNCHANGED. This is the whole of «idempotency
+        // survives defer -> deliver»: the key composed by the producer at 22:00
+        // is the key inserted into `notifications` at 07:00, so a redelivery of
+        // the same cause still collides with B9's unique index.
+        sourceEventId: candidate.sourceEventId,
+        deferReason: 'QUIET_HOURS',
+        scheduledFor,
+        businessDate: getBusinessDate(now, timeZone),
+      });
+
+      this.logger.log(
+        `notification.deferred type=${candidate.type} audience=${candidate.targetAudience} ` +
+          `scheduledFor=${scheduledFor.toISOString()} ${enqueuedId ? 'enqueued' : 'already_queued'}`,
+      );
+      return {
+        type: candidate.type,
+        targetAudience: candidate.targetAudience,
+        decision: 'DEFER',
+        // `ALREADY_DEFERRED` and `QUIET_HOURS` are different facts and the
+        // caller's log line must be able to tell them apart: the first means a
+        // redelivered cause found its own row already waiting.
+        reason: enqueuedId ? 'QUIET_HOURS' : 'ALREADY_DEFERRED',
+      };
+    } catch (err) {
+      this.logger.error(
+        `notification.defer_failed type=${candidate.type} ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return {
+        type: candidate.type,
+        targetAudience: candidate.targetAudience,
+        decision: 'SUPPRESS',
+        reason: 'DEFER_ENQUEUE_FAILED',
+      };
+    }
+  }
+
+  /**
+   * The write plus the two outcomes it can have, shared by the immediate path
+   * and the DELIVER-class quiet-hours bypass so that «the constraint refused
+   * it» is reported identically in both.
+   */
+  private async deliverEvaluated(
+    childId: string,
+    familyId: string,
+    candidate: IDeliverableNotification,
+  ): Promise<INotificationOutcome> {
+    try {
+      const written = await this.deliverNow(childId, familyId, candidate);
       return written
         ? { type: candidate.type, targetAudience: candidate.targetAudience, decision: 'SEND' }
-        : { type: candidate.type, targetAudience: candidate.targetAudience, decision: 'SUPPRESS', reason: 'ALREADY_NOTIFIED' };
+        : {
+            type: candidate.type,
+            targetAudience: candidate.targetAudience,
+            decision: 'SUPPRESS',
+            reason: 'ALREADY_NOTIFIED',
+          };
     } catch (err) {
-      this.logger.warn(`Failed to deliver Smart Notification (${candidate.type})`, err instanceof Error ? err.message : err);
-      // Deliberately still returns a real outcome object (not a
-      // thrown error) — a delivery failure is reported, not
-      // propagated, matching this service's own "never block the
-      // caller's real business logic" discipline throughout.
-      return { type: candidate.type, targetAudience: candidate.targetAudience, decision: 'SUPPRESS', reason: 'DELIVERY_ERROR' };
+      this.logger.warn(
+        `Failed to deliver Smart Notification (${candidate.type})`,
+        err instanceof Error ? err.message : err,
+      );
+      return {
+        type: candidate.type,
+        targetAudience: candidate.targetAudience,
+        decision: 'SUPPRESS',
+        reason: 'DELIVERY_ERROR',
+      };
     }
   }
 
   /** Routes a SEND-approved candidate to its correct real delivery
    * mechanism based on targetAudience — enforced structurally (CHILD
-   * always goes through the approval-gated path). */
-  private async deliver(childId: string, familyId: string, candidate: IDeliverableNotification): Promise<boolean> {
+   * always goes through the approval-gated path).
+   *
+   * PHASE D — PUBLIC, so that `QuietHoursReleaseService` releases a deferred
+   * notification through THIS EXACT METHOD rather than through a second copy of
+   * the routing rules. There is one place a notification becomes a row, and a
+   * deferred notification reaches it by the same door as an immediate one; that
+   * is what «no second notification engine» means in code rather than in prose.
+   */
+  async deliverNow(
+    childId: string,
+    familyId: string,
+    candidate: IDeliverableNotification,
+    options: { deferPushToCaller?: boolean } = {},
+  ): Promise<boolean> {
     if (candidate.targetAudience === 'PARENT') {
       return this.runtimeAlertRepository.createForFamilyOwner({
         familyId,
@@ -210,6 +411,9 @@ export class SmartNotificationIntegrationService {
         priority: candidate.priority === 'HIGH' || candidate.priority === 'LOW' ? 'NORMAL' : candidate.priority,
         type: candidate.type,
         sourceEventId: candidate.sourceEventId,
+        // PHASE D: only the release path sets this, and only because it owns a
+        // durable retry the repository's best-effort push would otherwise burn.
+        deferPushToCaller: options.deferPushToCaller,
       });
     }
     // B9 — the CHILD branch is protected too, and by the same kind of thing:

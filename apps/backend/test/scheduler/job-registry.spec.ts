@@ -24,13 +24,20 @@ import * as path from 'path';
 import { DeadLetterAlertJob } from '../../src/modules/scheduler/application/jobs/dead-letter-alert.job';
 import { ExpiredTokenSweepJob } from '../../src/modules/scheduler/application/jobs/expired-token-sweep.job';
 import { FamilyDailyRolloverJob } from '../../src/modules/scheduler/application/jobs/family-daily-rollover.job';
+import { NotificationDeliverySweepJob } from '../../src/modules/scheduler/application/jobs/notification-delivery-sweep.job';
 import { RetentionSweepJob } from '../../src/modules/scheduler/application/jobs/retention-sweep.job';
 import { JobRegistry } from '../../src/modules/scheduler/application/job-registry.service';
 
-const MIGRATION = path.resolve(
-  __dirname,
-  '../../prisma/migrations/0011_scheduler_and_retention/migration.sql',
-);
+/**
+ * PHASE D: the seed is no longer in ONE file. Migration 0011 created the
+ * registry and seeded four jobs; migration 0014 seeded the fifth
+ * (`notification-delivery-sweep`). The set this suite compares against is
+ * therefore the UNION of every migration that inserts into `scheduled_jobs` —
+ * discovered by reading the directory rather than by listing filenames, so a
+ * sixth job seeded by a future migration is caught by this test on the day it
+ * is written instead of on the day someone remembers to add it here.
+ */
+const MIGRATIONS_DIR = path.resolve(__dirname, '../../prisma/migrations');
 
 interface SeededJob {
   name: string;
@@ -39,18 +46,27 @@ interface SeededJob {
   localHour: number | null;
 }
 
-/** Parses the `INSERT INTO "scheduled_jobs" ... VALUES (...)` block. */
+/** Parses every `INSERT INTO "scheduled_jobs" ... VALUES (...)` row in every migration. */
 function seededJobs(): SeededJob[] {
-  const sql = fs.readFileSync(MIGRATION, 'utf8');
-  const rows = [
-    ...sql.matchAll(/\(\s*'([a-z-]+)',\s*'(PLATFORM|FAMILY)',\s*(\d+),\s*(NULL|\d+),\s*(true|false)\s*\)/g),
-  ];
-  return rows.map((m) => ({
-    name: m[1],
-    scope: m[2],
-    cadenceSeconds: Number(m[3]),
-    localHour: m[4] === 'NULL' ? null : Number(m[4]),
-  }));
+  const jobs: SeededJob[] = [];
+  for (const dir of fs.readdirSync(MIGRATIONS_DIR).sort()) {
+    const file = path.join(MIGRATIONS_DIR, dir, 'migration.sql');
+    if (!fs.existsSync(file)) continue;
+    const sql = fs.readFileSync(file, 'utf8');
+    if (!sql.includes('INSERT INTO "scheduled_jobs"')) continue;
+    const rows = [
+      ...sql.matchAll(/\(\s*'([a-z-]+)',\s*'(PLATFORM|FAMILY)',\s*(\d+),\s*(NULL|\d+),\s*(true|false)\s*\)/g),
+    ];
+    for (const m of rows) {
+      jobs.push({
+        name: m[1],
+        scope: m[2],
+        cadenceSeconds: Number(m[3]),
+        localHour: m[4] === 'NULL' ? null : Number(m[4]),
+      });
+    }
+  }
+  return jobs;
 }
 
 /**
@@ -67,11 +83,12 @@ function registry(): JobRegistry {
     new ExpiredTokenSweepJob(stub()),
     new DeadLetterAlertJob(stub()),
     new FamilyDailyRolloverJob(stub(), stub()),
+    new NotificationDeliverySweepJob(stub()),
   );
 }
 
-describe('PHASE C P4 — job registry ↔ migration 0011 seed', () => {
-  it('registers exactly the four jobs the migration seeds — no more, no fewer', () => {
+describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => {
+  it('registers exactly the jobs the migrations seed — no more, no fewer', () => {
     const inCode = [...registry().names()].sort();
     const inMigration = seededJobs()
       .map((j) => j.name)
@@ -82,6 +99,8 @@ describe('PHASE C P4 — job registry ↔ migration 0011 seed', () => {
       'data-retention-sweep',
       'expired-token-sweep',
       'family-daily-rollover',
+      // PHASE D (PC-D-005): the quiet-hours release, seeded by migration 0014.
+      'notification-delivery-sweep',
       'outbox-dead-letter-alert',
     ]);
   });
@@ -129,6 +148,7 @@ describe('PHASE C P4 — job registry ↔ migration 0011 seed', () => {
           duplicate as unknown as ExpiredTokenSweepJob,
           new DeadLetterAlertJob(stub()),
           new FamilyDailyRolloverJob(stub(), stub()),
+          new NotificationDeliverySweepJob(stub()),
         ),
     ).toThrow(/Duplicate scheduled job name/);
   });
