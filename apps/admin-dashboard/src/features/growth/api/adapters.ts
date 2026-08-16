@@ -36,9 +36,21 @@ export interface AdapterGap {
   reasonKey: string;
 }
 
-export type AdapterResult<T> =
-  | { kind: 'COMPOSED'; data: T; composedFrom: string[] }
-  | { kind: 'MISSING'; gap: AdapterGap };
+/** A number this client assembled from endpoints that DO exist. */
+export interface ComposedResult<T> {
+  kind: 'COMPOSED';
+  data: T;
+  composedFrom: string[];
+}
+
+/** A number no endpoint provides. Carries no data field at all, so no view
+ * can render one by accident. */
+export interface MissingResult {
+  kind: 'MISSING';
+  gap: AdapterGap;
+}
+
+export type AdapterResult<T> = ComposedResult<T> | MissingResult;
 
 export const GAPS = {
   referralAdminSummary: {
@@ -100,7 +112,7 @@ function sumOrNull(rows: DailyMetricRow[], pick: (r: DailyMetricRow) => number |
  * subscriptions) are read off the LAST row, because summing a stock across
  * days counts the same family once per day. Flows are summed.
  */
-export function composeExecutiveCounts(rows: DailyMetricRow[]): AdapterResult<ExecutiveCounts> {
+export function composeExecutiveCounts(rows: DailyMetricRow[]): ComposedResult<ExecutiveCounts> {
   if (rows.length === 0) {
     return {
       kind: 'COMPOSED',
@@ -177,7 +189,7 @@ export function composeChannelEconomics(
   channels: ChannelRow[],
   campaigns: Campaign[],
   countryCode: CountryCode,
-): AdapterResult<ChannelEconomicsRow[]> {
+): ComposedResult<ChannelEconomicsRow[]> {
   const scoped = campaigns.filter((c) => c.countryCode === countryCode);
 
   const rows = channels.map((channel): ChannelEconomicsRow => {
@@ -232,7 +244,7 @@ export interface ReferralSummary {
  * (one family is not the platform) and a privacy regression. So the other
  * five fields are typed `null` and rendered as a declared gap.
  */
-export function composeReferralSummary(rows: DailyMetricRow[]): AdapterResult<ReferralSummary> {
+export function composeReferralSummary(rows: DailyMetricRow[]): ComposedResult<ReferralSummary> {
   return {
     kind: 'COMPOSED',
     data: {
@@ -261,7 +273,7 @@ export interface ProductAiMetrics {
 /** MISSING. No admin endpoint exposes AI sessions, goal counts or reward
  * redemption. The activation event proves a reward was granted, but that is
  * one boolean per family, not a product-engagement series. */
-export function fetchProductAiMetrics(): AdapterResult<ProductAiMetrics> {
+export function fetchProductAiMetrics(): MissingResult {
   return { kind: 'MISSING', gap: GAPS.productAiMetrics };
 }
 
@@ -277,7 +289,7 @@ export interface CohortRetentionRow {
 /** MISSING. `GET /admin/growth/kpis` returns RETENTION_D1/7/30/90 for a
  * COUNTRY as of a date; there is no per-cohort breakdown. The country view
  * below is real; the cohort table is a declared gap. */
-export function fetchCohortRetention(): AdapterResult<CohortRetentionRow[]> {
+export function fetchCohortRetention(): MissingResult {
   return { kind: 'MISSING', gap: GAPS.cohortRetention };
 }
 
@@ -290,7 +302,7 @@ export interface RefundSummary {
 /** MISSING. `payment_transactions` records refunds (PHASE-D-Payments §4) but
  * the growth contract exposes no refund aggregate — `growth_daily_metrics`
  * carries payment success/failure counts and net revenue only. */
-export function fetchRefunds(): AdapterResult<RefundSummary> {
+export function fetchRefunds(): MissingResult {
   return { kind: 'MISSING', gap: GAPS.refunds };
 }
 
@@ -300,7 +312,7 @@ export function fetchRefunds(): AdapterResult<RefundSummary> {
  * forever, which is exactly the kind of number that survives a board
  * meeting and then can't be reproduced.
  */
-export function activeChildrenGap(): AdapterResult<number> {
+export function activeChildrenGap(): MissingResult {
   return { kind: 'MISSING', gap: GAPS.activeChildren };
 }
 
