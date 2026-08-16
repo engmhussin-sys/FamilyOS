@@ -426,6 +426,15 @@ model Family {
   entitlements         Entitlement[]
   paymentWebhookEvents PaymentWebhookEvent[]
 
+  // -- PHASE D (growth, attribution, referral) --
+  acquisitionAttribution   AcquisitionAttribution?
+  activation               FamilyActivation?
+  referralCode             ReferralCode?
+  referralLinks            ReferralLink[]
+  referralEventsAsReferrer ReferralEvent[]         @relation("ReferrerFamily")
+  referralRewards          ReferralReward[]
+  growthAlerts             GrowthAlert[]
+
   @@map("families")
 }
 
@@ -3577,4 +3586,525 @@ model PaymentWebhookEvent {
   @@index([provider, receivedAt])
   @@index([outcome, receivedAt])
   @@map("payment_webhook_events")
+}
+
+/// ============================================================
+/// PHASE D — GROWTH, ATTRIBUTION, REFERRAL & FORECASTING
+/// (migration `0015_growth_attribution_referral`)
+///
+/// TWELVE TABLES, AND THE TENANCY CLASS OF EACH IS AN ARGUMENT, NOT A
+/// DEFAULT. Four of them are STRICT because a row describes ONE household
+/// and is meaningless outside it; seven are GLOBAL because they are
+/// platform configuration or platform-wide aggregates that belong to no
+/// household and must never be readable by one; one is PLATFORM_ANNOTATED
+/// because it is an operator alert that may or may not be about a family.
+///
+/// PRIVACY (CONTEXT §3 principle 8). Not one of these tables carries a
+/// child identifier, a child name, a date of birth, message content or
+/// app-usage detail. `family_activations` — the table closest to a child's
+/// behaviour — stores a family id, an instant, a duration and a rule
+/// version, and deliberately not WHICH child completed WHICH goal. That is
+/// the line between product analytics and behavioural profiling of minors,
+/// and it is drawn in the schema so no query can cross it.
+/// ============================================================
+
+enum AcquisitionChannelType {
+  ORGANIC
+  TIKTOK
+  INSTAGRAM
+  FACEBOOK
+  YOUTUBE
+  GOOGLE
+  INFLUENCER
+  SCHOOL
+  PARENT_COMMUNITY
+  REFERRAL
+  PARTNERSHIP
+  APP_STORE
+  GOOGLE_PLAY
+  OTHER
+}
+
+enum AcquisitionPlatformType {
+  ANDROID
+  IOS
+  WEB
+  UNKNOWN
+}
+
+enum ReferralEventKind {
+  SENT
+  CLICKED
+  REGISTERED
+  QUALIFIED
+  REJECTED
+}
+
+enum ReferralRewardKind {
+  SUBSCRIPTION_CREDIT_DAYS
+  CHILD_REWARD_COINS
+}
+
+enum ReferralRewardState {
+  PENDING
+  GRANTED
+  FAILED
+}
+
+enum ForecastScenarioKind {
+  CONSERVATIVE
+  BASE
+  AGGRESSIVE
+}
+
+enum GrowthAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// STRICT (tenancy). WHERE THIS HOUSEHOLD CAME FROM.
+///
+/// Written EXACTLY ONCE, inside the registration transaction, and never
+/// updated — `family_id` is UNIQUE and the service only INSERTs. Attribution
+/// that can be overwritten is not attribution: every campaign's number would
+/// then depend on which request arrived last.
+///
+/// The client supplies these values and the client is NOT trusted with them:
+/// they are normalised and length-capped in `domain/attribution.ts`, the
+/// channel is resolved to a closed enum, and none of it participates in any
+/// authorization decision. `family_id` still comes from the transaction that
+/// created the family — CONTEXT §3 principle 3 is not relaxed here.
+model AcquisitionAttribution {
+  id           String                  @id @default(uuid()) @db.Uuid
+  familyId     String                  @unique @map("family_id") @db.Uuid
+  channel      AcquisitionChannelType
+  /// The RAW `utm_source`, kept for diagnosis. Never used as a channel — an
+  /// unrecognised source resolves to OTHER, and this column is how you find
+  /// out which unrecognised sources deserve to become channels.
+  source       String?                 @db.VarChar(120)
+  campaign     String?                 @db.VarChar(120)
+  /// FK-less on purpose: a UTM may name a campaign that was never created in
+  /// `growth_campaigns`, and refusing the registration over a marketing typo
+  /// would be the wrong trade. Resolution to a campaign row happens at read
+  /// time, by name, and unmatched spend is reported as unmatched.
+  campaignId   String?                 @map("campaign_id") @db.Uuid
+  medium       String?                 @db.VarChar(60)
+  content      String?                 @db.VarChar(120)
+  countryCode  String?                 @map("country_code") @db.VarChar(2)
+  platform     AcquisitionPlatformType @default(UNKNOWN)
+  referralCode String?                 @map("referral_code") @db.VarChar(32)
+  referrer     String?                 @db.VarChar(400)
+  landingPage  String?                 @map("landing_page") @db.VarChar(400)
+  /// The anonymous session the APP_INSTALLED event was emitted under. This is
+  /// the ONLY join between the pre-registration funnel and the post-
+  /// registration one, and it is why INSTALL can be attributed at all.
+  sessionId    String?                 @map("session_id") @db.VarChar(100)
+  createdAt    DateTime                @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([channel, createdAt])
+  @@index([countryCode, createdAt])
+  @@index([campaignId])
+  @@index([referralCode])
+  @@map("acquisition_attributions")
+}
+
+/// STRICT (tenancy). THE ACTIVATION FACT — one row per household, ever.
+///
+/// `family_id` is UNIQUE, and that constraint IS the "first, and only once"
+/// gate of the activation definition (CONTEXT §3 principle 6: the defence is
+/// the database, not an application check-then-insert). Two concurrent
+/// qualifying completions produce exactly one row.
+///
+/// NO `child_id`. See the section docstring. `time_to_value_minutes` is
+/// STORED rather than recomputed so the median is taken over frozen facts
+/// and cannot move when a family changes its timezone.
+model FamilyActivation {
+  id                  String   @id @default(uuid()) @db.Uuid
+  familyId            String   @unique @map("family_id") @db.Uuid
+  /// Which version of the "meaningful goal" rule admitted this row. A metric
+  /// whose definition changed silently is worse than no metric.
+  ruleVersion         String   @map("rule_version") @db.VarChar(40)
+  completionKind      String   @map("completion_kind") @db.VarChar(30)
+  occurredAt          DateTime @map("occurred_at")
+  /// Minutes from `families.created_at` to `occurred_at`. Non-negative by
+  /// CHECK — a negative time-to-value is a clock problem, not a fast family.
+  timeToValueMinutes  Int      @map("time_to_value_minutes")
+  countryCode         String?  @map("country_code") @db.VarChar(2)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([occurredAt])
+  @@index([countryCode, occurredAt])
+  @@map("family_activations")
+}
+
+/// GLOBAL (tenancy). AN ADMIN-CREATED ACQUISITION CAMPAIGN.
+///
+/// Same class and same reasoning as `SubscriptionPrice`: platform
+/// configuration owned by the deployment, identical for every household,
+/// and meaningless to scope to one. What a HOUSEHOLD's relationship to a
+/// campaign is lives in `acquisition_attributions`, which IS strict.
+///
+/// EVERY NUMBER HERE IS SUPPLIED BY AN ADMIN. There is no default budget, no
+/// default target and no hardcoded channel mix anywhere in the growth module
+/// — `budget_minor`, `target_users` and `target_paid_users` are NOT NULL
+/// precisely so a campaign cannot be created without someone stating them.
+model GrowthCampaign {
+  id              String                 @id @default(uuid()) @db.Uuid
+  name            String                 @db.VarChar(120)
+  channel         AcquisitionChannelType
+  countryCode     String                 @map("country_code") @db.VarChar(2)
+  /// Minor units of `currency_code`. Never a float, never "cents".
+  budgetMinor     Int                    @map("budget_minor")
+  currencyCode    String                 @map("currency_code") @db.VarChar(3)
+  startsAt        DateTime               @map("starts_at")
+  endsAt          DateTime               @map("ends_at")
+  targetUsers     Int                    @map("target_users")
+  targetPaidUsers Int                    @map("target_paid_users")
+  /// The `utm_campaign` string this campaign is recognised by. Attribution
+  /// rows are matched to campaigns on THIS, case-insensitively.
+  utmCampaign     String?                @map("utm_campaign") @db.VarChar(120)
+  isActive        Boolean                @default(true) @map("is_active")
+  createdByUserId String?                @map("created_by_user_id") @db.Uuid
+  notes           String?                @db.VarChar(500)
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  dailySpend CampaignDailySpend[]
+
+  @@unique([name, countryCode])
+  @@index([countryCode, isActive])
+  @@index([channel])
+  @@map("growth_campaigns")
+}
+
+/// GLOBAL (tenancy). WHAT A CAMPAIGN ACTUALLY COST ON A GIVEN DAY, AND WHAT
+/// THE AD PLATFORM SAID IT BOUGHT.
+///
+/// `impressions`, `clicks`, `visits` and `leads` are EXTERNALLY REPORTED —
+/// this server never observes an ad impression, and the funnel API tags
+/// those two steps `EXTERNAL_REPORTED` so a dashboard cannot render a
+/// reported number and a measured one identically.
+///
+/// UNIQUE `(campaign_id, business_date)` makes the daily import idempotent:
+/// re-running yesterday's export UPDATEs one row instead of doubling spend.
+model CampaignDailySpend {
+  id           String   @id @default(uuid()) @db.Uuid
+  campaignId   String   @map("campaign_id") @db.Uuid
+  /// The campaign's country reporting day (`reporting.timezone.<CC>`), not a
+  /// UTC date. Stored as a DATE, interpreted on that country's calendar.
+  businessDate DateTime @map("business_date") @db.Date
+  spendMinor   Int      @map("spend_minor")
+  impressions  Int      @default(0)
+  clicks       Int      @default(0)
+  visits       Int      @default(0)
+  leads        Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  campaign GrowthCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, businessDate])
+  @@index([businessDate])
+  @@map("campaign_daily_spend")
+}
+
+/// STRICT (tenancy). ONE REFERRAL CODE PER HOUSEHOLD, FOR LIFE.
+///
+/// `family_id` UNIQUE — a household that could mint codes could mint one per
+/// invitation and defeat every velocity limit that counts per code. `code`
+/// UNIQUE globally, over an alphabet with no confusable characters (see
+/// `domain/referral.ts`).
+model ReferralCode {
+  id              String   @id @default(uuid()) @db.Uuid
+  familyId        String   @unique @map("family_id") @db.Uuid
+  code            String   @unique @db.VarChar(32)
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  family Family         @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  links  ReferralLink[]
+  events ReferralEvent[]
+
+  @@map("referral_codes")
+}
+
+/// STRICT (tenancy). A SHAREABLE LINK FOR ONE CODE ON ONE CHANNEL.
+///
+/// Separate from `referral_codes` because the CODE is the identity and the
+/// LINK is a presentation of it: one household shares the same code on
+/// WhatsApp and on Instagram and wants to know which one worked. One row per
+/// (code, channel), enforced.
+model ReferralLink {
+  id             String                 @id @default(uuid()) @db.Uuid
+  familyId       String                 @map("family_id") @db.Uuid
+  referralCodeId String                 @map("referral_code_id") @db.Uuid
+  channel        AcquisitionChannelType
+  url            String                 @db.VarChar(400)
+  clickCount     Int                    @default(0) @map("click_count")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+
+  family       Family       @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  referralCode ReferralCode @relation(fields: [referralCodeId], references: [id], onDelete: Cascade)
+
+  @@unique([referralCodeId, channel])
+  @@index([familyId])
+  @@map("referral_links")
+}
+
+/// STRICT (tenancy), scoped to the REFERRER. The append-only referral log.
+///
+/// THREE OF THE FOUR FRAUD DEFENCES LIVE ON THIS TABLE, as constraints:
+///   - `referral_events_no_self_referral` CHECK — a family cannot refer
+///     itself, and the CHECK (not the service) is what guarantees it.
+///   - `referral_events_referred_family_uq` — a partial UNIQUE over
+///     `referred_family_id` WHERE kind = 'REGISTERED'. One household can be
+///     referred exactly once, by exactly one referrer, ever.
+///   - `(referrer family, idempotency_key)` UNIQUE — a redelivered
+///     qualification writes one row, not two.
+///
+/// REJECTED rows are KEPT. "This family tried to refer itself eleven times"
+/// is a fraud signal, and a system that discards its refusals cannot see it.
+model ReferralEvent {
+  id               String            @id @default(uuid()) @db.Uuid
+  /// The REFERRER. This is the tenant of the row.
+  familyId         String            @map("family_id") @db.Uuid
+  referralCodeId   String            @map("referral_code_id") @db.Uuid
+  kind             ReferralEventKind
+  /// The REFERRED household, once it exists. NULL for SENT/CLICKED — at
+  /// which point there is no referred household to name.
+  referredFamilyId String?           @map("referred_family_id") @db.Uuid
+  /// Which surface the invitation went out on. Never an email address, never
+  /// a phone number: this table would otherwise become a contact list of
+  /// people who are not our users.
+  channel          AcquisitionChannelType?
+  rejectionReason  String?           @map("rejection_reason") @db.VarChar(60)
+  idempotencyKey   String            @map("idempotency_key") @db.VarChar(200)
+  occurredAt       DateTime          @default(now()) @map("occurred_at")
+
+  family       Family       @relation("ReferrerFamily", fields: [familyId], references: [id], onDelete: Cascade)
+  referralCode ReferralCode @relation(fields: [referralCodeId], references: [id], onDelete: Cascade)
+
+  rewards ReferralReward[]
+
+  @@unique([familyId, idempotencyKey])
+  @@index([familyId, kind, occurredAt])
+  @@index([referredFamilyId])
+  @@map("referral_events")
+}
+
+/// STRICT (tenancy), scoped to the REFERRER who is being paid.
+///
+/// `referral_event_id` is UNIQUE, and that single constraint is the answer to
+/// "concurrent conversion → exactly one reward". It is the same shape as
+/// `payment_transactions (family_id, idempotency_key)` and exists for the
+/// same reason: this path pays out, and an application check-then-insert
+/// races over money.
+///
+/// FULFILMENT REUSES AN EXISTING LEDGER, never a new currency:
+///   SUBSCRIPTION_CREDIT_DAYS -> extends `entitlements.valid_until`, which is
+///                               monotonic and already idempotent;
+///   CHILD_REWARD_COINS       -> writes ONE `rewards_ledger_entries` row with
+///                               the deterministic key `referral:{eventId}`,
+///                               protected by that table's own UNIQUE.
+/// `fulfilment_ref` records which row was written, so the payout is auditable
+/// from either end.
+model ReferralReward {
+  id              String              @id @default(uuid()) @db.Uuid
+  familyId        String              @map("family_id") @db.Uuid
+  referralEventId String              @unique @map("referral_event_id") @db.Uuid
+  kind            ReferralRewardKind
+  /// Days of credit, or coins. Interpreted per `kind`; never a currency
+  /// amount, because a referral reward is not money and must not be summed
+  /// into revenue.
+  value           Int
+  status          ReferralRewardState @default(PENDING)
+  /// The id of the row this payout actually became (entitlement or ledger
+  /// entry). NULL until fulfilment succeeds.
+  fulfilmentRef   String?             @map("fulfilment_ref") @db.VarChar(120)
+  failureReason   String?             @map("failure_reason") @db.VarChar(300)
+  grantedAt       DateTime?           @map("granted_at")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  family        Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  referralEvent ReferralEvent @relation(fields: [referralEventId], references: [id], onDelete: Cascade)
+
+  @@index([familyId, status])
+  @@map("referral_rewards")
+}
+
+/// GLOBAL (tenancy). THE DAILY AGGREGATE THE DASHBOARD READS.
+///
+/// A cross-tenant aggregate belongs to no household and must never be
+/// readable by one — exactly the `SubscriptionPrice` argument. It is written
+/// only by `growth-daily-aggregation`, running under SystemContext.
+///
+/// UNIQUE `(business_date, country_code)` is what makes the aggregation job
+/// idempotent: a re-run UPSERTs the same row instead of doubling every
+/// number. `country_code = '**'` is the platform-wide row (a sentinel rather
+/// than NULL, so the unique index actually applies to it — PostgreSQL treats
+/// NULLs as distinct, which would have allowed duplicate platform rows).
+///
+/// MONEY IS PER-CURRENCY BY CONSTRUCTION: every row carries exactly one
+/// `currency_code` and a country has exactly one currency, so no column here
+/// can ever hold a sum of EGP and SAR.
+model GrowthDailyMetric {
+  id                   String   @id @default(uuid()) @db.Uuid
+  businessDate         DateTime @map("business_date") @db.Date
+  /// ISO-3166 alpha-2, or '**' for the platform-wide row.
+  countryCode          String   @map("country_code") @db.VarChar(2)
+  currencyCode         String?  @map("currency_code") @db.VarChar(3)
+  /// The reporting timezone the day boundary was computed on. Stored so a
+  /// later configuration change is visible as a discontinuity rather than as
+  /// an unexplained step.
+  reportingTimeZone    String   @map("reporting_timezone") @db.VarChar(64)
+
+  dau                  Int      @default(0)
+  wau                  Int      @default(0)
+  mau                  Int      @default(0)
+  newRegistrations     Int      @default(0) @map("new_registrations")
+  activations          Int      @default(0)
+  childrenAdded        Int      @default(0) @map("children_added")
+  devicesPaired        Int      @default(0) @map("devices_paired")
+  trialsStarted        Int      @default(0) @map("trials_started")
+  trialsResolved       Int      @default(0) @map("trials_resolved")
+  trialsConverted      Int      @default(0) @map("trials_converted")
+  newPaidFamilies      Int      @default(0) @map("new_paid_families")
+  payingFamilies       Int      @default(0) @map("paying_families")
+  activePaidSubs       Int      @default(0) @map("active_paid_subscriptions")
+  churnedPaidSubs      Int      @default(0) @map("churned_paid_subscriptions")
+  paymentSuccessCount  Int      @default(0) @map("payment_success_count")
+  paymentFailureCount  Int      @default(0) @map("payment_failure_count")
+  referralsQualified   Int      @default(0) @map("referrals_qualified")
+  /// NET of VAT, minor units of `currency_code`. Gross revenue includes money
+  /// that was never ours.
+  netRevenueMinor      Int      @default(0) @map("net_revenue_minor")
+  mrrMinor             Int      @default(0) @map("mrr_minor")
+  /// Median time-to-value in minutes for the families that activated TODAY.
+  medianTimeToValueMinutes Int? @map("median_time_to_value_minutes")
+
+  computedAt           DateTime @default(now()) @map("computed_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@unique([businessDate, countryCode])
+  @@index([countryCode, businessDate])
+  @@map("growth_daily_metrics")
+}
+
+/// GLOBAL (tenancy). WHAT A HUMAN COMMITTED TO, PER COUNTRY PER QUARTER.
+///
+/// A TARGET IS AN INPUT, NEVER AN OUTPUT. Nothing in this system invents one;
+/// the API returns `target: null` when nobody has set one, and a dashboard
+/// must render that as "no target", not as zero.
+model GrowthQuarterlyTarget {
+  id           String   @id @default(uuid()) @db.Uuid
+  countryCode  String   @map("country_code") @db.VarChar(2)
+  year         Int
+  quarter      Int
+  /// A member of `TARGET_METRICS` in `domain/forecast.ts`.
+  metric       String   @db.VarChar(30)
+  /// Numeric, not integer: CHURN_RATE is a rate and REVENUE_MINOR is a large
+  /// integer, and one column has to hold both without either losing precision.
+  targetValue  Decimal  @map("target_value") @db.Decimal(18, 6)
+  currencyCode String?  @map("currency_code") @db.VarChar(3)
+  setByUserId  String?  @map("set_by_user_id") @db.Uuid
+  note         String?  @db.VarChar(300)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([countryCode, year, quarter, metric])
+  @@index([countryCode, year])
+  @@map("growth_quarterly_targets")
+}
+
+/// GLOBAL (tenancy). THE ADMIN-EDITABLE ASSUMPTIONS BEHIND EVERY FORECAST.
+///
+/// Every number a forecast produces is derived from a row here, and the row is
+/// RETURNED WITH the forecast so a reader can disagree with the inputs rather
+/// than with the output. Three scenarios per country, no more: Conservative,
+/// Base, Aggressive.
+model GrowthForecastScenario {
+  id                 String               @id @default(uuid()) @db.Uuid
+  scenario           ForecastScenarioKind
+  countryCode        String               @map("country_code") @db.VarChar(2)
+  currencyCode       String               @map("currency_code") @db.VarChar(3)
+  monthlyAcquisition Int                  @map("monthly_acquisition")
+  conversionRate     Decimal              @map("conversion_rate") @db.Decimal(6, 5)
+  paidConversionRate Decimal              @map("paid_conversion_rate") @db.Decimal(6, 5)
+  churnRate          Decimal              @map("churn_rate") @db.Decimal(6, 5)
+  arpuMinor          Int                  @map("arpu_minor")
+  cacMinor           Int                  @map("cac_minor")
+  retentionD30       Decimal              @map("retention_d30") @db.Decimal(6, 5)
+  isActive           Boolean              @default(true) @map("is_active")
+  updatedByUserId    String?              @map("updated_by_user_id") @db.Uuid
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  @@unique([countryCode, scenario])
+  @@map("growth_forecast_scenarios")
+}
+
+/// PLATFORM_ANNOTATED (tenancy). AN OPERATOR ALERT.
+///
+/// `family_id IS NULL` means "not attributable to one household" — which is
+/// true of every alert this module raises today (conversion, churn, payment
+/// failures, country shifts are all population-level). The column exists
+/// because an AI-safety incident IS about one household, and such a row must
+/// NOT be readable by a tenant: an alert is a platform operations artefact,
+/// and "another family had a safety incident" is not this family's business.
+/// Exactly the `AuditLog` / `JobRun` case.
+///
+/// UNIQUE `(alert_type, scope_key, business_date)` is what makes the scan job
+/// idempotent — an hourly scan of a condition that persists for three days
+/// raises ONE alert per day, not seventy-two.
+model GrowthAlert {
+  id           String              @id @default(uuid()) @db.Uuid
+  familyId     String?             @map("family_id") @db.Uuid
+  alertType    String              @map("alert_type") @db.VarChar(60)
+  /// What the alert is ABOUT: a country code, a provider, '**' for platform.
+  scopeKey     String              @map("scope_key") @db.VarChar(40)
+  businessDate DateTime            @map("business_date") @db.Date
+  severity     GrowthAlertSeverity @default(WARNING)
+  /// Arabic operator-facing sentence. No child data, ever.
+  message      String              @db.VarChar(500)
+  /// The measured value and the threshold it crossed — counts and rates only.
+  observedValue Decimal?           @map("observed_value") @db.Decimal(18, 6)
+  thresholdValue Decimal?          @map("threshold_value") @db.Decimal(18, 6)
+  acknowledgedAt DateTime?         @map("acknowledged_at")
+  acknowledgedByUserId String?     @map("acknowledged_by_user_id") @db.Uuid
+  createdAt    DateTime            @default(now()) @map("created_at")
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  @@unique([alertType, scopeKey, businessDate])
+  @@index([severity, createdAt])
+  @@index([acknowledgedAt])
+  @@map("growth_alerts")
+}
+
+/// GLOBAL (tenancy). EVERY BUSINESS NUMBER THE GROWTH MODULE OBEYS.
+///
+/// Referral reward values, the qualification window, the activation
+/// threshold, alert thresholds and the reporting timezones all live here —
+/// none of them is a constant in code. `domain/growth-settings.ts` holds the
+/// SCHEMA (type, bounds, default, Arabic description); this table holds the
+/// VALUE, and a write is validated against the schema before it lands.
+///
+/// Exactly the `FeatureFlag` case: platform configuration owned by the
+/// deployment, not by a household.
+model GrowthSetting {
+  key             String   @id @db.VarChar(80)
+  value           String   @db.VarChar(200)
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("growth_settings")
 }

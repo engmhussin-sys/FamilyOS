@@ -135,6 +135,32 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   'PaymentTransaction',
   'Refund',
   'Entitlement',
+
+  // -- PHASE D (GROWTH). Created STRICT in migration 0015 with
+  //    `family_id uuid NOT NULL` from the first row — as in 0005, 0006 and
+  //    0014, so no backfill, no orphan case and no nullable window.
+  //
+  //    Rule 1 applies verbatim to all six: each row describes ONE household
+  //    and is meaningless outside it. `AcquisitionAttribution` is where a
+  //    household came from; `FamilyActivation` is whether it ever reached
+  //    value; the four referral tables are one household's invitations, its
+  //    conversions and the payouts it earned.
+  //
+  //    THE REFERRAL TABLES ARE THE INTERESTING CASE, because a referral spans
+  //    TWO households. The tenant of a `ReferralEvent` is the REFERRER —
+  //    `family_id` — and the referred household appears only as
+  //    `referred_family_id`, a plain column with no tenancy meaning. That is
+  //    deliberate and it is the whole reason the referral surface is
+  //    tenant-safe: parent A can read the events they caused, and reading one
+  //    of them tells them a code was redeemed, never who the other household
+  //    is beyond an opaque id they cannot resolve to anything through any
+  //    route in this API.
+  'AcquisitionAttribution',
+  'FamilyActivation',
+  'ReferralCode',
+  'ReferralLink',
+  'ReferralEvent',
+  'ReferralReward',
 ]);
 
 /**
@@ -196,6 +222,15 @@ export const PLATFORM_ANNOTATED_MODELS: ReadonlySet<TenantModelName> = new Set([
   // row must NOT be visible to a tenant: it is another merchant's traffic, or
   // an attack, and either way it is not this family's business.
   'PaymentWebhookEvent',
+  // PHASE D (GROWTH). An operator alert. Every rule this module raises today
+  // is population-level (conversion, churn, payment failures, a country's
+  // performance shifting) and belongs to no household — `family_id IS NULL` is
+  // the honest value. The column exists because an AI-SAFETY alert IS about
+  // one household, and such a row must NOT be readable by a tenant: an alert
+  // is a platform operations artefact, and "another family had a safety
+  // incident" is not this family's business. Exactly the AuditLog / JobRun
+  // case, which is why it is in this class and not in SHARED_NULL.
+  'GrowthAlert',
 ]);
 
 /**
@@ -253,6 +288,30 @@ export const GLOBAL_MODELS: ReadonlyMap<TenantModelName, string> = new Map([
   [
     'QuranSurah',
     'F4: the 114 surahs and their Hafs ayah counts, seeded by migration 0006 from src/shared/rewards/quran.ts. Fixed reference data about the mushaf; it is not tenant data under any reading, and scoping it to a family would mean a family could not validate a target spec.',
+  ],
+  [
+    'GrowthCampaign',
+    'PHASE D (GROWTH): an admin-created acquisition campaign — budget, country, channel, window and targets. Platform configuration owned by the deployment and identical for every household; exactly the SubscriptionPrice case. What a HOUSEHOLD\'s relationship to a campaign is lives in AcquisitionAttribution, which IS strict.',
+  ],
+  [
+    'CampaignDailySpend',
+    'PHASE D (GROWTH): what a campaign cost on a day, plus the impressions/clicks/visits the ad platform reported. Ad spend is a platform fact; no household paid any of it, and scoping it to one would be meaningless.',
+  ],
+  [
+    'GrowthDailyMetric',
+    'PHASE D (GROWTH): the cross-tenant daily aggregate. A row is a COUNT OVER HOUSEHOLDS and therefore belongs to none of them; making it readable by a tenant would tell one family how many other families exist, converted and churned. Written only by the aggregation job under SystemContext.',
+  ],
+  [
+    'GrowthQuarterlyTarget',
+    'PHASE D (GROWTH): what a human committed to for a country and quarter. A company target is not tenant data under any reading, and a household that could read it would learn the company\'s revenue plan.',
+  ],
+  [
+    'GrowthForecastScenario',
+    'PHASE D (GROWTH): the admin-editable assumptions behind every projection (acquisition, conversion, churn, ARPU, CAC, retention). Platform-level business planning inputs, the same class as the price list they are derived against.',
+  ],
+  [
+    'GrowthSetting',
+    'PHASE D (GROWTH): every business number the growth module obeys — referral reward values, the qualification window, the activation threshold, alert thresholds, reporting timezones. Platform configuration owned by the deployment, exactly the FeatureFlag case. Per-country variation is a value inside the key, not a row-level tenant.',
   ],
 ]);
 

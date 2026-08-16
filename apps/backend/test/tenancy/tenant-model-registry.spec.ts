@@ -78,8 +78,18 @@ describe('tenant model registry', () => {
   // are recorded here rather than one of them being folded silently into the
   // other's number, because this census exists precisely so that a model
   // arriving without a classification is a failing test rather than a surprise.
-  it('the schema still has 85 models — the number this classification was built against', () => {
-    expect(prismaModels).toHaveLength(85);
+  // PHASE D (GROWTH): 85 -> 98. Migration 0015 adds SIX STRICT tables
+  // (`AcquisitionAttribution`, `FamilyActivation`, `ReferralCode`,
+  // `ReferralLink`, `ReferralEvent`, `ReferralReward` — each row describes one
+  // household and is meaningless outside it), ONE PLATFORM_ANNOTATED
+  // (`GrowthAlert` — population-level alerts have `family_id IS NULL` and an
+  // AI-safety alert that names a household must not be readable by any tenant)
+  // and SIX GLOBAL (`GrowthCampaign`, `CampaignDailySpend`,
+  // `GrowthDailyMetric`, `GrowthQuarterlyTarget`, `GrowthForecastScenario`,
+  // `GrowthSetting` — platform configuration and cross-tenant aggregates that
+  // belong to no household).
+  it('the schema still has 98 models — the number this classification was built against', () => {
+    expect(prismaModels).toHaveLength(98);
   });
 
   it.each([...STRICT_TENANT_MODELS])(
@@ -145,10 +155,16 @@ describe('tenant model registry', () => {
   // payments tables from migration 0013. SHARED_NULL+PLATFORM 7 -> 8 and
   // GLOBAL 13 -> 16 come entirely from that same commercial work — the
   // notification deferral adds no platform-level and no un-tenanted table.
-  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008 + 1 from 0014 + 5 from 0013', () => {
-    expect(STRICT_TENANT_MODELS.size).toBe(60);
-    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(8);
+  // PHASE D (GROWTH), migration 0015: STRICT 60 -> 66, SHARED_NULL+PLATFORM
+  // 8 -> 9 (`GrowthAlert`), GLOBAL 16 -> 22. The split is argued per table in
+  // the registry itself; the headline is that a growth table is STRICT when a
+  // row describes ONE household (where it came from, whether it activated, who
+  // it referred) and GLOBAL when it is platform configuration or a
+  // cross-tenant aggregate that would tell one family about another.
+  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008 + 1 from 0014 + 5 from 0013 + 6 from 0015', () => {
+    expect(STRICT_TENANT_MODELS.size).toBe(66);
+    expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(9);
     expect(SELF_TENANT_MODELS.size).toBe(1);
-    expect(GLOBAL_MODELS.size).toBe(16);
+    expect(GLOBAL_MODELS.size).toBe(22);
   });
 });
