@@ -44,8 +44,14 @@ export const CATEGORICAL: readonly VizColorPair[] = [
   { light: '#00846F', dark: '#3FA893' }, // 1 · teal    (brand primary)
   { light: '#D98E12', dark: '#C4820F' }, // 2 · amber   (brand accent)
   { light: '#6C4CF0', dark: '#8C74F2' }, // 3 · violet  (brand child.violet)
-  { light: '#C93D1F', dark: '#E06A4E' }, // 4 · coral   (brand child.coral)
+  { light: '#1668B0', dark: '#6BAEE8' }, // 4 · blue    (brand info)
 ] as const;
+// Slot 4 was brand child.coral (#C93D1F / #E06A4E) until `vizTokens.spec`
+// caught that those are byte-identical to STATUS.serious. A campaign series
+// would have been drawn in the exact colour that means "this is a serious
+// problem" two cards away on the same screen. Coral stays reserved for
+// status; the fourth series slot is brand info blue, which collides with no
+// STATUS value in either mode.
 
 /**
  * All-pairs forms (scatter, bubble, small multiples) validate to THREE

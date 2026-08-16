@@ -611,7 +611,8 @@
         "AI_SAFETY_INCIDENT": "AI safety incident",
         "RETENTION_DROP": "Retention drop",
         "COUNTRY_PERFORMANCE_SHIFT": "Country performance shift"
-      }
+      },
+      "criticalCount": "{{count}} critical"
     },
     "filter": {
       "range": "Period",

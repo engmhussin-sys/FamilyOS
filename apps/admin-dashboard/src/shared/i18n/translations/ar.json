@@ -611,7 +611,8 @@
         "AI_SAFETY_INCIDENT": "حادثة سلامة ذكاء اصطناعي",
         "RETENTION_DROP": "هبوط الاحتفاظ",
         "COUNTRY_PERFORMANCE_SHIFT": "تحوّل أداء بلد"
-      }
+      },
+      "criticalCount": "{{count}} تنبيه حرج"
     },
     "filter": {
       "range": "الفترة",
