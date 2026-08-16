@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type {
@@ -104,8 +104,15 @@ export class GooglePlayProvider implements IPaymentProvider, IPaymentProviderAda
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly fetchImpl: FetchLike = defaultFetch,
-    private readonly now: () => Date = () => new Date(),
+    /**
+     * The HTTP boundary and the clock, both injectable so tests can mock
+     * GOOGLE'S RESPONSES and control time — never our own state-mapping logic.
+     *
+     * `@Optional()` is load-bearing, not decoration — see the note in
+     * `AppleStoreKitProvider` for the exact Nest failure it prevents.
+     */
+    @Optional() private readonly fetchImpl: FetchLike = defaultFetch,
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   isConfigured(): boolean {

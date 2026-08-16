@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type {
@@ -18,11 +18,7 @@ import type {
 } from '../../application/ports/payment-provider.port';
 import type { CanonicalSubscriptionStatus } from '../../domain/subscription-status';
 import { PaymentProviderNotConfiguredException } from '../../domain/billing.errors';
-import {
-  AppleJwsVerifier,
-  sha256Hex,
-  unsafeDecodeJwsPayload,
-} from '../apple/apple-jws.verifier';
+import { AppleJwsVerifier, unsafeDecodeJwsPayload } from '../apple/apple-jws.verifier';
 import {
   AppStoreServerApiClient,
   type FetchLike,
@@ -115,9 +111,19 @@ export class AppleStoreKitProvider implements IPaymentProvider, IPaymentProvider
 
   constructor(
     private readonly configService: ConfigService,
-    /** Injected so tests can mock APPLE'S HTTP RESPONSES, not our logic. */
-    private readonly fetchImpl: FetchLike = defaultFetch,
-    private readonly now: () => Date = () => new Date(),
+    /**
+     * The HTTP boundary and the clock, both injectable so tests can mock
+     * APPLE'S RESPONSES and control time — never our own verification logic.
+     *
+     * `@Optional()` is load-bearing, not decoration. A TypeScript default
+     * parameter value does not stop Nest from trying to resolve the parameter:
+     * `emitDecoratorMetadata` records `Function` as the design type and the DI
+     * container fails at startup with «can't resolve dependencies ... argument
+     * Function at index [1]». `@Optional()` makes Nest pass `undefined`, at
+     * which point the default value applies exactly as intended.
+     */
+    @Optional() private readonly fetchImpl: FetchLike = defaultFetch,
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   // -------------------------------------------------------------------------

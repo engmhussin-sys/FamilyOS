@@ -44,6 +44,8 @@ const PUBLIC_ROUTES: Record<string, string> = {
   'POST /auth/refresh': 'Presents a refresh token, not an access token; the token IS the credential. Throttled 20/min.',
   'POST /pairing/accept': 'A child device redeems a one-time, 10-minute pairing code; the code is the credential. Throttled 10/min.',
   'POST /webhooks/stripe': 'Server-to-server call from Stripe. Control is HMAC signature verification (StripeWebhookService.verifySignature), which runs before anything else in the handler.',
+  'POST /webhooks/payments/:provider':
+    'PHASE D. Server-to-server callbacks from Apple, Google, Paymob, Fawry and the Saudi gateway — none of which has, or can have, a user session. The control is PROVIDER SIGNATURE VERIFICATION inside PaymentWebhookService.ingest, which runs BEFORE the payload is parsed and before anything reaches a business table: Apple JWS against a pinned Apple Root CA G3 chain, Paymob HMAC-SHA512, Fawry SHA-256, Moyasar shared secret, Google Pub/Sub OIDC. Every adapter FAILS CLOSED when unconfigured (returns verified:false, never true). Throttled 300/min as defence in depth.',
   'GET /health/live': 'Liveness probe. Orchestrators cannot authenticate. Returns {status:"ok"} and nothing else.',
   'GET /health/ready': 'Readiness probe. Returns three booleans, no tenant data.',
   'GET /system/readiness': 'Infrastructure readiness probe, same reasoning as /health/ready.',
@@ -266,6 +268,8 @@ describe('R14 — every route in the application is guarded or explicitly public
       'After it, someone else can delete the family. The single most dangerous non-deleting action in the product.',
     'DELETE /families/members/:userId':
       'One parent removing the other. Named explicitly in A4 as the adversarial-parent case.',
+    'POST /billing/purchases/verify':
+      'PHASE D. Symmetric with /billing/subscribe: it converts a store purchase into an entitlement for the WHOLE household and binds the household to a store account through provider_account_links. A co-parent may read the catalogue and the entitlements; committing the family to a purchase is the billing owner\'s. (Note that even the OWNER does not get to decide WHOSE purchase it is — the tenant is resolved from the provider\'s own account reference, and a mismatch is a 403.)',
   };
 
   const allRoutes = discoverRoutes();

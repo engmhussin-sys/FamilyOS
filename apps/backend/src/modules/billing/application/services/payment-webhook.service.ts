@@ -227,25 +227,43 @@ export class PaymentWebhookService {
         return this.applyPurchase(event, familyId);
 
       case 'GRACE_PERIOD_STARTED':
-        return this.applyStatus(event, familyId, 'GRACE_PERIOD', 'entered the grace period');
+        // GRACE_PERIOD KEEPS FULL ACCESS. Q17 specifies 7 days with a clear,
+        // non-frightening notice, and CONTEXT.md §3.7 forbids punitive UX;
+        // downgrading a household the instant a card fails violates both.
+        return this.applyStatus(event, familyId, 'GRACE_PERIOD', 'entered the grace period', { revoke: false });
 
       case 'BILLING_RETRY':
-        return this.applyStatus(event, familyId, 'PAST_DUE', 'entered billing retry');
+        // Access HAS stopped: Apple's billing retry without a grace period and
+        // Google's account hold both mean the customer is not currently paid up.
+        return this.applyStatus(event, familyId, 'PAST_DUE', 'entered billing retry', { revoke: true });
 
       case 'PAYMENT_FAILED':
-        return this.applyStatus(event, familyId, 'PAST_DUE', 'payment failed');
+        return this.applyStatus(event, familyId, 'PAST_DUE', 'payment failed', { revoke: true });
 
       case 'PAYMENT_PENDING':
-        return this.applyStatus(event, familyId, 'PENDING', 'awaiting payment');
+        // Fawry's kiosk window. Nothing was ever granted, so there is nothing
+        // to revoke — and revoking here would strip a household that is
+        // renewing early while its previous period is still running.
+        return this.applyStatus(event, familyId, 'PENDING', 'awaiting payment', { revoke: false });
 
       case 'CANCELLED':
-        // NOT a revocation. The customer has paid through the end of the
-        // period and keeps access until it ends; only auto-renewal stops.
-        // Revoking here is the classic way to take away something already
-        // paid for, and it is what both Apple's AUTO_RENEW_DISABLED and
-        // Google's SUBSCRIPTION_STATE_CANCELED would tempt a naive handler
-        // into.
-        return this.applyStatus(event, familyId, 'CANCELLED', 'auto-renewal disabled; access continues to period end');
+        // NOT A REVOCATION, and this is the single most consequential line in
+        // the file. The customer has PAID THROUGH THE END OF THE PERIOD and
+        // keeps access until it ends; only auto-renewal stops. Entitlement
+        // lapses on its own at `valid_until`, which the grant already set.
+        //
+        // Both Apple's DID_CHANGE_RENEWAL_STATUS/AUTO_RENEW_DISABLED and
+        // Google's SUBSCRIPTION_STATE_CANCELED read like "cancelled" and tempt
+        // a handler into revoking immediately — which takes away something the
+        // customer already paid for and generates the support ticket that
+        // teaches everyone this lesson the expensive way.
+        return this.applyStatus(
+          event,
+          familyId,
+          'CANCELLED',
+          'auto-renewal disabled; access continues to period end',
+          { revoke: false },
+        );
 
       case 'GRACE_PERIOD_EXPIRED':
       case 'EXPIRED':
@@ -447,11 +465,24 @@ export class PaymentWebhookService {
     return { outcome: 'PROCESSED', familyId, detail: 'refund recorded and entitlement revoked' };
   }
 
+  /**
+   * `revoke` is an EXPLICIT PARAMETER, not derived from
+   * `isEntitlementBearing(status)`.
+   *
+   * Deriving it was the first implementation and it was wrong: `CANCELLED` is
+   * not an entitlement-bearing status — a cancelled subscription grants nothing
+   * NEW — but a cancellation must not withdraw the period the customer already
+   * paid for. Those are two different questions, and collapsing them into one
+   * predicate produced exactly the "revoke on cancel" bug the test
+   * `AUTO_RENEW_DISABLED marks the subscription cancelled and leaves
+   * entitlement intact` now pins down. Every caller states its answer.
+   */
   private async applyStatus(
     event: IProviderWebhookEvent,
     familyId: string,
     status: Parameters<IPaymentRepository['applySubscriptionStateIfNewer']>[0]['status'],
     detail: string,
+    options: { revoke: boolean },
   ): Promise<{ outcome: WebhookOutcomeValue; familyId: string; detail: string }> {
     const subscription = await this.billing.findSubscriptionByFamily(familyId);
     if (!subscription) return { outcome: 'IGNORED', familyId, detail: 'no subscription for this family' };
@@ -471,10 +502,7 @@ export class PaymentWebhookService {
       return { outcome: 'IGNORED', familyId, detail: 'stale event; newer state already applied' };
     }
 
-    // GRACE_PERIOD KEEPS FULL ACCESS. Q17 and CONTEXT.md §3.7 both require it,
-    // and `isEntitlementBearing('GRACE_PERIOD')` is true for exactly this
-    // reason — so no entitlement is touched here.
-    if (!isEntitlementBearing(status)) {
+    if (options.revoke) {
       await this.entitlements.revokeAll(familyId, detail, event.signedAt ?? new Date());
     }
 
