@@ -312,6 +312,78 @@ export function businessDateDaysAgo(
   return addBusinessDays(getBusinessDate(instant, timeZone), -days);
 }
 
+/**
+ * PHASE D (`PC-D-005`) — THE INSTANT AT WHICH A FAMILY'S WALL CLOCK NEXT READS
+ * `HH:MM`, STRICTLY AFTER `now`.
+ *
+ * This is the deferral schedule in one function: a notification blocked by
+ * quiet hours is released the next time the family's own clock reaches
+ * `quietHoursEnd`. It is expressed here, in the ONE file that owns the family
+ * calendar, rather than in the notification service, because every way of
+ * writing it inline is wrong in a way this file already solved:
+ *
+ *   `now + 9h`                 — assumes today's offset holds for nine hours.
+ *                                Across a spring-forward it releases an hour
+ *                                late; across a fall-back an hour early.
+ *   `setHours(7,0,0,0)`        — the CONTAINER's clock. The exact defect B2
+ *                                removed from quiet hours in the first place.
+ *   `startOfDay + 7h`          — 07:00 local is not «midnight plus seven hours»
+ *                                on a 23-hour day, because in Africa/Cairo that
+ *                                day has no 00:00 at all.
+ *
+ * It is built from `zonedWallClockToUtc`, which resolves the offset AT THE
+ * TARGET INSTANT in two passes, so all three cases fall out instead of being
+ * handled. The candidate day is advanced (never rewound) until the resolved
+ * instant is strictly later than `now`; the loop is bounded at three days,
+ * which is more than any DST anomaly can consume and which makes an
+ * unterminating search impossible by construction rather than by argument.
+ *
+ * THE SPRING-FORWARD GAP is the one case that needs a decision rather than a
+ * derivation: if a family's quiet hours ended at 00:30 and that local time does
+ * not exist on the transition date, `zonedWallClockToUtc` lands on an instant
+ * whose local time is AFTER the requested one (the clock jumped over it). That
+ * is accepted deliberately — releasing at 01:00 on a day that had no 00:30 is
+ * the only answer that exists, and it errs later rather than earlier, which is
+ * the safe direction for a quiet-hours boundary.
+ */
+export function nextLocalTimeAfter(
+  now: Date | string | number,
+  hhmm: string,
+  timeZone: string,
+): Date {
+  const tz = resolveTimeZone(timeZone);
+  const at = toInstant(now);
+  if (Number.isNaN(at.getTime())) {
+    throw new RangeError('nextLocalTimeAfter received an invalid instant.');
+  }
+  const [hourRaw, minuteRaw] = hhmm.split(':');
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    throw new RangeError(`nextLocalTimeAfter expected HH:MM, got "${hhmm}".`);
+  }
+
+  let date = getBusinessDate(at, tz);
+  for (let i = 0; i <= 3; i++) {
+    const candidate = zonedWallClockToUtc(date, hour, minute, 0, 0, tz);
+    if (candidate.getTime() > at.getTime()) return candidate;
+    date = addBusinessDays(date, 1);
+  }
+  // Unreachable: three calendar days always contain a later occurrence of any
+  // wall-clock time. It throws rather than returning a guess, because a silent
+  // wrong instant here is a notification delivered at the wrong hour forever.
+  throw new RangeError(
+    `nextLocalTimeAfter could not resolve ${hhmm} in ${tz} after ${at.toISOString()}.`,
+  );
+}
+
 /** 0 = Sunday .. 6 = Saturday, on the family's calendar. */
 export function getBusinessDayOfWeek(
   dateOrInstant: Date | string | number,

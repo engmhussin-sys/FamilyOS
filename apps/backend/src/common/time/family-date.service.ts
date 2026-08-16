@@ -14,6 +14,7 @@ import {
   getEndOfBusinessDay,
   getStartOfBusinessDay,
   isSameBusinessDay,
+  nextLocalTimeAfter,
   resolveTimeZone,
   type BusinessDate,
 } from './family-date';
@@ -184,6 +185,19 @@ export class FamilyDateService {
     instant: Date | string | number = new Date(),
   ): Promise<string> {
     return getBusinessTimeHHMM(instant, await this.timeZoneOf(familyId));
+  }
+
+  /**
+   * PHASE D (`PC-D-005`) — the instant this family's clock next reads `HH:MM`.
+   * The scheduled delivery time of a quiet-hours-deferred notification,
+   * computed on the family's calendar and nowhere else.
+   */
+  async nextLocalTimeAfter(
+    familyId: string,
+    hhmm: string,
+    now: Date | string | number = new Date(),
+  ): Promise<Date> {
+    return nextLocalTimeAfter(now, hhmm, await this.timeZoneOf(familyId));
   }
 
   /** 0 = Sunday .. 6 = Saturday, on the family's calendar. */
