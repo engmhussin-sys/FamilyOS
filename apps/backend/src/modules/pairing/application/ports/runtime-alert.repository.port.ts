@@ -35,7 +35,56 @@ export interface ICreateRuntimeAlertInput {
    * IS the statement of what makes this notification the same notification.
    */
   sourceEventId: string;
+  /**
+   * PHASE D (`PD-N-002`) — WHO OWNS THE PUSH RETRY FOR THIS WRITE.
+   *
+   * Default `false`, i.e. EXACTLY today's behaviour: this repository writes the
+   * `notifications` row and then fires the FCM push best-effort, swallowing any
+   * transport failure. Every existing caller is unaffected and none of them
+   * passes this field.
+   *
+   * `true` is passed by exactly one caller — `QuietHoursReleaseService` — and
+   * it means «write the row, do NOT push; I have a durable row in
+   * `notification_deliveries` with an attempt counter, a backoff and a terminal
+   * DEAD state, and I will drive the push myself so a transient FCM failure is
+   * retried instead of logged».
+   *
+   * It is a flag rather than a second method because the ROW-WRITING logic —
+   * owner resolution, the five-minute window, the unique-index conflict, the
+   * priority default — must not exist twice. Duplicating it so the push could
+   * be omitted would be a second notification writer, which is the one thing
+   * `PrismaRuntimeAlertRepository`'s docstring promises there is not.
+   */
+  deferPushToCaller?: boolean;
 }
+
+/**
+ * PHASE D (`PD-N-002`) — the aggregate result of pushing one notification to
+ * every device a recipient owns.
+ *
+ *   SENT       at least one device accepted it. Done.
+ *   SKIPPED    Firebase is not configured in this environment — a documented
+ *              no-op, and NOT a failure to retry (retrying it eight times in an
+ *              environment with no credentials would manufacture DEAD rows out
+ *              of a deployment choice).
+ *   NONE       the recipient has no registered push token. Also not a failure:
+ *              the in-app row exists and the app will show it on next open.
+ *   RETRYABLE  every device failed transiently. THE CALLER SHOULD RETRY.
+ *   PERMANENT  every device failed terminally (revoked tokens, wrong
+ *              credentials). Retrying cannot help; the row stands as the record.
+ *   NO_RECIPIENT the family has no members left to notify.
+ *
+ * The aggregation is deliberately OPTIMISTIC — one success makes the whole
+ * fan-out a success — because the product question is «was the household
+ * reached», not «did every device succeed».
+ */
+export type PushFanoutOutcome =
+  | 'SENT'
+  | 'SKIPPED'
+  | 'NONE'
+  | 'RETRYABLE'
+  | 'PERMANENT'
+  | 'NO_RECIPIENT';
 
 export interface IRuntimeAlertRecord {
   id: string;
@@ -58,6 +107,24 @@ export interface IRuntimeAlertRepository {
    * sent"; callers that do not, ignore it. `void` would have made a
    * constraint-refused duplicate indistinguishable from a real send. */
   createForFamilyOwner(input: ICreateRuntimeAlertInput): Promise<boolean>;
+
+  /**
+   * PHASE D (`PD-N-002`) — PUSH ONLY, for a notification whose row already
+   * exists.
+   *
+   * This is the retry half of the delivery-failure fix, and it exists as its
+   * own method for a reason worth stating: a retry must be able to RE-PUSH
+   * without RE-WRITING. `createForFamilyOwner` is idempotent by design — the
+   * second call finds the row and returns `false` — so driving a push retry
+   * through it would silently do nothing from the second attempt onwards, which
+   * is a retry loop that cannot succeed. This method takes no `sourceEventId`
+   * because it creates nothing that could collide.
+   */
+  pushToFamilyOwner(input: {
+    familyId: string;
+    title: string;
+    body: string;
+  }): Promise<PushFanoutOutcome>;
 
   /** Sprint 6 — Alert Center's read side. Type-scoped to
    * 'RUNTIME_ALERT' only — a user's other notification types (if any
