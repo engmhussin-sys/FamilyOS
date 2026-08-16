@@ -8,6 +8,7 @@ import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
 import { familyDateProvider } from '../common/family-date.testing';
 import { addBusinessDays, getBusinessDate } from '../../src/common/time/family-date';
+import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 describe('HabitEngineService', () => {
   const habitRepositoryMock = {
@@ -40,7 +41,12 @@ describe('HabitEngineService', () => {
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
         // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
-        familyDateProvider()
+        familyDateProvider(),
+        // PHASE D (GROWTH). `GrowthEventEmitter.emit` never throws by contract
+        // (see its class docstring: analytics must never be able to fail a
+        // reward, a habit or an AI answer), so a resolving double is a faithful
+        // stand-in and these suites stay about the business path.
+        { provide: GrowthEventEmitter, useValue: { emit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = moduleRef.get(HabitEngineService);

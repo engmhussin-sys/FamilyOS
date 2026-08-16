@@ -6,6 +6,7 @@ import { ChildrenService } from '../../src/modules/children/application/services
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
 import { FamilyDateService } from '../../src/common/time/family-date.service';
+import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 /** The family's calendar day, fixed so the assertions can name it. */
 const BUSINESS_DAY = '2026-08-14';
@@ -62,6 +63,11 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
         { provide: FamilyDateService, useValue: familyDateMock },
+        // PHASE D (GROWTH). `GrowthEventEmitter.emit` never throws by contract
+        // (see its class docstring: analytics must never be able to fail a
+        // reward, a habit or an AI answer), so a resolving double is a faithful
+        // stand-in and these suites stay about the business path.
+        { provide: GrowthEventEmitter, useValue: { emit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = moduleRef.get(RewardsEngineService);
