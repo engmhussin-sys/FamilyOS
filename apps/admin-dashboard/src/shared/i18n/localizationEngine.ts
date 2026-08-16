@@ -3,7 +3,17 @@ import ar from './translations/ar.json';
 
 export type Locale = 'en' | 'ar';
 export const SUPPORTED_LOCALES: Locale[] = ['en', 'ar'];
-export const DEFAULT_LOCALE: Locale = 'en';
+/**
+ * Arabic-first, not Arabic-also. CONTEXT §1: the first markets are Egypt and
+ * Saudi Arabia and the first language is Arabic with real RTL — and
+ * `index.html` has shipped `lang="ar" dir="rtl"` since Phase B, so an English
+ * default made the very first paint disagree with the document element.
+ * English remains the fallback chain's floor: a key missing from `ar.json`
+ * still resolves in `en.json` rather than rendering blank.
+ */
+export const DEFAULT_LOCALE: Locale = 'ar';
+/** English is where an unresolved key lands, independently of the default. */
+export const FALLBACK_LOCALE: Locale = 'en';
 export const RTL_LOCALES: Locale[] = ['ar'];
 
 const RESOURCES: Record<Locale, Record<string, unknown>> = { en, ar };
@@ -53,7 +63,7 @@ function interpolate(template: string, options?: TranslateOptions): string {
 
 /**
  * The localization engine's public translate function. Fallback
- * strategy: requested locale -> DEFAULT_LOCALE -> the raw key itself
+ * strategy: requested locale -> FALLBACK_LOCALE (en) -> the raw key itself
  * (never a blank string \u2014 a missing translation should be visibly
  * wrong, not silently empty).
  *
@@ -64,12 +74,12 @@ function interpolate(template: string, options?: TranslateOptions): string {
  * case only, flagged as a real simplification, not hidden).
  */
 export function translate(locale: Locale, key: string, options?: TranslateOptions): string {
-  const resources = FLATTENED[locale] ?? FLATTENED[DEFAULT_LOCALE];
+  const resources = FLATTENED[locale] ?? FLATTENED[FALLBACK_LOCALE];
   const resolvedKey = resolvePluralKey(key, options?.count, resources);
 
   const template =
     resources[resolvedKey] ??
-    FLATTENED[DEFAULT_LOCALE][resolvedKey] ??
+    FLATTENED[FALLBACK_LOCALE][resolvedKey] ??
     key;
 
   return interpolate(template, options);

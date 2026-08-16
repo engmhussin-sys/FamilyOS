@@ -30,6 +30,13 @@ interface RequestOptions {
   body?: unknown;
   /** Skip attaching the access token — only for register/login/refresh themselves. */
   skipAuth?: boolean;
+  /**
+   * Extra request headers. Added for the `/admin/growth/*` surface, which
+   * authenticates with `x-internal-admin-key` and not a parent JWT
+   * (GROWTH_ANALYTICS_API §1). Those calls also pass `skipAuth`, because
+   * the refresh-on-401 machinery below has nothing to refresh for them.
+   */
+  headers?: Record<string, string>;
 }
 
 // Ensures concurrent 401s trigger exactly one refresh call, not one per
@@ -37,7 +44,7 @@ interface RequestOptions {
 let refreshInFlight: Promise<string | null> | null = null;
 
 async function rawRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...options.headers };
   if (!options.skipAuth) {
     const token = tokenStorage.getAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
