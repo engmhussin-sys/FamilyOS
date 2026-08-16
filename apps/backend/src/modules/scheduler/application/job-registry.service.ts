@@ -6,6 +6,8 @@ import { ExpiredTokenSweepJob } from './jobs/expired-token-sweep.job';
 import { FamilyDailyRolloverJob } from './jobs/family-daily-rollover.job';
 import { NotificationDeliverySweepJob } from './jobs/notification-delivery-sweep.job';
 import { RetentionSweepJob } from './jobs/retention-sweep.job';
+import { GrowthDailyAggregationJob } from './jobs/growth-daily-aggregation.job';
+import { GrowthAlertScanJob } from './jobs/growth-alert-scan.job';
 
 /**
  * PHASE C P4 — THE ONE LIST OF JOBS THAT EXIST.
@@ -31,6 +33,8 @@ export class JobRegistry {
     deadLetterAlert: DeadLetterAlertJob,
     familyDailyRollover: FamilyDailyRolloverJob,
     notificationDeliverySweep: NotificationDeliverySweepJob,
+    growthDailyAggregation: GrowthDailyAggregationJob,
+    growthAlertScan: GrowthAlertScanJob,
   ) {
     const definitions: JobDefinition[] = [
       retentionSweep.definition(),
@@ -38,6 +42,10 @@ export class JobRegistry {
       deadLetterAlert.definition(),
       familyDailyRollover.definition(),
       notificationDeliverySweep.definition(),
+      // PHASE D (GROWTH). Both are PLATFORM jobs seeded as rows by migration
+      // 0015, so the set assertion in `job-registry.spec.ts` still holds.
+      growthDailyAggregation.definition(),
+      growthAlertScan.definition(),
     ];
 
     const map = new Map<string, JobDefinition>();

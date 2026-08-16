@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
 
 import { ChildrenService } from '../../../children/application/services/children.service';
+import { GrowthEventEmitter } from '../../../analytics/application/growth-event-emitter.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { composeRewardTimelineKey } from '../../../../shared/events/idempotency';
 import { forEntity, forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
@@ -54,6 +55,9 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     // Daily and weekly rule caps are counted on the family's calendar, so a
     // Cairo child completing a habit at 00:30 is counted against TODAY.
     private readonly familyDate: FamilyDateService,
+    /** PHASE D (GROWTH). See `approveRedemption` — a redemption is counted
+     * when it is APPROVED, never when it is requested. */
+    private readonly growthEvents: GrowthEventEmitter,
   ) {}
 
   /** IRewardTriggerWriter's public entry point — identical behavior to
@@ -525,6 +529,20 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     }
 
     await this.repository.approveRedemption(redemptionId, redemption.childId, item.costCoins, approvingUserId);
+
+    /**
+     * PHASE D (GROWTH). The APPROVAL is the redemption — a REQUESTED row is a
+     * child asking, and counting it would report a redemption that may never
+     * happen. Emitted after the transaction committed, and carrying a cost and
+     * a type but never the child, the item name or the request text.
+     */
+    await this.growthEvents.emit({
+      name: 'REWARD_REDEEMED',
+      familyId,
+      userId: approvingUserId,
+      sessionId: `rewards:${familyId}`,
+      payload: { rewardType: 'COINS', amountMinor: item.costCoins },
+    });
   }
 
   async denyRedemption(redemptionId: string, familyId: string, decidingUserId: string): Promise<void> {

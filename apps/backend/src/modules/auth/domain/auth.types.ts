@@ -55,6 +55,31 @@ export interface IRegisterParentInput {
   timezone?: string;
   locale?: string;
   acceptedTerms: boolean;
+  /**
+   * PHASE D (GROWTH). Where this household came from — the ONLY moment this
+   * data exists (install referrer and UTM parameters live in the client's
+   * memory between the ad click and this call, and nothing later can
+   * reconstruct them).
+   *
+   * NONE of it is trusted: it is normalised, length-capped and resolved to a
+   * closed channel vocabulary in `analytics/domain/attribution.ts`, and it
+   * participates in NO authorization decision. It is a marketing label
+   * attached to a row the server created; it can bias a chart and can do
+   * nothing else. `familyId` is still derived from the transaction that
+   * creates the family — CONTEXT §3 principle 3 is not relaxed here.
+   */
+  attribution?: {
+    source?: string;
+    campaign?: string;
+    medium?: string;
+    content?: string;
+    countryCode?: string;
+    platform?: string;
+    referralCode?: string;
+    referrer?: string;
+    landingPage?: string;
+    sessionId?: string;
+  };
 }
 
 export interface IAuthenticatedUser {

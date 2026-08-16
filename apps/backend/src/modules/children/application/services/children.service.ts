@@ -7,6 +7,7 @@ import {
   CHILD_REPOSITORY,
   type IChildRepository,
 } from '../ports/child.repository.port';
+import { GrowthEventEmitter } from '../../../analytics/application/growth-event-emitter.service';
 import { EntitlementsService } from '../../../billing/application/services/entitlements.service';
 
 /**
@@ -24,6 +25,9 @@ export class ChildrenService {
   constructor(
     @Inject(CHILD_REPOSITORY) private readonly childRepository: IChildRepository,
     private readonly entitlements: EntitlementsService,
+    /** PHASE D (GROWTH). From `GrowthCaptureModule` — it imports nothing, so
+     * no module cycle is constructible through it. */
+    private readonly growthEvents: GrowthEventEmitter,
   ) {}
 
   /** CLOSES A REAL GAP (proactive business/code audit): 'multiple_children'
@@ -39,7 +43,25 @@ export class ChildrenService {
         throw new ForbiddenException('Adding more than one child requires a plan with the multiple_children feature.');
       }
     }
-    return this.childRepository.create(familyId, input);
+    const child = await this.childRepository.create(familyId, input);
+
+    /**
+     * PHASE D (GROWTH) — the CHILD_ADDED funnel step.
+     *
+     * AFTER the write, and the emitter never throws (see its class docstring),
+     * so a failure here cannot cost a parent the child they just added.
+     * The payload carries a COUNT, never the child's id, name or birth date —
+     * `childId` is not in `ALLOWED_PAYLOAD_KEYS` at all, so passing it would be
+     * dropped and logged rather than stored. CONTEXT §3 principle 8.
+     */
+    await this.growthEvents.emit({
+      name: 'CHILD_ADDED',
+      familyId,
+      sessionId: `children:${familyId}`,
+      payload: { childCount: existingChildren.length + 1 },
+    });
+
+    return child;
   }
 
   listChildren(familyId: string): Promise<Child[]> {

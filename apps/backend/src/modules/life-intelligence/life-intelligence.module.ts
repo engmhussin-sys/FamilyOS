@@ -6,6 +6,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { AiCoreModule } from '../ai-core/ai-core.module';
 import { ConsentCheckModule } from '../consent-check/consent-check.module';
 import { BillingModule } from '../billing/billing.module';
+import { GrowthCaptureModule } from '../analytics/growth-capture.module';
 import { HabitEngineService } from './application/services/habit-engine.service';
 import { LifeTimelineService } from './application/services/life-timeline.service';
 import { HealthEngineService } from './application/services/health-engine.service';
@@ -83,7 +84,7 @@ import { REWARD_TRIGGER_WRITER } from './domain/reward-trigger.types';
  * registered, unmasked.
  */
 @Module({
-  imports: [ChildrenModule, PairingModule, NotificationsModule, AiCoreModule, ConsentCheckModule, BillingModule],
+  imports: [ChildrenModule, PairingModule, NotificationsModule, AiCoreModule, ConsentCheckModule, BillingModule, GrowthCaptureModule],
   // B4 (PA-B-015): `RewardRulesController` is the controller Phase A found
   // missing. It reuses this module's existing `PrismaRewardsRepository` — the
   // same repository the grant path reads rules through — so there is exactly

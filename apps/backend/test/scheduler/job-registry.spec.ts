@@ -26,6 +26,8 @@ import { ExpiredTokenSweepJob } from '../../src/modules/scheduler/application/jo
 import { FamilyDailyRolloverJob } from '../../src/modules/scheduler/application/jobs/family-daily-rollover.job';
 import { NotificationDeliverySweepJob } from '../../src/modules/scheduler/application/jobs/notification-delivery-sweep.job';
 import { RetentionSweepJob } from '../../src/modules/scheduler/application/jobs/retention-sweep.job';
+import { GrowthDailyAggregationJob } from '../../src/modules/scheduler/application/jobs/growth-daily-aggregation.job';
+import { GrowthAlertScanJob } from '../../src/modules/scheduler/application/jobs/growth-alert-scan.job';
 import { JobRegistry } from '../../src/modules/scheduler/application/job-registry.service';
 
 /**
@@ -84,6 +86,8 @@ function registry(): JobRegistry {
     new DeadLetterAlertJob(stub()),
     new FamilyDailyRolloverJob(stub(), stub()),
     new NotificationDeliverySweepJob(stub()),
+    new GrowthDailyAggregationJob(stub(), stub()),
+    new GrowthAlertScanJob(stub()),
   );
 }
 
@@ -99,6 +103,13 @@ describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => 
       'data-retention-sweep',
       'expired-token-sweep',
       'family-daily-rollover',
+      // PHASE D (GROWTH): the hourly alert scan, seeded by migration 0015.
+      'growth-alert-scan',
+      // PHASE D (GROWTH): the daily aggregate + referral qualification sweep,
+      // seeded by migration 0015. Both are PLATFORM (no family calendar
+      // applies to a cross-tenant aggregate) and both are idempotent by a
+      // unique index rather than by running exactly once.
+      'growth-daily-aggregation',
       // PHASE D (PC-D-005): the quiet-hours release, seeded by migration 0014.
       'notification-delivery-sweep',
       'outbox-dead-letter-alert',
@@ -149,6 +160,8 @@ describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => 
           new DeadLetterAlertJob(stub()),
           new FamilyDailyRolloverJob(stub(), stub()),
           new NotificationDeliverySweepJob(stub()),
+          new GrowthDailyAggregationJob(stub(), stub()),
+          new GrowthAlertScanJob(stub()),
         ),
     ).toThrow(/Duplicate scheduled job name/);
   });

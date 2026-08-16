@@ -1,6 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 
 import { ChildrenService } from '../../../children/application/services/children.service';
+import { GrowthEventEmitter } from '../../../analytics/application/growth-event-emitter.service';
 import { PrismaHabitRepository } from '../../infrastructure/repositories/prisma-habit.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
@@ -57,11 +58,31 @@ export class HabitEngineService {
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
     @Inject(REWARD_TRIGGER_WRITER) private readonly rewardTrigger: IRewardTriggerWriter,
     private readonly familyDate: FamilyDateService,
+    /** PHASE D (GROWTH). See `createHabit`. */
+    private readonly growthEvents: GrowthEventEmitter,
   ) {}
 
   async createHabit(childId: string, familyId: string, input: Omit<ICreateHabitInput, 'childId'>): Promise<IHabit> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    return this.habitRepository.create({ ...input, childId });
+    const habit = await this.habitRepository.create({ ...input, childId });
+
+    /**
+     * PHASE D (GROWTH) — the FIRST_GOAL funnel step.
+     *
+     * «A goal» is a product concept spanning habits, tasks, learning goals and
+     * reward programs, and the funnel counts households that created ANY of
+     * them. Emitting one event name from all four producers is what makes that
+     * one query instead of a UNION over four tables that will become five.
+     * `goalKind` is the discriminator; the habit's id and name are not sent.
+     */
+    await this.growthEvents.emit({
+      name: 'GOAL_CREATED',
+      familyId,
+      sessionId: `goals:${familyId}`,
+      payload: { goalKind: 'HABIT' },
+    });
+
+    return habit;
   }
 
   async listHabits(childId: string, familyId: string): Promise<IHabit[]> {

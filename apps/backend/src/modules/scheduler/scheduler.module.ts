@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { TimeModule } from '../../common/time/time.module';
 import { DataRetentionModule } from '../data-retention/data-retention.module';
+import { AnalyticsModule } from '../analytics/analytics.module';
 import { EventsModule } from '../events/events.module';
 import { LifeIntelligenceModule } from '../life-intelligence/life-intelligence.module';
 import { JobObservability } from './application/job-observability.service';
@@ -13,6 +14,8 @@ import { ExpiredTokenSweepJob } from './application/jobs/expired-token-sweep.job
 import { FamilyDailyRolloverJob } from './application/jobs/family-daily-rollover.job';
 import { NotificationDeliverySweepJob } from './application/jobs/notification-delivery-sweep.job';
 import { RetentionSweepJob } from './application/jobs/retention-sweep.job';
+import { GrowthDailyAggregationJob } from './application/jobs/growth-daily-aggregation.job';
+import { GrowthAlertScanJob } from './application/jobs/growth-alert-scan.job';
 import { SchedulerOperationsController } from './presentation/controllers/scheduler-operations.controller';
 
 /**
@@ -31,6 +34,12 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
  *   TimeModule             owns the family calendar. Nothing here re-derives a
  *                          business date; `job-schedule.ts` composes
  *                          `family-date.ts` and nothing else.
+ *   AnalyticsModule        PHASE D (GROWTH): owns the daily aggregate, the
+ *                          referral qualification sweep and the eight alert
+ *                          rules. This module gives all three a clock and a
+ *                          lease, and adds no second implementation of any of
+ *                          them — the two job classes below are twenty lines
+ *                          each and delegate immediately.
  *
  * NO NEW RUNTIME DEPENDENCY WAS ADDED TO `package.json`. Not
  * `@nestjs/schedule`, not `bullmq`, not `node-cron`. The full argument is in
@@ -40,7 +49,7 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
  * and this deployment already has a PostgreSQL holding both.
  */
 @Module({
-  imports: [TimeModule, DataRetentionModule, LifeIntelligenceModule, EventsModule],
+  imports: [TimeModule, DataRetentionModule, LifeIntelligenceModule, EventsModule, AnalyticsModule],
   controllers: [SchedulerOperationsController],
   providers: [
     RetentionSweepJob,
@@ -48,6 +57,8 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
     DeadLetterAlertJob,
     FamilyDailyRolloverJob,
     NotificationDeliverySweepJob,
+    GrowthDailyAggregationJob,
+    GrowthAlertScanJob,
     JobRegistry,
     JobRunner,
     JobObservability,

@@ -5,6 +5,7 @@ import { TrialManager } from './trial-manager.service';
 import { PaymentService } from './payment.service';
 import { InvoiceService } from './invoice.service';
 import { AuditService } from '../../../audit/application/audit.service';
+import { GrowthEventEmitter } from '../../../analytics/application/growth-event-emitter.service';
 import type { PaymentProviderValue, SubscriptionPlanTier } from '../../domain/billing.types';
 
 @Injectable()
@@ -15,6 +16,18 @@ export class SubscriptionService {
     private readonly paymentService: PaymentService,
     private readonly invoiceService: InvoiceService,
     private readonly auditService: AuditService,
+    /**
+     * PHASE D (GROWTH). The five commercial growth events are emitted from the
+     * paths that already own the fact — never re-derived from a table by a
+     * reporting job, which would make a marker appear hours after the money
+     * moved and would be silently wrong for any row written before Phase D.
+     *
+     * NOTE WHAT THESE EVENTS ARE AND ARE NOT: they are MARKERS for funnel
+     * counting and channel slicing. REVENUE IS NEVER SUMMED FROM THEM — it is
+     * summed from `payment_transactions`, which the database itself keeps
+     * append-only. An analytics event is a copy; the transaction is the fact.
+     */
+    private readonly growthEvents: GrowthEventEmitter,
   ) {}
 
   getForFamily(familyId: string) {
@@ -30,13 +43,22 @@ export class SubscriptionService {
       throw new ConflictException('This family already has a subscription record.');
     }
 
-    return this.repository.createSubscription({
+    const created = await this.repository.createSubscription({
       familyId,
       planTier: 'PREMIUM',
       provider: 'MANUAL',
       status: 'TRIALING',
       trialEndsAt: this.trialManager.computeTrialEndDate(),
     });
+
+    await this.growthEvents.emit({
+      name: 'TRIAL_STARTED',
+      familyId,
+      sessionId: `billing:${familyId}`,
+      payload: { planTier: 'PREMIUM', provider: 'MANUAL' },
+    });
+
+    return created;
   }
 
   /** Subscribes (or converts a trial) to a paid tier via the given
@@ -108,6 +130,31 @@ export class SubscriptionService {
       metadata: { planTier, provider, success: chargeResult.success },
     });
 
+    await this.growthEvents.emit({
+      name: chargeResult.success ? 'PAYMENT_SUCCESS' : 'PAYMENT_FAILED',
+      familyId,
+      userId: actorUserId,
+      sessionId: `billing:${familyId}`,
+      payload: {
+        planTier,
+        provider,
+        // The AMOUNT is a slicing dimension only. `payment_transactions` is the
+        // authority on money and is what every revenue KPI sums.
+        amountMinor: invoice?.amountCents,
+        failureReason: chargeResult.success ? undefined : 'CHARGE_DECLINED',
+      },
+    });
+
+    if (chargeResult.success) {
+      await this.growthEvents.emit({
+        name: 'SUBSCRIPTION_STARTED',
+        familyId,
+        userId: actorUserId,
+        sessionId: `billing:${familyId}`,
+        payload: { planTier, provider },
+      });
+    }
+
     return { subscription, invoice, chargeResult };
   }
 
@@ -124,6 +171,14 @@ export class SubscriptionService {
       action: 'billing.canceled',
       entityType: 'Subscription',
       entityId: subscription.id,
+    });
+
+    await this.growthEvents.emit({
+      name: 'SUBSCRIPTION_CANCELLED',
+      familyId,
+      userId: actorUserId,
+      sessionId: `billing:${familyId}`,
+      payload: { planTier: subscription.planTier, provider: subscription.provider },
     });
   }
 

@@ -463,8 +463,8 @@ CREATE TABLE IF NOT EXISTS "growth_settings" (
 --     job has no family calendar to be due on. The reporting timezone they use
 --     for their day boundary is a `growth_settings` row, read at run time.
 -- -----------------------------------------------------------------------------
-INSERT INTO "scheduled_jobs" ("name","scope","cadence_seconds","local_hour","enabled","next_run_at")
+INSERT INTO "scheduled_jobs" ("name", "scope", "cadence_seconds", "local_hour", "enabled")
 VALUES
-  ('growth-daily-aggregation','PLATFORM', 3600, NULL, true, now()),
-  ('growth-alert-scan',       'PLATFORM', 3600, NULL, true, now())
+  ('growth-daily-aggregation', 'PLATFORM', 3600, NULL, true),
+  ('growth-alert-scan',        'PLATFORM', 3600, NULL, true)
 ON CONFLICT ("name") DO NOTHING;

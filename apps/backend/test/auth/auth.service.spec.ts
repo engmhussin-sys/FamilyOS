@@ -4,6 +4,8 @@ import { PasswordService } from '../../src/modules/auth/application/services/pas
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { USER_REPOSITORY } from '../../src/modules/auth/application/ports/auth.repository.ports';
 import { AuditService } from '../../src/modules/audit/application/audit.service';
+import { AttributionService } from '../../src/modules/analytics/application/attribution.service';
+import { ReferralService } from '../../src/modules/analytics/application/referral.service';
 import {
   EmailAlreadyRegisteredException,
   InvalidCredentialsException,
@@ -30,10 +32,18 @@ describe('AuthService', () => {
 
   const auditServiceMock = { record: jest.fn() };
 
+  // PHASE D (GROWTH). Both are called AFTER the family exists and neither may
+  // fail a registration, which is exactly what the two tests at the bottom of
+  // this file assert against these doubles.
+  const attributionServiceMock = { captureAtRegistration: jest.fn() };
+  const referralServiceMock = { registerReferral: jest.fn() };
+
   let authService: AuthService;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    attributionServiceMock.captureAtRegistration.mockResolvedValue('ORGANIC');
+    referralServiceMock.registerReferral.mockResolvedValue({ bound: true, reason: null });
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -42,6 +52,8 @@ describe('AuthService', () => {
         { provide: PasswordService, useValue: passwordServiceMock },
         { provide: TokenService, useValue: tokenServiceMock },
         { provide: AuditService, useValue: auditServiceMock },
+        { provide: AttributionService, useValue: attributionServiceMock },
+        { provide: ReferralService, useValue: referralServiceMock },
       ],
     }).compile();
 

@@ -4,6 +4,7 @@ import { ChildrenService } from '../../src/modules/children/application/services
 import { CHILD_REPOSITORY } from '../../src/modules/children/application/ports/child.repository.port';
 import { ChildNotFoundException } from '../../src/modules/children/domain/child.errors';
 import { EntitlementsService } from '../../src/modules/billing/application/services/entitlements.service';
+import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 describe('ChildrenService', () => {
   const childRepositoryMock = {
@@ -24,6 +25,10 @@ describe('ChildrenService', () => {
         ChildrenService,
         { provide: CHILD_REPOSITORY, useValue: childRepositoryMock },
         { provide: EntitlementsService, useValue: entitlementsMock },
+        // PHASE D (GROWTH). `emit` never throws by contract (see the emitter's
+        // class docstring), so a double that resolves is a faithful stand-in —
+        // and these suites are about the business path, not about telemetry.
+        { provide: GrowthEventEmitter, useValue: { emit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = moduleRef.get(ChildrenService);

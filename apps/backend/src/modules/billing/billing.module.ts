@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { GrowthCaptureModule } from '../analytics/growth-capture.module';
+
 import { BillingController } from './presentation/controllers/billing.controller';
 import { StripeWebhookController } from './presentation/controllers/stripe-webhook.controller';
 import { PaymentWebhookController } from './presentation/controllers/payment-webhook.controller';
@@ -65,6 +67,11 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
  * quietly becomes two sources of truth.
  */
 @Module({
+  // PHASE D (GROWTH). The CAPTURE half only, which imports nothing — the five
+  // commercial growth events are emitted from the paths that already own the
+  // fact, and revenue is still summed from `payment_transactions` and never
+  // from an analytics event.
+  imports: [GrowthCaptureModule],
   controllers: [BillingController, StripeWebhookController, PaymentWebhookController, SubscriptionController],
   providers: [
     // -- Sprint 8, unchanged --

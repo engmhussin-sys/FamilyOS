@@ -18,6 +18,8 @@ import {
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
 import { AuditService } from '../../../audit/application/audit.service';
+import { AttributionService } from '../../../analytics/application/attribution.service';
+import { ReferralService } from '../../../analytics/application/referral.service';
 
 /**
  * The domain layer intentionally does not import Prisma's generated
@@ -41,6 +43,14 @@ export class AuthService {
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
     private readonly auditService: AuditService,
+    /**
+     * PHASE D (GROWTH). Both come from `GrowthCaptureModule`, which imports
+     * NOTHING — see its docstring. Depending on the full `AnalyticsModule`
+     * here would close the cycle
+     * Auth -> Analytics -> Events -> Pairing -> Auth.
+     */
+    private readonly attribution: AttributionService,
+    private readonly referrals: ReferralService,
   ) {}
 
   /**
@@ -75,6 +85,33 @@ export class AuthService {
       entityId: user.id,
       metadata: { familyId: family.id },
     });
+
+    /**
+     * PHASE D (GROWTH) — ATTRIBUTION AND REFERRAL, CAPTURED HERE AND NOWHERE
+     * ELSE.
+     *
+     * AFTER the family row exists and AFTER the audit record, deliberately:
+     * neither of these may be able to fail a registration. `captureAtRegistration`
+     * swallows its own failures (a marketing label is not worth a 500 on the
+     * most important request in the funnel) and `registerReferral` returns a
+     * reason instead of throwing for every rejection it knows about — a
+     * mistyped or already-used referral code creates the household anyway,
+     * simply uncredited.
+     *
+     * The `familyId` passed to both is `family.id`, the row this transaction
+     * just created. It is never read from `input`.
+     */
+    await this.attribution.captureAtRegistration(family.id, user.id, input.attribution);
+
+    const referralCode = input.attribution?.referralCode;
+    if (referralCode) {
+      const outcome = await this.referrals.registerReferral(family.id, referralCode);
+      if (!outcome.bound) {
+        this.logger.log(
+          `referral.not_bound family=${family.id.slice(0, 8)} reason=${outcome.reason ?? 'UNKNOWN'} — registration unaffected.`,
+        );
+      }
+    }
 
     return {
       id: user.id,

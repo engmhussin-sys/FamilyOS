@@ -6,6 +6,7 @@ import { TrialManager } from '../../src/modules/billing/application/services/tri
 import { PaymentService } from '../../src/modules/billing/application/services/payment.service';
 import { InvoiceService } from '../../src/modules/billing/application/services/invoice.service';
 import { AuditService } from '../../src/modules/audit/application/audit.service';
+import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 describe('SubscriptionService', () => {
   const repositoryMock = {
@@ -35,6 +36,10 @@ describe('SubscriptionService', () => {
         { provide: PaymentService, useValue: paymentServiceMock },
         { provide: InvoiceService, useValue: invoiceServiceMock },
         { provide: AuditService, useValue: auditServiceMock },
+        // PHASE D (GROWTH). `emit` never throws by contract (see the emitter's
+        // class docstring), so a double that resolves is a faithful stand-in —
+        // and these suites are about the business path, not about telemetry.
+        { provide: GrowthEventEmitter, useValue: { emit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = moduleRef.get(SubscriptionService);

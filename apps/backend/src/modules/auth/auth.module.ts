@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
 import { ChildrenModule } from '../children/children.module';
+import { GrowthCaptureModule } from '../analytics/growth-capture.module';
 
 import { AuthController } from './presentation/controllers/auth.controller';
 import { JwtStrategy } from './presentation/strategies/jwt.strategy';
@@ -23,6 +24,10 @@ import {
   imports: [
     PassportModule,
     ChildrenModule,
+    // PHASE D (GROWTH). The CAPTURE half only — it imports nothing, so this
+    // cannot create the Auth -> Analytics -> Events -> Pairing -> Auth cycle
+    // that importing the full AnalyticsModule would.
+    GrowthCaptureModule,
     // JwtModule is registered without global secret/expiry options —
     // TokenService and the two Passport strategies each pass their own
     // secret/expiresIn per call, since access and refresh tokens use

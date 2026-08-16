@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { GrowthCaptureModule } from '../analytics/growth-capture.module';
 import { ChildrenModule } from '../children/children.module';
 import { ScreenTimeModule } from '../screen-time/screen-time.module';
 import { PairingModule } from '../pairing/pairing.module';
@@ -47,7 +48,7 @@ import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
  * fact (no code path in those six ever calls AI_PROVIDER), not a promise.
  */
 @Module({
-  imports: [ChildrenModule, ScreenTimeModule, PairingModule],
+  imports: [ChildrenModule, ScreenTimeModule, PairingModule, GrowthCaptureModule],
   controllers: [AiCoreController, AiPlatformController, ParentCoachController, ChildCoachController],
   providers: [
     AiContextManagerService,
