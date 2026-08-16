@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
@@ -18,6 +17,7 @@ import type {
 import type { BillingPeriodValue } from '../application/ports/payment-provider.port';
 import type { EntitlementKey, PaymentProviderValue, SubscriptionPlanTier } from '../domain/billing.types';
 import type { CanonicalSubscriptionStatus } from '../domain/subscription-status';
+import type { VatMode } from '../domain/money';
 import { toPersistedStatus } from '../domain/subscription-status';
 
 /** Postgres unique-violation. The ONLY thing that makes an insert idempotent. */
@@ -64,16 +64,12 @@ export class PrismaPaymentRepository implements IPaymentRepository {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  private get db(): any {
-    return this.prisma as any;
-  }
-
   // -------------------------------------------------------------------------
   // Price catalogue (GLOBAL — no tenant scoping, by classification)
   // -------------------------------------------------------------------------
 
   async findCountry(countryCode: string): Promise<ICountryConfig | null> {
-    const row = await this.db.country.findUnique({
+    const row = await this.prisma.country.findUnique({
       where: { code: countryCode },
       include: { currency: true },
     });
@@ -81,7 +77,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
   }
 
   async listActiveCountries(): Promise<ICountryConfig[]> {
-    const rows = await this.db.country.findMany({
+    const rows = await this.prisma.country.findMany({
       where: { isActive: true },
       include: { currency: true },
       orderBy: { code: 'asc' },
@@ -94,7 +90,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     countryCode: string;
     billingPeriod: BillingPeriodValue;
   }): Promise<ISubscriptionPriceRecord | null> {
-    const row = await this.db.subscriptionPrice.findUnique({
+    const row = await this.prisma.subscriptionPrice.findUnique({
       where: {
         planTier_countryCode_billingPeriod: {
           planTier: params.planTier,
@@ -107,14 +103,14 @@ export class PrismaPaymentRepository implements IPaymentRepository {
   }
 
   async findPriceByStoreProductId(storeProductId: string): Promise<ISubscriptionPriceRecord | null> {
-    const row = await this.db.subscriptionPrice.findFirst({
+    const row = await this.prisma.subscriptionPrice.findFirst({
       where: { storeProductId, isActive: true },
     });
     return row ?? null;
   }
 
   async listPricesForCountry(countryCode: string): Promise<ISubscriptionPriceRecord[]> {
-    return this.db.subscriptionPrice.findMany({
+    return this.prisma.subscriptionPrice.findMany({
       where: { countryCode, isActive: true },
       orderBy: [{ planTier: 'asc' }, { billingPeriod: 'asc' }],
     });
@@ -125,7 +121,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
   // -------------------------------------------------------------------------
 
   async findTrial(familyId: string): Promise<ITrialRecord | null> {
-    return this.db.trial.findUnique({ where: { familyId } });
+    return this.prisma.trial.findUnique({ where: { familyId } });
   }
 
   /**
@@ -142,7 +138,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     source: string;
   }): Promise<IIdempotentInsert<ITrialRecord>> {
     try {
-      const record = await this.db.trial.create({
+      const record = await this.prisma.trial.create({
         data: {
           familyId: input.familyId,
           planTier: input.planTier,
@@ -153,13 +149,17 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       return { record, wasCreated: true };
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.db.trial.findUnique({ where: { familyId: input.familyId } });
-      return { record: existing as ITrialRecord, wasCreated: false };
+      const existing = await this.prisma.trial.findUnique({ where: { familyId: input.familyId } });
+      // The unique index just fired, so the row exists. A `!` here would be a
+      // lie under a concurrent DELETE; rethrowing the original violation is the
+      // honest answer, and it is what a caller can actually act on.
+      if (!existing) throw error;
+      return { record: existing, wasCreated: false };
     }
   }
 
   async markTrialConverted(familyId: string, at: Date): Promise<void> {
-    await this.db.trial.updateMany({ where: { familyId }, data: { convertedAt: at } });
+    await this.prisma.trial.updateMany({ where: { familyId }, data: { convertedAt: at } });
   }
 
   // -------------------------------------------------------------------------
@@ -179,7 +179,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     provider: PaymentProviderValue,
     providerAccountRef: string,
   ): Promise<string | null> {
-    const row = await this.db.providerAccountLink.findUnique({
+    const row = await this.prisma.providerAccountLink.findUnique({
       where: { provider_providerAccountRef: { provider, providerAccountRef } },
     });
     if (!row || row.revokedAt) return null;
@@ -192,11 +192,11 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     providerAccountRef: string;
   }): Promise<IIdempotentInsert<{ familyId: string }>> {
     try {
-      const record = await this.db.providerAccountLink.create({ data: input });
+      const record = await this.prisma.providerAccountLink.create({ data: input });
       return { record: { familyId: record.familyId as string }, wasCreated: true };
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.db.providerAccountLink.findUnique({
+      const existing = await this.prisma.providerAccountLink.findUnique({
         where: {
           provider_providerAccountRef: {
             provider: input.provider,
@@ -204,7 +204,12 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           },
         },
       });
-      return { record: { familyId: existing.familyId as string }, wasCreated: false };
+      // The unique index just fired, so the row exists — but a race with a
+      // concurrent DELETE is expressible, and pretending otherwise with a `!`
+      // would turn it into a TypeError inside a payment path. Rethrowing the
+      // original violation is the honest answer.
+      if (!existing) throw error;
+      return { record: { familyId: existing.familyId }, wasCreated: false };
     }
   }
 
@@ -234,7 +239,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     isSandbox: boolean;
   }): Promise<IIdempotentInsert<IPaymentTransactionRecord>> {
     try {
-      const record = await this.db.paymentTransaction.create({ data: input });
+      const record = await this.prisma.paymentTransaction.create({ data: input });
       return { record, wasCreated: true };
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
@@ -243,7 +248,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
       // our own code paths deriving the same key. Both mean "already recorded";
       // the provider index is tried first because it is the specific one.
       const existing =
-        (await this.db.paymentTransaction.findUnique({
+        (await this.prisma.paymentTransaction.findUnique({
           where: {
             provider_providerTransactionId: {
               provider: input.provider,
@@ -251,7 +256,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
             },
           },
         })) ??
-        (await this.db.paymentTransaction.findUnique({
+        (await this.prisma.paymentTransaction.findUnique({
           where: {
             familyId_idempotencyKey: {
               familyId: input.familyId,
@@ -259,7 +264,11 @@ export class PrismaPaymentRepository implements IPaymentRepository {
             },
           },
         }));
-      return { record: existing as IPaymentTransactionRecord, wasCreated: false };
+      // The unique index just fired, so the row exists. A `!` here would be a
+      // lie under a concurrent DELETE; rethrowing the original violation is the
+      // honest answer, and it is what a caller can actually act on.
+      if (!existing) throw error;
+      return { record: existing, wasCreated: false };
     }
   }
 
@@ -267,13 +276,13 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     provider: PaymentProviderValue,
     providerTransactionId: string,
   ): Promise<IPaymentTransactionRecord | null> {
-    return this.db.paymentTransaction.findUnique({
+    return this.prisma.paymentTransaction.findUnique({
       where: { provider_providerTransactionId: { provider, providerTransactionId } },
     });
   }
 
   async listPaymentTransactions(familyId: string): Promise<IPaymentTransactionRecord[]> {
-    return this.db.paymentTransaction.findMany({
+    return this.prisma.paymentTransaction.findMany({
       where: { familyId },
       orderBy: { occurredAt: 'desc' },
     });
@@ -291,7 +300,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     status: IPaymentTransactionRecord['status'],
     verifiedAt?: Date,
   ): Promise<void> {
-    await this.db.paymentTransaction.update({
+    await this.prisma.paymentTransaction.update({
       where: { id: paymentTransactionId },
       data: { status, ...(verifiedAt ? { verifiedAt } : {}) },
     });
@@ -310,21 +319,25 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     occurredAt: Date;
   }): Promise<IIdempotentInsert<IRefundRecord>> {
     try {
-      const record = await this.db.refund.create({ data: input });
+      const record = await this.prisma.refund.create({ data: input });
       return { record, wasCreated: true };
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.db.refund.findUnique({
+      const existing = await this.prisma.refund.findUnique({
         where: {
           familyId_idempotencyKey: { familyId: input.familyId, idempotencyKey: input.idempotencyKey },
         },
       });
-      return { record: existing as IRefundRecord, wasCreated: false };
+      // The unique index just fired, so the row exists. A `!` here would be a
+      // lie under a concurrent DELETE; rethrowing the original violation is the
+      // honest answer, and it is what a caller can actually act on.
+      if (!existing) throw error;
+      return { record: existing, wasCreated: false };
     }
   }
 
   async listRefunds(familyId: string): Promise<IRefundRecord[]> {
-    return this.db.refund.findMany({ where: { familyId }, orderBy: { occurredAt: 'desc' } });
+    return this.prisma.refund.findMany({ where: { familyId }, orderBy: { occurredAt: 'desc' } });
   }
 
   // -------------------------------------------------------------------------
@@ -395,7 +408,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
    * it unanswerable.
    */
   async revokeEntitlements(familyId: string, reason: string, at: Date): Promise<number> {
-    const result = await this.db.entitlement.updateMany({
+    const result = await this.prisma.entitlement.updateMany({
       where: { familyId, status: 'ACTIVE' },
       data: { status: 'REVOKED', revokedAt: at, revokedReason: reason.slice(0, 200) },
     });
@@ -403,11 +416,11 @@ export class PrismaPaymentRepository implements IPaymentRepository {
   }
 
   async listEntitlements(familyId: string): Promise<IEntitlementRecord[]> {
-    return this.db.entitlement.findMany({ where: { familyId }, orderBy: { featureKey: 'asc' } });
+    return this.prisma.entitlement.findMany({ where: { familyId }, orderBy: { featureKey: 'asc' } });
   }
 
   async findEntitlement(familyId: string, featureKey: EntitlementKey): Promise<IEntitlementRecord | null> {
-    return this.db.entitlement.findUnique({
+    return this.prisma.entitlement.findUnique({
       where: { familyId_featureKey: { familyId, featureKey } },
     });
   }
@@ -428,11 +441,11 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     familyId: string | null;
   }): Promise<IIdempotentInsert<IWebhookEventRecord>> {
     try {
-      const record = await this.db.paymentWebhookEvent.create({ data: input });
+      const record = await this.prisma.paymentWebhookEvent.create({ data: input });
       return { record, wasCreated: true };
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
-      const existing = await this.db.paymentWebhookEvent.findUnique({
+      const existing = await this.prisma.paymentWebhookEvent.findUnique({
         where: {
           provider_providerEventId: {
             provider: input.provider,
@@ -440,7 +453,11 @@ export class PrismaPaymentRepository implements IPaymentRepository {
           },
         },
       });
-      return { record: existing as IWebhookEventRecord, wasCreated: false };
+      // The unique index just fired, so the row exists. A `!` here would be a
+      // lie under a concurrent DELETE; rethrowing the original violation is the
+      // honest answer, and it is what a caller can actually act on.
+      if (!existing) throw error;
+      return { record: existing, wasCreated: false };
     }
   }
 
@@ -450,7 +467,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     familyId: string | null,
     failureReason: string | null,
   ): Promise<void> {
-    await this.db.paymentWebhookEvent.updateMany({
+    await this.prisma.paymentWebhookEvent.updateMany({
       where: { id },
       data: {
         outcome,
@@ -468,7 +485,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
   async findSubscriptionByOriginalTransactionId(
     providerOriginalTransactionId: string,
   ): Promise<{ id: string; familyId: string; lastProviderEventAt: Date | null } | null> {
-    const row = await this.db.subscription.findFirst({
+    const row = await this.prisma.subscription.findFirst({
       where: { providerOriginalTransactionId },
       select: { id: true, familyId: true, lastProviderEventAt: true },
     });
@@ -532,7 +549,7 @@ export class PrismaPaymentRepository implements IPaymentRepository {
     billingPeriod: BillingPeriodValue | null;
     subscriptionPriceId: string | null;
   }): Promise<void> {
-    await this.db.subscription.update({
+    await this.prisma.subscription.update({
       where: { id: input.subscriptionId },
       data: {
         providerOriginalTransactionId: input.providerOriginalTransactionId,
@@ -554,7 +571,20 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
-function toCountryConfig(row: any): ICountryConfig {
+/** The `countries` row shape Prisma returns with its currency joined in. */
+interface ICountryRow {
+  code: string;
+  nameEn: string;
+  nameAr: string;
+  currencyCode: string;
+  vatBasisPoints: number;
+  vatMode: VatMode;
+  defaultProvider: PaymentProviderValue;
+  isActive: boolean;
+  currency: { minorUnits: number } | null;
+}
+
+function toCountryConfig(row: ICountryRow): ICountryConfig {
   return {
     code: row.code,
     nameEn: row.nameEn,
