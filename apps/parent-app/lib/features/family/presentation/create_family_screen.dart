@@ -5,10 +5,30 @@ import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
+import '../api/family_api.dart';
 
-/// DESIGN PASS: the children-count slider now shows a large live
-/// number badge (matching the visual weight the pairing code got on
-/// AddChildScreen) instead of a small label above a bare Slider.
+/// WHAT CHANGED, AND WHY IT WAS NOT COSMETIC.
+///
+/// 1. COUNTRY IS NOW A CHOICE, NOT FREE TEXT. It was a `TextField`, so
+///    "مصر", "Egypt", "egypt " and a typo all arrived as different
+///    strings — and none of them could be turned into an IANA timezone.
+///    It is now a two-item picker over [supportedFamilyCountries], which
+///    is the only shape that can resolve to `Africa/Cairo` /
+///    `Asia/Riyadh` deterministically.
+/// 2. THE TIMEZONE IS ACTUALLY SENT. The country's zone goes out on the
+///    same `PATCH /settings` call as the name. Before, it never did, and
+///    `Family.timezone` stayed on its schema default of `"UTC"` for the
+///    life of the family — which moves every business-day boundary the
+///    backend computes (streaks, daily limits, reward idempotency keys).
+///    The resolved zone is shown on screen rather than hidden, because a
+///    setting this consequential should not be invisible at the moment
+///    it is chosen.
+/// 3. THE "NUMBER OF CHILDREN" SLIDER IS GONE. It went nowhere:
+///    `UpdateSettingsDto` has no such field, `model Family` has no such
+///    column, and child count is derived from real `Child` rows created
+///    later on the create-child screen. A control that implies it is
+///    saving something and saves nothing is worse than no control, so it
+///    was removed rather than annotated as decorative.
 class CreateFamilyScreen extends ConsumerStatefulWidget {
   const CreateFamilyScreen({super.key});
 
@@ -18,8 +38,12 @@ class CreateFamilyScreen extends ConsumerStatefulWidget {
 
 class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
   final _nameController = TextEditingController();
-  final _countryController = TextEditingController();
-  int _numberOfChildren = 1;
+
+  /// Defaults to Egypt — the larger launch market — rather than to `null`,
+  /// so the common case is one tap and the request can never go out
+  /// without a timezone by accident.
+  String _countryCode = supportedFamilyCountries.first;
+
   bool _isSubmitting = false;
   String? _errorMessage;
 
@@ -30,7 +54,10 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
     });
 
     try {
-      await ref.read(familyApiProvider).setupFamily(name: _nameController.text.trim());
+      await ref.read(familyApiProvider).setupFamily(
+            name: _nameController.text.trim(),
+            countryCode: _countryCode,
+          );
       if (!mounted) return;
       Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
     } catch (e) {
@@ -44,6 +71,15 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
     final t = ref.watch(localeControllerProvider.notifier).t;
+
+    // Resolved through LITERAL `t('...')` keys on purpose: a key built by
+    // string interpolation is invisible to `scripts/verify_l10n_parity.py`,
+    // which only follows literal call sites. Keeping the two in a map means
+    // the checker still proves both labels exist in both locales.
+    final countryLabels = <String, String>{
+      'EG': t('family.country.EG'),
+      'SA': t('family.country.SA'),
+    };
 
     return Scaffold(
       appBar: AppBar(title: Text(t('family.setupTitle'))),
@@ -59,33 +95,34 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                   decoration: InputDecoration(labelText: t('family.name'), prefixIcon: const Icon(Icons.home_rounded)),
                 ),
                 const SizedBox(height: 16),
-                TextField(
-                  controller: _countryController,
+                DropdownButtonFormField<String>(
+                  value: _countryCode,
                   decoration: InputDecoration(labelText: t('family.country'), prefixIcon: const Icon(Icons.public_rounded)),
+                  items: supportedFamilyCountries
+                      .map((code) => DropdownMenuItem(value: code, child: Text(countryLabels[code] ?? code)))
+                      .toList(),
+                  onChanged: _isSubmitting
+                      ? null
+                      : (value) => setState(() => _countryCode = value ?? _countryCode),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 12),
+                // The zone is stated in words, not as a raw IANA string: a
+                // parent should not have to know what "Africa/Cairo" means
+                // to understand that their day starts at midnight Cairo
+                // time. `t()` supplies the sentence; the country supplies
+                // the noun.
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: Text(t('family.numberOfChildren'), style: Theme.of(context).textTheme.titleMedium)),
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.14), shape: BoxShape.circle),
-                      alignment: Alignment.center,
-                      child: Text('$_numberOfChildren', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: AppTheme.sage500, fontWeight: FontWeight.w700)),
+                    Icon(Icons.schedule_rounded, size: 18, color: AppTheme.sage500),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        t('family.timezoneExplainer', options: {'country': countryLabels[_countryCode] ?? _countryCode}),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
                   ],
-                ),
-                SliderTheme(
-                  data: SliderTheme.of(context).copyWith(activeTrackColor: AppTheme.sage500, thumbColor: AppTheme.sage500),
-                  child: Slider(
-                    value: _numberOfChildren.toDouble(),
-                    min: 1,
-                    max: 6,
-                    divisions: 5,
-                    label: '$_numberOfChildren',
-                    onChanged: (value) => setState(() => _numberOfChildren = value.round()),
-                  ),
                 ),
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 12),
@@ -119,7 +156,6 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
   @override
   void dispose() {
     _nameController.dispose();
-    _countryController.dispose();
     super.dispose();
   }
 }

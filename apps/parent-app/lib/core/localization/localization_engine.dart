@@ -533,7 +533,14 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'family.setupTitle': 'Set Up Your Family',
     'family.name': 'Family Name',
     'family.country': 'Country',
-    'family.numberOfChildren': 'Number of Children',
+    // The country is not stored on its own anywhere — it chooses the
+    // family's TIMEZONE, which is stored and which every business-day
+    // boundary is computed from. `family.numberOfChildren` was removed
+    // together with the slider it labelled: no backend field accepted it.
+    'family.country.EG': 'Egypt',
+    'family.country.SA': 'Saudi Arabia',
+    'family.timezoneExplainer':
+        'Your family’s day will start and end on {{country}} local time — streaks, daily limits and rewards all follow it.',
     'family.continueButton': 'Continue',
     'dashboard.title': 'Home',
     // PHASE E (§6). The parent home has to answer two questions on one
@@ -1119,7 +1126,10 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'family.setupTitle': 'إعداد عائلتك',
     'family.name': 'اسم العائلة',
     'family.country': 'الدولة',
-    'family.numberOfChildren': 'عدد الأطفال',
+    'family.country.EG': 'مصر',
+    'family.country.SA': 'السعودية',
+    'family.timezoneExplainer':
+        'سيبدأ يوم عائلتك وينتهي بتوقيت {{country}} المحلي — تتبعه سلاسل الإنجاز والحدود اليومية والمكافآت.',
     'family.continueButton': 'متابعة',
     'dashboard.title': 'الرئيسية',
     // PHASE E (§6) — العربية أولًا: هذه هي الإجابتان اللتان تُفتح بهما الشاشة.
