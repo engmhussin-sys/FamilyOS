@@ -111,6 +111,28 @@ export class PrismaPairingDeviceRepository implements IPairingDeviceRepository {
     }
   }
 
+  async setChildDevicePushToken(deviceId: string, pushToken: string): Promise<void> {
+    // UPDATE BY ID. The caller has already resolved this id from a verified
+    // device token and asserted the device is ACTIVE and paired to a child —
+    // nothing here is derived from a request body, so there is no id to probe.
+    await this.prisma.device.update({
+      where: { id: deviceId },
+      data: { pushToken, lastSeenAt: new Date() },
+    });
+  }
+
+  async clearDeadChildDevicePushToken(pushToken: string): Promise<number> {
+    // `ownerType: 'CHILD'` is the scope line, and it is the whole reason this
+    // is safe to ship while FCM_CONTRACT.md item 13 (the PARENT half) is still
+    // open and owned elsewhere: a parent's dead token is deliberately left
+    // alone by this method rather than half-handled by two owners.
+    const { count } = await this.prisma.device.updateMany({
+      where: { pushToken, ownerType: 'CHILD' },
+      data: { pushToken: null },
+    });
+    return count;
+  }
+
   async findPushTokensForUser(userId: string): Promise<string[]> {
     const devices = await this.prisma.device.findMany({
       where: { userId, pushToken: { not: null } },

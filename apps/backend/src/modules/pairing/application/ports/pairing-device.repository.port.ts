@@ -83,4 +83,36 @@ export interface IPairingDeviceRepository {
   /** Sprint 5 — the read side push-sending needs: every push token
    * registered for a given user, across however many devices. */
   findPushTokensForUser(userId: string): Promise<string[]>;
+
+  /**
+   * THE CHILD HALF OF `Device.pushToken`, which had no writer at all.
+   *
+   * `upsertParentDevicePushToken` above is keyed on `(userId, platform)` and
+   * CREATES a row when it finds none — correct for a parent, whose app instance
+   * is not otherwise represented anywhere. A child device is the opposite case
+   * in both respects: its `Device` row already exists (pairing created it, with
+   * a public key and a trust level) and it has no `userId` at all, so the parent
+   * method could neither find it nor legitimately create it.
+   *
+   * So this is an UPDATE BY PRIMARY KEY and nothing else. Re-registering the
+   * same token writes the same value to the same row — idempotent by
+   * construction, not by a check that could be forgotten, and structurally
+   * incapable of producing a second row.
+   */
+  setChildDevicePushToken(deviceId: string, pushToken: string): Promise<void>;
+
+  /**
+   * PERMANENT FCM FAILURE -> the token is nulled. `docs/integration/FCM_CONTRACT.md`
+   * §7 names this as a real, open gap ("nothing clears `Device.pushToken`") and
+   * spells out the required behaviour: null the token, per token, from that
+   * token's own send outcome, and NEVER delete the `Device` row — the device
+   * still exists, only its token died, and the next registration restores it.
+   *
+   * Keyed on the TOKEN rather than on a device id on purpose: the delivery side
+   * knows which token FCM rejected, and matching on the token means a device
+   * that has ALREADY re-registered a fresh one (the `onTokenRefresh` race) does
+   * not get its new, working token cleared by a late failure report about the
+   * old one.
+   */
+  clearDeadChildDevicePushToken(pushToken: string): Promise<number>;
 }
