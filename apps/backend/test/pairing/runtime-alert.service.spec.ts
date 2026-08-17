@@ -62,4 +62,52 @@ describe('RuntimeAlertService', () => {
 
     expect(runtimeAlertRepositoryMock.createForFamilyOwner).not.toHaveBeenCalled();
   });
+
+  describe('deviceRevoked', () => {
+    it('tells the family owner, with the device and the reason the parent gave', async () => {
+      await service.deviceRevoked({
+        familyId: 'family-1',
+        childId: 'child-1',
+        deviceId: 'device-1',
+        reason: 'code entered on the wrong phone',
+      });
+
+      expect(runtimeAlertRepositoryMock.createForFamilyOwner).toHaveBeenCalledWith(
+        expect.objectContaining({
+          familyId: 'family-1',
+          childId: 'child-1',
+          priority: 'HIGH',
+          data: {
+            alertType: 'DEVICE_REVOKED',
+            deviceId: 'device-1',
+            reason: 'code entered on the wrong phone',
+          },
+        }),
+      );
+    });
+
+    it('is HIGH and not CRITICAL — a parent did this on purpose, so it must not bypass quiet hours', async () => {
+      // The accessibility alert above IS CRITICAL because the enforcement
+      // surface is off and something may be being defeated. Nothing is being
+      // defeated here, and the generic RUNTIME_ALERT type is already classified
+      // DEFER/SYSTEM, so this cannot wake a household at 03:00.
+      await service.deviceRevoked({ familyId: 'f', childId: 'c', deviceId: 'd' });
+
+      const call = runtimeAlertRepositoryMock.createForFamilyOwner.mock.calls[0][0];
+      expect(call.priority).toBe('HIGH');
+      expect(call.type).toBeUndefined(); // i.e. the default, RUNTIME_ALERT
+      expect(call.data.reason).toBeUndefined();
+    });
+
+    it('keys the notification on (child, device) so a duplicate is refused by the unique index', async () => {
+      await service.deviceRevoked({ familyId: 'f', childId: 'child-1', deviceId: 'device-1' });
+
+      // `forEntity`, not `forRecurringSignal`: a device can be revoked exactly
+      // once, so this key is eternal rather than bucketed — recomputing it a
+      // week later still collides.
+      expect(runtimeAlertRepositoryMock.createForFamilyOwner.mock.calls[0][0].sourceEventId).toBe(
+        'runtime:child-1:device-1:DEVICE_REVOKED',
+      );
+    });
+  });
 });

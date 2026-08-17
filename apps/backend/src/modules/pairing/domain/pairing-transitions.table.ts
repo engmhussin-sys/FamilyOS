@@ -55,7 +55,23 @@ export const PAIRING_TRANSITIONS: readonly IPairingTransitionRule[] = [
   // --- Suspension / reactivation / revocation / removal ---
   { event: 'DEVICE_SUSPENDED', allowedFromStates: ['HEALTHY', 'DEGRADED'], toState: 'SUSPENDED', actorType: 'USER' },
   { event: 'DEVICE_REACTIVATED', allowedFromStates: ['SUSPENDED'], toState: 'ACTIVATED', actorType: 'USER' },
-  { event: 'DEVICE_REVOKED', allowedFromStates: ['HEALTHY', 'DEGRADED', 'SUSPENDED'], toState: 'REVOKED', actorType: 'USER' },
+  // ACTIVATED IS A LEGAL «FROM» FOR REVOCATION, and its absence was a real
+  // hole rather than a deliberate omission.
+  //
+  // A device enters ACTIVATED the instant the parent confirms it and leaves it
+  // only on its FIRST HEARTBEAT (HEARTBEAT_RECEIVED -> HEALTHY). That window is
+  // measured in seconds when the child's phone is switched on, and in HOURS OR
+  // DAYS when it is not: a code typed into the wrong phone, a device left in a
+  // drawer, a pairing abandoned halfway. It is also exactly the window in which
+  // a parent who has just realised they mis-paired wants to undo it.
+  //
+  // Before this line, `POST /pairing/revoke` answered that parent with 409
+  // `InvalidPairingTransitionException` — the one moment revocation is most
+  // obviously correct was the one moment it was refused, and the only way out
+  // was to wait for the mis-paired device to phone home first. REVOKED is
+  // already reachable from every LATER state; this makes it reachable from the
+  // earliest one at which a device holds a usable token.
+  { event: 'DEVICE_REVOKED', allowedFromStates: ['ACTIVATED', 'HEALTHY', 'DEGRADED', 'SUSPENDED'], toState: 'REVOKED', actorType: 'USER' },
   { event: 'DEVICE_REMOVED', allowedFromStates: ['REVOKED'], toState: 'REMOVED', actorType: 'USER' },
 
   // --- Rejection (Decision-056: broadened to any post-accept, pre-activation state) ---
