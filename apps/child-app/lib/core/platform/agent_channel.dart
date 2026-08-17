@@ -40,6 +40,24 @@ abstract class AgentPlatformChannel {
   Future<void> requestBatteryOptimizationExemption();
   Future<bool> areNotificationsGranted();
 
+  /// G18 — asks for POST_NOTIFICATIONS and returns the platform's answer as one
+  /// of the `NotificationPermissionOutcome` wire strings: 'granted',
+  /// 'already_granted', 'not_required', 'denied', 'permanently_denied'.
+  ///
+  /// A STRING, not a bool, because the caller must distinguish "declined once"
+  /// (worth offering again another day) from "declined for good" (Android will
+  /// never show the dialog again, so only the settings route remains).
+  ///
+  /// The raw wire string stops here, exactly as [getCapabilityReport] keeps a
+  /// raw Map at this boundary: the typed `NotificationPermissionOutcome` is
+  /// produced one layer up, in the permissions plugin.
+  Future<String> requestNotificationsPermission();
+
+  /// G18 — opens this app's own notification settings page. Returns whether a
+  /// screen actually opened; the native side never throws on a device that has
+  /// no such Activity.
+  Future<bool> openNotificationSettings();
+
   // --- Sprint 4: Device Capability Engine ---
   /// Returns the raw field map exactly matching the backend's
   /// ReportCapabilitiesDto shape — kept as a Map here (not a typed

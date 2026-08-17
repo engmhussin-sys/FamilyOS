@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../../core/notifications/push_registration_service.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// DESIGN PASS: unread notifications now get a colored accent bar and
@@ -19,10 +20,56 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   List<dynamic>? _notifications;
   String? _errorMessage;
 
+  /// G18. Null until the first read completes, so nothing is claimed about the
+  /// permission before it has actually been checked.
+  ParentNotificationPermissionState? _permissionState;
+
+  /// G18. Set once the parent has answered the system dialog in this session, so
+  /// a "denied" answer does not immediately redraw the same banner underneath
+  /// the snackbar explaining the denial. No nagging within one visit.
+  bool _permissionAsked = false;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _refreshPermissionState();
+  }
+
+  /// G18 — reads the permission WITHOUT prompting.
+  ///
+  /// The banner is offered only when there is a real dialog to show and a real
+  /// channel to deliver on: `unavailable` (no Firebase in this build) shows
+  /// nothing at all, because asking for a permission that could not be used
+  /// would be a lie about what this build can do.
+  Future<void> _refreshPermissionState() async {
+    final state =
+        await ref.read(pushRegistrationServiceProvider).currentPermissionState();
+    if (mounted) setState(() => _permissionState = state);
+  }
+
+  Future<void> _requestPermission() async {
+    setState(() => _permissionAsked = true);
+    final state = await ref
+        .read(pushRegistrationServiceProvider)
+        .requestPermissionAfterExplanation();
+    if (!mounted) return;
+    setState(() => _permissionState = state);
+
+    final t = ref.read(localeControllerProvider.notifier).t;
+    final message = switch (state) {
+      ParentNotificationPermissionState.granted => t('notifications.permGranted'),
+      ParentNotificationPermissionState.denied ||
+      ParentNotificationPermissionState.notRequested =>
+        t('notifications.permDenied'),
+      // Nothing useful to say about a build with no Firebase, and the banner
+      // was never shown in that state anyway.
+      ParentNotificationPermissionState.unavailable => null,
+    };
+    if (message == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 5)),
+    );
   }
 
   Future<void> _load() async {
@@ -56,7 +103,71 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           TextButton(onPressed: _markAllRead, child: Text(t('notifications.markAllRead'))),
         ],
       ),
-      body: _errorMessage != null
+      body: Column(
+        children: [
+          _permissionBanner(t),
+          Expanded(child: _body(t)),
+        ],
+      ),
+    );
+  }
+
+  /// G18 — the explanation, in the one place where the value is already visible.
+  ///
+  /// Shown ONLY when there is both something to gain and a dialog left to show:
+  /// not when already granted, not when this build has no Firebase to deliver
+  /// with, and not again after the parent has answered in this session.
+  Widget _permissionBanner(String Function(String) t) {
+    final state = _permissionState;
+    final shouldShow = !_permissionAsked &&
+        (state == ParentNotificationPermissionState.notRequested ||
+            state == ParentNotificationPermissionState.denied);
+    if (!shouldShow) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.sage500.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.sage500.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.notifications_off_outlined, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  t('notifications.permTitle'),
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            t('notifications.permBody'),
+            style: const TextStyle(fontSize: 14, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: AlignmentDirectional.centerEnd,
+            child: FilledButton(
+              onPressed: _requestPermission,
+              child: Text(t('notifications.permEnable')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(String Function(String) t) {
+    return _errorMessage != null
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -115,7 +226,6 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                           );
                         },
                       ),
-                    ),
-    );
+                    );
   }
 }

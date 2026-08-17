@@ -29,6 +29,42 @@ import io.flutter.plugin.common.MethodChannel
  * AgentCapabilityNotImplementedException — never a silent fake success.
  */
 class MainActivity : FlutterActivity() {
+
+    /**
+     * G18. Android delivers the POST_NOTIFICATIONS answer here, not to the
+     * MethodChannel call that asked for it, so the two must be bridged.
+     *
+     * `super` IS STILL CALLED IN EVERY CASE, and deliberately: Flutter's own
+     * plugin machinery dispatches permission results through this same override
+     * (a future plugin that requests a permission would otherwise never hear
+     * back, which is the classic way adding one override quietly breaks an
+     * unrelated plugin). The requester consumes only its own REQUEST_CODE and
+     * reports whether it did.
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        NotificationPermissionRequester.onRequestPermissionsResult(
+            this,
+            requestCode,
+            permissions,
+            grantResults,
+        )
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
+    /**
+     * A pending reply must not outlive the engine it would reply into: a
+     * MethodChannel reply after the engine is gone is a crash, and a retained
+     * callback leaks this Activity across a configuration change.
+     */
+    override fun onDestroy() {
+        NotificationPermissionRequester.reset()
+        super.onDestroy()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -96,6 +132,33 @@ class MainActivity : FlutterActivity() {
                 }
                 AgentChannel.METHOD_ARE_NOTIFICATIONS_GRANTED -> {
                     result.success(permissionManager.areNotificationsGranted())
+                }
+
+                // --- G18: the POST_NOTIFICATIONS runtime request ---
+                // The one permission this app needs that is a NORMAL runtime
+                // permission rather than a Settings deep-link, and the one that
+                // was DECLARED IN THE MANIFEST SINCE SPRINT 4 AND NEVER
+                // REQUESTED — which on Android 13+ silently dropped every
+                // notification this app posts, the entire Smart Notification
+                // Engine's output included.
+                //
+                // `this` (the Activity), not applicationContext: the platform
+                // requires an Activity to show the dialog, which is precisely
+                // why PermissionManager could not own this call.
+                //
+                // The reply is asynchronous. NotificationPermissionRequester
+                // guarantees `result` is answered EXACTLY ONCE — including when
+                // the dialog is cancelled, when a second request arrives while
+                // the first is open, and when the request cannot be dispatched
+                // at all.
+                AgentChannel.METHOD_REQUEST_NOTIFICATIONS_PERMISSION -> {
+                    NotificationPermissionRequester.request(this) { outcome ->
+                        result.success(outcome)
+                    }
+                }
+
+                AgentChannel.METHOD_OPEN_NOTIFICATION_SETTINGS -> {
+                    result.success(permissionManager.openNotificationSettings())
                 }
 
                 // --- F2 (verdict risk R7): OEM background-restriction step ---

@@ -72,6 +72,18 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     return _invoke<bool>(AgentChannelConstants.methodAreNotificationsGranted);
   }
 
+  @override
+  Future<String> requestNotificationsPermission() async {
+    return _invoke<String>(
+      AgentChannelConstants.methodRequestNotificationsPermission,
+    );
+  }
+
+  @override
+  Future<bool> openNotificationSettings() async {
+    return _invoke<bool>(AgentChannelConstants.methodOpenNotificationSettings);
+  }
+
   // --- Sprint 4: Device Capability Engine ---
 
   @override

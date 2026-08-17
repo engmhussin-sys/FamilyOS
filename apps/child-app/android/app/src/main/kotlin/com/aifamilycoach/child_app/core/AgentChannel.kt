@@ -28,6 +28,60 @@ object AgentChannel {
     const val METHOD_REQUEST_BATTERY_OPTIMIZATION_EXEMPTION = "requestBatteryOptimizationExemption"
     const val METHOD_ARE_NOTIFICATIONS_GRANTED = "areNotificationsGranted"
 
+    /**
+     * G18 — REQUESTS POST_NOTIFICATIONS, the one permission this app needs
+     * that is a NORMAL runtime permission rather than a special access
+     * granted from a Settings screen.
+     *
+     * WHY THIS EXISTS AT ALL: the manifest has declared POST_NOTIFICATIONS
+     * since Sprint 4 and NOTHING EVER REQUESTED IT. On Android 13+ (API 33)
+     * a declared-but-never-requested POST_NOTIFICATIONS means every
+     * notification this app posts is silently dropped — the
+     * foreground-service notification, RuntimeAlertNotifier's alerts, and
+     * every reward/learning message the Smart Notification Engine produces.
+     * The engine passed its tests and would have been invisible on a real
+     * device.
+     *
+     * Answers with one of [NotificationPermissionOutcome] — never a bare
+     * boolean, because "declined once" and "declined for good" need
+     * different handling and a boolean cannot tell them apart.
+     */
+    const val METHOD_REQUEST_NOTIFICATIONS_PERMISSION = "requestNotificationsPermission"
+
+    /**
+     * Opens THIS app's own notification settings page — the only remaining
+     * route once Android has stopped showing the runtime dialog.
+     */
+    const val METHOD_OPEN_NOTIFICATION_SETTINGS = "openNotificationSettings"
+
+    /**
+     * The closed vocabulary [METHOD_REQUEST_NOTIFICATIONS_PERMISSION]
+     * answers with. MUST mirror `NotificationPermissionOutcome` in
+     * lib/plugins/permissions/domain/permission_status.dart — there is no
+     * compile-time link between the two languages.
+     */
+    object NotificationPermissionOutcome {
+        /** Below API 33 the permission does not exist; no dialog is shown. */
+        const val NOT_REQUIRED = "not_required"
+
+        /** Already granted before this call — no dialog was shown. */
+        const val ALREADY_GRANTED = "already_granted"
+
+        /** The child saw the system dialog and allowed. */
+        const val GRANTED = "granted"
+
+        /** The child saw the dialog and declined. Asking again is permitted. */
+        const val DENIED = "denied"
+
+        /**
+         * Android will not show the dialog again (declined twice, or "don't
+         * ask again"). The only remaining route is this app's notification
+         * settings page, so the UI must offer THAT rather than a button that
+         * now silently does nothing.
+         */
+        const val PERMANENTLY_DENIED = "permanently_denied"
+    }
+
     // --- Sprint 4: Device Capability Engine ---
     const val METHOD_GET_CAPABILITY_REPORT = "getCapabilityReport"
 

@@ -1,16 +1,19 @@
 package com.aifamilycoach.child_app.core
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AppOpsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 /**
  * Sprint 4's Permission Manager. Deliberately narrow: every method here
@@ -217,10 +220,69 @@ class PermissionManager(private val context: Context) {
      * 33+, unlike the special-access permissions above) — it must be
      * requested via `ActivityCompat.requestPermissions` from an Activity
      * context, not a Settings deep-link. That call site belongs to
-     * MainActivity (or a future onboarding Activity), not this class —
+     * MainActivity (see NotificationPermissionRequester), not this class —
      * PermissionManager only reports the current state here.
      */
     fun requiresRuntimeNotificationPermission(): Boolean {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    }
+
+    /**
+     * G18. The PERMISSION-level answer, deliberately distinct from
+     * [areNotificationsGranted] above, which reports whether notifications are
+     * enabled for this app AS A WHOLE.
+     *
+     * THE DIFFERENCE MATTERS AND IS THE REASON BOTH EXIST:
+     * `areNotificationsEnabled()` is false both when POST_NOTIFICATIONS was
+     * never granted AND when the user muted the app from Settings, so it
+     * cannot answer "is there still a runtime dialog worth showing?". Only a
+     * permission check can, and showing a dialog Android will never display is
+     * exactly how an app ends up with a dead button.
+     *
+     * Below API 33 the permission is granted at install time, so this is true
+     * there by definition.
+     */
+    fun isPostNotificationsPermissionGranted(): Boolean {
+        if (!requiresRuntimeNotificationPermission()) return true
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * Opens this app's own notification settings page — the only route left
+     * once Android has stopped showing the runtime dialog (declined twice, or
+     * "don't ask again").
+     *
+     * Never throws, and falls back from the notification-specific screen to
+     * the app-details screen: a missing OEM Activity is the single most common
+     * crash in code that ships this feature, the same reasoning
+     * OemBackgroundRestrictionManager already applies to autostart screens.
+     */
+    fun openNotificationSettings(): Boolean {
+        val candidates = mutableListOf<Intent>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            candidates += Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+        }
+        candidates += Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${context.packageName}"),
+        ).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+
+        for (intent in candidates) {
+            try {
+                context.startActivity(intent)
+                return true
+            } catch (_: Throwable) {
+                // Fall through to the next, less specific screen.
+            }
+        }
+        return false
     }
 }

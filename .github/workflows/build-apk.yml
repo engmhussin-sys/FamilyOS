@@ -191,6 +191,18 @@ jobs:
       - name: Gradle scripts parse as Groovy
         run: python3 scripts/verify_gradle_syntax.py
 
+      # G18. Its own negative control FIRST, for the same reason as the preflight
+      # controls above: this checker's silence is worthless unless it can be
+      # shown to fail on the defect it exists to catch — a POST_NOTIFICATIONS
+      # declared in the manifest that nothing ever requests, which on Android 13+
+      # makes every notification the app posts invisible while every unit test
+      # still passes.
+      - name: Notification permission — negative control
+        run: python3 scripts/verify_notification_permission.py --self-test
+
+      - name: Notification permission is declared AND requested (both apps)
+        run: python3 scripts/verify_notification_permission.py
+
       # PHASE G. Runs here, in the cheap job, because the property it protects
       # is one nobody notices until an upload is rejected: that a RELEASE build
       # cannot be signed with the debug key and that no key material is

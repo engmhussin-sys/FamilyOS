@@ -27,6 +27,15 @@ class AgentChannelConstants {
       'requestBatteryOptimizationExemption';
   static const String methodAreNotificationsGranted = 'areNotificationsGranted';
 
+  /// G18 — requests POST_NOTIFICATIONS. Answers with one of the
+  /// `NotificationPermissionOutcome` wire strings, never a bool.
+  static const String methodRequestNotificationsPermission =
+      'requestNotificationsPermission';
+
+  /// G18 — opens this app's own notification settings page, the only route
+  /// left once Android has stopped showing the runtime dialog.
+  static const String methodOpenNotificationSettings = 'openNotificationSettings';
+
   // --- Sprint 4: Device Capability Engine ---
   static const String methodGetCapabilityReport = 'getCapabilityReport';
 

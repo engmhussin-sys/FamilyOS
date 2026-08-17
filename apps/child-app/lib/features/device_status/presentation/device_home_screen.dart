@@ -9,6 +9,7 @@ import '../../../plugins/telemetry/contracts/runtime_telemetry.dart';
 import '../../family_growth/presentation/my_growth_screen.dart';
 import '../../family_growth/presentation/rewards_screen.dart';
 import '../../onboarding/presentation/accessibility_priming_screen.dart';
+import '../../onboarding/presentation/notification_priming_screen.dart';
 import '../../onboarding/presentation/oem_setup_screen.dart';
 
 /// Combines Sprint 4's three Flutter requirements ("Permission
@@ -102,7 +103,73 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
       final proceed = await AccessibilityPrimingScreen.show(context);
       if (!proceed) return;
     }
+
+    // G18. Notifications are the one permission on this list that is a NORMAL
+    // runtime permission: Android shows its own dialog instead of a Settings
+    // screen, and it shows it at most twice in the app's lifetime. So this arm
+    // is handled separately — explain, then ask, then respond to the ANSWER,
+    // which the fire-and-forget path below cannot see.
+    if (status.kind == AgentPermissionKind.notifications) {
+      await _requestNotificationPermission();
+      return;
+    }
+
     await ref.read(permissionStatusServiceProvider).requestPermission(status.kind);
+  }
+
+  /// G18 — the explained ask, and the graceful denial.
+  ///
+  /// Declining is a NON-EVENT by design: the child is told plainly that
+  /// everything else still works, and nothing nags them afterwards. That is
+  /// CONTEXT §3.7 (non-punitive) applied to a permission prompt — the same
+  /// instinct as the accessibility path's "declining is a no-op".
+  ///
+  /// A PERMANENT denial is the one case needing more than a message, because
+  /// the row the child just tapped can never work again: Android will not show
+  /// the dialog, so the settings screen is offered rather than leaving a control
+  /// that silently does nothing.
+  Future<void> _requestNotificationPermission() async {
+    final proceed = await NotificationPrimingScreen.show(context);
+    if (!proceed) return;
+
+    final service = ref.read(permissionStatusServiceProvider);
+    final outcome = await service.requestNotificationPermission();
+    if (!mounted) return;
+
+    final t = ref.read(localeControllerProvider.notifier).t;
+
+    switch (outcome) {
+      case NotificationPermissionOutcome.granted:
+      case NotificationPermissionOutcome.alreadyGranted:
+      case NotificationPermissionOutcome.notRequired:
+        _showSnack(t('notifPriming.granted'));
+      case NotificationPermissionOutcome.denied:
+        _showSnack(t('notifPriming.denied'));
+      case NotificationPermissionOutcome.permanentlyDenied:
+        _showSnack(
+          t('notifPriming.permanentlyDenied'),
+          action: SnackBarAction(
+            label: t('notifPriming.openSettings'),
+            onPressed: () => service.openNotificationSettings(),
+          ),
+        );
+    }
+
+    // The checklist must reflect the new state immediately: on this path there
+    // is no Settings round trip, so didChangeAppLifecycleState never fires.
+    await _refreshPermissions();
+  }
+
+  void _showSnack(String message, {SnackBarAction? action}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: action,
+        duration:
+            action == null ? const Duration(seconds: 4) : const Duration(seconds: 8),
+      ),
+    );
   }
 
   /// Sprint 7's Runtime Diagnostics UI — surfaces

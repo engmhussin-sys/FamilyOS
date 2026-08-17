@@ -300,6 +300,40 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'priming.later': 'Later',
 
     // ------------------------------------------------------------------
+    // G18 — POST_NOTIFICATIONS pre-permission priming.
+    //
+    // Shown IMMEDIATELY BEFORE the Android 13+ system notification dialog,
+    // and never on cold start. Android shows that dialog at most twice in
+    // an app's entire lifetime, so spending one of those on a child who has
+    // no idea what is being asked wastes a chance that does not come back.
+    //
+    // The copy names what the CHILD gets (their own reward news, a warning
+    // before quiet hours) rather than what the app wants, and promises
+    // nothing the app does not do: no marketing, no telling-off, and
+    // declining is presented as genuinely fine — CONTEXT §3.7,
+    // non-punitive.
+    // ------------------------------------------------------------------
+    'notifPriming.title': 'Can ABNY send you little messages?',
+    'notifPriming.what':
+        'ABNY would like to send short messages to this phone — never more than a line or two.',
+    'notifPriming.example1': 'When you have earned a new reward.',
+    'notifPriming.example2':
+        'A heads-up before quiet hours begin, so nothing stops suddenly in the middle of a game.',
+    'notifPriming.example3': 'A "well done" when you finish something you planned.',
+    'notifPriming.why':
+        'Without this permission Android hides all of them, and you would only find out by opening the app yourself.',
+    'notifPriming.noSpam':
+        'No adverts, and never a message that tells you off. You can switch them off again whenever you like.',
+    'notifPriming.allow': 'Yes, send them',
+    'notifPriming.later': 'Not now',
+    'notifPriming.granted': 'Done — ABNY can send you messages now.',
+    'notifPriming.denied':
+        'No problem. Everything else still works — you just will not get messages. You can turn them on any time from this screen.',
+    'notifPriming.permanentlyDenied':
+        'Android will not ask again, so messages have to be switched on from the phone settings.',
+    'notifPriming.openSettings': 'Open settings',
+
+    // ------------------------------------------------------------------
     // F2 — OEM autostart / battery step (audit verdict risk R7).
     // ------------------------------------------------------------------
     'oem.title': 'Keep the plan running',
@@ -613,6 +647,33 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'priming.reversible': 'تستطيع إيقافها من الشاشة نفسها متى شئت.',
     'priming.open': 'افتح الإعدادات',
     'priming.later': 'ليس الآن',
+
+    // ------------------------------------------------------------------
+    // G18 — شاشة التمهيد قبل إذن الإشعارات (POST_NOTIFICATIONS).
+    //
+    // تظهر قبل نافذة النظام في أندرويد 13+ مباشرةً، ولا تظهر أبدًا عند
+    // فتح التطبيق أول مرة. أندرويد يعرض تلك النافذة مرتين على الأكثر في
+    // عمر التطبيق كله، لذا إظهارها لطفل لا يعرف ما المطلوب منه يُهدر
+    // فرصة لا تعود.
+    //
+    // النبرة: تُخبر الطفل بما سيصله هو (أخبار مكافآته، تنبيه قبل وقت
+    // النوم) لا بما يريده التطبيق، ولا تَعِد بشيء لا يفعله التطبيق: لا
+    // إعلانات، ولا رسالة تلوم الطفل، والرفض مقبول تمامًا — وفق
+    // CONTEXT §3.7 (غير عقابي).
+    // ------------------------------------------------------------------
+    'notifPriming.title': 'هل تسمح لـ«ابني» أن يرسل لك رسائل صغيرة؟',
+    'notifPriming.what': 'يريد «ابني» أن يرسل إلى هذا الهاتف رسائل قصيرة — سطر أو سطران، لا أكثر.',
+    'notifPriming.example1': 'عندما تكسب مكافأة جديدة.',
+    'notifPriming.example2': 'تنبيه لطيف قبل أن يبدأ وقت الهدوء، حتى لا يتوقف شيء فجأة في وسط اللعب.',
+    'notifPriming.example3': '«أحسنت» عندما تُنهي شيئًا خطّطت له.',
+    'notifPriming.why': 'بدون هذا الإذن يُخفي أندرويد كل هذه الرسائل، ولن تعرف بها إلا إذا فتحت التطبيق بنفسك.',
+    'notifPriming.noSpam': 'لا إعلانات، ولا رسالة تلومك أبدًا. وتستطيع إيقافها متى شئت.',
+    'notifPriming.allow': 'نعم، أرسلها',
+    'notifPriming.later': 'ليس الآن',
+    'notifPriming.granted': 'تمّ — يستطيع «ابني» أن يرسل لك رسائل الآن.',
+    'notifPriming.denied': 'لا مشكلة. كل شيء آخر يعمل كما هو، لكن لن تصلك رسائل. تستطيع تشغيلها في أي وقت من هذه الشاشة.',
+    'notifPriming.permanentlyDenied': 'لن يسأل أندرويد مرة أخرى، لذا يجب تشغيل الرسائل من إعدادات الهاتف.',
+    'notifPriming.openSettings': 'افتح الإعدادات',
 
     // ------------------------------------------------------------------
     // F2 — خطوة إعدادات الشركة المصنّعة (خطر R7).

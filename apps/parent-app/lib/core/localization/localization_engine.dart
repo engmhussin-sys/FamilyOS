@@ -574,6 +574,24 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'notifications.title': 'Notifications',
     'notifications.empty': 'No notifications yet.',
     'notifications.markAllRead': 'Mark all as read',
+
+    // ------------------------------------------------------------------
+    // G18 — POST_NOTIFICATIONS priming, shown INSIDE this screen.
+    //
+    // The permission used to be requested during cold start from
+    // SplashScreen, before the parent had seen a single notification. It is
+    // asked for here now, where the parent is looking at the exact messages
+    // the permission governs — so the explanation is one sentence about
+    // something already on screen, not a sales pitch.
+    // ------------------------------------------------------------------
+    'notifications.permTitle': 'These are not reaching your phone',
+    'notifications.permBody':
+        'You can read them here, but Android will not show them on your phone until you allow notifications. Nothing else about the app changes.',
+    'notifications.permEnable': 'Allow notifications',
+    'notifications.permGranted': 'Done — these will reach your phone from now on.',
+    'notifications.permDenied':
+        'Not allowed. You can still read everything here. To change it later, turn notifications on for ABNY in your phone settings.',
+
     'settings.title': 'Settings',
     'settings.language': 'Language',
     'settings.profile': 'Profile',
@@ -1148,6 +1166,23 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'notifications.title': 'الإشعارات',
     'notifications.empty': 'لا يوجد إشعارات بعد.',
     'notifications.markAllRead': 'تعليم الكل كمقروء',
+
+    // ------------------------------------------------------------------
+    // G18 — تمهيد إذن الإشعارات، يظهر داخل هذه الشاشة نفسها.
+    //
+    // كان الإذن يُطلب عند بدء التطبيق من شاشة البداية، قبل أن يرى الأب
+    // إشعارًا واحدًا. أصبح يُطلب هنا، حيث ينظر الأب إلى الرسائل نفسها
+    // التي يحكمها الإذن — فيصبح الشرح جملة واحدة عن شيء أمامه على
+    // الشاشة، لا محاولة إقناع.
+    // ------------------------------------------------------------------
+    'notifications.permTitle': 'هذه الرسائل لا تصل إلى هاتفك',
+    'notifications.permBody':
+        'تستطيع قراءتها هنا، لكن أندرويد لن يعرضها على هاتفك حتى تسمح بالإشعارات. لا يتغير أي شيء آخر في التطبيق.',
+    'notifications.permEnable': 'اسمح بالإشعارات',
+    'notifications.permGranted': 'تمّ — ستصل هذه الرسائل إلى هاتفك من الآن.',
+    'notifications.permDenied':
+        'لم يُسمح بها. تستطيع قراءة كل شيء هنا كما هو. ولتغيير ذلك لاحقًا، شغّل إشعارات «ابني» من إعدادات هاتفك.',
+
     'settings.title': 'الإعدادات',
     'settings.language': 'اللغة',
     'settings.profile': 'الملف الشخصي',
