@@ -118,6 +118,20 @@ export class GrowthSettingsService {
   }
 
   /**
+   * G16. Reads a BOOLEAN setting.
+   *
+   * Anything that is not exactly `true` resolves to `false`, and the direction is
+   * deliberate: every boolean setting in this table is a GATE whose documented
+   * default is off, so the safe reading of an unexpected value is "off". `get`
+   * has already logged the discrepancy loudly and substituted the documented
+   * default before this line runs.
+   */
+  async bool(key: string): Promise<boolean> {
+    const value = await this.get(key);
+    return value === true;
+  }
+
+  /**
    * The reporting timezone for a country's day boundary, with the platform
    * default as the fallback. `**` is the platform-wide sentinel used by
    * `growth_daily_metrics`.

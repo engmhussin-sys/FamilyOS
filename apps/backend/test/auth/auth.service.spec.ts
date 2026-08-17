@@ -6,9 +6,11 @@ import { USER_REPOSITORY } from '../../src/modules/auth/application/ports/auth.r
 import { AuditService } from '../../src/modules/audit/application/audit.service';
 import { AttributionService } from '../../src/modules/analytics/application/attribution.service';
 import { ReferralService } from '../../src/modules/analytics/application/referral.service';
+import { PilotEnrollmentService } from '../../src/modules/analytics/application/pilot-enrollment.service';
 import {
   EmailAlreadyRegisteredException,
   InvalidCredentialsException,
+  PilotInviteRequiredException,
 } from '../../src/modules/auth/domain/auth.errors';
 
 describe('AuthService', () => {
@@ -38,12 +40,25 @@ describe('AuthService', () => {
   const attributionServiceMock = { captureAtRegistration: jest.fn() };
   const referralServiceMock = { registerReferral: jest.fn() };
 
+  // G16. THE DEFAULT IS THE DISABLED GATE, and that is the point: every other
+  // test in this file runs against it and still passes, which is precisely the
+  // "the flag defaults to off, so nothing changes for existing families" claim.
+  const pilotServiceMock = { evaluate: jest.fn(), redeem: jest.fn() };
+  const PILOT_DISABLED = {
+    decision: 'PILOT_DISABLED' as const,
+    allowed: true,
+    cohortId: null,
+    inviteId: null,
+  };
+
   let authService: AuthService;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     attributionServiceMock.captureAtRegistration.mockResolvedValue('ORGANIC');
     referralServiceMock.registerReferral.mockResolvedValue({ bound: true, reason: null });
+    pilotServiceMock.evaluate.mockResolvedValue(PILOT_DISABLED);
+    pilotServiceMock.redeem.mockResolvedValue(true);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -54,6 +69,7 @@ describe('AuthService', () => {
         { provide: AuditService, useValue: auditServiceMock },
         { provide: AttributionService, useValue: attributionServiceMock },
         { provide: ReferralService, useValue: referralServiceMock },
+        { provide: PilotEnrollmentService, useValue: pilotServiceMock },
       ],
     }).compile();
 
@@ -109,6 +125,157 @@ describe('AuthService', () => {
         familyId: 'family-1',
         familyRole: 'OWNER',
       });
+    });
+
+    // ====================================================================
+    // G16 — THE CONTROLLED-PILOT GATE AT THE REGISTRATION BOUNDARY.
+    //
+    // The gate's own decision logic is tested in test/analytics/pilot-gate.spec.ts
+    // and its constraints against real PostgreSQL in
+    // test/database/pilot-cohorts.integration.spec.ts. What is asserted HERE is
+    // only what AuthService does with the answer — because the expensive mistake
+    // is not a wrong decision, it is a correct decision applied at the wrong
+    // moment and leaving an account behind.
+    // ====================================================================
+
+    it('G16: the flag defaults to OFF — the gate is consulted and nothing changes', async () => {
+      userRepositoryMock.findByEmail.mockResolvedValue(null);
+      passwordServiceMock.hash.mockResolvedValue('hashed-password');
+      userRepositoryMock.createParentWithFamily.mockResolvedValue({
+        user: { id: 'user-1', email: 'new@example.com', fullName: 'New Parent' },
+        family: { id: 'family-1' },
+        membership: { role: 'OWNER' },
+      });
+
+      await authService.register({
+        email: 'new@example.com',
+        password: 'Sup3rSecret!',
+        fullName: 'New Parent',
+        acceptedTerms: true,
+      });
+
+      // Consulted on every registration — the gate is not conditional on a
+      // caller remembering to ask for it.
+      expect(pilotServiceMock.evaluate).toHaveBeenCalledTimes(1);
+      // Disabled means the account is created exactly as before...
+      expect(userRepositoryMock.createParentWithFamily).toHaveBeenCalledTimes(1);
+      // ...and no invitation is redeemed, because there is none.
+      expect(pilotServiceMock.redeem).not.toHaveBeenCalled();
+    });
+
+    it('G16: an UNINVITED family in a pilot country is refused, and NO account is created', async () => {
+      userRepositoryMock.findByEmail.mockResolvedValue(null);
+      pilotServiceMock.evaluate.mockResolvedValue({
+        decision: 'NOT_INVITED',
+        allowed: false,
+        cohortId: null,
+        inviteId: null,
+      });
+
+      await expect(
+        authService.register({
+          email: 'uninvited@example.com',
+          password: 'Sup3rSecret!',
+          fullName: 'Uninvited Parent',
+          acceptedTerms: true,
+          attribution: { countryCode: 'SA' },
+        }),
+      ).rejects.toBeInstanceOf(PilotInviteRequiredException);
+
+      // THE ASSERTION THAT MATTERS. A refusal after `createParentWithFamily`
+      // would leave a User and a Family behind, and a gate that admits the
+      // household it just refused is not a gate.
+      expect(userRepositoryMock.createParentWithFamily).not.toHaveBeenCalled();
+      // Nor is anything else written: no password hashed, no audit, no
+      // attribution, no referral.
+      expect(passwordServiceMock.hash).not.toHaveBeenCalled();
+      expect(auditServiceMock.record).not.toHaveBeenCalled();
+      expect(attributionServiceMock.captureAtRegistration).not.toHaveBeenCalled();
+      expect(referralServiceMock.registerReferral).not.toHaveBeenCalled();
+    });
+
+    it('G16: an already-redeemed invitation is refused the same way', async () => {
+      userRepositoryMock.findByEmail.mockResolvedValue(null);
+      pilotServiceMock.evaluate.mockResolvedValue({
+        decision: 'INVITE_ALREADY_REDEEMED',
+        allowed: false,
+        cohortId: null,
+        inviteId: null,
+      });
+
+      await expect(
+        authService.register({
+          email: 'used@example.com',
+          password: 'Sup3rSecret!',
+          fullName: 'Second Household',
+          acceptedTerms: true,
+          attribution: { countryCode: 'EG' },
+        }),
+      ).rejects.toBeInstanceOf(PilotInviteRequiredException);
+
+      expect(userRepositoryMock.createParentWithFamily).not.toHaveBeenCalled();
+    });
+
+    it('G16: an INVITED family registers, and the invitation is redeemed against the new family', async () => {
+      userRepositoryMock.findByEmail.mockResolvedValue(null);
+      passwordServiceMock.hash.mockResolvedValue('hashed-password');
+      userRepositoryMock.createParentWithFamily.mockResolvedValue({
+        user: { id: 'user-9', email: 'invited@example.com', fullName: 'Invited Parent' },
+        family: { id: 'family-9' },
+        membership: { role: 'OWNER' },
+      });
+      pilotServiceMock.evaluate.mockResolvedValue({
+        decision: 'INVITED',
+        allowed: true,
+        cohortId: 'pilot-2026-q1',
+        inviteId: 'invite-9',
+      });
+
+      const result = await authService.register({
+        email: 'Invited@Example.com',
+        password: 'Sup3rSecret!',
+        fullName: 'Invited Parent',
+        acceptedTerms: true,
+        attribution: { countryCode: 'SA' },
+      });
+
+      expect(result.familyId).toBe('family-9');
+      // The gate is asked with the address as given and the reported country;
+      // normalisation is the gate's own job, tested where it lives.
+      expect(pilotServiceMock.evaluate).toHaveBeenCalledWith('Invited@Example.com', 'SA');
+      // Redeemed against the family this transaction just created — never an id
+      // from the request.
+      expect(pilotServiceMock.redeem).toHaveBeenCalledWith('invite-9', 'family-9');
+    });
+
+    it('G16: a failure to record the enrolment does NOT fail the registration', async () => {
+      userRepositoryMock.findByEmail.mockResolvedValue(null);
+      passwordServiceMock.hash.mockResolvedValue('hashed-password');
+      userRepositoryMock.createParentWithFamily.mockResolvedValue({
+        user: { id: 'user-9', email: 'invited@example.com', fullName: 'Invited Parent' },
+        family: { id: 'family-9' },
+        membership: { role: 'OWNER' },
+      });
+      pilotServiceMock.evaluate.mockResolvedValue({
+        decision: 'INVITED',
+        allowed: true,
+        cohortId: 'pilot-2026-q1',
+        inviteId: 'invite-9',
+      });
+      // Lost the race for the invitation, or it was withdrawn in between.
+      pilotServiceMock.redeem.mockResolvedValue(false);
+
+      const result = await authService.register({
+        email: 'invited@example.com',
+        password: 'Sup3rSecret!',
+        fullName: 'Invited Parent',
+        acceptedTerms: true,
+        attribution: { countryCode: 'SA' },
+      });
+
+      // The household keeps the account it legitimately created. An unrecorded
+      // cohort label is a reporting problem, not a reason to delete a family.
+      expect(result.familyId).toBe('family-9');
     });
   });
 

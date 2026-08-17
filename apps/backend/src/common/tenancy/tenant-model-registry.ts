@@ -326,6 +326,10 @@ export const GLOBAL_MODELS: ReadonlyMap<TenantModelName, string> = new Map([
     'GrowthSetting',
     'PHASE D (GROWTH): every business number the growth module obeys — referral reward values, the qualification window, the activation threshold, alert thresholds, reporting timezones. Platform configuration owned by the deployment, exactly the FeatureFlag case. Per-country variation is a value inside the key, not a row-level tenant.',
   ],
+  [
+    'PilotInvite',
+    'G16: the controlled-pilot allow-list — one row per invited household, created by an operator BEFORE that household exists. Global for a reason of TIMING, not convenience: the pilot gate runs inside registration, ahead of the transaction that creates the Family row, because its entire purpose is to refuse before an account exists. A family_id column could therefore only ever be NULL at the single moment it is read, and a tenant column that is NULL exactly when it is needed is worse than none — it invites a filter that silently matches nothing. The backward link is redeemed_by_family_id, written once the family exists, and it is indexed. Identical to the FeatureFlag / GrowthSetting case in every other respect: platform configuration owned by the deployment, and no family-scoped route reads these rows.',
+  ],
 ]);
 
 /** True for any model the extension must not let through without a tenant. */

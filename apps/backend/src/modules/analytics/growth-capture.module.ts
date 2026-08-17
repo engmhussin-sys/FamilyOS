@@ -9,6 +9,7 @@ import { GrowthSettingsService } from './application/growth-settings.service';
 import { AttributionService } from './application/attribution.service';
 import { ActivationService } from './application/activation.service';
 import { ReferralService } from './application/referral.service';
+import { PilotEnrollmentService } from './application/pilot-enrollment.service';
 
 /**
  * PHASE D (GROWTH) — THE CAPTURE HALF, IN ITS OWN MODULE, AND THE REASON IS A
@@ -53,6 +54,10 @@ import { ReferralService } from './application/referral.service';
     AttributionService,
     ActivationService,
     ReferralService,
+    // G16: the controlled-pilot gate. Belongs here, not in AnalyticsModule,
+    // because AuthService (a PRODUCER) must depend on it — and this module
+    // imports nothing, so no cycle is constructible.
+    PilotEnrollmentService,
   ],
   exports: [
     EventCollectorService,
@@ -61,6 +66,10 @@ import { ReferralService } from './application/referral.service';
     AttributionService,
     ActivationService,
     ReferralService,
+    // G16: the controlled-pilot gate. Belongs here, not in AnalyticsModule,
+    // because AuthService (a PRODUCER) must depend on it — and this module
+    // imports nothing, so no cycle is constructible.
+    PilotEnrollmentService,
   ],
 })
 export class GrowthCaptureModule {}

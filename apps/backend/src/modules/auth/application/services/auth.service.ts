@@ -10,6 +10,7 @@ import {
   AccountNotActiveException,
   EmailAlreadyRegisteredException,
   InvalidCredentialsException,
+  PilotInviteRequiredException,
 } from '../../domain/auth.errors';
 import {
   USER_REPOSITORY,
@@ -20,6 +21,7 @@ import { TokenService } from './token.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AttributionService } from '../../../analytics/application/attribution.service';
 import { ReferralService } from '../../../analytics/application/referral.service';
+import { PilotEnrollmentService } from '../../../analytics/application/pilot-enrollment.service';
 
 /**
  * The domain layer intentionally does not import Prisma's generated
@@ -51,6 +53,8 @@ export class AuthService {
      */
     private readonly attribution: AttributionService,
     private readonly referrals: ReferralService,
+    /** G16. Same module, same no-import reasoning as the two above. */
+    private readonly pilot: PilotEnrollmentService,
   ) {}
 
   /**
@@ -63,6 +67,28 @@ export class AuthService {
     const existing = await this.userRepository.findByEmail(input.email.toLowerCase());
     if (existing) {
       throw new EmailAlreadyRegisteredException(input.email);
+    }
+
+    /**
+     * G16 — THE CONTROLLED-PILOT GATE, AND IT IS HERE FOR ONE REASON: this is
+     * before anything is written.
+     *
+     * A refusal must leave NO User and NO Family behind, so the check cannot live
+     * after `createParentWithFamily` (which creates both atomically) and cannot be
+     * a cleanup afterwards. It also runs after the duplicate-email check above, so
+     * an existing account still gets its own, more accurate 409.
+     *
+     * INERT BY DEFAULT. `pilot.enabled` defaults to false and migration 0021 seeds
+     * no settings row, so `evaluate` returns PILOT_DISABLED / allowed and this
+     * block changes nothing for any existing deployment or any family outside a
+     * pilot country. See PilotEnrollmentService for why it also fails OPEN.
+     */
+    const pilotGate = await this.pilot.evaluate(input.email, input.attribution?.countryCode);
+    if (!pilotGate.allowed) {
+      this.logger.warn(
+        `auth.register_refused_by_pilot decision=${pilotGate.decision} — no account was created.`,
+      );
+      throw new PilotInviteRequiredException();
     }
 
     const passwordHash = await this.passwordService.hash(input.password);
@@ -102,6 +128,24 @@ export class AuthService {
      * just created. It is never read from `input`.
      */
     await this.attribution.captureAtRegistration(family.id, user.id, input.attribution);
+
+    /**
+     * G16 — records the enrolment: cohort id, country and this family, on the
+     * invitation row that admitted them.
+     *
+     * HERE, beside attribution, and for the same reason: the family row now exists
+     * (so `redeemed_by_family_id` can name it) and neither of these may be able to
+     * fail a registration. `redeem` never throws and returns false rather than
+     * raising when it loses a race for the invitation — the household keeps the
+     * account it just legitimately created, and the unrecorded label is a
+     * reporting problem, not a reason to delete a family.
+     *
+     * `inviteId` is non-null only when the decision was INVITED, so this is a
+     * no-op on every non-pilot registration.
+     */
+    if (pilotGate.inviteId !== null) {
+      await this.pilot.redeem(pilotGate.inviteId, family.id);
+    }
 
     const referralCode = input.attribution?.referralCode;
     if (referralCode) {

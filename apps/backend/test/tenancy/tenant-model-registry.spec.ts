@@ -95,8 +95,15 @@ describe('tenant model registry', () => {
   // cooldowns and quiet hours, which turns `DEFAULT_FATIGUE_POLICY`'s five
   // constants into configuration. Both are one household's business and neither
   // has a tenant-less case.
-  it('the schema still has 100 models — the number this classification was built against', () => {
-    expect(prismaModels).toHaveLength(100);
+  // G16, migration 0021: 100 -> 101. `PilotInvite` is the controlled-pilot
+  // allow-list — one row per invited household, created BEFORE that household
+  // exists. GLOBAL for a reason of TIMING rather than convenience: the gate runs
+  // inside registration, ahead of the transaction that creates the Family row,
+  // so a `family_id` column could only ever be NULL at the single moment it is
+  // read. The backward link is `redeemed_by_family_id`, and it is indexed. The
+  // full argument is in the registry entry itself.
+  it('the schema still has 101 models — the number this classification was built against', () => {
+    expect(prismaModels).toHaveLength(101);
   });
 
   it.each([...STRICT_TENANT_MODELS])(
@@ -171,10 +178,15 @@ describe('tenant model registry', () => {
   // PHASE F, migration 0018: STRICT 66 -> 68. Neither new table has a
   // platform-level or un-tenanted case, so the other three classes are
   // unchanged — which is itself the assertion worth making.
+  // G16, migration 0021: GLOBAL 22 -> 23 (`PilotInvite`), and the other three
+  // classes are UNCHANGED — which is itself the assertion worth making. A
+  // controlled pilot adds an operator-owned allow-list, not a new kind of
+  // household data: nothing about a family's own rows changes because a pilot
+  // exists, and the STRICT count staying at 68 is what says so.
   it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008 + 1 from 0014 + 5 from 0013 + 6 from 0015 + 2 from 0018', () => {
     expect(STRICT_TENANT_MODELS.size).toBe(68);
     expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(9);
     expect(SELF_TENANT_MODELS.size).toBe(1);
-    expect(GLOBAL_MODELS.size).toBe(22);
+    expect(GLOBAL_MODELS.size).toBe(23);
   });
 });

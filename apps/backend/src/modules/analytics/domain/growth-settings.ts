@@ -218,6 +218,51 @@ export const GROWTH_SETTING_SCHEMAS: readonly GrowthSettingSchema[] = [
     descriptionAr: 'نسبة التغيّر في تسجيلات بلد ما أسبوعًا بعد أسبوع التي تُعتبر «تحوّلًا جوهريًا».',
     humanDecision: false,
   },
+
+  // ---- G16: the controlled pilot (Saudi Arabia + Egypt) -------------------
+  //
+  // WHY THESE LIVE HERE AND NOT IN `feature_flags`.
+  // FeatureFlag was considered first and does not fit: its per-family targeting
+  // is `enabled_family_ids`, and the pilot gate runs DURING REGISTRATION, when
+  // no family row exists yet — there is nothing to target. Growth settings are
+  // the right machinery for the opposite reason: they already provide schema
+  // validation, bounds, an Arabic-described admin surface (`listAll`), a
+  // documented default when no row exists, and change-without-a-deploy, which
+  // is exactly what a pilot's country list and cohort id need.
+  //
+  // NOTHING IS LAUNCHED BY ADDING THESE. `pilot.enabled` defaults to `false`,
+  // so on every existing and new deployment the gate is inert and registration
+  // behaves precisely as it did before. Turning it on is an admin UPDATE.
+  {
+    key: 'pilot.enabled',
+    type: 'BOOLEAN',
+    defaultValue: 'false',
+    min: null,
+    max: null,
+    descriptionAr:
+      'المفتاح الرئيسي للتجربة المحدودة. القيمة الافتراضية false: البوابة معطّلة تمامًا ولا يتغيّر أي شيء في التسجيل. تشغيلها يعني أن الأسر في بلدان التجربة تحتاج دعوة.',
+    humanDecision: true,
+  },
+  {
+    key: 'pilot.countries',
+    type: 'STRING',
+    defaultValue: 'SA,EG',
+    min: null,
+    max: null,
+    descriptionAr:
+      'قائمة رموز ISO-3166 alpha-2 المفصولة بفواصل التي تسري عليها بوابة التجربة. البلد غير المذكور هنا لا يتأثر بالتجربة إطلاقًا.',
+    humanDecision: true,
+  },
+  {
+    key: 'pilot.cohortId',
+    type: 'STRING',
+    defaultValue: 'pilot-2026-q1',
+    min: null,
+    max: null,
+    descriptionAr:
+      'معرّف الفوج (cohort) الذي تُسجَّل فيه الأسر المدعوّة الآن. تغييره يبدأ فوجًا جديدًا دون أي تهجير للبيانات؛ الأفواج السابقة تبقى كما هي في سجلات الدعوات.',
+    humanDecision: true,
+  },
 ];
 
 const SCHEMA_BY_KEY: ReadonlyMap<string, GrowthSettingSchema> = new Map(

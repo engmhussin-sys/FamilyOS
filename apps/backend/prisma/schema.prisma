@@ -4257,3 +4257,60 @@ model NotificationPolicySetting {
   @@index([familyId])
   @@map("notification_policy_settings")
 }
+
+/// G16 — THE CONTROLLED-PILOT ALLOW-LIST (Saudi Arabia + Egypt).
+///
+/// One row per INVITED household, created by an operator before that household
+/// registers. It is the only thing that lets a family through the pilot gate in
+/// a pilot country, and it is where the cohort and the country are recorded once
+/// they do.
+///
+/// GLOBAL, NOT FAMILY-SCOPED, AND THE REASON IS TIMING: the row must be readable
+/// BEFORE a family exists — the gate runs inside registration, ahead of the
+/// transaction that creates the Family. A `family_id` column could therefore only
+/// ever be NULL at the one moment it matters. `redeemed_by_family_id` is the
+/// backward link, filled in afterwards. Same shape as `growth_settings` and
+/// `feature_flags`; classified in `tenant-model-registry.ts` with that
+/// justification.
+///
+/// WHY THE EMAIL AND NOT A CODE: a redeemable code is bearer material — it can be
+/// forwarded, posted in a group chat, and used by whoever reads it first, which
+/// is precisely what a *controlled* pilot must not allow. An invitation bound to
+/// the address the operator sent it to cannot be transferred by forwarding it.
+/// The email is stored lower-cased, matching how `AuthService` resolves users.
+model PilotInvite {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Lower-cased. The address the operator invited; the family that registers
+  /// must use it. Stored, never used as a login credential.
+  email String @db.VarChar(255)
+
+  /// Which pilot wave this invitation belongs to. Free text against
+  /// `pilot.cohortId` in `growth_settings` rather than an enum, so starting a
+  /// second wave is an UPDATE of one setting and not an ALTER TYPE.
+  cohortId String @map("cohort_id") @db.VarChar(60)
+
+  /// ISO-3166 alpha-2, upper-cased. The country this invitation is FOR — which
+  /// is not necessarily the country the registration reports, and the two
+  /// disagreeing is exactly the sort of row an operator should be able to find.
+  countryCode String @map("country_code") @db.VarChar(2)
+
+  /// Null until redeemed. Set together with [redeemedByFamilyId] in the same
+  /// update, so a half-redeemed row is not representable.
+  redeemedAt         DateTime? @map("redeemed_at")
+  redeemedByFamilyId String?   @map("redeemed_by_family_id") @db.Uuid
+
+  /// The operator who created the invitation, for an audit trail. FK-less on
+  /// purpose, exactly as `AcquisitionAttribution.campaignId` is: an invitation
+  /// must survive the deletion of the admin account that issued it.
+  invitedByUserId String?  @map("invited_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  /// ONE invitation per address per cohort. This is the constraint that makes
+  /// the allow-list an allow-list: without it, two rows for one address in one
+  /// cohort would let a second registration redeem the second row.
+  @@unique([email, cohortId])
+  @@index([cohortId, countryCode])
+  @@index([redeemedByFamilyId])
+  @@map("pilot_invites")
+}
