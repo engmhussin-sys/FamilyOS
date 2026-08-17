@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { addBusinessDays } from '../../../../common/time/family-date';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { HabitEngineService } from '../../../life-intelligence/application/services/habit-engine.service';
+import { StalledGoalService } from '../../../life-intelligence/application/services/stalled-goal.service';
 import { computeCurrentStreak } from '../../../life-intelligence/application/services/streak-calculator';
 import type { FamilyJobContext, FamilyJobDefinition, JobOutcome } from '../../domain/job.types';
 
@@ -65,6 +66,21 @@ export class FamilyDailyRolloverJob {
   constructor(
     private readonly prisma: PrismaService,
     private readonly habits: HabitEngineService,
+    /**
+     * SPRINT F1 — THE THIRD JUDGEMENT ABOUT A DAY THAT IS OVER, and the reason
+     * it is here rather than in a new scheduled job of its own.
+     *
+     * A stalled goal is the same SHAPE of fact as a missed habit and a broken
+     * streak: it is the absence of something, it emits no event, and it can
+     * only be judged once the family's day has actually closed. This job
+     * already owns exactly that moment, already fans out per household on the
+     * FAMILY'S clock, and already carries the `job_runs (job_name, family_id,
+     * business_date)` unique key that makes «once per household per day» a
+     * database property. A second `scheduled_jobs` row would have needed a
+     * migration, would have duplicated the fan-out, and would have given the
+     * three judgements two different definitions of «yesterday».
+     */
+    private readonly stalledGoals: StalledGoalService,
   ) {}
 
   definition(): FamilyJobDefinition {
@@ -72,7 +88,7 @@ export class FamilyDailyRolloverJob {
       name: FAMILY_DAILY_ROLLOVER_JOB,
       scope: 'FAMILY',
       description:
-        'تدوير اليوم لكل أسرة على تقويمها المحلّي: تعليم العادات غير المنجَزة أمس كـ MISSED، ورصد انكسار السلاسل.',
+        'تدوير اليوم لكل أسرة على تقويمها المحلّي: تعليم العادات غير المنجَزة أمس كـ MISSED، ورصد انكسار السلاسل، وتنبيه ولي الأمر للأهداف التي بدأت ولم تكتمل.',
       handler: (ctx) => this.run(ctx),
     };
   }
@@ -91,6 +107,11 @@ export class FamilyDailyRolloverJob {
    *      that lands between the two reads wins rather than being overwritten.
    *      Streak-break detection is a pure recomputation over the completion
    *      rows — same rows in, same answer out — and writes nothing.
+   *      SPRINT F1: the stalled-goal sweep is idempotent by
+   *      `notification_decisions_cause_uniq (family_id, source_event_id,
+   *      target_audience)` — the key is `forEntity('signal', childId,
+   *      programId, businessDate)`, so the second run recomputes the same
+   *      string and the ledger refuses the row. See `StalledGoalService`.
    *
    * Level 2 is what makes level 1 safe to bypass for a manual re-run, and it
    * is what would still be true if someone deleted the unique index. Defence
@@ -107,20 +128,44 @@ export class FamilyDailyRolloverJob {
       if (await this.streakBrokeOn(childId, ctx.businessDate)) streaksBroken += 1;
     }
 
-    if (missed > 0 || streaksBroken > 0) {
+    /**
+     * SPRINT F1 — AND THE GOAL NOBODY FINISHED.
+     *
+     * Run AFTER the habit judgements and outside the per-child loop, because
+     * the sweep is one query per household rather than one per child, and
+     * because it must not be able to fail the two writes above: `sweepFamily`
+     * never throws by construction (a notification problem must not cost a
+     * `MISSED` row), and `ctx.businessDate` — the day this run CLOSES, derived
+     * from `Family.timezone` by `closableBusinessDate` — is the same day both
+     * judgements above were made about.
+     */
+    const stalled = await this.stalledGoals.sweepFamily({
+      familyId: ctx.familyId,
+      businessDate: ctx.businessDate,
+      now: ctx.now,
+    });
+
+    if (missed > 0 || streaksBroken > 0 || stalled.produced > 0) {
       // Counts and one family id prefix. No child id, no habit title, nothing
       // a log aggregator would turn into a profile.
       this.logger.log(
-        `rollover.completed family=${ctx.familyId.slice(0, 8)} tz=${ctx.timeZone} businessDate=${ctx.businessDate} children=${children.length} missed=${missed} streaksBroken=${streaksBroken}`,
+        `rollover.completed family=${ctx.familyId.slice(0, 8)} tz=${ctx.timeZone} businessDate=${ctx.businessDate} children=${children.length} missed=${missed} streaksBroken=${streaksBroken} goalsStalled=${stalled.produced}`,
       );
     }
 
     return {
-      affectedRows: missed,
+      // `affectedRows` is the headline number an operator scans, and a
+      // household whose only event was a stalled goal must not report zero.
+      affectedRows: missed + stalled.produced,
       details: {
         children: children.length,
         habits_marked_missed: missed,
         streaks_broken: streaksBroken,
+        // Counts only, per `JobOutcome.details`' own contract.
+        goals_stalled_found: stalled.candidates,
+        goals_stalled_notified: stalled.produced,
+        goals_stalled_already_decided: stalled.alreadyDecided,
+        goals_stalled_refused: stalled.refused,
       },
     };
   }

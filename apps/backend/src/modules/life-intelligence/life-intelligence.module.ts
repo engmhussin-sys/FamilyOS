@@ -30,6 +30,11 @@ import { PrismaDigitalTwinRepository } from './infrastructure/repositories/prism
 import { PrismaDigitalWellbeingRepository } from './infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { DigitalWellbeingEngineService } from './application/services/digital-wellbeing-engine.service';
 import { QuietHoursReleaseService } from './application/services/quiet-hours-release.service';
+// SPRINT F1 — the producer `GOAL_STALLED_PARENT` never had. Registered HERE,
+// beside the two other producers that call `handleEvent` (`RewardsEngineService`,
+// `DigitalWellbeingEngineService`), rather than in the scheduler: the scheduler
+// owns WHEN a sweep runs, this module owns WHAT the sweep asks and says.
+import { StalledGoalService } from './application/services/stalled-goal.service';
 import { SmartNotificationIntegrationService } from './application/services/smart-notification-integration.service';
 import { BaselineCalculatorService } from './application/services/baseline-calculator.service';
 import { PatternDetectionService } from './application/services/pattern-detection.service';
@@ -146,6 +151,7 @@ import { SmartNotificationEngineService } from '../notification-engine/applicati
     DigitalWellbeingEngineService,
     SmartNotificationIntegrationService,
     QuietHoursReleaseService,
+    StalledGoalService,
     BaselineCalculatorService,
     PatternDetectionService,
     AnomalyDetectionService,
@@ -186,6 +192,9 @@ import { SmartNotificationEngineService } from '../notification-engine/applicati
     DigitalWellbeingEngineService,
     SmartNotificationIntegrationService,
     QuietHoursReleaseService,
+    // SPRINT F1 — exported so `SchedulerModule`'s rollover job reaches THIS
+    // instance rather than constructing a second producer with its own engine.
+    StalledGoalService,
     RewardRuleService,
     LIFE_TIMELINE_WRITER,
     REWARD_TRIGGER_WRITER,

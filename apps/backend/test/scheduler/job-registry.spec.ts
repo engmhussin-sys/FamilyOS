@@ -84,7 +84,7 @@ function registry(): JobRegistry {
     new RetentionSweepJob(stub()),
     new ExpiredTokenSweepJob(stub()),
     new DeadLetterAlertJob(stub()),
-    new FamilyDailyRolloverJob(stub(), stub()),
+    new FamilyDailyRolloverJob(stub(), stub(), stub()),
     new NotificationDeliverySweepJob(stub()),
     new GrowthDailyAggregationJob(stub(), stub()),
     new GrowthAlertScanJob(stub()),
@@ -158,7 +158,7 @@ describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => 
           // The second argument's `definition()` returns the same name.
           duplicate as unknown as ExpiredTokenSweepJob,
           new DeadLetterAlertJob(stub()),
-          new FamilyDailyRolloverJob(stub(), stub()),
+          new FamilyDailyRolloverJob(stub(), stub(), stub()),
           new NotificationDeliverySweepJob(stub()),
           new GrowthDailyAggregationJob(stub(), stub()),
           new GrowthAlertScanJob(stub()),
