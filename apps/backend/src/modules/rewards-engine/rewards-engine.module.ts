@@ -8,6 +8,7 @@ import { AchievementOutcomeConsumer } from './application/consumers/achievement-
 import { RewardSideEffectConsumer } from './application/consumers/reward-side-effect.consumer';
 import { AchievementService } from './application/services/achievement.service';
 import { AchievementEvidenceService } from './application/services/achievement-evidence.service';
+import { LearningCatalogueService } from './application/services/learning-catalogue.service';
 import { QuizService } from './application/services/quiz.service';
 import { EvidenceStorageModule } from './evidence-storage.module';
 import { RewardPayoutService } from './application/services/reward-payout.service';
@@ -15,6 +16,7 @@ import { RewardProgramService } from './application/services/reward-program.serv
 import { RewardSuggestionService } from './application/services/reward-suggestion.service';
 import { PrismaRewardProgramRepository } from './infrastructure/repositories/prisma-reward-program.repository';
 import { ChildAchievementsController } from './presentation/controllers/child-achievements.controller';
+import { ChildCatalogueController } from './presentation/controllers/child-catalogue.controller';
 import { RewardProgramsController } from './presentation/controllers/reward-programs.controller';
 
 /**
@@ -44,7 +46,7 @@ import { RewardProgramsController } from './presentation/controllers/reward-prog
  */
 @Module({
   imports: [EventsModule, ChildrenModule, PairingModule, AiCoreModule, EvidenceStorageModule],
-  controllers: [RewardProgramsController, ChildAchievementsController],
+  controllers: [RewardProgramsController, ChildAchievementsController, ChildCatalogueController],
   providers: [
     PrismaRewardProgramRepository,
     RewardProgramService,
@@ -56,6 +58,12 @@ import { RewardProgramsController } from './presentation/controllers/reward-prog
     // ledger row.
     QuizService,
     AchievementEvidenceService,
+    /**
+     * The child-facing READ of the taxonomy the parent catalogue already
+     * serves. It has no write path, no ledger access and no event: its only
+     * dependency beyond the pure projection is "how old is this child?".
+     */
+    LearningCatalogueService,
     RewardPayoutService,
     RewardSuggestionService,
     AchievementOutcomeConsumer,

@@ -11,6 +11,19 @@ import {
 } from '../../../../shared/rewards/program-taxonomy';
 import { findSurah } from '../../../../shared/rewards/quran';
 import { describeTargetSpec } from '../../../../shared/rewards/target-spec';
+import {
+  PROGRAM_DEFAULT_FREQUENCY,
+  PROGRAM_DEFAULT_MAX_PER_DAY,
+  PROGRAM_DEFAULT_MAX_PER_WEEK,
+  PROGRAM_DEFAULT_MIN_AGE,
+  PROGRAM_DEFAULT_REQUIRES_PARENT_APPROVAL,
+  PROGRAM_DEFAULT_STREAK_MULTIPLIER_BPS,
+  suggestedCategoriesForAge,
+  suggestedDifficultyForAge,
+  suggestedDurationMinutesForAge,
+  suggestedPointsForAge,
+  suggestedVerificationForCategory,
+} from '../../domain/learning-catalogue';
 import { ageInYears } from '../../domain/program-rules';
 import { PrismaRewardProgramRepository } from '../../infrastructure/repositories/prisma-reward-program.repository';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
@@ -125,14 +138,17 @@ export class RewardSuggestionService {
 
   // --- the deterministic part ----------------------------------------------
 
-  /** Age bands, then "what this child is not doing yet" — a stable order. */
+  /**
+   * Age bands, then "what this child is not doing yet" — a stable order.
+   *
+   * THE AGE TABLE MOVED, THE BEHAVIOUR DID NOT. `suggestedCategoriesForAge`
+   * holds the exact list this method inlined, and it now has a second reader:
+   * the child-facing learning catalogue (`domain/learning-catalogue.ts`). One
+   * table rather than two, so the domains a child is shown as "مقترح لعمرك"
+   * cannot drift from the domains this engine actually drafts in.
+   */
   private rankCategories(age: number, used: Set<string>): ProgramCategory[] {
-    const byAge: ProgramCategory[] =
-      age < 8
-        ? ['QURAN', 'READING', 'HABITS', 'MANNERS', 'ARABIC', 'SPORT']
-        : age < 12
-          ? ['QURAN', 'READING', 'MATH', 'ARABIC', 'ENGLISH', 'SPORT']
-          : ['QURAN', 'STUDY', 'PROGRAMMING', 'ENGLISH', 'SCIENCE', 'SPORT'];
+    const byAge: ProgramCategory[] = [...suggestedCategoriesForAge(age)];
 
     // Unused categories first. Suggesting a seventh Quran program to a child who
     // already has six is the sort of "recommendation" that teaches a parent to
@@ -163,8 +179,13 @@ export class RewardSuggestionService {
     // holds (both are QURAN activities) and no validation was relaxed.
     const activity: ProgramActivity =
       category === 'QURAN' ? 'QURAN_MEMORIZE_AYAH_RANGE' : CATEGORY_ACTIVITIES[category][0];
-    const duration = age < 8 ? 10 : age < 12 ? 20 : 30;
-    const points = age < 8 ? 10 : age < 12 ? 20 : 30;
+    // SAME TABLES, ONE HOME. These three were inline ternaries here; they now
+    // live in `domain/learning-catalogue.ts` and are read by both this engine
+    // and the child-facing catalogue, so the duration and the points a child is
+    // SHOWN are provably the duration and the points a parent's accepted draft
+    // actually carries. No number changed.
+    const duration = suggestedDurationMinutesForAge(age);
+    const points = suggestedPointsForAge(age);
 
     let targetSpec: Record<string, unknown>;
     if (category === 'QURAN') {
@@ -191,16 +212,16 @@ export class RewardSuggestionService {
       durationMinutes: duration,
       // Advisory drafts NEVER propose a weak verification level. A suggestion
       // that quietly proposed SELF_CHECK would be the AI relaxing a control.
-      verificationLevel: category === 'QURAN' ? 'RECITATION_SUBMISSION' : 'PARENT_CONFIRMATION',
+      verificationLevel: suggestedVerificationForCategory(category),
       verificationConfig: {},
       rewardSpec: { type: 'POINTS', amount: points },
-      frequency: 'DAILY',
-      maxPerDay: 1,
-      maxPerWeek: 7,
-      minAge: 0,
-      difficulty: age < 8 ? 'EASY' : 'MEDIUM',
-      requiresParentApproval: false,
-      streakMultiplierBps: 30000,
+      frequency: PROGRAM_DEFAULT_FREQUENCY,
+      maxPerDay: PROGRAM_DEFAULT_MAX_PER_DAY,
+      maxPerWeek: PROGRAM_DEFAULT_MAX_PER_WEEK,
+      minAge: PROGRAM_DEFAULT_MIN_AGE,
+      difficulty: suggestedDifficultyForAge(age),
+      requiresParentApproval: PROGRAM_DEFAULT_REQUIRES_PARENT_APPROVAL,
+      streakMultiplierBps: PROGRAM_DEFAULT_STREAK_MULTIPLIER_BPS,
     };
   }
 
