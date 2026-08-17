@@ -986,4 +986,79 @@ describeIfDb('PHASE D — quiet-hours deferral (real PostgreSQL)', () => {
       expect(rows.some((r: any) => r.type === 'PROTECTION_BYPASS_ATTEMPT')).toBe(true);
     }, 180_000);
   });
+
+  // ==========================================================================
+  /**
+   * PHASE E (P0.5) — «ONE EVENT, ONE NOTIFICATION» ON THE **OTHER** TABLE.
+   *
+   * Every idempotency proof in this file and in `reward-delivery-recovery`
+   * counts `notifications`. A CHILD-audience candidate never lands there: it is
+   * routed through `FamilyCommunicationService.draftAiMessage` into
+   * `child_messages`, behind its own constraint
+   * `child_messages (family_id, source_event_id)`. Half of the surface was
+   * being asserted, and the half that was not is the one where a duplicate
+   * reaches a child directly.
+   */
+  describe('9. PHASE E (P0.5): the CHILD half of the surface is one-per-cause too', () => {
+    const childMessageRows = (familyId: string): Promise<any[]> =>
+      raw<any[]>(
+        `SELECT * FROM "child_messages" WHERE "family_id" = $1::uuid ORDER BY "created_at"`,
+        familyId,
+      );
+
+    it('the same cause delivered twice writes ONE child message, and nothing in `notifications`', async () => {
+      const f = await createFamily('p05-child', 'Africa/Cairo');
+      const cause = `evt:p05-child-${stamp}`;
+      // Daytime, so this is an immediate delivery and not a deferral — the
+      // property under test is the constraint, not the queue.
+      const daytime = new Date('2026-01-15T10:00:00.000Z');
+
+      const first = await notify(
+        f.familyId,
+        f.childId,
+        { type: 'REWARD_GRANTED', targetAudience: 'CHILD', sourceEventId: cause },
+        daytime,
+      );
+      expect({ decision: first.decision, reason: first.reason }).toEqual({ decision: 'SEND', reason: undefined });
+
+      // A redelivered outbox message, six minutes later so the five-minute
+      // duplicate window has expired and ONLY the database constraint is left
+      // standing. That is the point: this must be refused by the schema, not by
+      // an in-memory window that a restart or a second replica forgets.
+      const second = await notify(
+        f.familyId,
+        f.childId,
+        { type: 'REWARD_GRANTED', targetAudience: 'CHILD', sourceEventId: cause },
+        new Date(daytime.getTime() + 6 * 60_000),
+      );
+      expect(second.decision).toBe('SUPPRESS');
+      expect(second.reason).toBe('ALREADY_NOTIFIED');
+
+      expect(await childMessageRows(f.familyId)).toHaveLength(1);
+      // And the parent table is untouched — the routing is exclusive, not
+      // additive, so one event cannot quietly become two notifications by
+      // landing in both.
+      expect(await notificationRows(f.familyId)).toHaveLength(0);
+    }, 180_000);
+
+    it('a DIFFERENT cause for the same child IS a second message — the constraint is on the cause, not the child', async () => {
+      const f = await createFamily('p05-child-two', 'Africa/Cairo');
+      const daytime = new Date('2026-01-15T10:00:00.000Z');
+
+      await notify(
+        f.familyId,
+        f.childId,
+        { type: 'REWARD_GRANTED', targetAudience: 'CHILD', sourceEventId: `evt:p05-a-${stamp}` },
+        daytime,
+      );
+      await notify(
+        f.familyId,
+        f.childId,
+        { type: 'BADGE_EARNED', targetAudience: 'CHILD', sourceEventId: `evt:p05-b-${stamp}` },
+        new Date(daytime.getTime() + 6 * 60_000),
+      );
+
+      expect(await childMessageRows(f.familyId)).toHaveLength(2);
+    }, 180_000);
+  });
 });

@@ -485,6 +485,18 @@ export class SmartNotificationIntegrationService {
       candidate.title,
       candidate.body,
       `${candidate.sourceEventId}:child`,
+      // PHASE E (`PE-N-001`) — SAY WHICH VOCABULARY THIS CATEGORY IS FROM.
+      //
+      // `candidate.type` is a NOTIFICATION TYPE (`BADGE_EARNED`,
+      // `HYDRATION_REMINDER`, `LEVEL_UP`). It was being handed to
+      // `SafetyEngineService.validate` as a RECOMMENDATION TYPE, whose
+      // whitelist has six members and shares none of them — so every
+      // CHILD-audience notification this system has ever produced was rejected
+      // with «Unknown recommendation type» and reported as `SUPPRESS` /
+      // `DELIVERY_ERROR`. The whole child half of the notification surface was
+      // dead, behind a constraint protecting a table nothing could write to
+      // through this path.
+      'CHILD_MESSAGE',
     );
     return drafted !== null;
   }

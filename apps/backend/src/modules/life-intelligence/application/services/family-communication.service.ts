@@ -95,10 +95,33 @@ export class FamilyCommunicationService {
     title: string,
     body: string,
     sourceEventId?: string,
+    /**
+     * PHASE E (`PE-N-001`) — WHICH VOCABULARY `category` BELONGS TO.
+     *
+     * `SafetyEngineService.validate` takes a RECOMMENDATION TYPE and refuses
+     * anything outside a six-member whitelist (`RE_ENABLE_PROTECTION`,
+     * `SET_SCREEN_TIME_POLICY`, …) — the vocabulary of the parent-facing AI
+     * recommendation surface. This method's `category` is the CHILD MESSAGE
+     * category, and for the notification path it is a notification type
+     * (`BADGE_EARNED`, `HYDRATION_REMINDER`, …). The two vocabularies do not
+     * intersect at a single member, so every CHILD-audience notification this
+     * system has ever produced was rejected with «Unknown recommendation type»
+     * and reported as a delivery error. Measured, not inferred — see the
+     * Phase E report.
+     *
+     * `'CHILD_MESSAGE'` passes `null` for the recommendation type, which is
+     * `validate`'s own documented «not a recommendation» value and which still
+     * runs the UNSAFE-PATTERN SCAN — the half of that function that actually
+     * protects a child, and which was never the part failing. The whitelist
+     * check remains in force for the parent-authored draft route, which is the
+     * caller it was written for.
+     */
+    categoryVocabulary: 'AI_RECOMMENDATION' | 'CHILD_MESSAGE' = 'AI_RECOMMENDATION',
   ): Promise<IChildMessage | null> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const seedSafety = this.safetyEngine.validate(category, title, body);
+    const safetyRecommendationType = categoryVocabulary === 'AI_RECOMMENDATION' ? category : null;
+    const seedSafety = this.safetyEngine.validate(safetyRecommendationType, title, body);
     if (!seedSafety.isSafe) {
       throw new BadRequestException(`Message rejected by Safety Engine: ${seedSafety.rejectionReason}`);
     }
@@ -132,7 +155,21 @@ export class FamilyCommunicationService {
         return { title, body };
       }
 
-      const rephrasedSafety = this.safetyEngine.validate('ai_conversation', title, trimmed);
+      // PHASE E (`PE-N-001`), THE SAME CONFLATION, ONE FUNCTION LOWER.
+      //
+      // This read `validate('ai_conversation', …)`, and `'ai_conversation'` is
+      // not in `ALLOWED_RECOMMENDATION_TYPES` either — so the re-check ALWAYS
+      // returned `isSafe: false` and the AI rephrasing was ALWAYS discarded.
+      // This half failed SAFE (the deterministic seed is used), which is why it
+      // survived: the feature simply never took effect, and the warn line
+      // blamed the Safety Engine for a rejection it had not made.
+      //
+      // `null` keeps the check that matters here — the unsafe-pattern scan over
+      // model output that can reach a child, which is the whole reason this
+      // re-validation exists and is stricter than ai-core's own reference
+      // pattern. What is dropped is a whitelist lookup against a vocabulary
+      // this string was never a member of.
+      const rephrasedSafety = this.safetyEngine.validate(null, title, trimmed);
       if (!rephrasedSafety.isSafe) {
         this.logger.warn(`AI-rephrased family message failed Safety Engine re-check: ${rephrasedSafety.rejectionReason} \u2014 using deterministic seed instead`);
         return { title, body };

@@ -240,4 +240,114 @@ describe('FamilyCommunicationService', () => {
       expect(repositoryMock.acknowledge).toHaveBeenCalledWith('m1');
     });
   });
+
+  /**
+   * PHASE E (`PE-N-001`) — AGAINST THE **REAL** SAFETY ENGINE.
+   *
+   * Every test above mocks `SafetyEngineService`, and that is exactly why this
+   * defect survived four audit phases: the mock said `isSafe: true` for any
+   * argument, so no test in this file ever exercised the whitelist the real
+   * engine applies. The real one refuses any `recommendationType` outside a
+   * six-member list of PARENT-facing AI recommendation types — a vocabulary
+   * that shares not one member with the notification types the child half of
+   * the notification surface passes in.
+   *
+   * Result, measured: every CHILD-audience notification ever produced
+   * (`BADGE_EARNED`, `LEVEL_UP`, `HYDRATION_REMINDER`, `STUDY_REMINDER`,
+   * `EXERCISE_ENCOURAGEMENT`) was rejected with «Unknown recommendation type»
+   * and reported by `SmartNotificationIntegrationService` as
+   * `SUPPRESS / DELIVERY_ERROR`. So this block wires the real engine.
+   */
+  describe('PHASE E (`PE-N-001`) — the SafetyEngine vocabulary, unmocked', () => {
+    let real: FamilyCommunicationService;
+
+    beforeEach(async () => {
+      const moduleRef = await Test.createTestingModule({
+        providers: [
+          FamilyCommunicationService,
+          { provide: PrismaCommunicationRepository, useValue: repositoryMock },
+          { provide: ChildrenService, useValue: childrenServiceMock },
+          { provide: PairingOrchestratorService, useValue: pairingOrchestratorMock },
+          SafetyEngineService, // THE REAL ONE.
+          { provide: AI_PROVIDER, useValue: aiProviderMock },
+        ],
+      }).compile();
+      real = moduleRef.get(FamilyCommunicationService);
+      aiProviderMock.complete.mockRejectedValue(new Error('no provider in this test'));
+      repositoryMock.create.mockImplementation((data: any) => ({ id: 'm-real', ...data }));
+    });
+
+    it('a notification type reaches the child instead of dying on a recommendation whitelist', async () => {
+      await expect(
+        real.draftAiMessageIfAbsent(
+          childId,
+          familyId,
+          'BADGE_EARNED',
+          'You earned a badge!',
+          'You earned the "Reader" badge — awesome work!',
+          'evt:pe-n-001:child',
+          'CHILD_MESSAGE',
+        ),
+      ).resolves.not.toBeNull();
+
+      expect(repositoryMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'BADGE_EARNED', authorType: 'AI' }),
+        'PENDING',
+        null,
+      );
+    });
+
+    it('and the unsafe-pattern scan — the half that actually protects a child — still refuses covert-monitoring text', async () => {
+      await expect(
+        real.draftAiMessageIfAbsent(
+          childId,
+          familyId,
+          'BADGE_EARNED',
+          'A tip',
+          'You can spy on their messages without them knowing.',
+          'evt:pe-n-001:unsafe',
+          'CHILD_MESSAGE',
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(repositoryMock.create).not.toHaveBeenCalled();
+    });
+
+    it('the PARENT-authored draft route keeps its whitelist — the narrowing is scoped to the notification path', async () => {
+      // Default vocabulary is AI_RECOMMENDATION, so an arbitrary category from
+      // a parent request body is still refused. This is the control that keeps
+      // the fix from being «delete the check».
+      await expect(
+        real.draftAiMessage(childId, familyId, 'ARBITRARY_CATEGORY', 'title', 'body'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      // ...and a genuine recommendation type still passes.
+      await expect(
+        real.draftAiMessage(childId, familyId, 'SET_SCREEN_TIME_POLICY', 'title', 'body'),
+      ).resolves.toBeDefined();
+    });
+
+    it('the AI rephrasing re-check no longer rejects every rephrasing it is given', async () => {
+      // Before the fix this path called `validate('ai_conversation', ...)`,
+      // which is also outside the whitelist, so the rephrased text was ALWAYS
+      // discarded and the AI rewording feature had never once taken effect.
+      aiProviderMock.complete.mockResolvedValue('Great work today — keep it going!');
+
+      await real.draftAiMessageIfAbsent(
+        childId,
+        familyId,
+        'BADGE_EARNED',
+        'You earned a badge!',
+        'You earned the "Reader" badge — awesome work and well done!',
+        'evt:pe-n-001:rephrase',
+        'CHILD_MESSAGE',
+      );
+
+      expect(repositoryMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({ body: 'Great work today — keep it going!' }),
+        'PENDING',
+        null,
+      );
+    });
+  });
 });

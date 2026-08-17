@@ -235,12 +235,25 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
     });
   }
 
-  /** THE FOUR NUMBERS THE INVARIANT IS. */
+  /**
+   * THE FIVE NUMBERS THE INVARIANT IS.
+   *
+   * PHASE E (P0.5) — it was four. `child_messages` was missing, and it is the
+   * OTHER table a notification can land in: `SmartNotificationIntegrationService`
+   * routes a PARENT-audience candidate to `notifications` and a CHILD-audience
+   * one to `FamilyCommunicationService.draftAiMessage`, which writes there.
+   * «One event, one notification» was therefore being proven on one of the two
+   * tables it has to hold on, and a duplicate on the child half of the surface —
+   * protected by its own constraint, `child_messages (family_id,
+   * source_event_id)` — would have been invisible to every assertion in this
+   * file across a replay, a worker crash and a dead-letter recovery.
+   */
   const chain = async (t: Tenant): Promise<{
     rewards: number;
     events: number;
     timeline: number;
     notifications: number;
+    childMessages: number;
   }> => ({
     rewards: await count('rewardsLedgerEntry', { familyId: t.familyId, childId: t.childId, type: 'EARN' }),
     events: await count('domainEvent', { familyId: t.familyId, eventType: 'REWARD_GRANTED' }),
@@ -254,11 +267,14 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
       childId: t.childId,
       type: 'REWARD_GRANTED',
     }),
+    childMessages: await count('childMessage', { familyId: t.familyId, childId: t.childId }),
   });
 
   async function resetChildState(t: Tenant): Promise<void> {
     await sys('reset child state', async () => {
       await prisma.notification.deleteMany({ where: { familyId: t.familyId } });
+      // PHASE E (P0.5) — the other table a notification can land in. See `chain`.
+      await prisma.childMessage.deleteMany({ where: { familyId: t.familyId } });
       await prisma.lifeTimelineEvent.deleteMany({ where: { familyId: t.familyId } });
       await prisma.rewardsLedgerEntry.deleteMany({ where: { familyId: t.familyId } });
       await prisma.rewardsAccount.deleteMany({ where: { familyId: t.familyId } });
@@ -359,7 +375,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
 
       await drainOutbox();
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
       expect(await count('outboxMessage', { familyId: A.familyId, status: 'PENDING' })).toBe(0);
       expect(await count('outboxMessage', { familyId: A.familyId, status: 'DEAD' })).toBe(0);
     });
@@ -416,7 +432,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
       await clearBackoff(A);
       await drainOutbox();
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
 
       const msg = await sys('read recovered message', () =>
         prisma.outboxMessage.findFirst({
@@ -441,7 +457,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
 
       await drainOutbox();
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
     });
   });
 
@@ -511,7 +527,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
       // `announceGrant` is never reached — the repair therefore cannot live
       // there. It lives in the consumer, keyed, and it is NOT swallowed, so a
       // failure retries instead of disappearing.
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
     });
 
     it('THE CONSTRAINT: four more replays still yield exactly one entry', async () => {
@@ -532,7 +548,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
 
       // Enforced by `life_timeline_events_reward_source_key_uq`, not by the
       // consumer marker — the marker is deleted above on every pass.
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
     });
   });
 
@@ -580,7 +596,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
       await clearBackoff(A);
       await drainOutbox();
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
     });
 
     it('DB ROLLBACK: an ingestion whose transaction aborts leaves no event, no message, no grant', async () => {
@@ -601,7 +617,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
       expect(await count('domainEvent', { familyId: A.familyId, eventType: 'HABIT_COMPLETED' })).toBe(0);
       expect(await count('outboxMessage', { familyId: A.familyId })).toBe(0);
       expect(await count('habitCompletion', { familyId: A.familyId })).toBe(0);
-      expect(await chain(A)).toEqual({ rewards: 0, events: 0, timeline: 0, notifications: 0 });
+      expect(await chain(A)).toEqual({ rewards: 0, events: 0, timeline: 0, notifications: 0, childMessages: 0 });
     });
   });
 
@@ -634,7 +650,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
 
       await drainOutbox();
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
     });
 
     it('DUPLICATE EVENT: the same completion posted again grants nothing and notifies nobody', async () => {
@@ -660,7 +676,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
         await Promise.all([relay.tick(), relay.tick(), relay.tick()]);
       }
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
     });
 
     it('REDELIVERY: replaying every message with the consumer markers deleted changes nothing', async () => {
@@ -678,7 +694,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
 
       await drainOutbox();
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
     });
   });
 
@@ -741,7 +757,7 @@ describeIfDb('PHASE C — REWARD_GRANTED delivery, failure and recovery (real Po
 
       await drainOutbox();
 
-      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1 });
+      expect(await chain(A)).toEqual({ rewards: 1, events: 1, timeline: 1, notifications: 1, childMessages: 0 });
       expect(await count('outboxMessage', { familyId: A.familyId, status: 'DEAD' })).toBe(0);
     });
 
