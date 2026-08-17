@@ -4,6 +4,7 @@ import { ChildrenService } from '../../../children/application/services/children
 import { GrowthEventEmitter } from '../../../analytics/application/growth-event-emitter.service';
 import { PrismaHabitRepository } from '../../infrastructure/repositories/prisma-habit.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
+import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { IHabit, IHabitCompletion, IHabitScoreBreakdown, ICreateHabitInput } from '../../domain/habit.types';
 import { computeCurrentStreak } from './streak-calculator';
@@ -172,7 +173,7 @@ export class HabitEngineService {
         sourceEngine: 'habit-builder',
         category: 'HABITS',
         eventType: 'first_habit_completion',
-        title: `Started building the "${habit.title}" habit`,
+        title: TIMELINE_COPY_AR.firstHabitCompletion(habit.title),
       });
     }
 

@@ -2,6 +2,7 @@ import { Inject, Injectable, ForbiddenException } from '@nestjs/common';
 
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
+import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 import { PrismaDigitalWellbeingRepository } from '../../infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { ConsentCheckService } from '../../../consent-check/application/consent-check.service';
@@ -98,7 +99,7 @@ export class DigitalWellbeingEngineService {
         sourceEngine: 'digital-wellbeing',
         category: 'HABITS',
         eventType: 'first_wellbeing_snapshot',
-        title: 'Started tracking daily digital wellbeing',
+        title: TIMELINE_COPY_AR.firstWellbeingSnapshot(),
       });
       // A brand-new child has zero baseline yet — nothing more for
       // the pipeline below to meaningfully do on day one.
@@ -164,7 +165,7 @@ export class DigitalWellbeingEngineService {
           sourceEngine: 'digital-wellbeing',
           category: 'HABITS',
           eventType: 'behavior_pattern_detected',
-          title: `Recurring pattern: ${anomaly.code.replace(/_/g, ' ').toLowerCase()}`,
+          title: TIMELINE_COPY_AR.recurringPattern(anomaly.code),
           metadata: { code: anomaly.code, consecutiveDays: anomaly.consecutiveDays, explanation: anomaly.explanation },
         });
       }
@@ -175,7 +176,7 @@ export class DigitalWellbeingEngineService {
         sourceEngine: 'digital-wellbeing',
         category: 'HABITS',
         eventType: 'healthy_usage_pattern',
-        title: 'Healthy digital wellbeing pattern observed',
+        title: TIMELINE_COPY_AR.healthyUsagePattern(),
         metadata: { patterns: positivePatterns },
       });
     }

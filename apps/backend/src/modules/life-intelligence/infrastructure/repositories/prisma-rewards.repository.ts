@@ -102,6 +102,41 @@ export class PrismaRewardsRepository {
     });
   }
 
+  /**
+   * «HOW MANY POINTS DID THIS BUSINESS EVENT ACTUALLY PAY?», asked of the
+   * LEDGER — the only authority on the answer.
+   *
+   * The parent's reward notification now states the number («…وحصل على ٢٠
+   * نقطة»), and a number in a sentence a parent reads must be the number that
+   * is in the database. Nothing a client sent is consulted: `pointsHint` on the
+   * `CompletionEvent` is documented as A HINT ONLY and the Reward Rules decide
+   * the real value, so the hint is exactly the wrong field to publish.
+   *
+   * SAME PREFIX, SAME ARGUMENT AS `countGrantsForTrigger` — one composition of
+   * `${event.idempotencyKey}:${rewardType}:${source}` in one place — so this
+   * sums exactly the rows one trigger wrote. And because it is a READ over
+   * committed rows it is STABLE ACROSS REDELIVERY: the recovery path
+   * (`granted === 0`, grant already committed) gets the same twenty points as
+   * the first delivery did, which is what stops a replayed announcement from
+   * saying «0 نقطة».
+   *
+   * XP ONLY, and the product word for it is «نقطة». `reward-spec.ts`'s REUSE
+   * decision made XP the ledger word for the one number the product calls
+   * points; summing COINS or STARS in here would add two economies together.
+   */
+  async sumPointsForTrigger(childId: string, triggerIdempotencyKey: string): Promise<number> {
+    const rows = await this.prisma.rewardsLedgerEntry.findMany({
+      where: {
+        childId,
+        type: 'EARN',
+        rewardType: 'XP',
+        idempotencyKey: { startsWith: `${triggerIdempotencyKey}:` },
+      },
+      select: { amount: true },
+    });
+    return rows.reduce((sum, row) => sum + (row.amount ?? 0), 0);
+  }
+
   async getOrCreateAccount(childId: string): Promise<IRewardsAccount> {
     const row = await this.prisma.rewardsAccount.upsert({
       where: { childId },

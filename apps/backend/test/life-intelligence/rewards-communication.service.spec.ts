@@ -8,6 +8,11 @@ import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain
 import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
 import { FamilyDateService } from '../../src/common/time/family-date.service';
 import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
+import { TIMELINE_COPY_AR } from '../../src/modules/life-intelligence/domain/life-timeline-copy';
+
+/** Any Arabic letter. A timeline title in «سجل حياة الطفل» that matches nothing
+ * here is in the wrong language, whatever else is true of it. */
+const ARABIC_LETTERS = /[؀-ۿ]/;
 
 describe('RewardsEngineService', () => {
   const repositoryMock = {
@@ -36,6 +41,14 @@ describe('RewardsEngineService', () => {
   let service: RewardsEngineService;
   const childId = 'child-1';
   const familyId = 'family-1';
+
+  /** The title of the ONE timeline entry of a given kind this trigger wrote.
+   * Reads the recorded call rather than the arguments the test passed, so the
+   * assertion is about what the engine produced. */
+  const timelineTitleFor = (eventType: string): string | undefined =>
+    timelineMock.record.mock.calls
+      .map((call: unknown[]) => call[0] as { eventType: string; title: string })
+      .find((entry) => entry.eventType === eventType)?.title;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -127,7 +140,20 @@ describe('RewardsEngineService', () => {
       expect(repositoryMock.applyEarn).not.toHaveBeenCalled();
     });
 
-    it('writes a level-up Timeline event only when XP crosses a threshold', async () => {
+    /**
+     * UPDATED DELIBERATELY, and the old assertion is quoted so the change is
+     * legible: this test used to read
+     *
+     *     expect(...).toHaveBeenCalledWith({ eventType: 'level_up', title: 'Reached Level 2' })
+     *
+     * `life_timeline_events` IS «سجل حياة الطفل» (CONTEXT §1), and an English
+     * literal in it was the second defect `e2e-13` pinned. `TIMELINE_COPY_AR` is
+     * now the only place a timeline title exists, so this asserts BOTH halves:
+     * the row is byte-identical to what the copy module produces for this level,
+     * AND it is really Arabic — a title assertion that only compared against the
+     * module would pass just as happily if the module went back to English.
+     */
+    it('writes a level-up Timeline event only when XP crosses a threshold, titled in ARABIC from the copy module', async () => {
       repositoryMock.listActiveRewardRules.mockResolvedValue([
         { id: 'r2', familyId: null, triggerEngine: 'health', triggerCondition: {}, rewardType: 'XP', rewardAmountOrBadgeId: '100', isActive: true },
       ]);
@@ -136,7 +162,84 @@ describe('RewardsEngineService', () => {
 
       await service.processTriggerEvent(childId, familyId, { engine: 'health', type: 't', payload: {} });
 
-      expect(timelineMock.record).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'level_up', title: 'Reached Level 2' }));
+      expect(timelineMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'level_up', title: TIMELINE_COPY_AR.levelUp(2) }),
+      );
+      const levelUp = timelineTitleFor('level_up');
+      expect(levelUp).toBe('وصل إلى المستوى ٢');
+      expect(levelUp).toMatch(ARABIC_LETTERS);
+      // Arabic prose with Latin numerals reads as a translation (`PF-E-002`).
+      expect(levelUp).not.toMatch(/[0-9]/);
+    });
+
+    /**
+     * THE REWARD ENTRY ITSELF — the row `e2e-13` pinned as `'Earned a reward'`.
+     *
+     * Here in its NEGATIVE half: a trigger that is NOT a parent-authored program
+     * carries no `targetSummaryAr`, and the honest title is the general Arabic
+     * sentence rather than an invented goal name. The positive half — the entry
+     * naming «الآيات 1–5 من سورة الملك» — is asserted end-to-end in `e2e-13`
+     * against the row PostgreSQL actually holds.
+     */
+    it('writes the reward Timeline entry in ARABIC, and names no goal when the trigger carries none', async () => {
+      repositoryMock.listActiveRewardRules.mockResolvedValue([
+        { id: 'r2', familyId: null, triggerEngine: 'health', triggerCondition: {}, rewardType: 'XP', rewardAmountOrBadgeId: '10', isActive: true },
+      ]);
+      repositoryMock.getOrCreateAccount.mockResolvedValue({ id: 'a1', childId, xp: 0, coins: 0, stars: 0, level: 1 });
+      repositoryMock.applyEarn.mockResolvedValue(true);
+
+      await service.processTriggerEvent(childId, familyId, { engine: 'health', type: 't', payload: {} });
+
+      expect(timelineTitleFor('reward_granted')).toBe('حصل على مكافأة جديدة');
+      expect(timelineTitleFor('reward_granted')).toMatch(ARABIC_LETTERS);
+      expect(timelineTitleFor('reward_granted')).not.toMatch(/[A-Za-z]/);
+    });
+
+    /**
+     * AND THE POSITIVE HALF AT THIS LEVEL: the summary the completion carried is
+     * USED, and used VERBATIM. No Arabic is assembled from a surah number here —
+     * `describeTargetSpec` derived that sentence once, at program creation,
+     * precisely so this writer would not have to.
+     */
+    it('names the achievement in the Timeline entry, from the completion’s own targetSummaryAr', async () => {
+      repositoryMock.listActiveRewardRules.mockResolvedValue([
+        { id: 'r2', familyId: null, triggerEngine: 'reward-program', triggerCondition: {}, rewardType: 'XP', rewardAmountOrBadgeId: '20', isActive: true },
+      ]);
+      repositoryMock.getOrCreateAccount.mockResolvedValue({ id: 'a1', childId, xp: 0, coins: 0, stars: 0, level: 1 });
+      repositoryMock.applyEarn.mockResolvedValue(true);
+
+      await service.processTriggerEvent(childId, familyId, {
+        engine: 'reward-program',
+        type: 'ACHIEVEMENT_VERIFIED',
+        payload: { metadata: { targetSummaryAr: 'الآيات 1–5 من سورة الملك' } },
+      });
+
+      expect(timelineTitleFor('reward_granted')).toBe('أكمل الآيات 1–5 من سورة الملك وحصل على مكافأة');
+      expect(timelineTitleFor('reward_granted')).toContain('سورة الملك');
+    });
+
+    /**
+     * THE GUARD THAT MAKES THE ONE ABOVE SAFE. `describeTargetSpec`'s last line
+     * returns the raw ACTIVITY CODE for a spec it cannot describe, and that value
+     * is persisted on the program like any other. A title reading «أكمل
+     * QURAN_MEMORIZE_AYAH_RANGE» is the raw-enum leak this product forbids, so an
+     * enum-shaped summary is treated as ABSENT and the general sentence wins.
+     */
+    it('refuses an ENUM-SHAPED summary rather than putting a database value on the timeline', async () => {
+      repositoryMock.listActiveRewardRules.mockResolvedValue([
+        { id: 'r2', familyId: null, triggerEngine: 'reward-program', triggerCondition: {}, rewardType: 'XP', rewardAmountOrBadgeId: '20', isActive: true },
+      ]);
+      repositoryMock.getOrCreateAccount.mockResolvedValue({ id: 'a1', childId, xp: 0, coins: 0, stars: 0, level: 1 });
+      repositoryMock.applyEarn.mockResolvedValue(true);
+
+      await service.processTriggerEvent(childId, familyId, {
+        engine: 'reward-program',
+        type: 'ACHIEVEMENT_VERIFIED',
+        payload: { metadata: { targetSummaryAr: 'QURAN_MEMORIZE_AYAH_RANGE' } },
+      });
+
+      expect(timelineTitleFor('reward_granted')).toBe('حصل على مكافأة جديدة');
+      expect(timelineTitleFor('reward_granted')).not.toMatch(/[A-Z]{3,}_[A-Z_]+/);
     });
   });
 

@@ -3,7 +3,9 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Inject } fr
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { GrowthEventEmitter } from '../../../analytics/application/growth-event-emitter.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { achievementSummaryArOf } from '../../../../shared/rewards/achievement-summary';
 import { composeRewardTimelineKey } from '../../../../shared/events/idempotency';
+import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { forEntity, forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 import { IGrantCap, PrismaRewardsRepository } from '../../infrastructure/repositories/prisma-rewards.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
@@ -135,6 +137,26 @@ export class RewardsEngineService implements IRewardTriggerWriter {
   }
 
   /**
+   * THE POINTS, FROM THE LEDGER, so that the announcement can state them.
+   *
+   * The parent's `REWARD_GRANTED` sentence now names the amount («…وحصل على ٢٠
+   * نقطة»), and «the server is authoritative» means that number is read back out
+   * of `rewards_ledger_entries` — not taken from `CompletionEvent.pointsHint`
+   * (documented as A HINT ONLY), not from `RewardSpec.amount` (an intention the
+   * Reward Rules may cap or multiply), and not from a response body.
+   *
+   * IT IS A READ, for the same reason `countGrantsFor` is: a method on this
+   * service that could create a grant while answering a question about grants
+   * would be the next double-reward defect. It is therefore also stable across
+   * redelivery — the recovery path reads the same twenty points the first
+   * delivery did, instead of announcing «0 نقطة» for a reward that exists.
+   */
+  async pointsGrantedFor(childId: string, familyId: string, idempotencyKey: string): Promise<number> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    return this.repository.sumPointsForTrigger(childId, idempotencyKey);
+  }
+
+  /**
    * PHASE C (`PC-B-006`) — THE REPAIR, AND WHY IT CANNOT LIVE IN `announceGrant`.
    *
    * `announceGrant` is only reached when `actualGrantCount > 0`. On a
@@ -174,18 +196,41 @@ export class RewardsEngineService implements IRewardTriggerWriter {
    * partial unique index and behaves exactly as it did before Phase C — the
    * honest fallback, and the same one B9 chose for notifications rather than
    * synthesising a constant that would suppress every future entry.
+   *
+   * ---------------------------------------------------------------------------
+   * THE TITLE, AND WHY IT WAS THE SECOND DEFECT `e2e-13` PINNED.
+   *
+   * What was here: `title: 'Earned a reward'` — an English literal, written
+   * into `life_timeline_events`, which IS «سجل حياة الطفل» (CONTEXT §1) in a
+   * product whose first language is Arabic and whose two markets are EG and SA.
+   * It is not a raw enum and it carries no placeholder, so every generic leak
+   * check in this repository passed it; it was simply the wrong language, and
+   * that is a failure mode a leak check cannot see.
+   *
+   * TWO CHANGES, NOT ONE. The language, and the CONTENT. «حصل على مكافأة» is
+   * Arabic and still answers only WHEN — a timeline of twenty identical rows is
+   * a counter, not a life record — so the entry now names what was achieved,
+   * from `RewardProgram.targetSummaryAr` («الآيات 1–5 من سورة الملك») carried on
+   * the completion's own metadata. NOTHING IS ASSEMBLED HERE: that sentence was
+   * derived once by `describeTargetSpec` at program creation precisely so three
+   * clients and this writer do not each re-derive it from a surah number.
+   *
+   * The summary is ABSENT for every completion that is not a parent-authored
+   * program — a habit tick, a hydration goal, a streak — and the generic Arabic
+   * sentence is the honest answer there rather than an invented one.
    */
   private async recordGrantTimeline(
     childId: string,
     event: IRewardTriggerEvent,
     grantCount: number,
   ): Promise<void> {
+    const summaryAr = achievementSummaryArOf(event.payload);
     await this.timeline.record({
       childId,
       sourceEngine: 'rewards',
       category: 'REWARDS',
       eventType: 'reward_granted',
-      title: 'Earned a reward',
+      title: TIMELINE_COPY_AR.rewardGranted(summaryAr),
       metadata: { triggerEngine: event.engine, triggerType: event.type, grantCount },
       sourceKey: event.idempotencyKey ? composeRewardTimelineKey(event.idempotencyKey) : undefined,
     });
@@ -246,7 +291,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
               sourceEngine: 'rewards',
               category: 'REWARDS',
               eventType: 'badge_awarded',
-              title: `Earned the "${badge.title}" badge`,
+              title: TIMELINE_COPY_AR.badgeAwarded(badge.title),
             });
             // Sprint 16.2 Phase 2 — badges are the most milestone-
             // worthy grant type, so BOTH the child (encouragement)
@@ -444,7 +489,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
         sourceEngine: 'rewards',
         category: 'REWARDS',
         eventType: 'level_up',
-        title: `Reached Level ${newLevel}`,
+        title: TIMELINE_COPY_AR.levelUp(newLevel),
       });
       // Sprint 16.2 Phase 2 — a level-up is genuinely notification-
       // worthy on its own, distinct from the routine XP/coin grant

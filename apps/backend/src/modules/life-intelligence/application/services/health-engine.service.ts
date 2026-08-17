@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { PrismaHealthRepository } from '../../infrastructure/repositories/prisma-health.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
+import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import {
   IActivityLog,
@@ -73,7 +74,7 @@ export class HealthEngineService {
         sourceEngine: 'health',
         category: 'HEALTH',
         eventType: 'first_nutrition_log_today',
-        title: 'Logged today\u2019s first meal',
+        title: TIMELINE_COPY_AR.firstNutritionLogToday(),
       });
     }
     return log;
@@ -99,7 +100,7 @@ export class HealthEngineService {
         sourceEngine: 'health',
         category: 'HEALTH',
         eventType: 'hydration_target_reached',
-        title: 'Reached today\u2019s hydration goal',
+        title: TIMELINE_COPY_AR.hydrationTargetReached(),
         metadata: { targetMl: target, totalMl: totalToday },
       });
 
@@ -229,7 +230,8 @@ export class HealthEngineService {
           sourceEngine: 'health',
           category: 'HEALTH',
           eventType: 'first_group_activity',
-          title: `Joined a group activity: ${input.activityType}`,
+          title: TIMELINE_COPY_AR.firstGroupActivity(null),
+          metadata: { activityType: input.activityType },
         });
       }
     }
@@ -265,7 +267,7 @@ export class HealthEngineService {
         sourceEngine: 'health',
         category: 'HEALTH',
         eventType: 'activity_target_reached',
-        title: 'Reached today’s activity goal',
+        title: TIMELINE_COPY_AR.activityTargetReached(),
         metadata: { targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes },
       });
 

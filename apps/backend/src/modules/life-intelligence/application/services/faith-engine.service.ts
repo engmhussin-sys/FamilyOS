@@ -3,6 +3,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { PrismaFaithRepository } from '../../infrastructure/repositories/prisma-faith.repository';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
+import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { IFaithPractice, IFaithPracticeLog, IFaithScoreBreakdown, ICreateFaithPracticeInput } from '../../domain/faith.types';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
@@ -93,7 +94,7 @@ export class FaithEngineService {
         sourceEngine: 'faith',
         category: 'FAITH',
         eventType: 'first_practice_log',
-        title: `Started "${practice.title}"`,
+        title: TIMELINE_COPY_AR.firstPracticeLog(practice.title),
       });
     }
 

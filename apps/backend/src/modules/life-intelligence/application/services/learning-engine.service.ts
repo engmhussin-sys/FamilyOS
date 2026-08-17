@@ -4,6 +4,7 @@ import { ChildrenService } from '../../../children/application/services/children
 import { PrismaLearningRepository } from '../../infrastructure/repositories/prisma-learning.repository';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
+import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { ICreateLearningGoalInput, ICreateLearningSessionInput, ILearningGoal, ILearningProgressSummary, ILearningSession } from '../../domain/learning.types';
 import { computeCurrentStreak } from './streak-calculator';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
@@ -150,7 +151,7 @@ export class LearningEngineService {
       sourceEngine: 'learning',
       category: 'LEARNING',
       eventType: 'learning_goal_completed',
-      title: `Completed the goal "${goal.title}"`,
+      title: TIMELINE_COPY_AR.learningGoalCompleted(goal.title),
     });
 
     try {

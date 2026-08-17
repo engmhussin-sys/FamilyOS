@@ -500,6 +500,24 @@ export class AchievementService {
         streakDays,
         multiplierBps,
         verificationMethod: program.verificationLevel,
+        /**
+         * WHAT WAS ACHIEVED, IN ARABIC, DERIVED ONCE — «الآيات 1–5 من سورة
+         * الملك».
+         *
+         * `metadata` already carries `activity` and `category`, and both are
+         * MACHINE values: a consumer that wanted to tell a parent what their
+         * child finished had to turn `QURAN_MEMORIZE_AYAH_RANGE` and a surah
+         * number back into a sentence, which is exactly the re-derivation
+         * `RewardProgram.targetSummaryAr` was introduced to stop. Carrying the
+         * already-derived sentence is what lets the reward notification and the
+         * life timeline both NAME the achievement without either of them
+         * learning what a surah is.
+         *
+         * It is a fact about the PROGRAM, not about the child: no name, no id,
+         * no free text a client wrote. `describeTargetSpec` composed it from the
+         * parent's own form and the Quran table, server-side.
+         */
+        targetSummaryAr: program.targetSummaryAr ?? '',
       },
       programId: program.id,
       multiplierBps,
