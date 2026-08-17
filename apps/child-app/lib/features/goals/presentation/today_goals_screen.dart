@@ -6,6 +6,7 @@ import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/widgets/sparky_mascot.dart';
 import '../domain/child_goal.dart';
+import 'domain_chooser.dart';
 import 'goal_detail_screen.dart';
 
 /// أهداف اليوم — **THE CHILD'S FIRST SCREEN** as of B7.
@@ -25,11 +26,23 @@ import 'goal_detail_screen.dart';
 /// and everything it showed — permissions, capabilities, memory, battery,
 /// enforcement status — now lives behind a single quiet icon in the app
 /// bar. Nothing was deleted. It was demoted.
-class TodayGoalsScreen extends ConsumerWidget {
+class TodayGoalsScreen extends ConsumerStatefulWidget {
   const TodayGoalsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TodayGoalsScreen> createState() => _TodayGoalsScreenState();
+}
+
+class _TodayGoalsScreenState extends ConsumerState<TodayGoalsScreen> {
+  /// The chosen domain, or `null` for «كل حاجة».
+  ///
+  /// LOCAL, AND DELIBERATELY NOT PERSISTED. A filter that survives a restart
+  /// is a filter a child forgets they set, and the failure mode is a child
+  /// opening the app tomorrow and concluding they have no goals.
+  String? _category;
+
+  @override
+  Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
     final locale = ref.watch(localeControllerProvider.notifier);
     final t = locale.t;
@@ -50,13 +63,57 @@ class TodayGoalsScreen extends ConsumerWidget {
         emptyActionLabel: t('common.retry'),
         onEmptyAction: controller.load,
         builder: (context, goals) {
+          final domains = domainsOf(goals);
+
+          // A domain that disappears between two loads must not leave the
+          // screen filtered to nothing with no way back — the chip the child
+          // tapped would no longer be on screen to un-tap.
+          final selected =
+              domains.any((d) => d.category == _category) ? _category : null;
+
+          final visible = selected == null
+              ? goals
+              : goals.where((g) => g.category == selected).toList();
+
+          // The greeting counts THE WHOLE DAY, never the filtered slice.
+          // «فاضل لك هدفين» has to mean the day, or a child who filters to
+          // one domain is told their day shrank.
           final ready = goals.where((g) => g.available).length;
+
           return ListView(
             padding: KidSpace.screen,
             children: [
               _Greeting(readyCount: ready, total: goals.length),
               KidSpace.gapLg,
-              for (final goal in goals) GoalCard(goal: goal, onRefresh: controller.load),
+              if (domains.length >= 2) ...[
+                DomainChooser(
+                  domains: domains,
+                  selected: selected,
+                  onSelected: (value) => setState(() => _category = value),
+                ),
+                KidSpace.gapLg,
+              ],
+              if (visible.isEmpty)
+                // Reachable only with a filter on: the unfiltered empty day is
+                // `KidStateView`'s own empty state, one level up. Non-punitive
+                // and with the way out named.
+                KidCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(t('today.domainEmpty'), style: KidText.body(context)),
+                      KidSpace.gapMd,
+                      KidQuietButton(
+                        label: t('today.allDomains'),
+                        icon: Icons.apps_rounded,
+                        onPressed: () => setState(() => _category = null),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                for (final goal in visible)
+                  GoalCard(goal: goal, onRefresh: controller.load),
             ],
           );
         },

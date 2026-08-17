@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../family_growth/presentation/rewards_screen.dart';
 import '../domain/child_rewards.dart';
 
 /// «جوايزي» — `GET /self/achievements/rewards`.
@@ -115,6 +116,32 @@ class MyRewardsScreen extends ConsumerWidget {
                     ],
                   ),
                 ),
+
+            // THE STORE, REACHABLE FROM THE REWARDS TAB AT LAST.
+            //
+            // `RewardsScreen` — the coins balance and the family store, i.e.
+            // the ONLY place a child can actually SPEND what they earn — was
+            // reachable from exactly one place in the whole app: the settings
+            // icon → `DeviceHomeScreen` → a button in the middle of the
+            // diagnostics console. That is the same defect PA-M-041 named
+            // when it found the child's landing screen was a monitoring
+            // console: the child-facing half of the product was filed behind
+            // the device-facing half. Child MVP capability 4 («اختيار Goal /
+            // Reward») was unreachable from the tab named "my rewards".
+            //
+            // This is a LINK, not a merge. The two screens read two endpoints
+            // (`/self/achievements/rewards` and
+            // `/life-intelligence/self/rewards/*`) and unifying them is the
+            // product decision this file's header already records as
+            // deferred. Making the store reachable is not that decision.
+            KidSpace.gapLg,
+            KidQuietButton(
+              label: t('myRewards.openStore'),
+              icon: Icons.storefront_rounded,
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const RewardsScreen()),
+              ),
+            ),
           ],
         ),
       ),
