@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -22,7 +24,7 @@ class _WellbeingScreenState extends ConsumerState<WellbeingScreen> {
   Map<String, dynamic>? _snapshot;
   Map<String, dynamic>? _insight;
   bool _hasData = true;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   @override
   void initState() {
@@ -31,18 +33,23 @@ class _WellbeingScreenState extends ConsumerState<WellbeingScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
-      final api = ref.read(lifeIntelligenceApiProvider);
-      final result = await api.getWellbeingSnapshot(widget.childId);
+      final result = await ref
+          .read(lifeIntelligenceRepositoryProvider)
+          .getWellbeingSnapshot(widget.childId);
       if (mounted) {
         setState(() {
           _snapshot = result;
+          // STILL THE THREE-WAY DISTINCTION THIS SCREEN ALWAYS HAD. `null`
+          // from the backend means "no snapshot yet" — an honest absence,
+          // not a failure — and renders `wellbeing.noData`. A thrown error
+          // renders the error state. Neither may impersonate the other.
           _hasData = result != null;
         });
       }
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+    } catch (error) {
+      if (mounted) setState(() => _failure = ApiFailure.from(error));
       return;
     }
 
@@ -52,32 +59,66 @@ class _WellbeingScreenState extends ConsumerState<WellbeingScreen> {
     // history for a baseline yet) must never block the existing,
     // already-working rolling-average view above it.
     try {
-      final insight = await ref.read(lifeIntelligenceApiProvider).getWellbeingInsight(widget.childId);
+      final insight = await ref
+          .read(lifeIntelligenceRepositoryProvider)
+          .getWellbeingInsight(widget.childId);
       if (mounted) setState(() => _insight = insight);
     } catch (_) {
-      // Best-effort — the screen already rendered successfully above.
+      // Best-effort, and deliberately still silent HERE: the rolling
+      // averages below have already rendered, and an insight that does not
+      // exist yet is not something a parent can act on. It is no longer
+      // invisible to the TEAM, though — the repository logged the original
+      // error with its stack trace before this catch ever ran.
     }
+  }
+
+  /// EVERY FIGURE BELOW USED TO BE INTERPOLATED STRAIGHT OUT OF THE MAP.
+  ///
+  /// A field the backend omits printed the literal word «null» into an
+  /// Arabic sentence, and the two `windowNote` figures went into a
+  /// `Map<String, Object>` literal, where a null is a runtime type error
+  /// INSIDE build — a red screen and a stack trace on the parent's phone,
+  /// from a snapshot that was merely incomplete.
+  num? _number(String key) {
+    final value = _snapshot?[key];
+    return value is num ? value : null;
+  }
+
+  String _minutesText(
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    String key,
+  ) {
+    final value = _number(key);
+    return value == null
+        ? t('wellbeing.notYetAvailable')
+        : '$value ${t('wellbeing.minutesPerDay')}';
+  }
+
+  String _countText(
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    String key,
+  ) {
+    final value = _number(key);
+    return value?.toString() ?? t('wellbeing.notYetAvailable');
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text('${t('wellbeing.title')} \u2014 ${widget.childName}')),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
-                ),
+              child: DsErrorState(
+                failure: _failure!,
+                title: t('common.error'),
+                retryLabel: t('common.retry'),
+                requestIdLabel: t('common.requestId'),
+                arabic: locale.isRtl,
+                onRetry: _load,
               ),
             )
           : !_hasData
@@ -99,32 +140,36 @@ class _WellbeingScreenState extends ConsumerState<WellbeingScreen> {
                             icon: Icons.smartphone_rounded,
                             color: AppTheme.guardian950,
                             label: t('wellbeing.avgScreenTime'),
-                            value: '${_snapshot!['averageDailyScreenMinutes']} ${t('wellbeing.minutesPerDay')}',
+                            value: _minutesText(t, 'averageDailyScreenMinutes'),
                           ),
                           _MetricCard(
                             icon: Icons.touch_app_rounded,
                             color: AppTheme.sage500,
                             label: t('wellbeing.avgPickups'),
-                            value: '${_snapshot!['averagePickups']}',
+                            value: _countText(t, 'averagePickups'),
                           ),
                           _MetricCard(
                             icon: Icons.bedtime_rounded,
                             color: const Color(0xFF6B5B95),
                             label: t('wellbeing.nightUsage'),
-                            value: '${_snapshot!['averageNightUsageMinutes']} ${t('wellbeing.minutesPerDay')}',
+                            value: _minutesText(t, 'averageNightUsageMinutes'),
                           ),
                           _MetricCard(
                             icon: Icons.block_rounded,
                             color: AppTheme.brick500,
                             label: t('wellbeing.blockedAttempts'),
-                            value: '${_snapshot!['totalBlockedAttempts']}',
+                            value: _countText(t, 'totalBlockedAttempts'),
                           ),
                           const SizedBox(height: 8),
-                          Text(
-                            t('wellbeing.windowNote', options: {'days': _snapshot!['windowDays'], 'daysWithData': _snapshot!['daysWithData']}),
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            textAlign: TextAlign.center,
-                          ),
+                          if (_number('windowDays') != null && _number('daysWithData') != null)
+                            Text(
+                              t('wellbeing.windowNote', options: {
+                                'days': _number('windowDays')!,
+                                'daysWithData': _number('daysWithData')!,
+                              }),
+                              style: Theme.of(context).textTheme.bodyMedium,
+                              textAlign: TextAlign.center,
+                            ),
                         ],
                       ),
                     ),

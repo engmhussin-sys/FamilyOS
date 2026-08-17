@@ -2,7 +2,9 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -33,7 +35,7 @@ class _SubScoreMeta {
 
 class _DigitalTwinScreenState extends ConsumerState<DigitalTwinScreen> {
   Map<String, dynamic>? _twin;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   static const _subScoreOrder = <_SubScoreMeta>[
     _SubScoreMeta('health', 'digitalTwin.health', Icons.favorite_rounded),
@@ -52,34 +54,33 @@ class _DigitalTwinScreenState extends ConsumerState<DigitalTwinScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
-      final result = await ref.read(lifeIntelligenceApiProvider).getDigitalTwin(widget.childId);
+      final result =
+          await ref.read(lifeIntelligenceRepositoryProvider).getDigitalTwin(widget.childId);
       if (mounted) setState(() => _twin = result);
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+    } catch (error) {
+      if (mounted) setState(() => _failure = ApiFailure.from(error));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('digitalTwin.title'))),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
-                ),
+              child: DsErrorState(
+                failure: _failure!,
+                title: t('common.error'),
+                retryLabel: t('common.retry'),
+                requestIdLabel: t('common.requestId'),
+                arabic: locale.isRtl,
+                onRetry: _load,
               ),
             )
           : _twin == null
@@ -102,8 +103,10 @@ class _DigitalTwinScreenState extends ConsumerState<DigitalTwinScreen> {
                         (meta) => _SubScoreTile(
                           label: t(meta.labelKey),
                           icon: meta.icon,
-                          subScore: _twin![meta.key] as Map<String, dynamic>?,
-                          t: t,
+                          subScore: _twin![meta.key] is Map<String, dynamic>
+                              ? _twin![meta.key] as Map<String, dynamic>
+                              : null,
+                          locale: locale,
                         ),
                       ),
                     ],
@@ -121,8 +124,21 @@ class _GrowthScoreCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final growthScore = twin['growthScore'] as Map<String, dynamic>?;
-    final score = growthScore != null ? (growthScore['score'] as num).toDouble() : 0.0;
+    final rawGrowth = twin['growthScore'];
+    final growthScore = rawGrowth is Map<String, dynamic> ? rawGrowth : null;
+    // WAS `(growthScore['score'] as num).toDouble()`. A growthScore object
+    // that arrives without a numeric `score` — the backend returns one
+    // whenever not a single sub-score could be computed — threw inside
+    // build, and a cast error inside build is a stack trace on a parent's
+    // phone. The "not yet available" branch below already exists for
+    // exactly this situation; this makes it reachable.
+    final rawScore = growthScore == null ? null : growthScore['score'];
+    final score = rawScore is num ? rawScore.toDouble() : 0.0;
+    final rawInputs = growthScore == null ? null : growthScore['inputs'];
+    final inputs = rawInputs is Map ? rawInputs : null;
+    final contributing = inputs == null ? null : inputs['contributingSubScores'];
+    final total = inputs == null ? null : inputs['totalPossibleSubScores'];
+    final hasBreakdown = contributing is num && total is num;
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -146,9 +162,9 @@ class _GrowthScoreCard extends StatelessWidget {
               builder: (context, value, _) => CustomPaint(
                 painter: _ScoreRingPainter(progress: value),
                 child: Center(
-                  child: growthScore != null
+                  child: rawScore is num
                       ? Text(
-                          '${growthScore['score']}',
+                          '$rawScore',
                           style: Theme.of(context).textTheme.headlineMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
                         )
                       : const Icon(Icons.hourglass_empty_rounded, color: Colors.white54),
@@ -163,13 +179,13 @@ class _GrowthScoreCard extends StatelessWidget {
               children: [
                 Text(t('digitalTwin.growthScore'), style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.white)),
                 const SizedBox(height: 6),
-                if (growthScore != null)
+                if (hasBreakdown)
                   Text(
                     t(
                       'digitalTwin.basedOnSubScores',
                       options: {
-                        'count': (growthScore['inputs'] as Map)['contributingSubScores'] as Object,
-                        'total': (growthScore['inputs'] as Map)['totalPossibleSubScores'] as Object,
+                        'count': contributing as Object,
+                        'total': total as Object,
                       },
                     ),
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70),
@@ -215,12 +231,21 @@ class _ScoreRingPainter extends CustomPainter {
 }
 
 class _SubScoreTile extends StatefulWidget {
-  const _SubScoreTile({required this.label, required this.icon, required this.subScore, required this.t});
+  const _SubScoreTile({
+    required this.label,
+    required this.icon,
+    required this.subScore,
+    required this.locale,
+  });
 
   final String label;
   final IconData icon;
   final Map<String, dynamic>? subScore;
-  final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  /// The controller rather than a bare `t`, because this tile has to ASK
+  /// whether a label exists for a backend field name before it can decide
+  /// whether that field is safe to show at all — see [_readableInputs].
+  final LocaleController locale;
 
   @override
   State<_SubScoreTile> createState() => _SubScoreTileState();
@@ -235,11 +260,47 @@ class _SubScoreTileState extends State<_SubScoreTile> {
     return AppTheme.brick500;
   }
 
+  /// THE EXPANSION PANEL USED TO PRINT THE RAW `inputs` MAP.
+  ///
+  /// `'${e.key}: ${e.value}'` over every entry, which on the Safety tile
+  /// read «overallLevel: HIGH» and on Behavior «riskTrend: WORSENING» plus
+  /// an English `summary` sentence, and on Health a nested JSON map printed
+  /// by `Map.toString()`. Backend field names and backend enum values, in an
+  /// Arabic-first screen, to a parent, about their child's SAFETY — the
+  /// single worst place in this app to leak a wire value.
+  ///
+  /// A row survives only if BOTH are true:
+  ///   * this app has a reviewed label for the field name, and
+  ///   * the value is a number, so there is no enum, sentence or nested
+  ///     object to render.
+  ///
+  /// That is deliberately conservative. An unlabelled field is not shown
+  /// with a guessed name and a raw value; it is not shown. The sub-score
+  /// itself — the number a parent actually reads — is unaffected, and each
+  /// domain has its own screen where the same data appears properly laid
+  /// out.
+  List<MapEntry<String, num>> _readableInputs(Map<String, dynamic>? subScore) {
+    final inputs = subScore == null ? null : subScore['inputs'];
+    if (inputs is! Map) return const [];
+    final rows = <MapEntry<String, num>>[];
+    inputs.forEach((key, value) {
+      final name = key.toString();
+      if (value is! num) return;
+      if (!widget.locale.has('digitalTwinInput.$name')) return;
+      rows.add(MapEntry(name, value));
+    });
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
     final subScore = widget.subScore;
-    final score = subScore != null ? subScore['score'] as num : null;
+    final rawScore = subScore == null ? null : subScore['score'];
+    // WAS `subScore['score'] as num` — an unchecked cast on a field the
+    // backend documents as nullable for a child with no data yet.
+    final score = rawScore is num ? rawScore : null;
     final color = score != null ? _scoreColor(score) : Colors.grey;
+    final inputs = _readableInputs(subScore);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -253,8 +314,8 @@ class _SubScoreTileState extends State<_SubScoreTile> {
           child: Icon(widget.icon, color: color, size: 20),
         ),
         title: Text(widget.label, style: Theme.of(context).textTheme.titleMedium),
-        trailing: subScore == null
-            ? Text(widget.t('digitalTwin.notYetAvailable'), style: Theme.of(context).textTheme.bodyMedium)
+        trailing: score == null
+            ? Text(widget.locale.t('digitalTwin.notYetAvailable'), style: Theme.of(context).textTheme.bodyMedium)
             : Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -270,13 +331,22 @@ class _SubScoreTileState extends State<_SubScoreTile> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: (subScore['inputs'] as Map<String, dynamic>)
-                        .entries
-                        .map((e) => Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: Text('${e.key}: ${e.value}', style: Theme.of(context).textTheme.bodyMedium),
-                            ))
-                        .toList(),
+                    children: inputs.isEmpty
+                        ? [
+                            Text(
+                              widget.locale.t('digitalTwin.notYetAvailable'),
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ]
+                        : inputs
+                            .map((e) => Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  child: Text(
+                                    '${widget.locale.t('digitalTwinInput.${e.key}')}: ${e.value}',
+                                    style: Theme.of(context).textTheme.bodyMedium,
+                                  ),
+                                ))
+                            .toList(),
                   ),
                 ),
               ],
