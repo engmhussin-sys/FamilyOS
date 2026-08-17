@@ -98,20 +98,49 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     // discipline as WellbeingScreen's own insight-fetch pattern —
     // Health/Learning being unavailable must never block the
     // already-working Habits/Faith/Messages sections above.
+    // THE COMMENT ABOVE WAS TRUE OF THE INTENT AND FALSE OF THE CODE.
+    //
+    // These five calls used to share ONE `Future.wait` and ONE `catch`, which
+    // is the opposite of "one section's failure never blocks another":
+    // `Future.wait` rejects on the FIRST error, so a single failing call
+    // discarded the four that had already succeeded and the whole block fell
+    // into a silent `catch (_)`.
+    //
+    // That was not hypothetical. `generateSmartTasks()` threw a `TypeError`
+    // on EVERY call (it cast an array response to a Map — see that method's
+    // own note), so in practice health, learning, rewards and coaching never
+    // rendered either. Fixing the cast alone would have hidden how much this
+    // basket was costing; each call now settles on its own.
+    final api = ref.read(familyGrowthApiProvider);
+    final results = await Future.wait<Object?>([
+      _softly(api.getHealthProgress),
+      _softly(api.getLearningProgress),
+      _softly(api.getRewardsAccount),
+      _softly(api.getCoaching),
+      _softly(api.generateSmartTasks),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      // `as ... ?` not `as ...`: a null means that ONE section is unavailable
+      // and renders its own empty state. It never means the others are.
+      _healthProgress = results[0] as Map<String, dynamic>?;
+      _learningProgress = results[1] as Map<String, dynamic>?;
+      _rewardsAccount = results[2] as Map<String, dynamic>?;
+      _coachingTips = results[3] as List<dynamic>?;
+      _smartTasks = results[4] as List<dynamic>?;
+    });
+  }
+
+  /// Runs one section's fetch and converts its failure into `null` instead of
+  /// letting it take the other four with it. Deliberately catch-all: these are
+  /// supplementary sections on a screen that has already rendered, and there
+  /// is no version of "the rewards balance failed" that should blank the
+  /// child's habits.
+  Future<T?> _softly<T>(Future<T> Function() call) async {
     try {
-      final api = ref.read(familyGrowthApiProvider);
-      final results = await Future.wait([api.getHealthProgress(), api.getLearningProgress(), api.getRewardsAccount(), api.getCoaching(), api.generateSmartTasks()]);
-      if (mounted) {
-        setState(() {
-          _healthProgress = results[0] as Map<String, dynamic>;
-          _learningProgress = results[1] as Map<String, dynamic>;
-          _rewardsAccount = results[2] as Map<String, dynamic>;
-          _coachingTips = results[3] as List<dynamic>;
-          _smartTasks = results[4] as List<dynamic>;
-        });
-      }
+      return await call();
     } catch (_) {
-      // Best-effort — the screen already rendered successfully above.
+      return null;
     }
   }
 

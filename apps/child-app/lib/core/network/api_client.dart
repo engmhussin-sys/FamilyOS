@@ -141,6 +141,34 @@ class ApiClient {
     }
   }
 
+  /// THE [post] EQUIVALENT OF [getList], AND IT CLOSES A LIVE DEFECT.
+  ///
+  /// [post] above casts the body to a Map, exactly as [get] did before
+  /// [getList] existed. `POST /life-intelligence/self/smart-tasks/generate`
+  /// returns a bare JSON **array** (`return this.smartTaskEngine
+  /// .listForToday(...)`), so the cast on line above threw a `TypeError`
+  /// on every single call — and because the only caller wrapped it in a
+  /// best-effort `catch`, the smart-task cards silently never rendered.
+  /// A response shape mismatch that fails inside a swallow is invisible
+  /// twice over, which is why the shape now has its own method instead of
+  /// being cast at the call site.
+  Future<List<dynamic>> postList(
+    String path, {
+    Map<String, dynamic>? body,
+    bool skipAuth = false,
+  }) async {
+    try {
+      final response = await _dio.post(
+        path,
+        data: body,
+        options: Options(extra: {'skipAuth': skipAuth}),
+      );
+      return response.data as List<dynamic>;
+    } on DioException catch (e) {
+      throw _toApiException(e);
+    }
+  }
+
   /// Sprint 3 — a third auth mode, distinct from both the stored-session
   /// path and `skipAuth`: sends a ONE-TIME caller-supplied token (the
   /// Registration Token, `RegistrationTokenService`'s single-use bearer

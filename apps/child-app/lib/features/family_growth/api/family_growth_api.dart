@@ -84,9 +84,25 @@ class FamilyGrowthApi {
   /// used it meaningfully anyway (see the backend's own
   /// generateForTodayAuto docstring). Idempotent server-side — safe
   /// to call every time the screen loads, never creates duplicates.
-  Future<List<dynamic>> generateSmartTasks() async {
-    final result = await _client.post('/life-intelligence/self/smart-tasks/generate', body: <String, dynamic>{});
-    return result['data'] as List<dynamic>;
+  ///
+  /// FIXED — THIS METHOD COULD NEVER HAVE RETURNED A TASK.
+  /// It was `_client.post(...)` then `result['data'] as List`, and it was
+  /// wrong twice: `ApiClient.post` casts the response body to a
+  /// `Map<String, dynamic>`, but this route returns a bare JSON **array**
+  /// (`return this.smartTaskEngine.listForToday(...)`) — so the cast threw a
+  /// `TypeError` before `['data']` was ever reached — and there is no `data`
+  /// envelope on this endpoint for `['data']` to have found anyway. The only
+  /// caller (`my_growth_screen`) wraps this in a best-effort `catch`, so the
+  /// throw was swallowed and the smart-task cards simply never appeared, on
+  /// every device, since the day they were written.
+  ///
+  /// Now uses [ApiClient.postList] — the array-shaped sibling of `post`, in
+  /// the same way `getList` is the array-shaped sibling of `get`.
+  Future<List<dynamic>> generateSmartTasks() {
+    return _client.postList(
+      '/life-intelligence/self/smart-tasks/generate',
+      body: <String, dynamic>{},
+    );
   }
 
   Future<void> decideSmartTask(String taskId, String status) {
