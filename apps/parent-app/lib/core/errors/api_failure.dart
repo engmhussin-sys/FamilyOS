@@ -44,6 +44,7 @@ class ApiFailure {
     this.statusCode,
     this.requestId,
     this.fieldErrors = const [],
+    this.diagnostic,
   });
 
   /// The English sentence. Always present (the network layer substitutes a
@@ -66,6 +67,21 @@ class ApiFailure {
   final String? requestId;
 
   final List<ApiFieldError> fieldErrors;
+
+  /// THE REAL ERROR, KEPT BUT NEVER SHOWN.
+  ///
+  /// When a failure never reached the B3 filter — a proxy's 502 HTML page, a
+  /// dropped socket, a `FormatException` from a truncated body — the only
+  /// text available is the transport's own, e.g. «The request returned an
+  /// invalid status code of 502». That sentence is useless to a parent and
+  /// forbidden on a screen (it is raw exception text carrying an HTTP status
+  /// code), but throwing it away would leave a support engineer with nothing
+  /// at all.
+  ///
+  /// So it lives HERE: [message]/[messageAr] carry what a human reads,
+  /// [diagnostic] carries what actually happened. Nothing in the UI layer
+  /// renders this field — [DsErrorState] does not know it exists.
+  final String? diagnostic;
 
   /// ARABIC FIRST. `messageAr` wins whenever the server sent one; the
   /// English `message` is the fallback, never the default.
@@ -94,21 +110,94 @@ class ApiFailure {
     code: _timeoutCode,
   );
 
+  /// THE SENTENCE FOR A FAILURE NOBODY WORDED.
+  ///
+  /// [offline] and [timeout] above already establish the pattern: when the
+  /// server never got the chance to explain itself, the CLIENT supplies a
+  /// reviewed bilingual sentence rather than letting the transport's own
+  /// English wording reach a parent. This is the third such case, and the
+  /// one that used to be missing — a proxy 502, an HTML error page, a
+  /// truncated body or any pre-B3 route all landed here and rendered
+  /// whatever Dio happened to say.
+  ///
+  /// Non-punitive, and it names the one thing a parent can actually do.
+  static const ApiFailure unexpected = ApiFailure(
+    message: 'The request did not complete. Please try again in a moment.',
+    messageAr: 'تعذّر إتمام الطلب. حاول مرة أخرى بعد قليل.',
+    code: _unexpectedCode,
+  );
+
+  static const _unexpectedCode = 'CLIENT_UNEXPECTED';
+
+  /// True when NOBODY worded this failure — neither the B3 filter nor one of
+  /// the two transport classifications above — so the sentence on screen is
+  /// [unexpected]'s and the real text is in [diagnostic]. Branch on this,
+  /// never on the sentence itself.
+  bool get isUnexpected => code == _unexpectedCode;
+
+  /// The one line a log or a Sentry breadcrumb wants: everything needed to
+  /// join this failure to a backend log row, and NOTHING a parent would
+  /// ever see. Deliberately not localised — logs are read by engineers.
+  String get logLine {
+    final parts = <String>[
+      if (code != null) 'code=$code',
+      if (statusCode != null) 'status=$statusCode',
+      if (requestId != null) 'requestId=$requestId',
+      for (final field in fieldErrors) 'field=${field.field}',
+    ];
+    final detail = _firstNonEmpty([diagnostic, message]) ?? message;
+    return '${parts.join(' ')}${parts.isEmpty ? '' : ' '}detail=$detail';
+  }
+
+  /// THE ONE CONVERSION, AND THE POINT AT WHICH RAW TEXT STOPS.
+  ///
+  /// Three outcomes, in order:
+  ///   1. the transport already classified it (offline / timeout) — those
+  ///      two carry reviewed Arabic of their own;
+  ///   2. the B3 envelope is present (`code`, and normally `messageAr`) —
+  ///      the server's own words are carried through untouched, because the
+  ///      server is the only party that knows what actually went wrong.
+  ///      A B3 envelope that somehow lacks `messageAr` gets [unexpected]'s
+  ///      Arabic rather than falling through to the English, so an
+  ///      Arabic-locale parent is never handed an English sentence;
+  ///   3. anything else — a proxy page, a dropped socket, a `FormatException`
+  ///      — is rendered as [unexpected], with the real text preserved in
+  ///      [diagnostic] for the log.
+  ///
+  /// `statusCode`, `requestId` and `fieldErrors` survive every branch: they
+  /// are how support finds the matching backend log line, and dropping them
+  /// to clean up the message would trade one problem for a worse one.
   factory ApiFailure.from(Object error) {
     if (error is ApiFailure) return error;
     if (error is ApiException) {
       if (error.code == _offlineCode) return offline;
       if (error.code == _timeoutCode) return timeout;
+
+      final hasArabic = _firstNonEmpty([error.messageAr]) != null;
+      final fromEnvelope = _firstNonEmpty([error.code]) != null || hasArabic;
+
       return ApiFailure(
-        message: error.message,
-        messageAr: error.messageAr,
-        code: error.code,
+        message: fromEnvelope ? error.message : unexpected.message,
+        messageAr: hasArabic ? error.messageAr : unexpected.messageAr,
+        code: fromEnvelope ? error.code : _unexpectedCode,
         statusCode: error.statusCode,
         requestId: error.requestId ?? error.correlationId,
         fieldErrors: _fieldErrorsFrom(error.details),
+        // ALWAYS the untouched original, even when it is also the
+        // displayed sentence — a log reader should not have to work out
+        // which branch was taken to know what arrived on the wire.
+        diagnostic: error.message,
       );
     }
-    return ApiFailure(message: error.toString());
+    // Not even an ApiException: a bad cast, a `FormatException`, a null
+    // check on a shape the backend changed. `toString()` on those is a
+    // developer artefact and occasionally a stack trace.
+    return ApiFailure(
+      message: unexpected.message,
+      messageAr: unexpected.messageAr,
+      code: _unexpectedCode,
+      diagnostic: error.toString(),
+    );
   }
 
   static List<ApiFieldError> _fieldErrorsFrom(Map<String, dynamic>? details) {

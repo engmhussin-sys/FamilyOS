@@ -412,6 +412,46 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'coaching.track.parent': 'For you',
     'coaching.track.child': 'For your child',
     'coaching.track.family': 'For the family',
+    'coaching.track.other': 'Suggestion',
+    'lifeIntelligence.actionFailedTitle': 'The action did not complete',
+    'healthTrend.millilitres': 'ml',
+    // A CHILD-targeted message's `category` is a backend notification type
+    // (STREAK_ACHIEVED, HYDRATION_REMINDER, ...). It was rendered raw on the
+    // approval card; these are the labels that replaced it, with
+    // `messageCategory.other` covering any type this build predates.
+    'messageCategory.ACHIEVEMENT_REJECTED': 'Achievement sent back',
+    'messageCategory.ACHIEVEMENT_VERIFIED': 'Achievement confirmed',
+    'messageCategory.AI_RECOMMENDATION': 'Suggestion',
+    'messageCategory.BADGE_EARNED': 'Badge',
+    'messageCategory.CHILD_WELLBEING_CHECKIN': 'Checking in',
+    'messageCategory.DAILY_GOAL_COMPLETED': 'Goal of the day',
+    'messageCategory.EXERCISE_ENCOURAGEMENT': 'Movement',
+    'messageCategory.HYDRATION_REMINDER': 'Water reminder',
+    'messageCategory.LEARNING_GOAL_ACHIEVED': 'Learning goal',
+    'messageCategory.LEVEL_UP': 'New level',
+    'messageCategory.REWARD_GRANTED_CHILD': 'Reward',
+    'messageCategory.STREAK_ACHIEVED': 'Streak',
+    'messageCategory.STUDY_REMINDER': 'Study reminder',
+    'messageCategory.other': 'Message',
+    // The Digital Twin sub-score `inputs` map. Backend field names, shown
+    // to a parent only when one of these labels exists for them.
+    'digitalTwinInput.activePractices': 'Active practices',
+    'digitalTwinInput.averageAssessmentScore': 'Average score',
+    'digitalTwinInput.challengeParticipations': 'Challenges joined',
+    'digitalTwinInput.completedHabitDays': 'Days a habit was completed',
+    'digitalTwinInput.completedLogs': 'Practices logged',
+    'digitalTwinInput.groupActivityCount': 'Group activities',
+    'digitalTwinInput.groupBadgeCount': 'Group badges',
+    'digitalTwinInput.nutritionLogsCount': 'Meals logged',
+    'digitalTwinInput.overallRisk': 'Risk indicator',
+    'digitalTwinInput.riskAssessmentCount': 'Safety checks run',
+    'digitalTwinInput.sharedHabitCompletions': 'Shared habits completed',
+    'digitalTwinInput.sleepHours': 'Sleep hours',
+    'digitalTwinInput.streakDays': 'Streak days',
+    'digitalTwinInput.totalHabitDays': 'Days counted',
+    'digitalTwinInput.totalMinutes': 'Total minutes',
+    'digitalTwinInput.totalSessions': 'Study sessions',
+    'digitalTwinInput.trustChangeCount': 'Trust changes',
     'common.save': 'Save',
     'common.cancel': 'Cancel',
     'auth.loginTitle': 'Parent Login',
@@ -1054,6 +1094,40 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'coaching.track.parent': 'لك',
     'coaching.track.child': 'لطفلك',
     'coaching.track.family': 'للأسرة',
+    'coaching.track.other': 'اقتراح',
+    'lifeIntelligence.actionFailedTitle': 'لم تكتمل العملية',
+    'healthTrend.millilitres': 'مل',
+    'messageCategory.ACHIEVEMENT_REJECTED': 'إنجاز أُعيد',
+    'messageCategory.ACHIEVEMENT_VERIFIED': 'إنجاز مُعتمد',
+    'messageCategory.AI_RECOMMENDATION': 'اقتراح',
+    'messageCategory.BADGE_EARNED': 'شارة',
+    'messageCategory.CHILD_WELLBEING_CHECKIN': 'اطمئنان',
+    'messageCategory.DAILY_GOAL_COMPLETED': 'هدف اليوم',
+    'messageCategory.EXERCISE_ENCOURAGEMENT': 'حركة ونشاط',
+    'messageCategory.HYDRATION_REMINDER': 'تذكير بالماء',
+    'messageCategory.LEARNING_GOAL_ACHIEVED': 'هدف تعليمي',
+    'messageCategory.LEVEL_UP': 'مستوى جديد',
+    'messageCategory.REWARD_GRANTED_CHILD': 'مكافأة',
+    'messageCategory.STREAK_ACHIEVED': 'مواظبة',
+    'messageCategory.STUDY_REMINDER': 'تذكير بالمذاكرة',
+    'messageCategory.other': 'رسالة',
+    'digitalTwinInput.activePractices': 'ممارسات نشطة',
+    'digitalTwinInput.averageAssessmentScore': 'متوسّط الدرجات',
+    'digitalTwinInput.challengeParticipations': 'تحديات شارك فيها',
+    'digitalTwinInput.completedHabitDays': 'أيام أُنجزت فيها عادة',
+    'digitalTwinInput.completedLogs': 'ممارسات مُسجَّلة',
+    'digitalTwinInput.groupActivityCount': 'أنشطة جماعية',
+    'digitalTwinInput.groupBadgeCount': 'شارات جماعية',
+    'digitalTwinInput.nutritionLogsCount': 'وجبات مُسجَّلة',
+    'digitalTwinInput.overallRisk': 'مؤشّر المخاطر',
+    'digitalTwinInput.riskAssessmentCount': 'مرات فحص الأمان',
+    'digitalTwinInput.sharedHabitCompletions': 'عادات مشتركة أُنجزت',
+    'digitalTwinInput.sleepHours': 'ساعات النوم',
+    'digitalTwinInput.streakDays': 'أيام المواظبة',
+    'digitalTwinInput.totalHabitDays': 'الأيام المحسوبة',
+    'digitalTwinInput.totalMinutes': 'إجمالي الدقائق',
+    'digitalTwinInput.totalSessions': 'جلسات المذاكرة',
+    'digitalTwinInput.trustChangeCount': 'تغيّرات الثقة',
     'common.save': 'حفظ',
     'common.cancel': 'إلغاء',
     'auth.loginTitle': 'دخول الوالدين',
@@ -1353,4 +1427,23 @@ String translate(AppLocale locale, String key, {int? count, Map<String, Object>?
 
   final interpolationOptions = <String, Object>{if (count != null) 'count': count, ...?options};
   return _interpolate(template, interpolationOptions);
+}
+
+/// Whether [key] resolves to a real resource, in [locale] or in the default
+/// locale.
+///
+/// EXISTS FOR ONE SITUATION ONLY: a key built from a BACKEND value, such as
+/// `t('category.${habit['category']}')`. `translate` answers a missing key
+/// with the key itself, which on screen reads «category.WHATEVER» — a raw
+/// backend value with a prefix glued on, i.e. exactly the thing that must
+/// never reach a parent. A call site that interpolates a server value asks
+/// this first and chooses its own fallback when the answer is no.
+///
+/// Do NOT use this for a literal key. A literal key that is missing is a bug
+/// `verify_l10n_parity.py` already catches at commit time; guarding it here
+/// would hide it instead.
+bool hasTranslation(AppLocale locale, String key) {
+  final resources = _resources[locale];
+  if (resources != null && resources.containsKey(key)) return true;
+  return _resources[defaultLocale]!.containsKey(key);
 }

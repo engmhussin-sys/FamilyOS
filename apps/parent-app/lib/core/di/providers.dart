@@ -14,6 +14,7 @@ import '../../features/dashboard/api/dashboard_api.dart';
 import '../../features/notifications/api/notifications_api.dart';
 import '../../features/settings/api/settings_api.dart';
 import '../../features/life_intelligence/api/life_intelligence_api.dart';
+import '../../features/life_intelligence/data/life_intelligence_repository.dart';
 import '../../features/billing/api/billing_api.dart';
 import '../../features/billing/application/subscription_purchase_coordinator.dart';
 import '../../features/billing/domain/store_billing_client.dart';
@@ -60,6 +61,15 @@ final notificationsApiProvider = Provider<NotificationsApi>(
 );
 final settingsApiProvider = Provider<SettingsApi>((ref) => SettingsApi(ref.watch(apiClientProvider)));
 final lifeIntelligenceApiProvider = Provider<LifeIntelligenceApi>((ref) => LifeIntelligenceApi(ref.watch(apiClientProvider)));
+
+/// The boundary the ten Life Intelligence screens now read through, so that
+/// `ApiException` -> `ApiFailure` happens once instead of ten times, and the
+/// original error reaches the crash reporter on the way past. The API
+/// provider above is untouched: `RewardProgramsRepository` still composes it
+/// directly for the points balance, and nothing needed rewiring.
+final lifeIntelligenceRepositoryProvider = Provider<LifeIntelligenceRepository>(
+  (ref) => LifeIntelligenceRepository(ref.watch(lifeIntelligenceApiProvider)),
+);
 final billingApiProvider = Provider<BillingApi>((ref) => BillingApi(ref.watch(apiClientProvider)));
 
 // PHASE G — THE STORE BILLING SEAM, AND THE ONE LINE THAT CLOSES IT.

@@ -118,6 +118,12 @@ class LocaleController extends StateNotifier<AppLocale> {
     return translate(state, key, count: count, options: options);
   }
 
+  /// Guard for a key built out of a BACKEND value — see [hasTranslation].
+  /// A screen mapping `habit['category']` or a message category asks this
+  /// before calling [t], so an unrecognised server value falls back to
+  /// something a parent can read instead of surfacing as «category.FOO».
+  bool has(String key) => hasTranslation(state, key);
+
   bool get isRtl => rtlLocales.contains(state);
 
   /// Bridges this app's own AppLocale enum to Flutter's real `dart:ui`
