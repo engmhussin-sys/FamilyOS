@@ -36,6 +36,7 @@ import { FunnelService } from '../../src/modules/analytics/application/funnel.se
 import { ReferralService } from '../../src/modules/analytics/application/referral.service';
 import { ReferralRewardService } from '../../src/modules/analytics/application/referral-reward.service';
 import { GrowthSettingsService } from '../../src/modules/analytics/application/growth-settings.service';
+import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
 const ADMIN_KEY = process.env.INTERNAL_ADMIN_API_KEY as string;
@@ -917,6 +918,87 @@ describeIfDb('PHASE D (GROWTH) — the growth API (real PostgreSQL)', () => {
         .set('x-internal-admin-key', ADMIN_KEY)
         .send({ key: 'referral.reward.infinite', value: '1' })
         .expect(500);
+    });
+  });
+
+  /**
+   * PHASE F (`F6-004`, closing `PF-E-004`) — THE GUARD, ONE LAYER BELOW THE
+   * SCENARIO THAT MEASURED IT.
+   *
+   * `e2e-01 › THE REPLAY` proves the counter no longer triples under a real
+   * outbox redelivery. That is the PRODUCT proof and it is the one that
+   * matters, but it costs a full booted app and a drained outbox, so it is not
+   * where a future author changing `SelfHostedAnalyticsAdapter` will look.
+   *
+   * These four assertions pin the CONTRACT directly, against the real
+   * PostgreSQL and the real emitter: same cause counts once, different causes
+   * count separately, DIFFERENT EVENT NAMES sharing one cause both count
+   * (a domain event legitimately projects into more than one growth event),
+   * and NO cause is still at-least-once — which is the property the open
+   * `POST /analytics/track` surface depends on and the one an over-eager
+   * «just make it unique» fix would silently destroy.
+   */
+  describe('8. PF-E-004 — the analytics counter is idempotent on a CAUSE, and only on a cause', () => {
+    const emitter = () => app.get(GrowthEventEmitter);
+    const countOf = (eventName: string, familyId: string): Promise<number> =>
+      runAsSystemAsync('TEST_FIXTURE', `Growth API suite: count ${eventName}`, async () =>
+        prisma.analyticsEvent.count({ where: { familyId, eventName } }),
+      );
+
+    it('the SAME cause emitted twice is ONE row — a redelivery cannot inflate a funnel step', async () => {
+      const cause = `guard:${stamp}:same`;
+      const before = await countOf('REWARD_GRANTED', egFamilyA);
+
+      for (let i = 0; i < 3; i++) {
+        await emitter().emit({
+          name: 'REWARD_GRANTED',
+          familyId: egFamilyA,
+          sessionId: `bus:${egFamilyA}`,
+          sourceEventId: cause,
+          payload: { grantCount: 1 },
+        });
+      }
+
+      expect(await countOf('REWARD_GRANTED', egFamilyA)).toBe(before + 1);
+    });
+
+    it('a DIFFERENT cause is a different row — the constraint deduplicates the cause, not the type', async () => {
+      const before = await countOf('REWARD_GRANTED', egFamilyA);
+      await emitter().emit({
+        name: 'REWARD_GRANTED',
+        familyId: egFamilyA,
+        sessionId: `bus:${egFamilyA}`,
+        sourceEventId: `guard:${stamp}:other`,
+      });
+      expect(await countOf('REWARD_GRANTED', egFamilyA)).toBe(before + 1);
+    });
+
+    it('ONE cause projecting into TWO growth events writes BOTH — the event name is in the key', async () => {
+      // `REWARD_GRANTED` on the bus produces a `REWARD_GRANTED` growth event and
+      // feeds the activation; a completion produces `GOAL_COMPLETED`. A key on
+      // the cause alone would have silently dropped the second projection of any
+      // event that has one.
+      const cause = `guard:${stamp}:shared`;
+      const beforeReward = await countOf('REWARD_GRANTED', egFamilyA);
+      const beforeGoal = await countOf('GOAL_COMPLETED', egFamilyA);
+
+      await emitter().emit({ name: 'REWARD_GRANTED', familyId: egFamilyA, sessionId: 's', sourceEventId: cause });
+      await emitter().emit({ name: 'GOAL_COMPLETED', familyId: egFamilyA, sessionId: 's', sourceEventId: cause });
+
+      expect(await countOf('REWARD_GRANTED', egFamilyA)).toBe(beforeReward + 1);
+      expect(await countOf('GOAL_COMPLETED', egFamilyA)).toBe(beforeGoal + 1);
+    });
+
+    it('an event with NO cause is STILL at-least-once — two page views are two page views', async () => {
+      // The open `POST /analytics/track` surface. `source_event_id` is NULL, the
+      // index is PARTIAL, and nothing about ad-hoc telemetry changed. This is
+      // asserted rather than assumed because the obvious wrong fix — a TOTAL
+      // unique index, or `createMany({ skipDuplicates: true })` — would collapse
+      // every one of these into a single row and nobody would notice for months.
+      const before = await countOf('GOAL_STARTED', egFamilyA);
+      await emitter().emit({ name: 'GOAL_STARTED', familyId: egFamilyA, sessionId: 's' });
+      await emitter().emit({ name: 'GOAL_STARTED', familyId: egFamilyA, sessionId: 's' });
+      expect(await countOf('GOAL_STARTED', egFamilyA)).toBe(before + 2);
     });
   });
 });

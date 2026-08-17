@@ -394,33 +394,45 @@ describeGolden('GOLDEN E2E-01 — a parent sets a Quran goal and a child earns i
     });
 
     /**
-     * THE ONE PLACE THE REPLAY IS *ALLOWED* TO MOVE A NUMBER, and the asymmetry
-     * is deliberate and load-bearing, so this scenario measures it rather than
-     * assuming it either way.
+     * PF-E-004 — **CLOSED BY `F6-004`**, and this test is where it was measured.
      *
-     * `GrowthDomainEventBridge` says in its own docstring that it does NOT use
-     * `ConsumerIdempotency` — "double-counting an analytics event is a rounding
-     * error; the ONE thing that must not happen twice, the activation, is
-     * protected by a UNIQUE index on the row itself". So a redelivered
-     * `REWARD_GRANTED` really does append another `analytics_events` row, and
-     * the ACTIVATION really does not move.
+     * WHAT THIS ASSERTED BEFORE, VERBATIM:
      *
-     * MONEY AND PROGRESS DID NOT MOVE — the ledger, the timeline and the
-     * notification are still one each, asserted above. What moved is a chart.
-     * The size of that inaccuracy is recorded as PF-E-004 rather than filed as
-     * a pass or hidden behind a `toBeGreaterThanOrEqual`.
+     *     expect(await analyticsCount('REWARD_GRANTED')).toBe(3);
+     *
+     * and it was titled «the analytics counter is at-least-once BY DESIGN».
+     * The design was written down — `GrowthDomainEventBridge`'s docstring said
+     * «double-counting an analytics event is a rounding error» — and this
+     * scenario measured the rounding error: two redeliveries, three rows, next
+     * to one ledger row, one timeline entry, one notification and one
+     * activation. The FIRST_REWARD funnel step, and every conversion rate
+     * computed from it, inflated by the redelivery rate.
+     *
+     * THE COUNTER IS NOW AS IDEMPOTENT AS THE LEDGER, by the same kind of thing
+     * that makes the ledger idempotent: a CONSTRAINT on the cause
+     * (`analytics_events (event_name, source_event_id)`, migration 0020), not a
+     * marker — because the replay above DELETES the markers, which is exactly
+     * why a `ConsumerIdempotency` fix would have been a fix to nothing.
+     *
+     * THE ASYMMETRY THAT REMAINS IS THE HONEST ONE: the open
+     * `POST /analytics/track` surface has no cause, writes NULL, and is still
+     * at-least-once — two page views really are two page views.
      */
-    it('THE REPLAY — the ACTIVATION is still exactly one, and the analytics counter is at-least-once by design', async () => {
+    it('THE REPLAY — the ACTIVATION is exactly one, and so now is the analytics counter', async () => {
       const activations = await world.sys('count activations', () =>
         world.prisma.familyActivation.count({ where: { familyId: home.familyId } }),
       );
       expect(activations).toBe(1);
 
-      // Two redeliveries above, each re-entering the bridge: one original row
-      // plus one per redelivery. Pinned exactly, so a future change to the
-      // bridge's idempotency is visible here instead of silently absorbed.
-      expect(await analyticsCount('REWARD_GRANTED')).toBe(3);
-      // And the thing the funnel is actually FOR did not move: the ledger.
+      // ONE. Two redeliveries above, each re-entering the bridge with the
+      // consumer markers deleted, and the constraint refused both.
+      expect(await analyticsCount('REWARD_GRANTED')).toBe(1);
+      // And the same holds for every other bus-derived growth event, because
+      // the fix is on the emitter and not on one branch of it.
+      expect(await analyticsCount('GOAL_COMPLETED')).toBe(1);
+      expect(await analyticsCount('GOAL_STARTED')).toBe(1);
+
+      // The whole loop, one of everything, after two full redeliveries.
       const counts = await countTheLoop(world, home);
       expect(counts.ledger).toBe(1);
     });

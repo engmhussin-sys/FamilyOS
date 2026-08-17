@@ -1316,6 +1316,14 @@ model AnalyticsEvent {
   eventName String   @map("event_name")
   payload   Json?
   occurredAt DateTime @default(now()) @map("occurred_at")
+  /// PHASE F (`F6-004`, closing `PF-E-004`) — the CAUSE this row counts, for
+  /// the bus-derived growth events only. `null` for the open
+  /// `POST /analytics/track` surface, which has no cause and is not
+  /// deduplicated. The partial unique index that makes redelivery a no-op
+  /// lives in migration 0020 — Prisma cannot express a partial index, and
+  /// declaring a plain `@@unique` here would generate a TOTAL one that
+  /// collapsed every ad-hoc event with a NULL cause into a single row.
+  sourceEventId String? @map("source_event_id")
 
   @@index([eventName, occurredAt])
   @@index([familyId])

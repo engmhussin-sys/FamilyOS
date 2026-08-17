@@ -46,10 +46,32 @@ interface IRewardGrantedPayload {
  * which that is the right choice, stated so nobody copies it into one where it
  * is not.
  *
- * IT DOES NOT USE `ConsumerIdempotency`, ON PURPOSE. Double-counting an
- * analytics event is a rounding error; the ONE thing here that must not happen
- * twice — the activation — is protected by a UNIQUE index on the row itself,
- * which is a stronger guarantee than a marker table anyway.
+ * IT DOES NOT USE `ConsumerIdempotency`, ON PURPOSE — and PHASE F (`F6-004`,
+ * closing `PF-E-004`) KEPT THAT CHOICE WHILE FIXING WHAT IT COST.
+ *
+ * The paragraph that used to sit here said «double-counting an analytics event
+ * is a rounding error». `e2e-01 › THE REPLAY` measured the rounding error: two
+ * redeliveries with the consumer markers deleted produced THREE
+ * `analytics_events(REWARD_GRANTED)` rows beside one ledger row, one timeline
+ * entry, one notification and one activation. The FIRST_REWARD funnel step and
+ * every conversion rate derived from it were inflated by the redelivery rate —
+ * a number nobody had, on a chart the business reads.
+ *
+ * THE FIX IS NOT `ConsumerIdempotency`, and the reason is the same one B9 gave
+ * about notifications: F3's own docstring calls `consumed_messages` an
+ * OPTIMISATION, and the scenario that measured this defect DELETES that marker
+ * in order to force the replay. A marker-based fix would pass a test nobody
+ * wrote and fail the one that exists.
+ *
+ * So every event this bridge emits now carries `sourceEventId = envelope.id` —
+ * `domain_events.id`, server-assigned and IDENTICAL on every redelivery for as
+ * long as the row exists — and `analytics_events (event_name, source_event_id)`
+ * refuses the second row (migration 0020). The refusal is a CONSTRAINT, not a
+ * window and not something that can be dropped while the cause survives.
+ *
+ * WHAT DID NOT CHANGE: this bridge still writes no marker, still never throws,
+ * and the activation is still protected by its own UNIQUE index on the row —
+ * two independent guarantees rather than one shared one.
  */
 @Injectable()
 export class GrowthDomainEventBridge implements OnModuleInit {
@@ -82,6 +104,7 @@ export class GrowthDomainEventBridge implements OnModuleInit {
         familyId: envelope.familyId,
         sessionId: `bus:${envelope.familyId}`,
         payload: { completionKind, goalKind: envelope.type },
+        sourceEventId: envelope.id,
       });
     });
   }
@@ -97,6 +120,7 @@ export class GrowthDomainEventBridge implements OnModuleInit {
         familyId: envelope.familyId,
         sessionId: `bus:${envelope.familyId}`,
         payload: { grantCount, completionKind },
+        sourceEventId: envelope.id,
       });
 
       // THE ACTIVATION EVALUATION. Everything the four gates need is already
@@ -121,6 +145,7 @@ export class GrowthDomainEventBridge implements OnModuleInit {
         name: 'DEVICE_PAIRED',
         familyId: envelope.familyId,
         sessionId: `bus:${envelope.familyId}`,
+        sourceEventId: envelope.id,
       }),
     );
   }
@@ -132,6 +157,7 @@ export class GrowthDomainEventBridge implements OnModuleInit {
         familyId: envelope.familyId,
         sessionId: `bus:${envelope.familyId}`,
         payload: { goalKind: envelope.aggregateType },
+        sourceEventId: envelope.id,
       }),
     );
   }
@@ -143,6 +169,7 @@ export class GrowthDomainEventBridge implements OnModuleInit {
         familyId: envelope.familyId,
         sessionId: `bus:${envelope.familyId}`,
         payload: { goalKind: envelope.aggregateType },
+        sourceEventId: envelope.id,
       }),
     );
   }

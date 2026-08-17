@@ -15,6 +15,9 @@ export interface IGrowthEmitInput {
   /** Anonymous session for pre-registration events; a synthetic id otherwise. */
   readonly sessionId: string;
   readonly payload?: Record<string, unknown>;
+  /** PHASE F (`F6-004`) — the domain event this projection counts, so a
+   * redelivery is a no-op. See `IAnalyticsEventInput.sourceEventId`. */
+  readonly sourceEventId?: string;
 }
 
 /**
@@ -81,6 +84,7 @@ export class GrowthEventEmitter {
         sessionId: input.sessionId,
         eventName: input.name,
         payload,
+        sourceEventId: input.sourceEventId,
       });
     } catch (err) {
       this.logger.warn(
