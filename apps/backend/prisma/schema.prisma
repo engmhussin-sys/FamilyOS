@@ -351,6 +351,17 @@ model Family {
   id               String            @id @default(uuid()) @db.Uuid
   name             String
   timezone         String            @default("UTC")
+  /// ISO-3166-1 alpha-2, a REAL foreign key to `countries` (migration 0022) —
+  /// so an unsupported market cannot be stored by ANY code path, present or
+  /// future, rather than depending on whichever validator happens to run.
+  /// `countries` is the launch-market catalogue and adding a market is an
+  /// INSERT, not a migration.
+  ///
+  /// NULLABLE because families created before this column exist and there is no
+  /// true value to backfill them with — defaulting them to 'EG' would make the
+  /// growth dashboard report invented market data as measured fact, which is the
+  /// one thing that dashboard's NOT MEASURED discipline exists to prevent.
+  countryCode      String?           @map("country_code") @db.VarChar(2)
   subscriptionPlan SubscriptionPlan  @default(FREE) @map("subscription_plan")
   createdAt        DateTime          @default(now()) @map("created_at")
   updatedAt        DateTime          @updatedAt @map("updated_at")
@@ -365,6 +376,12 @@ model Family {
   broadcastMessages  FamilyBroadcastMessage[]
   challenges         FamilyChallenge[]
   supportRequests    SupportRequest[]
+
+  country  Country? @relation(fields: [countryCode], references: [code], onDelete: Restrict)
+  /// NOTE: `families_country_code_idx` is a PARTIAL index
+  /// (`WHERE country_code IS NOT NULL`) created by migration 0022. Prisma has no
+  /// syntax for a partial index, so it is deliberately ABSENT from this block
+  /// rather than declared as a full index that would not match the database.
 
   parentalConsents ParentalConsent[]
   devicePairingEvents DevicePairingEvent[]
@@ -3317,6 +3334,7 @@ model Country {
 
   currency Currency            @relation(fields: [currencyCode], references: [code])
   prices   SubscriptionPrice[]
+  families Family[]
 
   @@index([isActive])
   @@map("countries")

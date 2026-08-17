@@ -680,44 +680,43 @@ describeGolden('GOLDEN E2E-12 — the pairing lifecycle, end to end', () => {
 
     /**
      * ========================================================================
-     * KNOWN LIMIT, MEASURED HERE RATHER THAN DISCOVERED IN PRODUCTION.
+     * THE KNOWN LIMIT PINNED HERE IS NOW CLOSED, AND THIS IS ITS REPLACEMENT.
      * ========================================================================
      *
-     * A REVOKED CHILD CAN NEVER BE PAIRED AGAIN.
+     * Until the `PAIRING_INVITED` edge was widened, this test asserted a 409:
+     * `allowedFromStates: [null]` meant «valid only as the FIRST event for this
+     * childId», and pairing state is child-scoped (Decision-065/066), so any
+     * terminal state on a child's timeline refused `POST /pairing/invite` for
+     * that child *forever*. Revocation was a one-way door — a parent could undo
+     * a mis-pairing (the tests above) and then never pair the right phone.
      *
-     * `PAIRING_INVITED`'s `allowedFromStates` is `[null]` — «valid as the FIRST
-     * event recorded for a given childId» — and pairing state is scoped to the
-     * CHILD, not to the device (Decision-065/066). So the moment a child's
-     * timeline holds any terminal state at all, `POST /pairing/invite` answers
-     * 409 for that child forever. The same wall stands after `PAIRING_REJECTED`
-     * and after `PAIRING_EXPIRED`.
-     *
-     * WHY IT IS PINNED HERE INSTEAD OF FIXED HERE. The fix is one line — adding
-     * `'REVOKED'`, `'REMOVED'`, `'REJECTED'` and `'EXPIRED'` to that rule's
-     * allowed-from list — but it is a NEW EDGE in the state machine, and the
-     * change this scenario's own work was scoped to was the DEVICE_REVOKED row.
-     * Adding an edge to the table on the way past, in a commit about something
-     * else, is exactly how a state machine stops being a specification.
-     *
-     * WHAT IT COSTS TODAY, stated plainly so the priority is arguable from
-     * facts: it makes revocation a ONE-WAY DOOR. A parent who types a code into
-     * the wrong phone can now undo it (the test above) and then cannot pair the
-     * right phone — the child is left with no device and no route to one. The
-     * `ACTIVATED -> REVOKED` edge is worth strictly less until this is closed.
-     *
-     * THIS TEST WILL FAIL WHEN SOMEBODY FIXES IT. That is intended: replace it
-     * with the 200-and-INVITATION_SENT assertion in the same breath as the fix.
+     * The rule now also admits `REVOKED`, `REMOVED`, `REJECTED` and `EXPIRED`:
+     * exactly the states for which "this child has no working device" is true.
+     * The live states were deliberately left out — see the comment on that rule
+     * for why multi-device-per-child is not something to acquire by accident.
      */
-    it('KNOWN LIMIT — a revoked child cannot be re-invited: PAIRING_INVITED is first-event-only', async () => {
+    it('a revoked child CAN be paired again — revocation is an undo, not a dead end', async () => {
       const invited = await request(world.http)
         .post(`${P}/pairing/invite`)
         .set(asParent(home))
         .send({ childId: home.childId });
 
-      expect(invited.status).toBe(409);
-      expect(invited.body.message).toContain('PAIRING_INVITED');
-      // The timeline is untouched: the refusal happens before anything is written.
-      expect((await pairingStates(home.childId))[0]).toBe('REVOKED');
+      expect(invited.status).toBe(200);
+      expect((await pairingStates(home.childId))[0]).toBe('INVITATION_SENT');
+    });
+
+    it('re-inviting the CHILD does not resurrect the revoked DEVICE', async () => {
+      // The whole point of the edge above is that it restores the child's
+      // route to a device — not that it quietly un-revokes the one the parent
+      // just disconnected. A new invitation is a new device's beginning.
+      const row = await deviceRow(deviceId);
+      expect(row.status).toBe('REVOKED');
+
+      const policy = await request(world.http)
+        .get(`${P}/pairing/device/policy`)
+        .set(asBearer(deviceToken));
+      expect(policy.status).toBe(403);
+      expect(policy.body.code).toBe('DEVICE_NOT_ACTIVE');
     });
   });
 });

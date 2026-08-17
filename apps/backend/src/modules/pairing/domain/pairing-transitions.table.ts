@@ -39,7 +39,45 @@ export const DEVICE_REQUIRED_EVENTS: ReadonlySet<PairingEventTypeValue> = new Se
  */
 export const PAIRING_TRANSITIONS: readonly IPairingTransitionRule[] = [
   // --- Happy path ---
-  { event: 'PAIRING_INVITED', allowedFromStates: [null], toState: 'INVITATION_SENT', actorType: 'USER' },
+  /**
+   * RE-PAIRING AFTER A TERMINAL STATE — the edge that makes revocation an undo
+   * rather than a one-way door.
+   *
+   * `[null]` alone meant «valid only as the FIRST event recorded for this
+   * childId», and pairing state is scoped to the CHILD, not the device
+   * (Decision-065/066). So the moment a child's timeline held ANY terminal
+   * state, `POST /pairing/invite` answered 409 for that child *forever*: a
+   * parent who typed a code into the wrong phone could revoke it and then could
+   * not pair the right one, and a child whose first attempt hit
+   * `AUTHENTICATION_FAILED` was left with no device and no route to one. A
+   * lapsed invitation was equally fatal, which made the TTL a trap rather than
+   * a safeguard.
+   *
+   * The four states added below are exactly the terminal ones — every state for
+   * which "this child currently has no working device" is true:
+   *   REVOKED  · the parent withdrew trust and may now grant it again
+   *   REMOVED  · the device was removed after revocation
+   *   REJECTED · the attempt failed (parent rejection or authentication)
+   *   EXPIRED  · the invitation's TTL lapsed with nothing done
+   *
+   * WHAT IS DELIBERATELY NOT ADDED: the live states (`ACTIVATED`, `HEALTHY`,
+   * `DEGRADED`, `SUSPENDED`) and the mid-flight ones. Allowing an invite from
+   * those would quietly turn this into the "pair a second device" feature, and
+   * multi-device-per-child is a product decision with its own policy,
+   * enforcement and billing questions — not something to acquire as a side
+   * effect of fixing re-pairing. A parent replacing a working device revokes it
+   * first, which is the path this edge completes.
+   *
+   * REVOCATION IS STILL REAL. The revoked device's refresh tokens are already
+   * dead and `getLiveDeviceOrThrow` refuses it on every privileged surface.
+   * Re-inviting the CHILD does not resurrect the revoked DEVICE.
+   */
+  {
+    event: 'PAIRING_INVITED',
+    allowedFromStates: [null, 'REVOKED', 'REMOVED', 'REJECTED', 'EXPIRED'],
+    toState: 'INVITATION_SENT',
+    actorType: 'USER',
+  },
   { event: 'PAIRING_ACCEPTED', allowedFromStates: ['INVITATION_SENT'], toState: 'AUTHENTICATING', actorType: 'DEVICE' },
   { event: 'DEVICE_REGISTERED', allowedFromStates: ['AUTHENTICATING'], toState: 'DEVICE_REGISTERED', actorType: 'DEVICE' },
   { event: 'DEVICE_VERIFIED', allowedFromStates: ['DEVICE_REGISTERED'], toState: 'DEVICE_VERIFIED', actorType: 'DEVICE' },
