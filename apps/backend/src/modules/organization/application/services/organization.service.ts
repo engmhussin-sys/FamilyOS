@@ -5,6 +5,7 @@ import { RBAC_ENGINE, type IRbacEngine } from '../ports/rbac-engine.port';
 import { POLICY_ENGINE, type IPolicyEngine } from '../ports/policy-engine.port';
 import { AuditService } from '../../../audit/application/audit.service';
 import { USER_REPOSITORY, type IUserRepository } from '../../../auth/application/ports/auth.repository.ports';
+import { canGrantOrganizationRole } from '../../domain/organization.types';
 import type {
   IOrganization,
   IOrganizationInvitation,
@@ -134,6 +135,20 @@ export class OrganizationService {
       throw new ForbiddenException('You do not have permission to invite members to this organization.');
     }
 
+    // PHASE E (`PC-S-007`) — NOBODY GRANTS A ROLE ABOVE THEIR OWN.
+    //
+    // `hasPermission({ action: 'WRITE' })` clears at MANAGER (level 2), while
+    // DELETE and ADMIN both require OWNER (level 4). Without this check a
+    // MANAGER could invite an OWNER at an address they control and hold the
+    // whole organisation one acceptance later — and the only trace would be an
+    // `organization.member_invited` audit row, which reads like routine
+    // administration. The escalation is refused here, at the point the role is
+    // chosen, and again in `acceptInvitation` at the point it is conferred.
+    const actorRole = await this.rbac.getRole(requestingUserId, organizationId);
+    if (!actorRole || !canGrantOrganizationRole(actorRole, role)) {
+      throw new ForbiddenException('You cannot invite a member at a role higher than your own.');
+    }
+
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
     const invitation = await this.repository.createInvitation({
       organizationId,
@@ -178,6 +193,20 @@ export class OrganizationService {
     const acceptingUser = await this.userRepository.findById(acceptingUserId);
     if (!acceptingUser || acceptingUser.email.toLowerCase() !== invitation.email.toLowerCase()) {
       throw new ForbiddenException('This invitation was sent to a different email address.');
+    }
+
+    // PHASE E (`PC-S-007`) — THE SAME RULE, RE-CHECKED AT CONFERRAL.
+    //
+    // The invitation ROW carries the role and is redeemed up to seven days
+    // later, by a different person. Checking only at invite time would leave a
+    // week-long window in which an OWNER-level grant outlives the authority
+    // that issued it: an owner who invites a co-owner and is then demoted (or
+    // whose account is compromised, invitation sent, then cleaned up) has left
+    // a live escalation on the table. The inviter's CURRENT rank is what
+    // authorises the grant, so it is read now and not trusted from then.
+    const inviterRole = await this.rbac.getRole(invitation.invitedByUserId, invitation.organizationId);
+    if (!inviterRole || !canGrantOrganizationRole(inviterRole, invitation.role)) {
+      throw new ForbiddenException('The person who sent this invitation can no longer grant that role.');
     }
 
     const member = await this.repository.acceptInvitation(invitationId, acceptingUserId);

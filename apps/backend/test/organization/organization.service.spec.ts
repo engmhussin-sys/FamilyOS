@@ -154,6 +154,138 @@ describe('OrganizationService (Sprint B1)', () => {
       );
       expect(result.id).toBe('inv-1');
     });
+
+    /**
+     * PHASE E (`PC-S-007`, the real residual) — PRIVILEGE ESCALATION BY
+     * INVITATION.
+     *
+     * Phase C recorded `PC-S-007` as «12 routes carrying `@ParentSurface()`
+     * and ZERO reads of `OrganizationRole`». That description does not
+     * survive contact with the code and is corrected in the Phase E report:
+     * every write path here already calls `rbac.hasPermission`, and
+     * `getOrganizationOrThrow` already calls `rbac.getRole`. What was
+     * genuinely missing is narrower and worse — the INVITED role was never
+     * compared against the INVITER's own role.
+     *
+     * `ACTION_MIN_LEVEL.WRITE` is 2 (MANAGER), while `DELETE` and `ADMIN`
+     * both require 4 (OWNER). A MANAGER could therefore invite an OWNER, and
+     * one invitation to an address they control converts MANAGER into full
+     * organisation control. The audit row would read
+     * `organization.member_invited` — nothing in the trail would say a
+     * privilege boundary had been crossed.
+     */
+    it('a MANAGER cannot invite an OWNER — nobody grants a role above their own', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('MANAGER');
+      rbacMock.hasPermission.mockResolvedValue(true);
+
+      await expect(service.inviteMember('org-1', 'manager-1', 'accomplice@example.com', 'OWNER')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+
+      expect(repositoryMock.createInvitation).not.toHaveBeenCalled();
+    });
+
+    it('an ADMIN cannot invite an OWNER either — the rule is the hierarchy, not a hardcoded OWNER exception', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('ADMIN');
+      rbacMock.hasPermission.mockResolvedValue(true);
+
+      await expect(service.inviteMember('org-1', 'admin-1', 'accomplice@example.com', 'OWNER')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+
+      expect(repositoryMock.createInvitation).not.toHaveBeenCalled();
+    });
+
+    it('an OWNER may invite an OWNER — a co-owner is a legitimate B2B arrangement, so equality is allowed', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('OWNER');
+      rbacMock.hasPermission.mockResolvedValue(true);
+      repositoryMock.createInvitation.mockResolvedValue({
+        id: 'inv-owner',
+        organizationId: 'org-1',
+        email: 'co-owner@example.com',
+        role: 'OWNER',
+        status: 'PENDING',
+        expiresAt: new Date(),
+        invitedByUserId: 'owner-1',
+      });
+
+      const result = await service.inviteMember('org-1', 'owner-1', 'co-owner@example.com', 'OWNER');
+
+      expect(result.id).toBe('inv-owner');
+      expect(repositoryMock.createInvitation).toHaveBeenCalledWith(expect.objectContaining({ role: 'OWNER' }));
+    });
+
+    it('a MANAGER may still invite at or below their own level — the fix narrows, it does not remove the feature', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('MANAGER');
+      rbacMock.hasPermission.mockResolvedValue(true);
+      repositoryMock.createInvitation.mockResolvedValue({
+        id: 'inv-member',
+        organizationId: 'org-1',
+        email: 'teacher@example.com',
+        role: 'MEMBER',
+        status: 'PENDING',
+        expiresAt: new Date(),
+        invitedByUserId: 'manager-1',
+      });
+
+      const result = await service.inviteMember('org-1', 'manager-1', 'teacher@example.com', 'MEMBER');
+
+      expect(result.id).toBe('inv-member');
+    });
+
+    /**
+     * The other half of the same hole, and the reason the check cannot live
+     * only at invite time: the invitation ROW carries the role and is
+     * redeemed later, by someone else. An invitation created legitimately by
+     * an OWNER who has since been demoted is a role grant with no live
+     * authority behind it, and a seven-day expiry is a seven-day window.
+     */
+    it('an invitation whose inviter no longer outranks the invited role cannot be accepted', async () => {
+      repositoryMock.findInvitationById.mockResolvedValue({
+        id: 'inv-stale',
+        organizationId: 'org-1',
+        email: 'accomplice@example.com',
+        role: 'OWNER',
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 60_000),
+        invitedByUserId: 'demoted-1',
+      });
+      userRepositoryMock.findById.mockResolvedValue({ id: 'user-9', email: 'accomplice@example.com' });
+      // The inviter has since been demoted to MEMBER.
+      rbacMock.getRole.mockResolvedValue('MEMBER');
+
+      await expect(service.acceptInvitation('inv-stale', 'user-9')).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(repositoryMock.acceptInvitation).not.toHaveBeenCalled();
+    });
+
+    it('an invitation still backed by a sufficiently ranked inviter is accepted normally', async () => {
+      repositoryMock.findInvitationById.mockResolvedValue({
+        id: 'inv-ok',
+        organizationId: 'org-1',
+        email: 'teacher@example.com',
+        role: 'MEMBER',
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 60_000),
+        invitedByUserId: 'manager-1',
+      });
+      userRepositoryMock.findById.mockResolvedValue({ id: 'user-8', email: 'teacher@example.com' });
+      rbacMock.getRole.mockResolvedValue('MANAGER');
+      repositoryMock.acceptInvitation.mockResolvedValue({
+        id: 'mem-1',
+        organizationId: 'org-1',
+        userId: 'user-8',
+        role: 'MEMBER',
+      });
+
+      const member = await service.acceptInvitation('inv-ok', 'user-8');
+
+      expect(member.id).toBe('mem-1');
+    });
   });
 
   describe('setPolicy (Sprint B2)', () => {
