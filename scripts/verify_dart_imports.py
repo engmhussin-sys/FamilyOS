@@ -325,10 +325,36 @@ def check_delimiters(path: str, src: str) -> list:
 # ---------------------------------------------------------------------------
 
 # Recorded at B6+B7. Update this deliberately, never incidentally.
+#
+# UPDATED AT SPRINT F1 — child_app 12 -> 17, and the five additions are NAMED
+# here rather than absorbed, because being named is the entire point of this
+# baseline. All five exist to make ONE server route reachable:
+# `POST /self/achievements/:achievementId/evidence`, live since B5, which the
+# child app had no way to call because it could not produce a single byte.
+#
+#   record         — records the recitation itself (AAC in an MPEG-4
+#                    container = `audio/mp4`, a RECITATION signature in
+#                    evidence.ts). Pinned 5.1.2: 6.x moves to Dart 3.6.
+#   image_picker   — camera photo + gallery image for COMPLETION_ARTIFACT
+#                    (`image/jpeg` / `image/png`). Pinned 1.1.2.
+#   file_picker    — the `application/pdf` route, which neither of the above
+#                    can reach. Pinned 8.1.2, the last release on
+#                    compileSdk 34 (AGP 8.1.1 refuses compileSdk 35).
+#   path_provider  — `record` needs an explicit output path and Android has
+#                    no `/tmp`; this is the app's own cache dir. Pinned 2.1.4.
+#   http_parser    — `MediaType` for the multipart part's Content-Type.
+#                    Already transitive via dio; declared so the import is
+#                    legal here and so the code does not rely on dio 5.5.0's
+#                    `DioMediaType` re-export, which `^5.4.3` cannot promise.
+#
+# NOTHING BELOW HAS BEEN RESOLVED. pub.dev answers 403 in this environment, so
+# no `pubspec.lock` was generated and no version above was ever downloaded —
+# this baseline records what was DECLARED, which is all it ever recorded.
 EXPECTED_DEPS = {
     "child_app": {
         "flutter", "flutter_localizations", "shared_preferences", "flutter_riverpod",
         "dio", "flutter_secure_storage", "google_fonts", "sentry_flutter",
+        "record", "image_picker", "file_picker", "path_provider", "http_parser",
         "flutter_test", "mockito", "build_runner", "lints",
     },
     "parent_app": {
