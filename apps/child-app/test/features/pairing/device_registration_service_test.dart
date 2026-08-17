@@ -68,6 +68,19 @@ class _FakeAgentPlatformChannel implements AgentPlatformChannel {
 
   @override
   Future<String> getNativeAppVersion() async => '0.1.0';
+
+  // PHASE E (IMPLEMENTS-MISSING). `AgentPlatformChannel` declares 24 members
+  // and this fake declares three, so without this the class is a
+  // `non_abstract_class_inherits_abstract_member` COMPILE ERROR and the whole
+  // test file fails to build — not a runtime surprise, a build stop.
+  //
+  // Every other fake of this port in this repository already carried this
+  // line (runtime_coordinator_test, runtime_telemetry_collector_test, all
+  // three fakes in digital_wellbeing_service_test, and `_FakePairingApi` and
+  // `_FakeSecureStorage` in this very file). This one was the single
+  // omission; the fix is the file's own established pattern, not a new one.
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _FakePairingApi implements PairingApi {

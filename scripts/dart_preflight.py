@@ -21,19 +21,59 @@ Where the structural model cannot decide, the check abstains and says so in
 the `abstained` counter, which is printed. A check that cannot state its own
 blind spots is not trustworthy.
 
-CHECKS
-------
+CHECKS — PHASE C (1–12)
+-----------------------
   CTOR-ARITY    constructor invocations vs. the constructor actually declared
   CTOR-NAMED    named arguments vs. the declared named parameters
   CTOR-REQUIRED required named parameters that the call site omits
   STATIC-MEMBER `Type.member` where Type is an in-tree class/enum
   ENUM-MEMBER   `Enum.value` where Enum is an in-tree enum
   OVERRIDE      `@override` whose name exists nowhere in a fully in-tree chain
-  ABSTRACT-IMPL concrete class missing an abstract member of an in-tree chain
+  UNIMPORTED-NAME a name declared in this app, used in a file that never imports it
+  PROVIDER-SCOPE  `ref.read(xProvider)` where xProvider is not in scope
   UNUSED-IMPORT in-tree import none of whose exported names is referenced
   DUP-MEMBER    the same member name declared twice in one type
   LITERAL-TYPE  a literal argument whose type cannot match the declared one
   PART-INTEGRITY  `part` / `part of` agreement
+
+CHECKS — PHASE E (13–22)
+------------------------
+Phase C's twelve all answer "does this NAME resolve?". `flutter analyze` fails
+far more often on questions one step past that, and the ten below are the
+subset of those that stay decidable WITHOUT type inference — i.e. where the
+answer is fixed by a declaration this tree contains, not by a type the
+analyser would have to infer.
+
+  DUP-NAMED-ARG   the same named argument supplied twice in one invocation
+                  (`duplicate_named_argument`, a compile-time ERROR)
+  PARAM-DEFAULT   `required` parameter carrying a default value, and
+                  non-nullable optional-named parameters with no default
+                  (`default_value_on_required_parameter`,
+                   `missing_default_value_for_parameter` — both ERRORS)
+  FIELD-INIT      a non-nullable instance field that no constructor
+                  initialises (`not_initialized_non_nullable_instance_field`)
+  LATE-FIELD      a `late` private field never assigned anywhere in its
+                  library — a guaranteed LateInitializationError
+  SWITCH-EXHAUSTIVE  a `switch` over an in-tree enum that omits values and has
+                  no `default` (Dart 3 `non_exhaustive_switch_*`)
+  UNUSED-PRIVATE  a private member whose only occurrence in its library is its
+                  own declaration (`unused_field` / `unused_element` — a
+                  WARNING, therefore fatal under `flutter analyze`'s default)
+  UNUSED-LOCAL    a local variable whose only occurrence in its file is its own
+                  declaration (`unused_local_variable`, also fatal)
+  UNREACHABLE     a statement following `return`/`throw` in the same block, and
+                  `if (true)` / `if (false)` (`dead_code`, also fatal)
+  SELF-CALL       a bare `m(...)` inside a class whose supertype chain is fully
+                  in-tree, checked for arity / named / required against the
+                  declaration the chain provides
+  ARG-TYPE        the LITERAL-TYPE decision widened past numeric literals to
+                  string, list and map/set literals
+
+DELIBERATELY STILL NOT ATTEMPTED, by name: type inference of any expression
+that is not a literal; generics substitution; nullability FLOW analysis;
+extension-method resolution; exhaustiveness over sealed hierarchies; const
+evaluation. Those remain where `flutter analyze` will find most of what it
+finds.
 
 Usage:
     python3 scripts/dart_preflight.py                 # human report, exit 1 on error
@@ -384,12 +424,28 @@ class Preflight:
 
         got_named: Dict[str, str] = {}
         got_pos = 0
+        dup: List[str] = []
         for a in args:
             m = self.NAMED_ARG_RE.match(a.strip())
             if m and m.group(1) not in ("case", "default"):
+                # PHASE E / DUP-NAMED-ARG. `duplicate_named_argument` is a
+                # compile-time error, and the shape that produces it —
+                # copy-paste of an argument line inside a long Flutter widget
+                # invocation — is endemic to this codebase's screen files.
+                # It was invisible before because this dict silently
+                # overwrote the first occurrence.
+                if m.group(1) in got_named:
+                    dup.append(m.group(1))
                 got_named[m.group(1)] = a.strip()[m.end() :].strip()
             else:
                 got_pos += 1
+        if dup:
+            self.add(
+                "DUP-NAMED-ARG", lib.path, ln,
+                f"`{label}(...)` — named argument "
+                + ", ".join(f"`{d}:`" for d in sorted(set(dup)))
+                + " supplied more than once in the same invocation",
+            )
 
         if got_pos > max_pos or got_pos < req_pos:
             self.add(
@@ -452,6 +508,12 @@ class Preflight:
             s += (", " if pos else "") + "{" + ", ".join(nam) + "}"
         return s + ")"
 
+    # PHASE E / ARG-TYPE. The scalar declared types this checker is willing to
+    # contradict. Everything not in this set abstains — the point is that the
+    # set is CLOSED and hand-audited, so widening the literal side of the
+    # decision cannot widen the false-positive surface to arbitrary types.
+    _SCALARS = {"String", "bool", "int", "double", "num", "DateTime", "Duration"}
+
     @staticmethod
     def _literal_conflict(decl_type: str, arg: str) -> Optional[str]:
         t = decl_type.strip()
@@ -469,7 +531,834 @@ class Preflight:
         elif a in ("true", "false"):
             if t in ("String", "int", "double", "num", "DateTime", "Duration"):
                 return f"the bool literal `{a}`"
+        # ---- PHASE E: the three literal shapes Phase C did not decide -------
+        # NOTE ON MASKING: by the time an argument reaches here, string bodies
+        # have been blanked but the QUOTES SURVIVE, so `'abc'` arrives as
+        # `'   '`. That is exactly enough to know it is a string literal and
+        # not enough to know anything else about it — which is the right
+        # amount of knowledge for this check.
+        elif re.fullmatch(r"r?(?:'''|\"\"\"|'|\")[\s\S]*(?:'''|\"\"\"|'|\")", a):
+            if t in Preflight._SCALARS - {"String"}:
+                return "a string literal"
+        elif a.startswith("[") and a.endswith("]"):
+            if t in Preflight._SCALARS:
+                return "a list literal"
+        elif a.startswith("{") and a.endswith("}"):
+            if t in Preflight._SCALARS:
+                return "a map/set literal"
+        elif re.fullmatch(r"const\s*\[[\s\S]*\]", a):
+            if t in Preflight._SCALARS:
+                return "a const list literal"
         return None
+
+    # ======================================================================
+    # PHASE E CHECKS
+    # ======================================================================
+
+    # A "declared type is non-nullable" decision. Everything uncertain is
+    # NULLABLE-OR-UNKNOWN, because the consequence of guessing wrong here is a
+    # false error on correct code.
+    _TYPE_VARS = re.compile(r"^[A-Z]\d?$")
+
+    @classmethod
+    def _definitely_non_nullable(cls, t: str) -> bool:
+        t = t.strip()
+        if not t:
+            return False
+        if t.endswith("?") or "?" in t.split("<", 1)[0]:
+            return False
+        head = t.split("<", 1)[0].strip()
+        if head in ("dynamic", "Object", "var", "void", "Null", "Never", "Function"):
+            return False
+        # `T`, `K`, `V`, `T1` — a type VARIABLE may be instantiated at a
+        # nullable type, so nothing can be concluded.
+        if cls._TYPE_VARS.match(head):
+            return False
+        if not re.fullmatch(r"[A-Za-z_][\w.]*", head):
+            return False
+        return True
+
+    # ---- PARAM-DEFAULT ---------------------------------------------------
+    # Two compile-time ERRORS that live entirely inside a parameter list, so
+    # no call site and no type inference is involved:
+    #
+    #   required T x = v    -> default_value_on_required_parameter
+    #   {T x}   (T non-nullable, no default, not required)
+    #                       -> missing_default_value_for_parameter
+    #
+    # `this.x` and `super.x` parameters carry NO type of their own in this
+    # model, so `_definitely_non_nullable("")` is false and they abstain — the
+    # second rule genuinely does not apply to `super.` parameters anyway, since
+    # the superclass default carries over.
+    def check_param_defaults(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                for decl in lib.types.values():
+                    plists: List[Tuple[str, int, List[Param]]] = []
+                    for c in decl.ctors.values():
+                        if c.unparsed:
+                            self.abstained["paramlist-unparsed"] += 1
+                            continue
+                        label = decl.name + (f".{c.name}" if c.name else "")
+                        plists.append((label, c.line, c.params))
+                    for mem in decl.members.values():
+                        if mem.kind != "method" or mem.params is None:
+                            continue
+                        if mem.unparsed:
+                            self.abstained["paramlist-unparsed"] += 1
+                            continue
+                        plists.append((f"{decl.name}.{mem.name}", mem.line, mem.params))
+                    for label, line, params in plists:
+                        self.examined["param-lists"] += 1
+                        for p in params:
+                            if not p.named:
+                                continue
+                            if p.explicit_required and p.has_default:
+                                self.add(
+                                    "PARAM-DEFAULT", lib.path, line,
+                                    f"`{label}(...)` — parameter `{p.name}` is "
+                                    f"`required` and also carries a default value; "
+                                    f"Dart rejects that outright "
+                                    f"(default_value_on_required_parameter)",
+                                )
+                            elif (
+                                not p.required
+                                and not p.has_default
+                                and not p.is_super
+                                and self._definitely_non_nullable(p.type)
+                            ):
+                                self.add(
+                                    "PARAM-DEFAULT", lib.path, line,
+                                    f"`{label}(...)` — optional named parameter "
+                                    f"`{p.name}` is declared `{p.type}`, which is "
+                                    f"non-nullable, but is neither `required` nor "
+                                    f"given a default "
+                                    f"(missing_default_value_for_parameter)",
+                                )
+
+    # ---- FIELD-INIT ------------------------------------------------------
+    # `not_initialized_non_nullable_instance_field`. Decidable only under a
+    # deliberately narrow set of conditions, all of which are enforced below:
+    #   * the class is concrete and declares at least one generative
+    #     constructor (a class with only the implicit constructor is often an
+    #     interface-shaped declaration in this tree, and reporting those would
+    #     be noise);
+    #   * the field is an instance field, non-`late`, non-`static`,
+    #     non-`const`, has no initialiser, and its declared type is
+    #     DEFINITELY non-nullable by the conservative test above;
+    #   * the field's name appears NOWHERE in any constructor's header —
+    #     neither as `this.name`, nor in an initialiser list, nor as the
+    #     target of an assignment anywhere in the class body.
+    # Any doubt at all and it abstains.
+    _INST_FIELD_RE = re.compile(
+        r"^  (?P<mods>(?:@\w+\s+)*)"
+        r"(?P<kw>(?:static|final|const|late|var|covariant)\s+)*"
+        r"(?P<type>[A-Za-z_][\w.]*(?:<[^<>]*(?:<[^<>]*>)?[^<>]*>)?\??)\s+"
+        r"(?P<n>[a-z_]\w*)\s*(?P<tail>;|=(?!=|>))"
+    )
+
+    def check_field_init(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                for decl in lib.types.values():
+                    if decl.kind != "class" or decl.is_abstract:
+                        continue
+                    if decl.body_span == (0, 0):
+                        continue
+                    gen = [
+                        c for c in decl.ctors.values()
+                        if not c.is_factory and not c.redirects and not c.unparsed
+                    ]
+                    if not gen:
+                        self.abstained["field-init-no-generative-ctor"] += 1
+                        continue
+                    body = lib.masked[decl.body_span[0] : decl.body_span[1]]
+                    ctor_headers = " ".join(
+                        self._ctor_header_text(lib, c) for c in gen
+                    )
+                    off = decl.body_span[0]
+                    for raw in body.split("\n"):
+                        start_off, off = off, off + len(raw) + 1
+                        m = self._INST_FIELD_RE.match(raw)
+                        if not m:
+                            continue
+                        kws = raw[: m.start("type")]
+                        if re.search(r"\b(static|late|const)\b", kws):
+                            continue
+                        if m.group("tail") != ";":
+                            continue          # has an initialiser
+                        name, tname = m.group("n"), m.group("type")
+                        if name in _DART_KEYWORDS or tname in _DART_KEYWORDS:
+                            continue
+                        if not self._definitely_non_nullable(tname):
+                            continue
+                        self.examined["non-nullable-fields"] += 1
+                        if re.search(r"\b" + re.escape(name) + r"\b", ctor_headers):
+                            continue
+                        # assigned somewhere in the body (initState, a setter…)
+                        if re.search(
+                            r"(?<![\w.])(?:this\s*\.\s*)?"
+                            + re.escape(name) + r"\s*(?:\?\?)?=(?!=)",
+                            body,
+                        ):
+                            self.abstained["field-assigned-in-body"] += 1
+                            continue
+                        self.add(
+                            "FIELD-INIT", lib.path, line_of(lib.src, start_off),
+                            f"`{decl.name}.{name}` is declared `{tname}` — "
+                            f"non-nullable with no initialiser — and none of the "
+                            f"{len(gen)} generative constructor(s) of `{decl.name}` "
+                            f"mentions it",
+                        )
+
+    def _ctor_header_text(self, lib: Library, c: Ctor) -> str:
+        """A constructor's text from its name to its body/`;` — params + `:` list."""
+        if c.decl_offset < 0:
+            return ""
+        m = lib.masked
+        i = m.find("(", c.decl_offset)
+        if i == -1:
+            return ""
+        j = match_bracket(m, i)
+        if j == -1:
+            return ""
+        k = j
+        while k < len(m) and m[k] not in "{;":
+            k += 1
+        return m[c.decl_offset : k]
+
+    # ---- LATE-FIELD ------------------------------------------------------
+    # A `late` field with no initialiser that is assigned NOWHERE in its own
+    # library is a guaranteed LateInitializationError on first read. Restricted
+    # to PRIVATE fields (`_x`) for one reason that makes it decidable at all:
+    # a private name cannot be assigned from outside its library, so "not
+    # assigned in this file" really does mean "not assigned".
+    _LATE_FIELD_RE = re.compile(
+        r"^  (?:@\w+\s+)*(?:static\s+)?late\s+(?:final\s+)?"
+        r"(?:[A-Za-z_][\w.]*(?:<[^<>]*(?:<[^<>]*>)?[^<>]*>)?\??\s+)?"
+        r"(?P<n>_\w+)\s*(?P<tail>;|=(?!=|>))"
+    )
+
+    def check_late_fields(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                # a library's parts can assign its private members
+                scope = lib.masked
+                for p in lib.parts:
+                    tp = self._resolve_uri(lib, app, p)
+                    if tp:
+                        scope += "\n" + app.libs[tp].masked
+                if lib.part_of:
+                    self.abstained["late-in-part"] += 1
+                    continue
+                for decl in lib.types.values():
+                    if decl.body_span == (0, 0):
+                        continue
+                    body = lib.masked[decl.body_span[0] : decl.body_span[1]]
+                    off = decl.body_span[0]
+                    for raw in body.split("\n"):
+                        start_off, off = off, off + len(raw) + 1
+                        m = self._LATE_FIELD_RE.match(raw)
+                        if not m or m.group("tail") != ";":
+                            continue
+                        name = m.group("n")
+                        self.examined["late-private-fields"] += 1
+                        if re.search(
+                            r"(?<![\w.])(?:this\s*\.\s*)?"
+                            + re.escape(name) + r"\s*(?:\?\?|\|\||&&)?=(?!=)",
+                            scope,
+                        ):
+                            continue
+                        self.add(
+                            "LATE-FIELD", lib.path, line_of(lib.src, start_off),
+                            f"`{decl.name}.{name}` is `late` with no initialiser and "
+                            f"is never assigned anywhere in this library; the first "
+                            f"read throws LateInitializationError",
+                            sev="warning",
+                        )
+
+    # ---- SWITCH-EXHAUSTIVE ----------------------------------------------
+    # Dart 3 makes a switch over an enum exhaustiveness-checked. This fires
+    # ONLY when every case label in the switch is written `SomeEnum.value` for
+    # ONE in-tree enum and there is no `default:` and no `_` wildcard — i.e.
+    # when the switched type is not inferred but SPELLED OUT by the labels
+    # themselves. Anything else abstains.
+    _SWITCH_RE = re.compile(r"(?<![\w.])switch\s*\(")
+    _CASE_RE = re.compile(r"(?<![\w.])case\s+([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)")
+
+    def check_switch_exhaustive(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                vis = self.visible_types(lib, app)
+                m = lib.masked
+                for sm in self._SWITCH_RE.finditer(m):
+                    popen = m.index("(", sm.end() - 1)
+                    pend = match_bracket(m, popen)
+                    if pend == -1:
+                        continue
+                    bopen = m.find("{", pend)
+                    if bopen == -1 or m[pend:bopen].strip():
+                        self.abstained["switch-expression-or-arrow"] += 1
+                        continue
+                    bend = match_bracket(m, bopen)
+                    if bend == -1:
+                        continue
+                    body = m[bopen + 1 : bend - 1]
+                    if re.search(r"(?<![\w.])(?:default\s*:|case\s+_\b)", body):
+                        continue
+                    cases = self._CASE_RE.findall(body)
+                    if not cases:
+                        self.abstained["switch-not-enum-labelled"] += 1
+                        continue
+                    enums = {c[0] for c in cases}
+                    if len(enums) != 1:
+                        self.abstained["switch-mixed-labels"] += 1
+                        continue
+                    ename = next(iter(enums))
+                    decl = vis.get(ename)
+                    if decl is None or decl.kind != "enum":
+                        self.abstained["switch-enum-not-in-tree"] += 1
+                        continue
+                    # every label must be `Enum.value` — a bare `case foo:`
+                    # anywhere means the labels are not all enum constants.
+                    label_count = len(re.findall(r"(?<![\w.])case\s", body))
+                    if label_count != len(cases):
+                        self.abstained["switch-mixed-labels"] += 1
+                        continue
+                    self.examined["enum-switches"] += 1
+                    covered = {c[1] for c in cases}
+                    missing = [v for v in decl.enum_values if v not in covered]
+                    if missing:
+                        self.add(
+                            "SWITCH-EXHAUSTIVE", lib.path,
+                            line_of(lib.src, sm.start()),
+                            f"`switch` over enum `{ename}` "
+                            f"({os.path.relpath(decl.file, self.repo)}:{decl.line}) "
+                            f"has no `default` and does not cover "
+                            + ", ".join(f"`{ename}.{v}`" for v in missing),
+                        )
+
+    # ---- UNUSED-PRIVATE --------------------------------------------------
+    # `unused_field` / `unused_element` are WARNINGS, and `flutter analyze`
+    # treats warnings as fatal by default, so they redden CI exactly like
+    # errors. The decision rule is deliberately the crudest one that cannot be
+    # wrong: count occurrences of the identifier in the WHOLE library (its own
+    # file plus its parts, masked so comments and Arabic strings do not
+    # count). Exactly one occurrence = the declaration itself = unused.
+    def check_unused_private(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                if lib.part_of:
+                    continue
+                scope = lib.masked
+                for p in lib.parts:
+                    tp = self._resolve_uri(lib, app, p)
+                    if tp:
+                        scope += "\n" + app.libs[tp].masked
+                counts: Dict[str, int] = defaultdict(int)
+                # NOTE the lookbehind deliberately does NOT exclude a preceding
+                # `.`. Counting `this._x` and `widget._x` as occurrences can
+                # only make this check QUIETER, and quieter is the safe
+                # direction for a rule whose whole content is "the count is
+                # exactly one". Excluding `.` also silently swallowed `...xs`
+                # (the spread operator), which is what produced the first false
+                # positive this check ever emitted.
+                for mm in re.finditer(r"(?<![\w$])(_\w+)", scope):
+                    counts[mm.group(1)] += 1
+                for decl in lib.types.values():
+                    # A private member of a widget State subclass may be
+                    # referenced only from a generated part; there are none in
+                    # this tree, but the parts sweep above covers it anyway.
+                    for name, mem in decl.members.items():
+                        if not name.startswith("_") or name.startswith("__"):
+                            continue
+                        if mem.is_override:
+                            continue
+                        self.examined["private-members"] += 1
+                        if counts.get(name, 0) != 1:
+                            continue
+                        self.add(
+                            "UNUSED-PRIVATE", lib.path, mem.line,
+                            f"`{decl.name}.{name}` ({mem.kind}) is private and its "
+                            f"declaration is its only occurrence in this library "
+                            f"— `flutter analyze` reports this as "
+                            f"`unused_{'field' if mem.kind == 'field' else 'element'}`, "
+                            f"which is fatal by default",
+                            sev="warning",
+                        )
+
+    # ---- UNUSED-LOCAL ----------------------------------------------------
+    # Same rule, one scope down: a `final`/`var`/`const` local declaration
+    # whose identifier occurs exactly once in the entire file. Restricting the
+    # count to the whole file (not the enclosing block) is what makes
+    # shadowing irrelevant — if the name occurs once, there is nothing to
+    # shadow and nothing to be shadowed by.
+    _LOCAL_RE = re.compile(
+        r"^[ \t]{4,}(?:final|const|var)[ \t]+"
+        r"(?:[A-Za-z_][\w.]*(?:<[^<>]*(?:<[^<>]*>)?[^<>]*>)?\??[ \t]+)?"
+        r"(?P<n>[a-z_]\w*)[ \t]*=(?!=|>)",
+        re.M,
+    )
+
+    def check_unused_locals(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                scope = lib.masked
+                counts: Dict[str, int] = defaultdict(int)
+                # Same reasoning as check_unused_private: over-counting is the
+                # safe error. `final goals = …; final sorted = [...goals]…`
+                # was reported as an unused local purely because the spread
+                # operator's dots hid the second occurrence.
+                for mm in re.finditer(r"(?<![\w$])([A-Za-z_]\w*)", scope):
+                    counts[mm.group(1)] += 1
+                for m in self._LOCAL_RE.finditer(scope):
+                    name = m.group("n")
+                    if name in _DART_KEYWORDS or name.startswith("_"):
+                        # `_` and `_x` are the conventional "I do not want
+                        # this" names and the analyser exempts them.
+                        continue
+                    self.examined["locals-checked"] += 1
+                    if counts.get(name, 0) != 1:
+                        continue
+                    self.add(
+                        "UNUSED-LOCAL", lib.path, line_of(lib.src, m.start("n")),
+                        f"local variable `{name}` is declared here and its "
+                        f"declaration is its only occurrence in this file "
+                        f"(`unused_local_variable`, fatal by default)",
+                        sev="warning",
+                    )
+
+    # ---- UNREACHABLE -----------------------------------------------------
+    # `dead_code`, again a fatal warning. Two shapes only:
+    #
+    #   (a) a statement that FOLLOWS a `return …;` / `throw …;` inside the same
+    #       block. Every `case`/`default` label, every `}` and every `else`
+    #       is excluded, because a `return` at the end of a switch case is
+    #       normal and correct.
+    #   (b) `if (true)` / `if (false)` / `while (false)` — a literal condition.
+    _TERMINATOR_RE = re.compile(r"(?<![\w.$])(return|throw)\b")
+    _CONST_COND_RE = re.compile(r"(?<![\w.$])(if|while)\s*\(\s*(true|false)\s*\)")
+
+    @staticmethod
+    def _end_of_statement(text: str, start: int) -> int:
+        """Index just past the `;` that ends the statement beginning at `start`.
+
+        The `;` must be at bracket depth 0. A regex `[^;{}]*;` is NOT good
+        enough and got this wrong twice on real code: BOTH
+        `return [for (var i = 0; i <= last; i += 1) …];` and a `Wrap(children:
+        [for (var juz = 1; …)])` contain semicolons inside a collection-`for`
+        header, so the regex ended the statement in the middle of a list
+        literal and every following token looked like dead code.
+        """
+        depth = 0
+        i = start
+        n = len(text)
+        while i < n:
+            c = text[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                if depth == 0:
+                    return -1
+                depth -= 1
+            elif c == ";" and depth == 0:
+                return i + 1
+            i += 1
+        return -1
+
+    def check_unreachable(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                m = lib.masked
+                for cm in self._CONST_COND_RE.finditer(m):
+                    self.add(
+                        "UNREACHABLE", lib.path, line_of(lib.src, cm.start()),
+                        f"`{cm.group(1)} ({cm.group(2)})` — a constant condition; "
+                        f"one branch is dead code",
+                        sev="warning",
+                    )
+                for tm in self._TERMINATOR_RE.finditer(m):
+                    # ---------------------------------------------------------
+                    # SOUNDNESS GATE, and the reason this check is worth
+                    # trusting. `if (cond) return;` is the most common single
+                    # statement in this codebase and NOTHING after it is dead.
+                    # The first version of this check ignored that and produced
+                    # 98 findings of which every one was wrong.
+                    #
+                    # A terminator only kills the rest of its block when it is a
+                    # DIRECT statement of that block — i.e. the previous
+                    # non-whitespace character is `;`, `{` or `}`. If it is `)`
+                    # the terminator is the braceless body of an
+                    # `if`/`for`/`while`; if it is `>` it is an `=>` expression
+                    # body; if it is `:` it is a `case` label body and the next
+                    # `case` is not dead. All three abstain.
+                    # ---------------------------------------------------------
+                    k = tm.start() - 1
+                    while k >= 0 and m[k] in " \t\n\r":
+                        k -= 1
+                    if k < 0 or m[k] not in ";{}":
+                        self.abstained["terminator-not-a-block-statement"] += 1
+                        continue
+                    end = self._end_of_statement(m, tm.end())
+                    if end == -1:
+                        self.abstained["terminator-unterminated"] += 1
+                        continue
+                    rest = m[end:]
+                    stripped = rest.lstrip()
+                    lead = len(rest) - len(stripped)
+                    if not stripped:
+                        continue
+                    if stripped[0] == "}":
+                        continue
+                    nxt = re.match(r"[A-Za-z_]\w*", stripped)
+                    if nxt and nxt.group(0) in (
+                        "case", "default", "else", "catch", "finally", "on",
+                    ):
+                        continue
+                    # A `return`/`throw` inside a closure passed as an argument
+                    # is followed by `)` / `,` — not dead code.
+                    self.examined["terminators"] += 1
+                    if stripped[0] in ")],;":
+                        continue
+                    self.add(
+                        "UNREACHABLE", lib.path,
+                        line_of(lib.src, end + lead),
+                        f"statement follows a `{tm.group(1)}` in the same block — "
+                        f"`dead_code`, fatal under `flutter analyze` defaults",
+                        sev="warning",
+                    )
+
+    # ---- SELF-MEMBER -----------------------------------------------------
+    # `this.name` is the one member reference in Dart whose receiver needs no
+    # inference at all: it is the enclosing class, exactly. So when that
+    # class's supertype chain is entirely in-tree, "does `name` exist?" is
+    # fully decidable — `undefined_getter` / `undefined_method`, a
+    # compile-time error.
+    #
+    # The one shape that must NOT be read this way is `this.x` in a
+    # CONSTRUCTOR PARAMETER LIST, where it declares an initialising formal
+    # rather than referring to anything. Those spans are excluded explicitly
+    # below; they are also the overwhelming majority of `this.` occurrences in
+    # a Flutter codebase, so getting this wrong would have been loud.
+    _THIS_MEMBER_RE = re.compile(r"(?<![\w.$])this\s*\.\s*([A-Za-z_]\w*)")
+
+    def check_self_members(self) -> None:
+        for app in self.ws.apps.values():
+            ext_targets: Set[str] = set()
+            for lib in app.libs.values():
+                for t in lib.types.values():
+                    if t.kind == "extension":
+                        ext_targets |= set(t.supertypes)
+            for lib in app.libs.values():
+                vis = self.visible_types(lib, app)
+                for decl in lib.types.values():
+                    if decl.kind not in ("class", "mixin"):
+                        continue
+                    if decl.name in ext_targets or decl.body_span == (0, 0):
+                        continue
+                    chain = self.chain(decl, vis)
+                    if chain is None:
+                        self.abstained["self-member-chain-leaves-tree"] += 1
+                        continue
+                    known: Set[str] = set()
+                    for anc in chain:
+                        known |= set(anc.members)
+                        known |= set(anc.enum_values)
+                    # constructor parameter lists: `this.x` there is a
+                    # declaration, not a reference
+                    skip: List[Tuple[int, int]] = []
+                    for c in decl.ctors.values():
+                        if c.decl_offset < 0:
+                            continue
+                        o = lib.masked.find("(", c.decl_offset)
+                        if o == -1:
+                            continue
+                        e = match_bracket(lib.masked, o)
+                        if e != -1:
+                            skip.append((o, e))
+                    a, b = decl.body_span
+                    for m in self._THIS_MEMBER_RE.finditer(lib.masked, a, b):
+                        if any(s <= m.start() < e for s, e in skip):
+                            continue
+                        name = m.group(1)
+                        if name in UNIVERSAL_MEMBERS or name in known:
+                            continue
+                        # `const UiState.loading() : this._(…, null, null);` is
+                        # a REDIRECTING CONSTRUCTOR INVOCATION, not a member
+                        # reference. `this.` followed by a name this class
+                        # declares as a constructor is always that, never a
+                        # getter — and it accounted for every finding this
+                        # check produced on its first run.
+                        if name in decl.ctors:
+                            self.abstained["this-redirecting-ctor"] += 1
+                            continue
+                        self.examined["this-member-refs"] += 1
+                        self.add(
+                            "SELF-MEMBER", lib.path, line_of(lib.src, m.start()),
+                            f"`this.{name}` inside `{decl.name}` — no `{name}` is "
+                            f"declared by `{decl.name}` or by any type in its "
+                            f"fully in-tree chain "
+                            f"({' -> '.join(x.name for x in chain[1:]) or 'Object'})",
+                        )
+
+    # ---- OVERRIDE-SIG ----------------------------------------------------
+    # Phase C's OVERRIDE check answers "does an ancestor declare this NAME?".
+    # `invalid_override` is the next question and a compile-time ERROR: the
+    # overriding signature must stay substitutable for the one it replaces.
+    # When the whole chain is in-tree both signatures are in hand, and the four
+    # rules below are about COUNTS AND NAMES only — never about types — so no
+    # inference is involved.
+    def check_override_signatures(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                vis = self.visible_types(lib, app)
+                for decl in lib.types.values():
+                    if decl.kind not in ("class", "mixin"):
+                        continue
+                    chain = self.chain(decl, vis)
+                    if chain is None:
+                        continue
+                    for name, mem in decl.members.items():
+                        if not mem.is_override or mem.kind != "method":
+                            continue
+                        if mem.params is None or mem.unparsed:
+                            self.abstained["override-sig-unparsed"] += 1
+                            continue
+                        base = None
+                        for anc in chain:
+                            if anc is decl:
+                                continue
+                            cand = anc.members.get(name)
+                            if cand is not None and cand.kind == "method":
+                                base = (anc, cand)
+                                break
+                        if base is None:
+                            continue          # Phase C's OVERRIDE check owns this
+                        anc, bm = base
+                        if bm.params is None or bm.unparsed:
+                            self.abstained["override-sig-unparsed"] += 1
+                            continue
+                        self.examined["overrides-compared"] += 1
+                        o_pos = [p for p in mem.params if not p.named]
+                        b_pos = [p for p in bm.params if not p.named]
+                        o_named = {p.name: p for p in mem.params if p.named}
+                        b_named = {p.name: p for p in bm.params if p.named}
+                        why: List[str] = []
+                        if len(o_pos) < len(b_pos):
+                            why.append(
+                                f"accepts {len(o_pos)} positional parameter(s) where "
+                                f"`{anc.name}.{name}` accepts {len(b_pos)}"
+                            )
+                        if sum(1 for p in o_pos if p.required) > sum(
+                            1 for p in b_pos if p.required
+                        ):
+                            why.append(
+                                "makes a positional parameter required that the "
+                                "overridden member leaves optional"
+                            )
+                        gone = sorted(set(b_named) - set(o_named))
+                        if gone:
+                            why.append(
+                                "drops named parameter(s) "
+                                + ", ".join(f"`{g}`" for g in gone)
+                            )
+                        newly_required = sorted(
+                            n2 for n2, p in o_named.items()
+                            if p.required and not b_named.get(n2, p).required
+                        )
+                        if newly_required:
+                            why.append(
+                                "newly requires named parameter(s) "
+                                + ", ".join(f"`{n2}`" for n2 in newly_required)
+                            )
+                        if why:
+                            self.add(
+                                "OVERRIDE-SIG", lib.path, mem.line,
+                                f"`{decl.name}.{name}` is not a valid override of "
+                                f"`{anc.name}.{name}` "
+                                f"({os.path.relpath(anc.file, self.repo)}:{bm.line}): "
+                                + "; ".join(why),
+                            )
+
+    # ---- IMPLEMENTS-MISSING ---------------------------------------------
+    # `implements` obliges a class to DECLARE every member of the interface —
+    # inheriting an implementation is exactly what it does NOT do. Omitting one
+    # is `non_abstract_class_inherits_abstract_member`, a compile-time error,
+    # and hand-written test fakes are where it happens. A class declaring
+    # `noSuchMethod` is exempt by the language, and this tree's fakes rely on
+    # precisely that, so they are skipped rather than reported.
+    def check_implements(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                vis = self.visible_types(lib, app)
+                for decl in lib.types.values():
+                    if decl.kind != "class" or decl.is_abstract:
+                        continue
+                    ifaces = decl.rel.get("implements") or []
+                    if not ifaces:
+                        continue
+                    if "noSuchMethod" in decl.members:
+                        self.abstained["implements-nosuchmethod"] += 1
+                        continue
+                    required: Dict[str, TypeDecl] = {}
+                    bail = False
+                    for iname in ifaces:
+                        idecl = vis.get(iname)
+                        if idecl is None:
+                            bail = True
+                            break
+                        ichain = self.chain(idecl, vis)
+                        if ichain is None:
+                            bail = True
+                            break
+                        for anc in ichain:
+                            for n, m2 in anc.members.items():
+                                # A private member cannot be implemented from
+                                # another library at all — out of scope here.
+                                if n.startswith("_") or m2.is_static:
+                                    continue
+                                required.setdefault(n, anc)
+                    if bail:
+                        self.abstained["implements-interface-not-in-tree"] += 1
+                        continue
+                    have = set(decl.members)
+                    for sup in (decl.rel.get("extends") or []) + (
+                        decl.rel.get("with") or []
+                    ):
+                        sdecl = vis.get(sup)
+                        if sdecl is None:
+                            bail = True
+                            break
+                        schain = self.chain(sdecl, vis)
+                        if schain is None:
+                            bail = True
+                            break
+                        for anc in schain:
+                            have |= set(anc.members)
+                    if bail:
+                        self.abstained["implements-superclass-not-in-tree"] += 1
+                        continue
+                    self.examined["implements-classes"] += 1
+                    missing = sorted(
+                        n for n in required
+                        if n not in have and n not in UNIVERSAL_MEMBERS
+                    )
+                    if missing:
+                        self.add(
+                            "IMPLEMENTS-MISSING", lib.path, decl.line,
+                            f"`{decl.name}` implements "
+                            + ", ".join(f"`{i}`" for i in ifaces)
+                            + " but declares no "
+                            + ", ".join(f"`{n}`" for n in missing[:8])
+                            + (f" (+{len(missing) - 8} more)" if len(missing) > 8 else "")
+                            + ", and has no `noSuchMethod` to absorb the difference",
+                        )
+
+    # ---- SELF-CALL -------------------------------------------------------
+    # A bare `m(...)` inside a class body resolves to that class's own chain.
+    # When the WHOLE chain is in-tree the declaration is known exactly, so the
+    # same arity / named / required verification the constructor checks use
+    # applies with no type inference at all. Abstains when the name is not
+    # found in the chain (it could be a top-level function, a local closure, a
+    # callable field or an extension method) — this check only ever speaks
+    # when it has the declaration in hand.
+    _SELF_CALL_RE = re.compile(r"(?<![\w.$'\")\]])([a-z_]\w*)\s*\(")
+    # Keywords after which an identifier followed by `(` is an INVOCATION.
+    # Anything else that reads as a type is a DECLARATION.
+    _CALL_LEAD_KEYWORDS = {
+        "await", "return", "yield", "throw", "else", "in", "is", "as", "case",
+        "do", "if", "while", "assert", "print", "new", "const",
+    }
+
+    @staticmethod
+    def _looks_like_invocation(body: str, at: int) -> Optional[bool]:
+        """True = call site, False = declaration, None = cannot tell.
+
+        WHY THIS EXISTS. The first version of SELF-CALL matched
+        `Future<Map<String, dynamic>> post(\\n    String path, {` — a METHOD
+        DECLARATION — as a call to `post`, read its own parameter list as the
+        argument list, and reported 64 arity errors on a tree in which every
+        one of them was correct. The distinction is entirely in what precedes
+        the name: a declaration is preceded by its return type, an invocation
+        is preceded by a statement or operator boundary.
+        """
+        i = at - 1
+        while i >= 0 and body[i] in " \t\n\r":
+            i -= 1
+        if i < 0:
+            return None
+        c = body[i]
+        if c in ";{}(,[=&|!:+-*/%":
+            return True
+        if c == ">":
+            # `=>` is an arrow (call follows); a lone `>` closes a generic
+            # return type (declaration follows).
+            return body[i - 1] == "=" if i > 0 else None
+        if c in "?]":
+            return False               # `Foo? name(`  /  `List<Foo> name(`
+        if c.isalnum() or c == "_":
+            j = i
+            while j >= 0 and (body[j].isalnum() or body[j] == "_"):
+                j -= 1
+            word = body[j + 1 : i + 1]
+            if word in Preflight._CALL_LEAD_KEYWORDS:
+                return True
+            return False               # a return type, `static`, `async`, …
+        return None
+
+    def check_self_calls(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                vis = self.visible_types(lib, app)
+                shadow = set(lib.top_functions) | set(lib.top_vars)
+                for decl in lib.types.values():
+                    if decl.kind not in ("class", "mixin") or decl.body_span == (0, 0):
+                        continue
+                    chain = self.chain(decl, vis)
+                    if chain is None:
+                        continue
+                    known: Dict[str, "object"] = {}
+                    for anc in chain:
+                        for n, mem in anc.members.items():
+                            known.setdefault(n, mem)
+                    body = lib.masked[decl.body_span[0] : decl.body_span[1]]
+                    # local declarations inside the body can shadow a method
+                    local = set(re.findall(
+                        r"(?:final|var|const)\s+(?:[\w<>,\?\[\]\.]+\s+)?([a-z_]\w*)\s*=",
+                        body,
+                    ))
+                    local |= {
+                        p.name
+                        for c in decl.ctors.values() for p in c.params
+                    }
+                    for m in self._SELF_CALL_RE.finditer(body):
+                        name = m.group(1)
+                        if name in _DART_KEYWORDS or name in shadow or name in local:
+                            continue
+                        kind = self._looks_like_invocation(body, m.start())
+                        if kind is not True:
+                            self.abstained["self-call-is-declaration-or-unclear"] += 1
+                            continue
+                        mem = known.get(name)
+                        if mem is None:
+                            self.abstained["self-call-not-in-chain"] += 1
+                            continue
+                        if getattr(mem, "kind", "") != "method":
+                            self.abstained["self-call-not-a-method"] += 1
+                            continue
+                        if mem.params is None or mem.unparsed:
+                            self.abstained["self-call-unparsed"] += 1
+                            continue
+                        popen = decl.body_span[0] + m.end() - 1
+                        got = self._args(lib.masked, popen)
+                        if got is None:
+                            continue
+                        self.examined["self-calls"] += 1
+                        self._verify(
+                            "SELF", lib,
+                            line_of(lib.src, decl.body_span[0] + m.start()),
+                            f"{decl.name}.{name}", mem.params, got[1],
+                        )
 
     # ---- MEMBER-REF -------------------------------------------------------
     # `Type.member` in any position, not just as a call. This is where enum
@@ -816,6 +1705,18 @@ class Preflight:
         self.check_duplicates()
         self.check_unused_imports()
         self.check_parts()
+        # --- Phase E ---
+        self.check_param_defaults()
+        self.check_field_init()
+        self.check_late_fields()
+        self.check_switch_exhaustive()
+        self.check_unused_private()
+        self.check_unused_locals()
+        self.check_unreachable()
+        self.check_self_calls()
+        self.check_self_members()
+        self.check_override_signatures()
+        self.check_implements()
         if only:
             self.findings = [f for f in self.findings if f.check in only]
 

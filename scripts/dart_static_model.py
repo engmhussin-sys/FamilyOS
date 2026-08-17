@@ -243,6 +243,12 @@ class Param:
     required: bool
     is_super: bool = False
     has_default: bool = False
+    # Whether the `required` KEYWORD was literally written. `required` is
+    # cleared by `has_default` below, because for well-formed code a named
+    # parameter with a default is not required — but `required x = v` is
+    # exactly the malformed shape PARAM-DEFAULT exists to catch, and folding
+    # the two flags into one made that shape undetectable.
+    explicit_required: bool = False
 
 
 @dataclass
@@ -277,6 +283,11 @@ class TypeDecl:
     line: int
     is_abstract: bool
     supertypes: List[str] = field(default_factory=list)  # extends/with/implements/on
+    # The SAME names, kept apart by clause. `implements` obliges a class to
+    # DECLARE every member; `extends`/`with` let it INHERIT them. A checker
+    # that cannot tell the two apart cannot decide either question, which is
+    # why the flat list above is not enough on its own.
+    rel: Dict[str, List[str]] = field(default_factory=dict)
     members: Dict[str, Member] = field(default_factory=dict)
     ctors: Dict[str, Ctor] = field(default_factory=dict)
     enum_values: List[str] = field(default_factory=list)
@@ -370,8 +381,10 @@ def parse_params(sig: str) -> Tuple[List[Param], bool]:
         if not decl:
             return None
         required = is_named is False
+        explicit_required = False
         if decl.startswith("required "):
             required = True
+            explicit_required = True
             decl = decl[len("required ") :].strip()
         has_default = False
         for d in ("=", ":"):
@@ -398,11 +411,13 @@ def parse_params(sig: str) -> Tuple[List[Param], bool]:
         is_super = False
         if decl.startswith("this."):
             name = decl[5:].strip().split()[0]
-            return Param(name, "", is_named, required and is_named, False, has_default)
+            return Param(name, "", is_named, required and is_named, False,
+                         has_default, explicit_required)
         if decl.startswith("super."):
             is_super = True
             name = decl[6:].strip().split()[0]
-            return Param(name, "", is_named, required and is_named, True, has_default)
+            return Param(name, "", is_named, required and is_named, True,
+                         has_default, explicit_required)
         # Three shapes have to be told apart, and conflating them is how the
         # first version of this parser decided that
         # `void Function()? onSessionExpired` declared a named parameter
@@ -425,15 +440,23 @@ def parse_params(sig: str) -> Tuple[List[Param], bool]:
                     last_close = i
 
         if last_close != -1:
-            tail = decl[last_close + 1 :].strip().lstrip("?").strip()
+            tail_raw = decl[last_close + 1 :].strip()
+            # The `?` between the `)` and the parameter name is the NULLABILITY
+            # of the function type and it belongs to the TYPE, not to the name.
+            # Dropping it (the first version did) made
+            # `Future<X> Function()? cb` look like a non-nullable parameter, and
+            # every checker that reasons about nullability then reasoned about
+            # the opposite of what was written.
+            fn_nullable = tail_raw.startswith("?")
+            tail = tail_raw.lstrip("?").strip()
             tm = re.fullmatch(r"[A-Za-z_]\w*", tail)
             if tm:                                  # shape C
                 name = tail
-                type_text = decl[: last_close + 1].strip()
+                type_text = decl[: last_close + 1].strip() + ("?" if fn_nullable else "")
                 return Param(
                     name, type_text, is_named,
                     (required and is_named) or (not is_named and not has_default),
-                    is_super, has_default,
+                    is_super, has_default, explicit_required,
                 )
             head = decl[:first_open].strip()        # shape B
         else:
@@ -452,6 +475,7 @@ def parse_params(sig: str) -> Tuple[List[Param], bool]:
             (required and is_named) or (not is_named and not has_default),
             is_super,
             has_default,
+            explicit_required,
         )
 
     for decl in split_top_level(positional_text):
@@ -602,6 +626,7 @@ def scan_file(path: str, app: str) -> Library:
                 line=line_of(src, m.start()),
                 is_abstract="abstract" in m.group("mods"),
                 supertypes=_supertypes(header),
+                rel=_supertype_rel(header),
             )
             lib.types[name] = decl
             continue
@@ -616,6 +641,7 @@ def scan_file(path: str, app: str) -> Library:
             line=line_of(src, m.start()),
             is_abstract="abstract" in m.group("mods"),
             supertypes=_supertypes(header),
+            rel=_supertype_rel(header),
             body_span=(brace + 1, end - 1),
         )
         _scan_body(decl, src, masked, brace + 1, end - 1)
@@ -666,14 +692,19 @@ def _cut_at_top_level_assign(seg: str) -> str:
 
 
 def _supertypes(header: str) -> List[str]:
-    out: List[str] = []
+    return [n for names in _supertype_rel(header).values() for n in names]
+
+
+def _supertype_rel(header: str) -> Dict[str, List[str]]:
+    """Supertype names grouped by the clause that introduced them."""
+    out: Dict[str, List[str]] = {}
     for kw in ("extends", "with", "implements", "on"):
         m = re.search(r"\b" + kw + r"\s+([^{]*?)(?=\bextends\b|\bwith\b|\bimplements\b|\bon\b|$)", header)
         if m:
             for t in split_top_level(m.group(1)):
                 base = re.match(r"([A-Za-z_]\w*)", t.strip())
                 if base:
-                    out.append(base.group(1))
+                    out.setdefault(kw, []).append(base.group(1))
     return out
 
 

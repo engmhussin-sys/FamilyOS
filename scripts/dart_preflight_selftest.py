@@ -152,6 +152,122 @@ CONTROLS: List[Control] = [
         "await OemSetupScreen.showww(context);",
         "a static call to a member that does not exist on the type",
     ),
+    # =====================================================================
+    # PHASE E — the thirteen controls for the thirteen checks added past
+    # Phase C's twelve. Same discipline, same harness, same residue check:
+    # a checker that has not been SHOWN to fire proves nothing by its
+    # silence, and three of the ones below were caught reporting nonsense
+    # by exactly this method before they were allowed into the run.
+    # =====================================================================
+    Control(
+        "DUP-NAMED-ARG",
+        "apps/child-app/lib/features/goals/presentation/my_attempts_screen.dart",
+        "KidCard(\n                  padding:",
+        "KidCard(\n                  dimmed: false,\n                  dimmed: true,\n"
+        "                  padding:",
+        "the same named argument supplied twice in one invocation",
+    ),
+    Control(
+        "PARAM-DEFAULT",
+        "apps/child-app/lib/core/design_system/kid_components.dart",
+        "    required this.child,",
+        "    required this.child = const SizedBox.shrink(),",
+        "a `required` parameter that also carries a default value",
+    ),
+    Control(
+        "PARAM-DEFAULT",
+        "apps/child-app/lib/core/network/api_client.dart",
+        "  Future<Map<String, dynamic>> post(\n    String path, {\n"
+        "    Map<String, dynamic>? body,",
+        "  Future<Map<String, dynamic>> post(\n    String path, {\n"
+        "    Map<String, dynamic> body,",
+        "a non-nullable optional named parameter with no default",
+    ),
+    Control(
+        "FIELD-INIT",
+        "apps/child-app/lib/core/design_system/kid_components.dart",
+        "  final Widget child;",
+        "  final Widget child;\n  final String neverInitialisedField;",
+        "a non-nullable field no constructor initialises",
+    ),
+    Control(
+        "LATE-FIELD",
+        "apps/child-app/lib/core/design_system/kid_components.dart",
+        "  final Widget child;",
+        "  final Widget child;\n  late final String _neverAssignedLateField;",
+        "a `late` private field assigned nowhere in its library",
+    ),
+    Control(
+        "SWITCH-EXHAUSTIVE",
+        "apps/child-app/lib/core/state/ui_state.dart",
+        "      case UiStatus.empty:\n        return empty();\n",
+        "",
+        "an enum `switch` with a value dropped and no `default`",
+    ),
+    Control(
+        "UNUSED-PRIVATE",
+        "apps/child-app/lib/core/design_system/kid_components.dart",
+        "  final Widget child;",
+        "  final Widget child;\n  static const String _neverUsedPrivateField = 'x';",
+        "a private field referenced nowhere in its library",
+    ),
+    Control(
+        "UNUSED-LOCAL",
+        "apps/child-app/lib/core/design_system/kid_components.dart",
+        "    return Opacity(",
+        "    final neverUsedLocalVariable = 1;\n    return Opacity(",
+        "a local variable referenced nowhere in its file",
+    ),
+    Control(
+        "UNREACHABLE",
+        "apps/child-app/lib/core/network/api_client.dart",
+        "      return response.data as List<dynamic>;",
+        "      return response.data as List<dynamic>;\n"
+        "      return response.data as List<dynamic>;",
+        "a statement following a `return` in the same block",
+    ),
+    Control(
+        # NOTE the class chosen. `TodayGoalsController extends StateNotifier<…>`
+        # was the first candidate and the control FAILED on it — correctly:
+        # StateNotifier is not in this tree, so the chain is incomplete and
+        # SELF-CALL abstains by design. `HeartbeatService` has no supertype at
+        # all, so its chain is trivially complete and the check can speak.
+        "SELF-ARITY",
+        "apps/child-app/lib/features/pairing/application/heartbeat_service.dart",
+        "    stop();",
+        "    stop('an argument stop() does not take');",
+        "an argument passed to a no-argument method of the enclosing class",
+    ),
+    Control(
+        "LITERAL-TYPE",
+        "apps/child-app/lib/features/goals/presentation/my_attempts_screen.dart",
+        "KidCard(\n                  padding:",
+        "KidCard(\n                  dimmed: 'not a bool at all',\n                  padding:",
+        "a STRING literal passed where the declaration says bool (ARG-TYPE widening)",
+    ),
+    Control(
+        "SELF-MEMBER",
+        "apps/child-app/lib/core/state/ui_state.dart",
+        "  bool get isLoading => status == UiStatus.loading;",
+        "  bool get isLoading => this.notARealMemberAtAll;",
+        "`this.name` where the enclosing class has no such member",
+    ),
+    Control(
+        "OVERRIDE-SIG",
+        "apps/child-app/lib/core/platform/agent_channel_impl.dart",
+        "    required List<String> blockedPackages,\n  }) async {",
+        "  }) async {",
+        "an @override that drops a named parameter of the member it overrides",
+    ),
+    Control(
+        "IMPLEMENTS-MISSING",
+        "apps/child-app/test/features/pairing/device_registration_service_test.dart",
+        "  @override\n  dynamic noSuchMethod(Invocation invocation) => "
+        "super.noSuchMethod(invocation);\n}\n\nclass _FakePairingApi implements "
+        "PairingApi {",
+        "}\n\nclass _FakePairingApi implements PairingApi {",
+        "an `implements` class missing members with no `noSuchMethod`",
+    ),
 ]
 
 
