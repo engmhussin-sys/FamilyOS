@@ -20,35 +20,48 @@
  *           the row the parent actually reads, not on a returned object.
  *   PART 4  The parent ADJUSTS the goal to something lighter.
  *   PART 5  The child's own app shows the ADJUSTED goal.
+ *   PART 6  THE MORNING AFTER — the real producer sweeps the day that closed
+ *           and the household is told, once, about the goal that stalled.
  *
  * ---------------------------------------------------------------------------
- * THE PRINCIPAL FINDING, MEASURED IN ACT I AND ACT II AND NOT ARGUED:
+ * THE PRINCIPAL FINDING — RECORDED HERE, THEN CLOSED HERE. READ BOTH HALVES.
  *
- *   `GOAL_STALLED_PARENT` — «بدأ محمد هدف … ولم يكمله» — is a COMPLETE
- *   notification type. It has a sentence (`notification-copy.ts:448`), a
- *   quiet-hours classification with a written justification
- *   (`notification-class.ts:219`), an urgency weight
+ *   `GOAL_STALLED_PARENT` — «بدأ محمد هدف … ولم يكمله» — was a COMPLETE
+ *   notification type with NO PRODUCER. It had a sentence
+ *   (`notification-copy.ts:448`), a quiet-hours classification with a written
+ *   justification (`notification-class.ts:219`), an urgency weight
  *   (`notification-scoring.ts:86`) and an achievement baseline
- *   (`notification-scoring.ts:154`). Four tables, four deliberate rows.
- *
- *   AND IT HAS NO PRODUCER. Nothing in `src/` ever emits it. The three callers
- *   of `SmartNotificationEngineService.handleEvent` are the reward consumer,
- *   the rewards engine and the digital-wellbeing engine; none of them looks at
- *   an abandoned `achievement_requests` row, and no scheduled job does either
- *   (`FamilyDailyRolloverJob` rolls HABITS over, not reward programs).
- *
- *   So ACT I measures the product: a goal is started, the day passes, and
+ *   (`notification-scoring.ts:154`) — four tables, four deliberate rows — and
+ *   nothing in `src/` ever emitted it. The three callers of
+ *   `SmartNotificationEngineService.handleEvent` were the reward consumer, the
+ *   rewards engine and the digital-wellbeing engine; none of them looked at an
+ *   abandoned `achievement_requests` row, and no scheduled job did either. ACT
+ *   I measured that: a goal started, the day passed, and
  *   `notification_decisions` — the table whose entire purpose is to record why
- *   a household was or was not told something — has ZERO ROWS. And ACT II
- *   measures the engine on the SAME household through its real public entry
- *   point, and gets a complete, scored, explained, delivered coaching
- *   notification. The gap between the two acts IS the finding, and it is the
- *   same shape as `PF-E-001`, which this suite recorded and F6-003 closed: a
- *   capability that exists and is not wired.
+ *   a household was or was not told something — had ZERO ROWS, because nothing
+ *   asked the question. It was the same shape as `PF-E-001`: a capability that
+ *   exists and is not wired.
  *
- *   THE ASSERTIONS BELOW PIN BOTH SIDES. If a producer is ever wired, ACT I
- *   turns red and forces a deliberate update — which is exactly what happened
- *   to `e2e-05` and is why that file's history is readable.
+ *   SPRINT F1 WIRED IT, and this file's diff is where that becomes visible —
+ *   the same mechanism that made `PF-E-001`'s closure readable in `e2e-05`.
+ *   `StalledGoalService` asks one question of two tables — «did this family's
+ *   CLOSED day leave an attempt open on a goal that is still active?» — and
+ *   hands each answer to `handleEvent`. It runs from `FamilyDailyRolloverJob`,
+ *   the job that already judges the day that has just ended on the FAMILY's
+ *   own clock, so there is no second scheduler and no second definition of
+ *   «yesterday».
+ *
+ *   SO THE TWO ACTS NOW MEASURE TWO DIFFERENT THINGS, and both are executed:
+ *
+ *     ACT I    the producer is asked, at midday, about the day it would really
+ *              have been asked about then — and says NOTHING, because a day
+ *              still being lived is not a day anyone can judge. The silence is
+ *              now a DECISION with a reason a human can read, not a gap.
+ *     ACT II   the engine's own entry point, on the same household and the same
+ *              day, with the arithmetic pinned to the number.
+ *     ACT VII  THE PRODUCER, on the morning after, on the goal the child really
+ *              did abandon — one notification, once, and none for the goal the
+ *              parent had already archived.
  *
  * A SECOND FINDING, IN ACT V. `PATCH /reward-programs/:id`
  * (`UpdateRewardProgramDto`) accepts `status`, `maxPerDay`, `maxPerWeek`,
@@ -77,6 +90,9 @@ import {
   type GoldenWorld,
 } from './golden-world';
 import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
+import { StalledGoalService } from '../../src/modules/life-intelligence/application/services/stalled-goal.service';
+import { closableBusinessDate } from '../../src/modules/scheduler/domain/job-schedule';
+import { SCHEDULER_DEFAULTS } from '../../src/modules/scheduler/domain/job.types';
 import type { NotificationEventInput } from '../../src/modules/notification-engine/application/services/notification-context.assembler';
 import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { NOTIFICATION_PENALTY_COMPONENTS } from '../../src/modules/notifications/domain/engine/notification-decision.types';
@@ -167,6 +183,8 @@ describeGolden('GOLDEN E2E-14 — the goal that was missed, and whether the prod
    */
   let night: GoldenHousehold;
   let engine: SmartNotificationEngineService;
+  /** SPRINT F1 — the producer that did not exist when this file was written. */
+  let stalledGoals: StalledGoalService;
 
   /** Filled by ACT I and read by every act after it. */
   let heavyProgramId = '';
@@ -195,6 +213,7 @@ describeGolden('GOLDEN E2E-14 — the goal that was missed, and whether the prod
     await ageTheHousehold(world, home, utcWhenLocalIs('08:00', CAIRO));
     await ageTheHousehold(world, night, utcWhenLocalIs('08:00', CAIRO));
     engine = world.app.get(SmartNotificationEngineService);
+    stalledGoals = world.app.get(StalledGoalService);
     businessDate = getBusinessDate(MIDDAY, CAIRO);
   }, 240_000);
 
@@ -294,16 +313,33 @@ describeGolden('GOLDEN E2E-14 — the goal that was missed, and whether the prod
     );
 
   /**
+   * SPRINT F1 — THE REAL PRODUCER, at an explicit instant, for an explicit
+   * CLOSED business day, inside the tenant scope `JobRunner.executeFamilies`
+   * enters before every family handler.
+   *
+   * The two arguments are exactly what the job passes: `businessDate` is the
+   * day this run CLOSES — `closableBusinessDate(now, Family.timezone,
+   * local_hour)`, never UTC — and `now` is the instant the sweep is running at,
+   * which is what quiet hours are then judged on.
+   */
+  const sweepStalledGoals = (h: GoldenHousehold, closedDay: string, now: Date) =>
+    runWithTenant({ familyId: h.familyId, actorType: 'SYSTEM', actorId: 'golden-e2e-14' }, () =>
+      stalledGoals.sweepFamily({ familyId: h.familyId, businessDate: closedDay, now }),
+    );
+
+  /**
    * THE MISSED-GOAL EVENT, composed ONCE so that every act fires the same
    * thing and only the KEY and the INSTANT differ.
    *
-   * `trigger: 'PERIODIC_SIGNAL'` is a CHOICE THIS TEST MAKES AND SAYS SO. The
-   * trigger is a producer-supplied field and this type has no producer, so
-   * there is nothing to read it off. `PERIODIC_SIGNAL` is the member of
+   * `trigger: 'PERIODIC_SIGNAL'` WAS A CHOICE THIS TEST MADE WHEN THE TYPE HAD
+   * NO PRODUCER TO READ IT OFF, and Sprint F1's producer makes the SAME choice
+   * for the same stated reason: `PERIODIC_SIGNAL` is the member of
    * `NOTIFICATION_TRIGGERS` whose own comment reads «a periodic signal scan
-   * produced a candidate», which is what a stalled-goal sweep would be — it is
-   * not a DOMAIN_EVENT, because a goal NOT being finished emits no event, and
-   * that absence is half of why this path was never built.
+   * produced a candidate», which is exactly what a stalled-goal sweep is — and
+   * it is not a DOMAIN_EVENT, because a goal NOT being finished emits no event,
+   * and that absence is half of why this path was never built. ACT VII asserts
+   * the real producer's row carries this same value, so the shape ACT II fires
+   * by hand is the shape production writes.
    *
    * The goal is passed with `completedUnits: 0` of `totalUnits: 5` and NO
    * deadline, which is the truth of the row ACT I leaves behind: the child
@@ -399,21 +435,44 @@ describeGolden('GOLDEN E2E-14 — the goal that was missed, and whether the prod
     });
 
     /**
-     * THE FINDING, AS A NUMBER.
+     * THE FINDING THIS ACT USED TO RECORD, AND WHAT REPLACED IT.
      *
-     * The goal was created, started and abandoned; every domain event this
-     * produced has been relayed and consumed. `notification_decisions` exists
-     * so that «why was this household told / not told something» is answerable
-     * from a column. For the one day in this product's life that its own
-     * marketing is about, the answer is: there is no row, because nothing
-     * asked the question.
+     * IT USED TO SAY: the goal was created, started and abandoned; every domain
+     * event this produced was relayed and consumed; and `notification_decisions`
+     * — the table whose entire purpose is to record why a household was or was
+     * not told something — had ZERO ROWS, because NOTHING ASKED THE QUESTION.
+     * That assertion was pinned at zero deliberately, with a note saying that
+     * the day a stalled-goal producer was wired, it would have to be replaced
+     * by a statement of what the product now does.
      *
-     * PINNED AT ZERO ON PURPOSE. The day a stalled-goal producer is wired,
-     * this assertion turns red and its author has to come here and say what
-     * the product now does — the same mechanism that made `PF-E-001`'s closure
-     * visible in `e2e-05`'s diff.
+     * SPRINT F1 WIRED IT, SO HERE IS THAT STATEMENT. The producer is now RUN,
+     * on this household, at this instant — and the count is still zero, for a
+     * reason that is now a property of the product rather than an absence in
+     * it: A DAY STILL BEING LIVED IS NOT A DAY ANYONE CAN JUDGE.
+     *
+     *   `family-daily-rollover` is a FAMILY-scoped job; `JobRunner` hands each
+     *   family the day it has FINISHED, computed by `closableBusinessDate` from
+     *   `Family.timezone` and the registry's `local_hour` (2, migration 0011).
+     *   At 14:00 in Cairo that day is YESTERDAY — a day on which this goal did
+     *   not exist. So the sweep that would really have run at this instant is
+     *   run, with the real arguments, and finds nothing to say.
+     *
+     * WOULD THIS FAIL IF IT BROKE? Yes, in the direction that matters: a
+     * producer that judged TODAY — the day whose evening the child might still
+     * spend memorising — would find this open attempt and tell the parent their
+     * child had failed at 14:00. `candidates: 0` is that bug's tripwire, and
+     * the two lines above it prove the premise rather than assuming it.
      */
-    it('THE FINDING — no missed-goal notification, and no DECISION explaining the silence', async () => {
+    it('THE PRODUCER RUNS AND SAYS NOTHING — the day it may judge is yesterday, not the day still being lived', async () => {
+      // The premise, from the PRODUCTION function rather than from arithmetic:
+      // the day this family may close at 14:00 is not the day it is living.
+      const closable = closableBusinessDate(MIDDAY, CAIRO, SCHEDULER_DEFAULTS.defaultRolloverLocalHour);
+      expect(closable).not.toBe(businessDate);
+      expect(getBusinessDate(MIDDAY, CAIRO)).toBe(businessDate);
+
+      const report = await sweepStalledGoals(home, closable, MIDDAY);
+      expect(report).toEqual({ candidates: 0, produced: 0, alreadyDecided: 0, refused: 0 });
+
       expect(await countTheHousehold()).toEqual({
         decisions: 0,
         notifications: 0,
@@ -1002,6 +1061,165 @@ describeGolden('GOLDEN E2E-14 — the goal that was missed, and whether the prod
         notifications: 0,
         childMessages: 0,
         deliveries: 1,
+      });
+    });
+  });
+
+  // =========================================================================
+  // PART 6 — ACT VII: THE MORNING AFTER, AND THE PRODUCER THAT NOW EXISTS
+  // =========================================================================
+
+  /**
+   * SPRINT F1 — THE ACT THIS FILE WAS WRITTEN WITHOUT, AND WHY IT IS LAST.
+   *
+   * Every act above happens on ONE golden day. This one is the next morning, so
+   * it moves the clock, and it is declared after ACT VI for the same reason ACT
+   * VI is declared after ACT V: an act that changed the clock in the middle
+   * would make the acts after it assert something nobody chose.
+   *
+   * WHAT IT MEASURES — the whole of the F1 change, on the household this
+   * scenario has been about, through the real producer and not through a
+   * hand-composed event:
+   *
+   *   1. THE LIGHT GOAL the child started in ACT V and never finished IS
+   *      found, and produces exactly ONE parent notification.
+   *   2. THE HEAVY GOAL — whose attempt is STILL open in `achievement_requests`,
+   *      and whose row ACT IV archived — produces NOTHING. That is the
+   *      `rp.status = 'ACTIVE'` clause, executed: a parent who already acted is
+   *      not nudged about the goal they retired. It is also the strongest
+   *      available proof that the producer reads the PROGRAM and not only the
+   *      attempt, because both attempts are open on the same day.
+   *   3. RUNNING IT AGAIN writes nothing more, and the refusal is the ledger's
+   *      unique key rather than a flag in the sweep.
+   *
+   * THE INSTANT IS 15:00 THE NEXT DAY, and the hour is chosen rather than
+   * convenient: it is outside quiet hours (so this act measures the SEND path
+   * that ACT VI's household does not), and it is more than 24 hours after ACT
+   * II's notification, so the engine's own history window is empty and the
+   * score is the same 29.5 -> 30 ACT II pinned. A sweep an hour earlier would
+   * be measuring `FATIGUE_PENALTY`, which ACT II already measures.
+   */
+  describe('ACT VII — the next morning: the real producer sweeps the day that closed', () => {
+    /** 15:00 Cairo on the day AFTER the golden day — 25 hours after MIDDAY. */
+    const NEXT_AFTERNOON = utcWhenLocalIs('15:00', CAIRO, 1);
+    /** The day that has now closed: the golden day itself. */
+    let closedDay = '';
+
+    it('the premise: the clock has moved a day, and the day the sweep may judge is the golden day', async () => {
+      jest.setSystemTime(NEXT_AFTERNOON);
+      closedDay = closableBusinessDate(NEXT_AFTERNOON, CAIRO, SCHEDULER_DEFAULTS.defaultRolloverLocalHour);
+      expect(closedDay).toBe(businessDate);
+      expect(getBusinessDate(NEXT_AFTERNOON, CAIRO)).not.toBe(businessDate);
+      expect(NEXT_AFTERNOON.getTime() - MIDDAY.getTime()).toBe(25 * 60 * 60 * 1000);
+
+      // Both attempts are still open in the table — the heavy one from ACT I
+      // and the light one from ACT V — so «only one produced» below is about
+      // the PROGRAM's status and not about the rows having disappeared.
+      const attempts = await attemptRows();
+      expect(attempts).toHaveLength(2);
+      expect(attempts.every((a) => a.submitted_at === null)).toBe(true);
+      expect(attempts.map((a) => a.program_id).sort()).toEqual(
+        [heavyProgramId, lightProgramId].sort(),
+      );
+    });
+
+    it('THE PRODUCER PRODUCES — one candidate, one notification, and it is the LIGHT goal', async () => {
+      const before = await countTheHousehold();
+      expect(before.notifications).toBe(1); // ACT II's, and only ACT II's
+
+      const report = await sweepStalledGoals(home, closedDay, NEXT_AFTERNOON);
+      // ONE candidate, not two: the archived heavy goal is not one, even though
+      // its attempt is as open as the light goal's.
+      expect(report).toEqual({ candidates: 1, produced: 1, alreadyDecided: 0, refused: 0 });
+
+      const decisions = await decisionRows();
+      expect(decisions).toHaveLength(3);
+      const produced = decisions.find(
+        (r) => r.source_event_id === forEntity('signal', home.childId, lightProgramId, closedDay),
+      );
+      expect(produced).toBeDefined();
+      // THE SAME SHAPE ACT II FIRES BY HAND, written by production code.
+      expect(produced.trigger).toBe('PERIODIC_SIGNAL');
+      expect(produced.event_type).toBe('GOAL_STALLED_PARENT');
+      expect(produced.notification_type).toBe('GOAL_STALLED_PARENT');
+      expect(produced.category).toBe('GOAL');
+      expect(produced.target_audience).toBe('PARENT');
+      expect(produced.child_id).toBe(home.childId);
+      expect(produced.copy_key).toBe('GOAL_STALLED_PARENT');
+      expect(produced.decision).toBe('SEND');
+      expect(produced.outcome).toBe('SEND');
+      expect(produced.ai_rewritten).toBe(false);
+      // The same arithmetic, at the same number, because 25 hours later the
+      // household's history window is empty again.
+      expect(Number(produced.score)).toBe(30);
+      expect(produced.priority_band).toBe('LOW');
+      assertTheArithmeticReconciles(produced);
+      // The business date is the day the sweep RAN on the family's calendar —
+      // the day after the one it judged, which is what «ربما يحتاج دفعة اليوم»
+      // is addressed to.
+      expect(produced.business_date.toISOString().slice(0, 10)).toBe(
+        getBusinessDate(NEXT_AFTERNOON, CAIRO),
+      );
+
+      /**
+       * AND NOT ONE FOR THE ARCHIVED GOAL — asserted as ARITHMETIC rather than
+       * as the absence of a key, and the reason is worth recording: ACT II
+       * hand-composed `forEntity('signal', childId, heavyProgramId,
+       * businessDate)` two hundred lines ago, and that is EXACTLY the string
+       * this producer composes for the heavy goal on this same day. The two
+       * agreeing is itself the property `notification-source-key.ts` exists to
+       * force — «what makes this notification the same notification» has one
+       * answer, at the call site — so the heavy key IS in the ledger, once,
+       * put there by ACT II.
+       *
+       * What proves the archived goal produced nothing is therefore the pair of
+       * numbers: ONE candidate (not two, with two open attempts on the table),
+       * and exactly ONE new ledger row.
+       */
+      const heavyKey = forEntity('signal', home.childId, heavyProgramId, closedDay);
+      expect(decisions.filter((r) => r.source_event_id === heavyKey)).toHaveLength(1);
+      expect(decisions).toHaveLength(before.decisions + 1);
+    });
+
+    it('the parent reads a sentence about the LIGHT goal, and the child is still told nothing', async () => {
+      const notifications = await notificationRows();
+      expect(notifications).toHaveLength(2);
+      const [, latest] = notifications;
+
+      const [light] = await programRow(lightProgramId);
+      expect(latest.type).toBe('GOAL_STALLED_PARENT');
+      expect(latest.user_id).toBe(home.ownerUserId);
+      expect(latest.body).toBe(
+        `بدأ ${home.childName} هدف ${light.target_summary_ar} ولم يكمله — ربما يحتاج دفعة اليوم`,
+      );
+      // It names the LIGHTER goal, not the heavy one the parent retired.
+      expect(latest.body).toContain(light.target_summary_ar);
+      expect(latest.body).not.toContain(heavyGoalTitle);
+      expect(hasEnumOrPlaceholderLeak(latest.body)).toBe(false);
+      for (const word of [...BLAME_WORDS, ...COMPARISON_WORDS, ...THREAT_WORDS]) {
+        expect(`${latest.title} ${latest.body}`).not.toContain(word);
+      }
+
+      // The routing property from ACT III still holds for the real producer.
+      expect(await countOf('child_messages', home.familyId)).toBe(0);
+    });
+
+    it('and the sweep run AGAIN, same day, writes nothing more — the ledger refuses the cause', async () => {
+      const before = await countTheHousehold();
+
+      const replay = await sweepStalledGoals(
+        home,
+        closedDay,
+        new Date(NEXT_AFTERNOON.getTime() + 20 * 60 * 1000),
+      );
+      expect(replay).toEqual({ candidates: 1, produced: 0, alreadyDecided: 1, refused: 0 });
+
+      expect(await countTheHousehold()).toEqual(before);
+      expect(await countTheHousehold()).toEqual({
+        decisions: 3,
+        notifications: 2,
+        childMessages: 0,
+        deliveries: 0,
       });
     });
   });
