@@ -32,6 +32,46 @@ class PairingApi {
     });
   }
 
+  /// `POST /pairing/activate` — `PairingController.activate`, parent JWT,
+  /// body `ActivateDto { deviceId, overrideRiskWarning? }`, answers 200.
+  ///
+  /// THE STEP NOTHING IN THIS APP USED TO TAKE. The orchestrator drives
+  /// `PARENT_CONFIRMED -> POLICY_ASSIGNED -> DEVICE_ACTIVATED` and writes
+  /// `Device.status = ACTIVE` in this one call, so without it a family's
+  /// device registers, verifies, uploads its capabilities and then waits
+  /// forever.
+  ///
+  /// `overrideRiskWarning` IS DELIBERATELY NOT SENT, and it is not a
+  /// forgotten parameter. `PairingOrchestratorService.activate` blocks a
+  /// HIGH/CRITICAL-risk device with a bare
+  /// `ConflictException('Device risk level is …')` that carries no `code`
+  /// and no `messageAr`, so `GlobalExceptionFilter` shapes it with the
+  /// generic 409 fallback from `error-catalogue.ts` — the SAME `code`
+  /// (`CONFLICT`) and the SAME Arabic sentence as an already-activated
+  /// device. There is therefore no server-authored wording for «this device
+  /// looks risky» to put in front of a parent, and no field a client can
+  /// read to tell the two 409s apart. Sending `overrideRiskWarning: true`
+  /// from here would mean a parent overriding a risk decision they were
+  /// never shown; a risk override is an informed decision or it is nothing.
+  /// Left unimplemented, recorded as a backend gap.
+  Future<Map<String, dynamic>> activateDevice(String deviceId) {
+    return _client.post('/pairing/activate', data: {'deviceId': deviceId});
+  }
+
+  /// `GET /pairing/device/:deviceId/status` — `PairingController.getStatus`,
+  /// family-scoped server-side. Returns
+  /// `{pairingState, trustLevel, riskLevel, lastSeenAt, activationStatus}`.
+  ///
+  /// This is the only route that answers «is this device ready for its
+  /// parent to confirm it?». `GET /pairing/devices` carries `Device.status`
+  /// alone, which reads `PENDING_PAIRING` both for a device that has not
+  /// uploaded its capabilities yet AND for one that is waiting on exactly
+  /// this parent. Every value it returns is a raw enum and none of them is
+  /// ever rendered: the caller maps them to a state and writes its own copy.
+  Future<Map<String, dynamic>> getDeviceStatus(String deviceId) {
+    return _client.get('/pairing/device/$deviceId/status');
+  }
+
   Future<void> registerPushToken(String platform, String pushToken) {
     return _client.post('/pairing/parent-device/push-token', data: {'platform': platform, 'pushToken': pushToken});
   }

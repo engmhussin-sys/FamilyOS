@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -30,6 +31,34 @@ enum PairingWatchPhase {
   cannotConfirm,
 }
 
+/// HOW FAR THE PAIRED DEVICE ITSELF HAS GOT, read from
+/// `GET /pairing/device/:deviceId/status` and never guessed here.
+///
+/// The four values are the only four answers that change what this screen
+/// offers a parent. They are derived from `pairingState` and
+/// `activationStatus`, both of which are raw backend enums that are read,
+/// mapped, and then dropped — no value from either ever reaches a string a
+/// parent sees.
+enum DeviceReadiness {
+  /// The status route has not answered yet, or answered with something this
+  /// build does not recognise. The action is still offered: the server is
+  /// the authority on whether it is legal, and it refuses in Arabic.
+  unknown,
+
+  /// The device is registered but has not finished verifying and uploading
+  /// its capabilities, so `PARENT_CONFIRMED` is not a legal transition yet.
+  preparing,
+
+  /// `CAPABILITIES_UPLOADED` — the one state from which
+  /// `POST /pairing/activate` succeeds. This is the moment the parent's
+  /// confirmation is the only thing missing.
+  awaitingParent,
+
+  /// `Device.status = ACTIVE`, as reported by the server. Set from nothing
+  /// else, ever.
+  active,
+}
+
 /// WHAT THIS SCREEN DID WRONG, AND WHAT IT DOES NOW.
 ///
 /// It called `POST /pairing/invite`, printed the code, ran a countdown and
@@ -52,11 +81,22 @@ enum PairingWatchPhase {
 /// child who types the code in its last second still gets confirmed —
 /// registration takes a few seconds after redemption.
 ///
-/// KNOWN GAP, DELIBERATELY NOT PAPERED OVER. Nothing in this app calls
-/// `POST /pairing/activate`, so a freshly paired device sits at
-/// `PENDING_PAIRING`. The confirmation below therefore says "connected",
-/// and says "active" only when the device's own `status` is `ACTIVE`. It
-/// does not claim an activation that has not happened.
+/// THE STEP THAT USED TO BE MISSING ENTIRELY. Until this change nothing in
+/// this app called `POST /pairing/activate`, so a device that had paired,
+/// verified and uploaded its capabilities sat at `PENDING_PAIRING` forever
+/// — a family finished pairing and had no working product. Once the watch
+/// finds the device, this screen reads
+/// `GET /pairing/device/:deviceId/status`, and the moment the server says
+/// the device is waiting on its parent it offers exactly one action:
+/// confirm and activate it.
+///
+/// WHAT THE SCREEN WILL NOT DO. It never says "active" off the back of its
+/// own successful call — after activating (or being refused) it re-reads
+/// the server's status and renders that. A 409 is shown with the server's
+/// own Arabic sentence, because the same 409 means BOTH «already done» and
+/// «blocked on device risk» (see `PairingApi.activateDevice` for why those
+/// are indistinguishable on the wire today) and this client is not entitled
+/// to guess which. And it never sends `overrideRiskWarning`.
 class AddChildScreen extends ConsumerStatefulWidget {
   const AddChildScreen({super.key});
 
@@ -104,6 +144,20 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
   bool _isRevoking = false;
   bool _wasRevoked = false;
 
+  // --- the activation step ------------------------------------------------
+
+  /// The server's own answer about the paired device, never inferred.
+  DeviceReadiness _readiness = DeviceReadiness.unknown;
+
+  bool _isActivating = false;
+  bool _isCheckingReadiness = false;
+
+  /// The server's sentence about the last activation attempt — its
+  /// `messageAr`, rendered verbatim. Kept apart from [_errorMessage]
+  /// because a 409 here frequently means «this was already done», which is
+  /// not a failure and must not be painted like one.
+  String? _activationNotice;
+
   @override
   void initState() {
     super.initState();
@@ -147,6 +201,8 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
       _phase = PairingWatchPhase.idle;
       _pairedDeviceId = null;
       _pairedDeviceIsActive = false;
+      _readiness = DeviceReadiness.unknown;
+      _activationNotice = null;
       _wasRevoked = false;
       _baseline = null;
     });
@@ -180,7 +236,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
       _startCountdown();
       if (baseline != null) _startPolling(childId, expiresInSeconds);
     } catch (e) {
-      setState(() => _errorMessage = e.toString());
+      setState(() => _errorMessage = _displayError(e));
     } finally {
       if (mounted) setState(() => _isGenerating = false);
     }
@@ -211,12 +267,31 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
     _watchLimit = null;
   }
 
+  /// THE WATCH HAS TWO PHASES AND ONE TIMER.
+  ///
+  /// Before a device is found it polls `GET /pairing/devices`. After one is
+  /// found it polls that device's own status instead, until the server says
+  /// the device is either waiting on its parent or already active — because
+  /// "a device appeared" and "a device is ready to be confirmed" are seconds
+  /// apart in real life and a parent should not have to guess which they are
+  /// looking at. One timer, one deadline, one `dispose`.
   Future<void> _poll(String childId) async {
     _watchElapsed += AddChildScreen.pollInterval;
     final limit = _watchLimit;
     if (limit != null && _watchElapsed > limit) {
       _stopPolling();
-      if (mounted) setState(() => _phase = PairingWatchPhase.gaveUp);
+      // Only the FIRST phase can give up: once a device has been found, the
+      // invite's lifetime is spent and irrelevant, and reporting "no device
+      // connected" over a device that plainly did would be a lie.
+      if (mounted && _pairedDeviceId == null) {
+        setState(() => _phase = PairingWatchPhase.gaveUp);
+      }
+      return;
+    }
+
+    final pairedDeviceId = _pairedDeviceId;
+    if (pairedDeviceId != null) {
+      await _refreshReadiness(pairedDeviceId, stopWatchWhenSettled: true);
       return;
     }
 
@@ -236,15 +311,119 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
       final wasKnown = baseline.containsKey(entry.key);
       final becameActive = entry.value == 'ACTIVE' && baseline[entry.key] != 'ACTIVE';
       if (!wasKnown || becameActive) {
-        _stopPolling();
         setState(() {
           _phase = PairingWatchPhase.connected;
           _pairedDeviceId = entry.key;
           _pairedDeviceIsActive = entry.value == 'ACTIVE';
+          _readiness =
+              entry.value == 'ACTIVE' ? DeviceReadiness.active : DeviceReadiness.unknown;
         });
+        // The watch does not stop here any more: it switches to this
+        // device's own status, so the activation action can appear on its
+        // own as soon as the device is ready for it.
+        if (entry.value == 'ACTIVE') {
+          _stopPolling();
+        } else {
+          await _refreshReadiness(entry.key, stopWatchWhenSettled: true);
+        }
         return;
       }
     }
+  }
+
+  /// Maps the status route's raw enums onto [DeviceReadiness]. The strings
+  /// below are wire values, compared and discarded — none of them is ever
+  /// shown to a parent.
+  static DeviceReadiness _readinessOf(Map<String, dynamic> status) {
+    if (status['activationStatus'] == 'ACTIVATED') return DeviceReadiness.active;
+    final pairingState = status['pairingState'];
+    if (pairingState == 'CAPABILITIES_UPLOADED') return DeviceReadiness.awaitingParent;
+    if (pairingState is String && pairingState.isNotEmpty) return DeviceReadiness.preparing;
+    return DeviceReadiness.unknown;
+  }
+
+  /// Reads the server's answer for [deviceId]. A failed read is NOT an
+  /// answer: the previous readiness stands, exactly as one failed device
+  /// poll does not mean "not connected".
+  Future<void> _refreshReadiness(
+    String deviceId, {
+    bool stopWatchWhenSettled = false,
+  }) async {
+    final Map<String, dynamic> status;
+    try {
+      status = await ref.read(pairingApiProvider).getDeviceStatus(deviceId);
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+
+    final readiness = _readinessOf(status);
+    setState(() {
+      _readiness = readiness;
+      _pairedDeviceIsActive = readiness == DeviceReadiness.active;
+    });
+
+    // Nothing left for the watch to discover: either the parent's action is
+    // now possible, or the device is already active.
+    if (stopWatchWhenSettled &&
+        (readiness == DeviceReadiness.active ||
+            readiness == DeviceReadiness.awaitingParent)) {
+      _stopPolling();
+    }
+  }
+
+  /// The manual «check again», for the case where the automatic watch has
+  /// already spent its deadline while the device was still preparing.
+  Future<void> _checkReadinessNow() async {
+    final deviceId = _pairedDeviceId;
+    if (deviceId == null) return;
+    setState(() => _isCheckingReadiness = true);
+    await _refreshReadiness(deviceId);
+    if (mounted) setState(() => _isCheckingReadiness = false);
+  }
+
+  /// `POST /pairing/activate`, and then — always — the server's own status.
+  ///
+  /// The second read is the whole point. A 200 is not this screen's licence
+  /// to announce an active device, and a 409 is not proof that nothing
+  /// happened: the backend's own contract is that «already activated» and
+  /// «blocked on risk» are the same 409 with the same Arabic. So the call's
+  /// outcome is rendered as the server worded it, and the STATE is whatever
+  /// the server says it is a moment later.
+  Future<void> _activatePairedDevice() async {
+    final deviceId = _pairedDeviceId;
+    if (deviceId == null) return;
+
+    // The parent has taken over from the watch.
+    _stopPolling();
+    setState(() {
+      _isActivating = true;
+      _errorMessage = null;
+      _activationNotice = null;
+    });
+
+    String? notice;
+    try {
+      await ref.read(pairingApiProvider).activateDevice(deviceId);
+    } catch (error) {
+      notice = _displayError(error);
+    }
+    if (!mounted) return;
+
+    await _refreshReadiness(deviceId);
+    if (!mounted) return;
+    setState(() {
+      _isActivating = false;
+      _activationNotice = notice;
+    });
+  }
+
+  /// The server's Arabic sentence when there is one, its English when there
+  /// is not, and the raw error only for something that never reached the
+  /// server at all. `ApiFailure` already encodes that order.
+  String _displayError(Object error) {
+    return ApiFailure.from(error)
+        .displayFor(arabic: ref.read(localeControllerProvider.notifier).isRtl);
   }
 
   Future<void> _revokePairedDevice() async {
@@ -266,7 +445,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
       // The server's own sentence, including the 409 the pairing state
       // machine raises while a device is ACTIVATED but has not yet sent a
       // heartbeat. Better a real refusal than a fake success.
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _errorMessage = _displayError(e));
     } finally {
       if (mounted) setState(() => _isRevoking = false);
     }
@@ -418,10 +597,26 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
             icon: Icons.check_circle_rounded,
             color: AppTheme.sage500,
             title: t('pairing.connectedTitle'),
-            // The device is linked; it is only reported as ACTIVE when the
-            // backend says so, because nothing in this app activates it.
+            // The device is linked; it is reported as ACTIVE only when the
+            // backend's own status route says so — never off the back of
+            // this screen's own activation call returning 200.
             body: _pairedDeviceIsActive ? t('pairing.connectedActiveBody') : t('pairing.connectedPendingBody'),
           ),
+          if (_pairedDeviceId != null && !_pairedDeviceIsActive)
+            ..._buildActivationSection(context, t),
+          if (_activationNotice != null) ...[
+            const SizedBox(height: 12),
+            _Banner(
+              icon: Icons.info_outline_rounded,
+              color: AppTheme.amber500,
+              title: t('pairing.activationNoticeTitle'),
+              // THE SERVER'S OWN SENTENCE, VERBATIM. It has already been
+              // written for this situation («هذا الإجراء تمّ بالفعل، أو لم
+              // يعد متاحًا الآن»); rewording it here would replace a
+              // reviewed sentence with an unreviewed one.
+              body: _activationNotice!,
+            ),
+          ],
           if (_pairedDeviceId != null) ...[
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -460,6 +655,52 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
           ),
         ];
     }
+  }
+
+  /// The one action that turns a paired device into a working one.
+  ///
+  /// Offered when the server says the device is waiting on its parent, and
+  /// also when the status could not be read at all — the server is the
+  /// authority on whether the transition is legal and refuses in Arabic, so
+  /// an unreadable status must not become a dead end. While the device is
+  /// still preparing itself there is nothing for a parent to confirm yet,
+  /// so the screen says so and offers a re-check instead of a button that
+  /// would only earn a 409.
+  List<Widget> _buildActivationSection(
+    BuildContext context,
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+  ) {
+    if (_readiness == DeviceReadiness.preparing) {
+      return [
+        const SizedBox(height: 12),
+        Text(t('pairing.activatePreparingBody'), style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _isCheckingReadiness ? null : _checkReadinessNow,
+          icon: _isCheckingReadiness ? null : const Icon(Icons.refresh_rounded),
+          label: _isCheckingReadiness
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : Text(t('pairing.checkAgainAction')),
+        ),
+      ];
+    }
+
+    return [
+      const SizedBox(height: 12),
+      FilledButton.icon(
+        onPressed: _isActivating ? null : _activatePairedDevice,
+        icon: _isActivating ? null : const Icon(Icons.verified_user_rounded),
+        label: _isActivating
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              )
+            : Text(t('pairing.activateAction')),
+      ),
+      const SizedBox(height: 4),
+      Text(t('pairing.activateHint'), style: Theme.of(context).textTheme.bodySmall),
+    ];
   }
 
   Future<void> _confirmRevoke(

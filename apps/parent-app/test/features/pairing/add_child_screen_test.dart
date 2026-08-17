@@ -29,6 +29,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'package:parent_app/core/di/providers.dart';
+import 'package:parent_app/core/network/api_exception.dart';
 import 'package:parent_app/core/localization/locale_controller.dart';
 import 'package:parent_app/core/localization/localization_engine.dart';
 import 'package:parent_app/core/theme/app_theme.dart';
@@ -77,10 +78,45 @@ class _FakePairingApi implements PairingApi {
   final List<String> revoked = <String>[];
   int inviteCalls = 0;
 
+  /// What `GET /pairing/device/:id/status` answers. Default: the device has
+  /// uploaded its capabilities and is waiting on its parent — the state in
+  /// which activation is the only thing missing.
+  Map<String, dynamic> deviceStatus = <String, dynamic>{
+    'pairingState': 'CAPABILITIES_UPLOADED',
+    'activationStatus': 'NOT_ACTIVATED',
+  };
+
+  /// Applied to [deviceStatus] the instant `activate` is called, BEFORE
+  /// [activateError] is thrown — so a test can model the real
+  /// «already activated, so this second call is a 409» case as well as the
+  /// «refused, and still not active» one.
+  Map<String, dynamic>? statusAfterActivate;
+
+  Object? activateError;
+
+  final List<String> activated = <String>[];
+  int statusCalls = 0;
+
   @override
   Future<Map<String, dynamic>> generateInviteCode(String childId) async {
     inviteCalls++;
     return <String, dynamic>{'code': '482913', 'expiresInSeconds': expiresInSeconds};
+  }
+
+  @override
+  Future<Map<String, dynamic>> activateDevice(String deviceId) async {
+    activated.add(deviceId);
+    final next = statusAfterActivate;
+    if (next != null) deviceStatus = next;
+    final error = activateError;
+    if (error != null) throw error;
+    return <String, dynamic>{'status': 'ACTIVATED'};
+  }
+
+  @override
+  Future<Map<String, dynamic>> getDeviceStatus(String deviceId) async {
+    statusCalls++;
+    return deviceStatus;
   }
 
   @override
@@ -254,6 +290,128 @@ void main() {
     // test at teardown on any timer still pending.
     await tester.pump(const Duration(minutes: 5));
     expect(dashboard.getDevicesCalls, callsBeforeDispose);
+  });
+
+  // -------------------------------------------------------------------------
+  // ACTIVATION — `POST /pairing/activate`.
+  //
+  // The gap these lock down: nothing in this app ever called that route, so a
+  // device that had paired, verified and uploaded its capabilities stayed at
+  // `PENDING_PAIRING` forever and the family had no working product.
+  // -------------------------------------------------------------------------
+
+  testWidgets('the parent activates the paired device, and ACTIVE comes from the server',
+      (tester) async {
+    final dashboard = _FakeDashboardApi(children: _oneChild, devices: const <dynamic>[]);
+    final pairing = _FakePairingApi();
+
+    await _pumpScreen(tester, dashboard: dashboard, pairing: pairing);
+    await _tapGenerate(tester);
+
+    dashboard.devices = <dynamic>[_device()];
+    await _advancePolls(tester, 1);
+
+    // The device is waiting on its parent, so the action is offered.
+    expect(find.text(_ar('pairing.activateAction')), findsOneWidget);
+    expect(find.text(_ar('pairing.connectedPendingBody')), findsOneWidget);
+
+    // The server's state AFTER the successful call.
+    pairing.statusAfterActivate = <String, dynamic>{
+      'pairingState': 'ACTIVATED',
+      'activationStatus': 'ACTIVATED',
+    };
+
+    await tester.ensureVisible(find.text(_ar('pairing.activateAction')));
+    await tester.tap(find.text(_ar('pairing.activateAction')));
+    await tester.pump();
+    await tester.pump();
+
+    expect(pairing.activated, <String>['dev_1']);
+    // "Active" is claimed only because the status route said so — the 200
+    // alone is never enough.
+    expect(find.text(_ar('pairing.connectedActiveBody')), findsOneWidget);
+    expect(find.text(_ar('pairing.connectedPendingBody')), findsNothing);
+    expect(find.text(_ar('pairing.activateAction')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a 409 is rendered in the server’s own Arabic, and nothing is claimed active',
+      (tester) async {
+    final dashboard = _FakeDashboardApi(children: _oneChild, devices: const <dynamic>[]);
+    final pairing = _FakePairingApi();
+
+    // The exact B3 envelope `GlobalExceptionFilter` shapes for a 409 with no
+    // `code` of its own — which is what BOTH a second activation and a
+    // risk-blocked activation produce.
+    const serverArabic = 'هذا الإجراء تمّ بالفعل، أو لم يعد متاحًا الآن.';
+    pairing.activateError = ApiException(
+      'This action has already been done, or is not available right now.',
+      statusCode: 409,
+      code: 'CONFLICT',
+      messageAr: serverArabic,
+    );
+
+    await _pumpScreen(tester, dashboard: dashboard, pairing: pairing);
+    await _tapGenerate(tester);
+
+    dashboard.devices = <dynamic>[_device()];
+    await _advancePolls(tester, 1);
+
+    await tester.ensureVisible(find.text(_ar('pairing.activateAction')));
+    await tester.tap(find.text(_ar('pairing.activateAction')));
+    await tester.pump();
+    await tester.pump();
+
+    // The server's sentence, verbatim — not a rewrite, and not the English.
+    expect(find.text(serverArabic), findsOneWidget);
+    expect(
+      find.text('This action has already been done, or is not available right now.'),
+      findsNothing,
+    );
+    // The status route still says NOT_ACTIVATED (the risk-blocked shape), so
+    // the screen must not have promoted itself to "active".
+    expect(find.text(_ar('pairing.connectedActiveBody')), findsNothing);
+    expect(find.text(_ar('pairing.connectedPendingBody')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a device still preparing itself is not offered for confirmation yet',
+      (tester) async {
+    final dashboard = _FakeDashboardApi(children: _oneChild, devices: const <dynamic>[]);
+    final pairing = _FakePairingApi();
+    pairing.deviceStatus = <String, dynamic>{
+      'pairingState': 'DEVICE_REGISTERED',
+      'activationStatus': 'NOT_ACTIVATED',
+    };
+
+    await _pumpScreen(tester, dashboard: dashboard, pairing: pairing);
+    await _tapGenerate(tester);
+
+    dashboard.devices = <dynamic>[_device()];
+    await _advancePolls(tester, 1);
+
+    expect(find.text(_ar('pairing.activatePreparingBody')), findsOneWidget);
+    expect(find.text(_ar('pairing.activateAction')), findsNothing);
+
+    // The watch stays on this device's own status until it is ready, so the
+    // action appears without the parent doing anything.
+    pairing.deviceStatus = <String, dynamic>{
+      'pairingState': 'CAPABILITIES_UPLOADED',
+      'activationStatus': 'NOT_ACTIVATED',
+    };
+    await _advancePolls(tester, 1);
+
+    expect(find.text(_ar('pairing.activateAction')), findsOneWidget);
+    expect(find.text(_ar('pairing.activatePreparingBody')), findsNothing);
+
+    // And once it is ready, the status polling stops too.
+    final callsAtReady = pairing.statusCalls;
+    await _advancePolls(tester, 6);
+    expect(pairing.statusCalls, callsAtReady);
+
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('the confirmed device can be unlinked through POST /pairing/revoke',

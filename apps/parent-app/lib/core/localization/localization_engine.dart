@@ -600,6 +600,13 @@ const Map<AppLocale, Map<String, String>> _resources = {
         'The device will lose access to your family straight away. You can pair it again later with a new code.',
     'pairing.revokedTitle': 'The device was unlinked',
     'pairing.revokedBody': 'It no longer has access to your family. Generate a new code to pair a device again.',
+    'pairing.activateAction': 'Confirm and activate the device',
+    'pairing.activateHint':
+        'This is the last step: once the device is activated, your family plan starts applying on it.',
+    'pairing.activatePreparingBody':
+        'The device is still finishing its own setup, so there is nothing to confirm yet. It only takes a moment.',
+    'pairing.checkAgainAction': 'Check again',
+    'pairing.activationNoticeTitle': 'The server’s reply',
     'notifications.title': 'Notifications',
     'notifications.empty': 'No notifications yet.',
     'notifications.markAllRead': 'Mark all as read',
@@ -1215,6 +1222,13 @@ const Map<AppLocale, Map<String, String>> _resources = {
         'سيفقد الجهاز الوصول إلى عائلتك فورًا، ويمكنك إقرانه مجددًا لاحقًا برمز جديد.',
     'pairing.revokedTitle': 'تم إلغاء ربط الجهاز',
     'pairing.revokedBody': 'لم يعد لديه وصول إلى عائلتك. أنشئ رمزًا جديدًا لإقران جهاز مرة أخرى.',
+    'pairing.activateAction': 'تأكيد الجهاز وتفعيله',
+    'pairing.activateHint':
+        'هذه هي الخطوة الأخيرة: بعد التفعيل تبدأ خطة عائلتك في العمل على هذا الجهاز.',
+    'pairing.activatePreparingBody':
+        'الجهاز ما زال يُكمل تجهيز نفسه، فلا يوجد ما تؤكّده الآن. الأمر لا يستغرق سوى لحظات.',
+    'pairing.checkAgainAction': 'تحقّق مرة أخرى',
+    'pairing.activationNoticeTitle': 'ردّ الخادم',
     'notifications.title': 'الإشعارات',
     'notifications.empty': 'لا يوجد إشعارات بعد.',
     'notifications.markAllRead': 'تعليم الكل كمقروء',
