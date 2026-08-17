@@ -298,7 +298,14 @@ model User {
   passwordHash    String     @map("password_hash")
   fullName        String     @map("full_name")
   phone           String?
-  locale          String     @default("en")
+  /// PHASE F (`F6-009`, `PF-E-002`). ARABIC, because CONTEXT §1 is a locked
+  /// decision and not a preference: first markets Egypt then Saudi Arabia,
+  /// first language Arabic, real RTL and not a translation. This column is what
+  /// `NotificationContextAssembler.readLocale` reads to choose the column of
+  /// `COPY_CATALOGUE` every sentence a household receives is rendered from, so
+  /// an English default meant English notifications for an Egyptian family that
+  /// simply did not send a `locale` on registration. See migration 0019.
+  locale          String     @default("ar")
   timezone        String     @default("UTC")
   status          UserStatus @default(PENDING_VERIFICATION)
   mfaEnabled      Boolean    @default(false) @map("mfa_enabled")

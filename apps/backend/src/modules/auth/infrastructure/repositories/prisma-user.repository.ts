@@ -30,7 +30,14 @@ export class PrismaUserRepository implements IUserRepository {
           email: input.email,
           passwordHash,
           fullName: input.fullName,
-          locale: input.locale ?? 'en',
+          // PHASE F (`F6-009`, `PF-E-002`). ARABIC when the client says nothing.
+          // This value chooses the language of every notification the household
+          // will ever receive (`NotificationContextAssembler.readLocale`), and
+          // CONTEXT §1 fixes the product's first language as Arabic. It must
+          // match `schema.prisma`'s own default, because a household created by
+          // any other path would otherwise get a different language from one
+          // created here.
+          locale: input.locale ?? 'ar',
           timezone: input.timezone ?? 'UTC',
           // CLOSES A REAL GAP: acceptedTerms was already enforced at
           // the DTO level (registration fails without it) — this is
