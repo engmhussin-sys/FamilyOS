@@ -42,6 +42,8 @@ import { createTenantExtension } from '../../src/common/tenancy/tenant.extension
 import { runAsSystemAsync } from '../../src/common/tenancy/system-context';
 import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { AI_PROVIDER, type IAIProvider } from '../../src/modules/ai-core/domain/ai-provider.port';
+import { FamilyCommunicationService } from '../../src/modules/life-intelligence/application/services/family-communication.service';
+import { resolveNotificationDestination } from '../../src/modules/notifications/domain/engine/notification-destination';
 import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
 import type { NotificationEventInput } from '../../src/modules/notification-engine/application/services/notification-context.assembler';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
@@ -332,6 +334,138 @@ describeIfDb('PHASE F — the smart notification decision layer (real PostgreSQL
     // A seven-year-old gets the youngest band and its emoji register.
     expect(decisions[0].age_band).toBe('5-7');
     expect(result.body).toContain('القارئ');
+  });
+
+  // ==========================================================================
+  // 5b. PHASE F1 — THE CHILD'S DESTINATION IS PERSISTED, AND IT CARRIES NO
+  //     IDENTIFIER
+  //
+  // THE GAP THIS CLOSES, MEASURED RATHER THAN INFERRED. `notification-destination.ts`
+  // resolves a link for EVERY copy key, child-audience ones included, and
+  // `SmartNotificationEngineService` puts it on `data`. The PARENT branch wrote
+  // it to `notifications.data`; the CHILD branch — `child_messages`, through
+  // the approval gate — had nowhere to put it, so the child's destination was
+  // computed and then discarded, and the child app's router, complete and
+  // tested, was never fed anything.
+  //
+  // ASSERTED AGAINST THE ROW, READ BACK OUT OF POSTGRESQL. This file's own
+  // header states why: «a phase whose subject is `record why` cannot be proven
+  // by asserting on a returned object».
+  // ==========================================================================
+  it('a CHILD-audience event PERSISTS its destination on child_messages.data — one key, the server\'s own answer, and nobody\'s identifier', async () => {
+    const f = await createFamily('child-link', 'Africa/Cairo', '2019-01-01');
+
+    const result = await fire({
+      familyId: f.familyId,
+      childId: f.childId,
+      eventType: 'BADGE_EARNED',
+      sourceEventId: `evt:${stamp}:badge-link`,
+      trigger: 'DOMAIN_EVENT',
+      variables: { badgeTitle: 'القارئ' },
+      /**
+       * A DELIBERATELY HOSTILE PRODUCER PAYLOAD, and every field of it is a
+       * real shape: `DigitalWellbeingEngineService` spreads a DEVICE-SUPPLIED
+       * `metadata` object into `data`, and a producer adding an id to its own
+       * payload is one line away on any of these paths. If the child branch
+       * copied `data` across, THIS is what a child's device would be handed.
+       */
+      data: {
+        // A DEVICE-CHOSEN SCREEN — and `subscription` is parent-only billing.
+        deepLink: 'abny://subscription',
+        familyId: f.familyId,
+        childId: f.childId,
+        userId: f.userId,
+        deviceId: 'device-abc123',
+        token: 'a-secret-token',
+        metadata: { packageName: 'com.example.game', deviceId: 'device-abc123' },
+      },
+      now: AFTERNOON,
+    });
+
+    expect(result.decision.targetAudience).toBe('CHILD');
+    expect(result.outcome?.decision).toBe('SEND');
+
+    const messages = await childMessageRows(f.familyId);
+    expect(messages).toHaveLength(1);
+    const row = messages[0];
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+
+    // ===== THE COLUMN IS NO LONGER EMPTY, AND THE TAP LANDS. =====
+    expect(data).not.toBeNull();
+    // A BADGE IS READ ON THE PROGRESS SURFACE — the badge shelf and the streak
+    // counter live there. Pinned to the byte so the next change to this map is
+    // deliberate.
+    expect(data.deepLink).toBe('abny://progress');
+
+    // ===== AND IT IS THE SAME ANSWER THE RESOLVER GIVES FOR THE COPY KEY THE
+    // ===== DECISION ROW NAMES — so the sentence and the destination can never
+    // ===== describe different things.
+    const decisions = await decisionRows(f.familyId);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0].target_audience).toBe('CHILD');
+    expect(data.deepLink).toBe(
+      resolveNotificationDestination({ copyKey: decisions[0].copy_key, audience: 'CHILD' }),
+    );
+
+    // ===== ONE KEY. NOT «no identifiers today» — no ROOM for one. =====
+    expect(Object.keys(data)).toEqual(['deepLink']);
+    const serialised = JSON.stringify(data);
+    for (const identifier of [
+      f.familyId,
+      f.childId,
+      f.userId,
+      'device-abc123',
+      'a-secret-token',
+      'com.example.game',
+    ]) {
+      expect(serialised).not.toContain(identifier);
+    }
+    // A deep link is a destination, not a capability — so it is also not a
+    // place to hide a token.
+    expect(serialised).not.toMatch(/token|secret|Bearer|eyJ/i);
+
+    // ===== THE SERVER IS AUTHORITATIVE. The device asked for the parent's
+    // ===== billing screen and did not get it — rule 3 refuses a parent-only
+    // ===== surface to a child, and the engine's own spread order means the
+    // ===== producer never had a vote in the first place.
+    expect(serialised).not.toContain('subscription');
+
+    // ===== AND THE APPROVAL GATE IS EXACTLY WHERE IT WAS. A payload must not
+    // ===== change delivery semantics: this row still waits for a parent.
+    expect(row.approval_status).toBe('PENDING');
+    expect(row.delivered_at).toBeNull();
+    expect(row.source_event_id).toBe(`evt:${stamp}:badge-link:child`);
+  });
+
+  /**
+   * THE OTHER HALF, AND IT IS THE HALF A «DOES THE COLUMN FILL?» TEST WOULD
+   * MISS: a message that HAS no destination must not acquire one.
+   *
+   * A parent typing «أحسنت» to their own child names no screen, and neither
+   * does any of the thousands of rows written before this column existed.
+   * `data` stays SQL NULL for them, which is what keeps that card non-tappable
+   * in the child app — and it is why nothing backfills. A link that opens the
+   * wrong screen is worse than a card that is not tappable.
+   */
+  it('a message with no destination stores SQL NULL, and nothing invents one for it', async () => {
+    const f = await createFamily('parent-authored');
+
+    await runWithTenant(
+      { familyId: f.familyId, actorType: 'USER', actorId: f.userId },
+      () =>
+        app
+          .get(FamilyCommunicationService)
+          .sendParentMessage(f.childId, f.familyId, f.userId, 'encouragement', 'رسالة', 'أحسنت يا محمد'),
+    );
+
+    const [row] = await raw<any[]>(
+      `SELECT "data", "data" IS NULL AS "is_sql_null" FROM "child_messages" WHERE "family_id" = $1::uuid`,
+      f.familyId,
+    );
+    // NOT a stored JSON `null`, which a client would then have to special-case:
+    // the absence of a destination is the absence of a value.
+    expect(row.is_sql_null).toBe(true);
+    expect(row.data).toBeNull();
   });
 
   // ==========================================================================

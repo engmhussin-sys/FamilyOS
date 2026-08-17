@@ -540,6 +540,80 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
       expect(delivered.body).toMatch(ARABIC_LETTERS);
     });
 
+    /**
+     * ======================================================================
+     * PHASE F1 — AND THE MESSAGE SAYS WHERE IT LEADS, OVER REAL HTTP, ON THE
+     * CHILD'S OWN DEVICE TOKEN.
+     * ======================================================================
+     *
+     * THE GAP THIS CLOSES. The server has resolved a destination for every
+     * notification since `F6-007`, child-audience ones included — and the CHILD
+     * branch had nowhere to put it, so it was computed and discarded and the
+     * child app's router was never fed anything. The row is the persistence
+     * half (pinned against raw SQL in `smart-notification-engine.e2e.spec.ts`);
+     * THIS is the delivery half, read out of the HTTP response the device
+     * actually receives.
+     *
+     * AND IT IS PINNED IDENTIFIER-FREE, exactly as `e2e-13 STEP 14` pins the
+     * PARENT's payload. The standard is higher here, not lower: `notifications`
+     * is read behind a parent-guarded endpoint and this row is handed to a
+     * child's phone. A deep link is a DESTINATION, not a capability — the
+     * server re-authorizes on the next call whatever the link claims — so
+     * there is nothing it needs an id for.
+     */
+    it('the delivered message carries a routable destination — and not one identifier', async () => {
+      const inbox = await request(world.http).get(`${P}/life-intelligence/self/messages`).set(asChild(older));
+      expect(inbox.status).toBe(200);
+      expect(inbox.body.length).toBeGreaterThanOrEqual(1);
+
+      const rows = await childMessageRows(older);
+      let withADestination = 0;
+
+      for (const message of inbox.body) {
+        // ONE KEY, AND IT IS THE PARENT SURFACE'S OWN SPELLING — `deepLink` on
+        // a `data` object, so one decision cannot render two ways in two apps.
+        expect(Object.keys(message.data ?? {})).toEqual(['deepLink']);
+        withADestination += 1;
+
+        // CANONICAL: `abny://<surface>`, no query string, no fragment, no host,
+        // no absolute URL. The same shape the child app's parser accepts.
+        expect(message.data.deepLink).toMatch(/^abny:\/\/[a-z-]+$/);
+        // AND NEVER A PARENT SURFACE. A child handed `abny://approvals` would
+        // be handed a route their app cannot service — and an approval queue is
+        // a screen where a grown-up judges their work.
+        expect(['approvals', 'approval', 'subscription', 'child']).not.toContain(
+          message.data.deepLink.replace('abny://', ''),
+        );
+
+        // NOT ONE IDENTIFIER, SAID OVER THE SERIALISED PAYLOAD because that is
+        // the form the device receives.
+        const serialised = JSON.stringify(message.data);
+        for (const identifier of [
+          older.familyId,
+          older.childId,
+          older.deviceId,
+          older.ownerUserId,
+          older.deviceToken,
+          older.parentToken,
+          older.childName,
+          message.id,
+        ]) {
+          expect(serialised).not.toContain(identifier);
+        }
+        expect(serialised).not.toMatch(/token|secret|Bearer|eyJ/i);
+
+        // SERVED IS STORED. The endpoint is not decorating a response with a
+        // destination it computed on the way out — it is handing over the value
+        // the approval-gated write put in the column.
+        const row = rows.find((r: any) => r.id === message.id);
+        expect(row).toBeDefined();
+        const stored = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+        expect(message.data).toEqual(stored);
+      }
+
+      expect(withADestination).toBeGreaterThanOrEqual(1);
+    });
+
     it("family B's parent cannot approve family A's child message — and is told it does not exist", async () => {
       const pending = await request(world.http)
         .get(`${P}/life-intelligence/communication/pending`)

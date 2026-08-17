@@ -113,6 +113,16 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         // this one — must still get the old two-rephrase behaviour, and `false`
         // is that fact asserted rather than assumed.
         false,
+        // PHASE F1 — `data`, the CHILD-READABLE PAYLOAD, and it is `null` here.
+        //
+        // Asserted as a literal for the same reason `false` above is: this
+        // producer reaches `deliverNow` with no `data` at all, so
+        // `childSafeNotificationPayload` has no link to forward and the column
+        // is left SQL NULL. `null` is a REAL answer — «this row has no
+        // destination» — and the child app renders such a row non-tappable. A
+        // wildcard here would let a future edit start writing a producer's own
+        // payload into a child-readable row without turning a test red.
+        null,
       );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
@@ -288,6 +298,16 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         // this one — must still get the old two-rephrase behaviour, and `false`
         // is that fact asserted rather than assumed.
         false,
+        // PHASE F1 — `data`, the CHILD-READABLE PAYLOAD, and it is `null` here.
+        //
+        // Asserted as a literal for the same reason `false` above is: this
+        // producer reaches `deliverNow` with no `data` at all, so
+        // `childSafeNotificationPayload` has no link to forward and the column
+        // is left SQL NULL. `null` is a REAL answer — «this row has no
+        // destination» — and the child app renders such a row non-tappable. A
+        // wildcard here would let a future edit start writing a producer's own
+        // payload into a child-readable row without turning a test red.
+        null,
       );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
@@ -350,7 +370,107 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         // this one — must still get the old two-rephrase behaviour, and `false`
         // is that fact asserted rather than assumed.
         false,
+        // PHASE F1 — `data`, the CHILD-READABLE PAYLOAD, and it is `null` here.
+        //
+        // Asserted as a literal for the same reason `false` above is: this
+        // producer reaches `deliverNow` with no `data` at all, so
+        // `childSafeNotificationPayload` has no link to forward and the column
+        // is left SQL NULL. `null` is a REAL answer — «this row has no
+        // destination» — and the child app renders such a row non-tappable. A
+        // wildcard here would let a future edit start writing a producer's own
+        // payload into a child-readable row without turning a test red.
+        null,
       );
+    });
+
+    /**
+     * ========================================================================
+     * PHASE F1 — THE SEAM WHERE A CHILD-READABLE ROW COULD HAVE LEARNED A
+     * TENANT IDENTIFIER, AND THE ASSERTION THAT SAYS IT CANNOT.
+     * ========================================================================
+     *
+     * The PARENT branch writes `candidate.data` VERBATIM to
+     * `notifications.data` — correct there, and pinned identifier-free by
+     * `e2e-13 STEP 14` against the payloads the producers actually send. The
+     * CHILD branch may NOT do the same thing, because `child_messages` is
+     * served to a CHILD DEVICE by `GET /life-intelligence/self/messages` and
+     * `candidate.data` is an OPEN-ENDED producer object:
+     * `DigitalWellbeingEngineService` spreads a DEVICE-SUPPLIED `metadata` map
+     * into it, and `NotificationRewardConsumer` puts the goal's own title and
+     * the points on it.
+     *
+     * So the fixture below is deliberately hostile — every identifier this
+     * product has, a device-chosen destination, and the producer's own detail —
+     * and the assertion is EXACT rather than `objectContaining`: the ninth
+     * argument is `{ deepLink }` and NOTHING ELSE. A whitelist is what makes
+     * this a property of ONE FUNCTION instead of a promise made by every
+     * producer that will ever write to `data`.
+     */
+    it('the CHILD branch narrows the payload to the destination alone — no identifier, no producer detail, no device-chosen screen', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+
+      await service.notifyEvent(childId, familyId, {
+        type: 'STREAK_ACHIEVED',
+        priority: 'NORMAL',
+        title: '7-day streak!',
+        body: 'Amazing consistency!',
+        targetAudience: 'CHILD',
+        sourceEventId: 'evt:22222222-2222-4222-8222-222222222222',
+        data: {
+          // THE SERVER'S OWN ANSWER. `SmartNotificationEngineService` spreads
+          // it on LAST, which is what makes it the one that survives.
+          deepLink: 'abny://progress',
+          // EVERYTHING A CHILD-READABLE ROW MUST NEVER CARRY.
+          familyId,
+          childId,
+          deviceId: 'device-9',
+          userId: 'user-9',
+          token: 'a-token',
+          // AND THE PRODUCER'S OWN DETAIL, which `e2e-13` asserts the child is
+          // deliberately NOT told: «the parent gained the detail and the CHILD
+          // did not» is an assertion about the SENTENCE, and a verbatim `data`
+          // copy would have handed it over anyway, one field at a time.
+          goalTitle: 'سورة الملك',
+          points: 20,
+          metadata: { packageName: 'com.example.game', deviceId: 'device-9' },
+        },
+      });
+
+      const args = familyCommunicationMock.draftAiMessageIfAbsent.mock.calls[0];
+      expect(args[8]).toEqual({ deepLink: 'abny://progress' });
+      expect(Object.keys(args[8] as Record<string, unknown>)).toEqual(['deepLink']);
+      // Said again over the SERIALISED payload, because that is the form the
+      // row is stored in and the form the child's device receives.
+      const serialised = JSON.stringify(args[8]);
+      for (const secret of [familyId, childId, 'device-9', 'user-9', 'a-token', 'سورة الملك']) {
+        expect(serialised).not.toContain(secret);
+      }
+    });
+
+    /**
+     * THE LINK IS RE-VALIDATED AT THE GATE rather than trusted from the layer
+     * above. `resolveNotificationDestination` already guarantees a canonical
+     * `abny://` string, so nothing should ever arrive here malformed — but a
+     * PRODUCER'S payload reaches this same object, and «the caller already
+     * checked» is how a gate stops being one. A link this server would not have
+     * written is DROPPED rather than escaped, and the row keeps no destination
+     * at all: the child app renders it non-tappable, and a card that is not
+     * tappable beats a tap that opens the wrong screen.
+     */
+    it('a destination this server would not have written is dropped, and the row keeps none', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+
+      await service.notifyEvent(childId, familyId, {
+        type: 'STREAK_ACHIEVED',
+        priority: 'NORMAL',
+        title: '7-day streak!',
+        body: 'Amazing consistency!',
+        targetAudience: 'CHILD',
+        sourceEventId: 'evt:33333333-3333-4333-8333-333333333333',
+        data: { deepLink: 'https://evil.example/reset-password' },
+      });
+
+      expect(familyCommunicationMock.draftAiMessageIfAbsent.mock.calls[0][8]).toBeNull();
     });
 
     it('a PARENT-targeted event candidate routes through createForFamilyOwner', async () => {

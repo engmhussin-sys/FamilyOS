@@ -10,6 +10,30 @@ export interface IChildMessage {
   category: string;
   title: string;
   body: string;
+  /**
+   * PHASE F1 — THE NOTIFICATION PAYLOAD, AND THE REASON A MESSAGE CARD IS
+   * TAPPABLE AT ALL.
+   *
+   * Today it holds exactly one key — `deepLink`, an `abny://<surface>[/<id>]`
+   * destination resolved by `notification-destination.ts` and narrowed to that
+   * single key by `childSafeNotificationPayload` before it is ever written. The
+   * SAME shape under the SAME spelling as the parent's `notifications.data`, so
+   * one decision cannot render two ways in two apps.
+   *
+   * IT IS PART OF THE CHILD-FACING CONTRACT: `GET /life-intelligence/self/messages`
+   * serves this field to the child's own device, and
+   * `deepLinkFromNotification` in the child app reads it off the row. It
+   * therefore carries NO `familyId`, NO `childId`, NO `deviceId` and no token —
+   * a deep link is a destination, not a capability, and the server
+   * re-authorizes on the next call whatever the link claims.
+   *
+   * `null` FOR A PARENT-AUTHORED MESSAGE, which names no destination, and for
+   * every row written before this column existed. That is a real answer rather
+   * than a missing one: the child app renders a payload-less row as
+   * NON-TAPPABLE, and nothing backfills a guess into it — a link that opens the
+   * wrong screen is worse than a card that is not tappable.
+   */
+  data: Record<string, unknown> | null;
   deliveredAt: Date | null;
   acknowledgedAt: Date | null;
 }
@@ -39,4 +63,12 @@ export interface ISendChildMessageInput {
    * machine-generated rows and leaves the human ones alone.
    */
   sourceEventId?: string;
+  /**
+   * PHASE F1 — the payload written to `child_messages.data`. See
+   * `IChildMessage.data` for the contract and for why it is one whitelisted
+   * key. Absent (`undefined`) and `null` mean the same thing to the writer —
+   * the column stays NULL — because «a human wrote this» and «this producer
+   * carried no destination» are both «this row has nowhere to go».
+   */
+  data?: Record<string, unknown> | null;
 }

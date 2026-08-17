@@ -1943,6 +1943,15 @@ model ChildMessage {
   category       String
   title          String
   body           String
+  /// The notification payload — the SAME shape `notifications.data` carries on
+  /// the parent surface, so one decision does not render two ways. Today it
+  /// holds `deepLink`; see migration 0023 for why this is a JSON payload and
+  /// not a single-purpose `deep_link` column.
+  ///
+  /// A CHILD-READABLE ROW: never a `familyId`, never a `childId`, never a token.
+  /// A deep link is a destination, not a capability — the server re-authorizes
+  /// on the next call whatever the link claims.
+  data           Json?
   deliveredAt    DateTime?              @map("delivered_at")
   acknowledgedAt DateTime?              @map("acknowledged_at")
   createdAt      DateTime               @default(now()) @map("created_at")

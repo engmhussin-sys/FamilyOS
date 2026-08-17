@@ -20,6 +20,7 @@ import {
   DEEP_LINK_SURFACES,
   NOTIFICATION_DEEP_LINK_DATA_KEY,
   NOTIFICATION_INBOX_LINK,
+  childSafeNotificationPayload,
   destinationKeys,
   hasExplicitDestination,
   isUsableDeepLinkId,
@@ -286,6 +287,84 @@ describe('PHASE F — the notification destination map', () => {
       ]) {
         expect(isValidDeepLink(bad)).toBe(false);
       }
+    });
+  });
+
+  // ==========================================================================
+  // 6. PHASE F1 — THE CHILD-READABLE PAYLOAD
+  //
+  // `notifications.data` is read behind a parent-guarded endpoint;
+  // `child_messages.data` is served to a CHILD DEVICE by
+  // `GET /life-intelligence/self/messages`. `childSafeNotificationPayload` is
+  // the one function standing between the two, and these are the properties the
+  // rest of the system is entitled to assume of it.
+  // ==========================================================================
+  describe('the child-readable payload', () => {
+    it('carries the destination and nothing else, whatever else the producer sent', () => {
+      const payload = childSafeNotificationPayload({
+        deepLink: 'abny://rewards',
+        familyId: A_UUID,
+        childId: A_UUID,
+        deviceId: 'device-1',
+        userId: 'user-1',
+        token: 'secret',
+        goalTitle: 'سورة الملك',
+        points: 20,
+        metadata: { packageName: 'com.example', deviceId: 'device-1' },
+      });
+
+      // EXACT, not `objectContaining`: «and nothing else» is the whole claim.
+      expect(payload).toEqual({ deepLink: 'abny://rewards' });
+      expect(Object.keys(payload as object)).toEqual([NOTIFICATION_DEEP_LINK_DATA_KEY]);
+    });
+
+    it('is null when there is no destination to carry', () => {
+      // All four are the same product answer — «this row has nowhere to go» —
+      // and the client renders such a row NON-TAPPABLE.
+      expect(childSafeNotificationPayload(undefined)).toBeNull();
+      expect(childSafeNotificationPayload(null)).toBeNull();
+      expect(childSafeNotificationPayload({})).toBeNull();
+      expect(childSafeNotificationPayload({ goalTitle: 'سورة الملك', points: 20 })).toBeNull();
+    });
+
+    it('drops a link this server would not have written rather than escaping it', () => {
+      for (const bad of [
+        'https://evil.example/reset-password',
+        'abny://goals?token=abc',
+        'abny://unknown-surface',
+        'abny://goal/not-a-uuid',
+        'abny://GOALS',
+        '',
+        ' ',
+        7,
+        null,
+        { deepLink: 'abny://rewards' },
+        ['abny://rewards'],
+      ]) {
+        expect(childSafeNotificationPayload({ deepLink: bad })).toBeNull();
+      }
+    });
+
+    it('forwards every destination the resolver can produce for a child', () => {
+      // The audience split matters here: a parent-only surface never reaches a
+      // child in the first place, and this pins that the narrowing step does not
+      // quietly refuse the links that DO.
+      for (const key of copyKeys()) {
+        if (audienceOf(key) !== 'CHILD') continue;
+        const link = resolveNotificationDestination({ copyKey: key, audience: 'CHILD' });
+        expect(childSafeNotificationPayload({ deepLink: link })).toEqual({ deepLink: link });
+      }
+    });
+
+    it('never lets a prototype-shaped key in through the whitelist', () => {
+      // `data` arrives from a producer and, on one path, from a DEVICE. The
+      // function reads exactly one key and constructs a fresh object, so
+      // nothing a payload names can widen what is written.
+      const payload = childSafeNotificationPayload(
+        JSON.parse('{"deepLink":"abny://progress","__proto__":{"polluted":true},"constructor":"x"}'),
+      );
+      expect(payload).toEqual({ deepLink: 'abny://progress' });
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     });
   });
 });

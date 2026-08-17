@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IChildMessage, ISendChildMessageInput } from '../../domain/communication.types';
@@ -23,6 +24,17 @@ export class PrismaCommunicationRepository {
         // B9 — NULL for a parent-authored message, a composed causal key for a
         // machine-generated one. See `ISendChildMessageInput.sourceEventId`.
         sourceEventId: input.sourceEventId ?? null,
+        // PHASE F1 — the notification payload: `{ deepLink }` and nothing else,
+        // already narrowed by `childSafeNotificationPayload`. See
+        // `IChildMessage.data`.
+        //
+        // `undefined` RATHER THAN `null` ON THE ABSENT BRANCH, and the
+        // distinction is Prisma's own: on a `Json?` column, `null` writes the
+        // JSON literal `null` INTO the column and `undefined` omits the column
+        // so it stays SQL NULL. «This row has no destination» is the absence of
+        // a value, not a stored JSON `null` a client would then have to
+        // special-case.
+        data: (input.data ?? undefined) as Prisma.InputJsonValue | undefined,
       },
     });
     return this.toDomain(row);
@@ -112,6 +124,7 @@ export class PrismaCommunicationRepository {
     category: string;
     title: string;
     body: string;
+    data?: unknown;
     deliveredAt: Date | null;
     acknowledgedAt: Date | null;
   }): IChildMessage {
@@ -124,6 +137,18 @@ export class PrismaCommunicationRepository {
       category: row.category,
       title: row.title,
       body: row.body,
+      // PHASE F1 — SERVED, not only stored. This is the field
+      // `GET /life-intelligence/self/messages` puts on the wire and the child
+      // app reads with `deepLinkFromNotification`.
+      //
+      // NORMALISED TO `null` FOR ANYTHING THAT IS NOT AN OBJECT: a SQL NULL, a
+      // stored JSON `null`, and (defensively) a scalar all mean «this row has
+      // no destination», and the client should not have to tell three absences
+      // apart to decide whether a card is tappable.
+      data:
+        row.data !== null && typeof row.data === 'object' && !Array.isArray(row.data)
+          ? (row.data as Record<string, unknown>)
+          : null,
       deliveredAt: row.deliveredAt,
       acknowledgedAt: row.acknowledgedAt,
     };

@@ -6,6 +6,7 @@ import {
   NOTIFICATION_DELIVERY_REPOSITORY,
   type INotificationDeliveryRepository,
 } from '../../../notifications/application/ports/notification-delivery.repository.port';
+import { childSafeNotificationPayload } from '../../../notifications/domain/engine/notification-destination';
 import { FamilyCommunicationService } from './family-communication.service';
 import { evaluateSmartNotificationCandidates, type ISmartNotificationSignals } from './smart-notification-decision-engine';
 import {
@@ -532,6 +533,33 @@ export class SmartNotificationIntegrationService {
       // PHASE F (`F6-005`) — see `IDeliverableNotification.preComposed`. `false`
       // for every pre-F6 producer, so nothing about their behaviour changes.
       candidate.preComposed === true,
+      /**
+       * PHASE F1 — WHERE THE CHILD'S TAP LANDS, PERSISTED INSTEAD OF DISCARDED.
+       *
+       * `SmartNotificationEngineService` resolves a destination for EVERY
+       * notification, child-audience ones included, and spreads it onto
+       * `candidate.data`. The PARENT branch above carries that payload to
+       * `notifications.data`; this branch had nowhere to put it, so the child's
+       * destination was computed and then thrown away, and the child app's
+       * router — complete and tested — was never fed anything.
+       *
+       * NARROWED, NOT COPIED. `childSafeNotificationPayload` takes the ONE
+       * whitelisted key rather than the producer's whole object: this row is
+       * served to a CHILD DEVICE by `GET /life-intelligence/self/messages`, and
+       * `candidate.data` may hold a producer's detail (`goalTitle`, `points`)
+       * or a device-supplied `metadata` blob. That function's header carries
+       * the full argument; the short version is that «no identifier reaches a
+       * child-readable row» must be a property of ONE function rather than of
+       * every producer that ever writes to `data`.
+       *
+       * IT CHANGES NO DELIVERY SEMANTICS. The row is still written PENDING with
+       * `deliveredAt = null` behind the parent's approval gate, still
+       * deduplicated by `child_messages (family_id, source_event_id)`, and a
+       * `null` payload — a producer that carries none, or a link that failed
+       * validation — writes the column NULL and leaves the card exactly as
+       * inert as it already was.
+       */
+      childSafeNotificationPayload(candidate.data),
     );
     return drafted !== null;
   }

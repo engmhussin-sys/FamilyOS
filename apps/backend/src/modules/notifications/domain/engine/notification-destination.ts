@@ -404,3 +404,57 @@ export function resolveNotificationDestination(request: NotificationDestinationR
   }
   return link;
 }
+
+/**
+ * THE SHAPE A CHILD-READABLE ROW MAY CARRY. One field, and it is the SAME field
+ * under the SAME spelling as the parent's `notifications.data`, so one decision
+ * cannot render two ways in two apps.
+ */
+export type ChildNotificationPayload = { readonly deepLink: string };
+
+/**
+ * PHASE F1 — THE CHILD'S HALF OF THE PAYLOAD, AND IT IS A WHITELIST RATHER THAN
+ * A FILTER.
+ *
+ * `notifications.data` carries the PRODUCER'S payload verbatim, plus the
+ * server's link spread over it: `goalTitle`, `points`, and — from
+ * `DigitalWellbeingEngineService` — a DEVICE-SUPPLIED `metadata` object whose
+ * contents nobody at this layer has enumerated. That is defensible for a
+ * parent's row, which is read behind a parent-guarded endpoint and pinned
+ * identifier-free by `e2e-13 STEP 14`. It is NOT defensible for
+ * `child_messages`, whose every row is served to a CHILD DEVICE by
+ * `GET /life-intelligence/self/messages`:
+ *
+ *   a. A TENANT IDENTIFIER MUST NEVER REACH A CHILD-READABLE ROW. Copying an
+ *      open-ended object across would make that guarantee a property of every
+ *      producer that writes to `data` today and of every one written after
+ *      today. Taking exactly ONE KNOWN KEY makes it a property of THIS
+ *      FUNCTION — one place, and a place a test can pin.
+ *      `smart-notification-engine.e2e.spec.ts` pins it by firing a child event
+ *      whose producer payload carries a `familyId`, a `childId` and a
+ *      `deviceId`, and reading the persisted row back out of PostgreSQL.
+ *   b. THE TWO AUDIENCES ARE TOLD DIFFERENT THINGS ON PURPOSE. `e2e-13`'s «the
+ *      parent gained the detail and the CHILD did not» is an assertion about
+ *      the SENTENCE; a verbatim `data` copy would have handed the child the
+ *      same detail through the back door, one field at a time.
+ *
+ * IT RE-VALIDATES THE LINK IT FORWARDS. `SmartNotificationEngineService` spreads
+ * the resolved destination onto `data` LAST, so what arrives here is the
+ * server's answer and never the producer's — but this function is the last gate
+ * in front of a child's screen, and «the caller already checked» is how a gate
+ * stops being one. A DEVICE-supplied `deepLink` reaching a producer's payload
+ * therefore cannot choose a screen even if the spread order above were ever
+ * edited.
+ *
+ * AND `null` IS A REAL ANSWER, not a failure: it means «this row has no
+ * destination». The child app renders a payload-less row as NON-TAPPABLE, and a
+ * card that is not tappable beats a tap that opens the wrong screen — which is
+ * also why nothing backfills the rows written before this column existed.
+ */
+export function childSafeNotificationPayload(
+  data: Record<string, unknown> | null | undefined,
+): ChildNotificationPayload | null {
+  const link = data?.[NOTIFICATION_DEEP_LINK_DATA_KEY];
+  if (!isValidDeepLink(link)) return null;
+  return { [NOTIFICATION_DEEP_LINK_DATA_KEY]: link };
+}

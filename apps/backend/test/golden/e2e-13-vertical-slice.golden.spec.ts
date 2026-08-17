@@ -1071,6 +1071,27 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       // Second person, and still not their own name back at them.
       expect(child.body).toContain('حصلت');
       expect(child.body).not.toContain(home.childName);
+
+      // PHASE F1 — AND THE PAYLOAD DID NOT HAND OVER WHAT THE SENTENCE
+      // WITHHELD. This assertion is the reason the child branch NARROWS
+      // `data` to one whitelisted key instead of copying the producer's
+      // object across: the parent's row legitimately carries `goalTitle` and
+      // `points`, and a verbatim copy would have given the child the same
+      // detail one field at a time, past a sentence written to withhold it.
+      //
+      // The child's row carries a DESTINATION and nothing else — «حصلت على
+      // مكافأة» leading to the rewards surface — and no identifier, which
+      // CONTEXT §3 principle 8 asks of a child-readable row at least as loudly
+      // as of the parent's FCM payload.
+      const childData = typeof child.data === 'string' ? JSON.parse(child.data) : child.data;
+      expect(Object.keys(childData ?? {})).toEqual(['deepLink']);
+      expect(childData.deepLink).toBe('abny://rewards');
+      const childPayload = JSON.stringify(childData);
+      for (const id of [home.familyId, home.childId, deviceId, programId, achievementId]) {
+        if (id) expect(childPayload).not.toContain(id);
+      }
+      expect(childPayload).not.toContain(home.childName);
+      expect(childPayload).not.toContain(THE_TARGET_SUMMARY);
     });
 
     /**

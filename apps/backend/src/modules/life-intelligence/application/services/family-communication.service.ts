@@ -161,6 +161,30 @@ export class FamilyCommunicationService {
      * validated» must not thereby skip this method's own gate.
      */
     skipAiRephrase = false,
+    /**
+     * PHASE F1 — THE NOTIFICATION PAYLOAD, AND TODAY THAT IS A DESTINATION.
+     *
+     * Written verbatim to `child_messages.data` and served to the child's own
+     * device by `GET /life-intelligence/self/messages`, which is what makes a
+     * message card tappable. It is the SAME SHAPE the parent's row carries on
+     * `notifications.data` under the same key, so one decision cannot render
+     * two ways in two apps.
+     *
+     * ALREADY NARROWED BY THE CALLER. `SmartNotificationIntegrationService`
+     * passes `childSafeNotificationPayload(candidate.data)` — one whitelisted
+     * key, never a producer's open-ended object — because this table is
+     * CHILD-READABLE and must carry no `familyId`, no `childId`, no `deviceId`
+     * and no token. This method does not re-derive that; it also does not
+     * widen it.
+     *
+     * OPTIONAL AND DEFAULT-ABSENT, so every caller written before F1 — the
+     * parent-authored draft route, the coaching paths — writes the column NULL
+     * exactly as it was, and a row with no payload stays non-tappable. Nothing
+     * backfills: a message written before this column existed HAS no
+     * destination, and a link that opens the wrong screen is worse than a card
+     * that is not tappable.
+     */
+    data?: Record<string, unknown> | null,
   ): Promise<IChildMessage | null> {
     // `getChildOrThrow` rather than `assertChildBelongsToFamily`, and it is the
     // SAME query — the latter delegates to it and discards the row. The row
@@ -218,7 +242,7 @@ export class FamilyCommunicationService {
     await this.assertChildSafeOrRefuse(familyId, child.dateOfBirth, finalTitle, finalBody);
 
     return this.repository.createIfAbsent(
-      { childId, authorType: 'AI', category, title: finalTitle, body: finalBody, sourceEventId },
+      { childId, authorType: 'AI', category, title: finalTitle, body: finalBody, sourceEventId, data },
       'PENDING',
       null,
     );
@@ -381,7 +405,16 @@ export class FamilyCommunicationService {
    * takes the AUTHENTICATED DEVICE's own deviceId, not a
    * caller-supplied childId alone \u2014 the device's real paired child is
    * looked up independently via PairingOrchestratorService and
-   * compared against the requested route param. */
+   * compared against the requested route param.
+   *
+   * PHASE F1 \u2014 AND THIS IS WHERE THE CHILD'S DESTINATION REACHES THEIR PHONE.
+   * Each row now carries `data` (`{ deepLink }` or `null`), which the child app
+   * reads with `deepLinkFromNotification` and routes through
+   * `ChildDeepLinkRouter`. A row with `null` renders exactly as it did before \u2014
+   * non-tappable. Nothing else about this endpoint changes: it still serves
+   * DELIVERED rows only, so a PENDING draft awaiting a parent is still
+   * structurally unreachable here. See `IChildMessage.data` for why that field
+   * carries no identifier. */
   async getChildInbox(deviceId: string, requestedChildId: string): Promise<IChildMessage[]> {
     const actualChildId = await this.pairingOrchestrator.getChildIdForDevice(deviceId);
     if (actualChildId !== requestedChildId) {
