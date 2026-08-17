@@ -89,9 +89,19 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       // B9 — the sixth argument is the composed causal key. `processSignals`
       // builds it itself (`signal:<child>:<type>:w<bucket>`) because its caller
       // supplies SIGNALS and cannot name notifications that do not exist yet.
+      //
+      // PHASE E (`PE-N-001`) — AND THE SEVENTH IS ASSERTED, NOT WILDCARDED.
+      // `'CHILD_MESSAGE'` is what tells `FamilyCommunicationService` that the
+      // third argument is a NOTIFICATION TYPE and not an AI RECOMMENDATION
+      // TYPE. Without it the Safety Engine's six-member recommendation
+      // whitelist rejected every candidate on this branch, which is how the
+      // whole child half of the surface was dead. Asserting the literal here
+      // means dropping it is a red test rather than a silent regression to
+      // that state.
       expect(familyCommunicationMock.draftAiMessageIfAbsent).toHaveBeenCalledWith(
         childId, familyId, 'HYDRATION_REMINDER', 'Water break?', expect.any(String),
         expect.stringMatching(/^signal:child-1:HYDRATION_REMINDER:w\d+:child$/),
+        'CHILD_MESSAGE',
       );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
@@ -254,6 +264,8 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       expect(familyCommunicationMock.draftAiMessageIfAbsent).toHaveBeenCalledWith(
         childId, familyId, 'STUDY_REMINDER', expect.any(String), expect.any(String),
         expect.stringMatching(/^signal:child-1:STUDY_REMINDER:w\d+:child$/),
+        // PHASE E (`PE-N-001`) — see the hydration case above.
+        'CHILD_MESSAGE',
       );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
@@ -303,6 +315,8 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         '7-day streak!',
         'Amazing consistency!',
         'evt:11111111-1111-4111-8111-111111111111:child',
+        // PHASE E (`PE-N-001`) — see the hydration case above.
+        'CHILD_MESSAGE',
       );
     });
 
