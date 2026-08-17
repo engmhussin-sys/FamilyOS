@@ -628,6 +628,13 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'notifications.permDenied':
         'Not allowed. You can still read everything here. To change it later, turn notifications on for ABNY in your phone settings.',
 
+    // The one line `DeepLinkRouter` renders when a notification's destination
+    // has no screen this app can open. It is the whole of "visibly and
+    // honestly": the tap is never swallowed, and the sentence says exactly
+    // where the parent ended up rather than pretending nothing was tapped.
+    'deepLink.unavailable':
+        'This part of the app is not ready yet — we have kept you in your notifications.',
+
     'settings.title': 'Settings',
     'settings.language': 'Language',
     'settings.profile': 'Profile',
@@ -1248,6 +1255,9 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'notifications.permGranted': 'تمّ — ستصل هذه الرسائل إلى هاتفك من الآن.',
     'notifications.permDenied':
         'لم يُسمح بها. تستطيع قراءة كل شيء هنا كما هو. ولتغيير ذلك لاحقًا، شغّل إشعارات «ابني» من إعدادات هاتفك.',
+
+    'deepLink.unavailable':
+        'هذا الجزء من التطبيق ليس جاهزًا بعد — أبقيناك في صندوق الإشعارات.',
 
     'settings.title': 'الإعدادات',
     'settings.language': 'اللغة',

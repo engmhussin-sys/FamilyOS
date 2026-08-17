@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/notifications/push_registration_service.dart';
+import '../../../core/routing/deep_link.dart';
+import '../../../core/routing/deep_link_router.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// DESIGN PASS: unread notifications now get a colored accent bar and
@@ -80,6 +82,44 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     } catch (e) {
       if (mounted) setState(() => _errorMessage = e.toString());
     }
+  }
+
+  /// THE TAP THAT FINALLY LANDS SOMEWHERE.
+  ///
+  /// Two things happen, in this order and for this reason:
+  ///   1. an UNREAD row is marked read first, and awaited. Marking read is the
+  ///      behaviour this row already had and it is not being traded for
+  ///      navigation — a parent who taps a row has seen it, whether or not the
+  ///      destination turns out to have a screen. `NotificationsApi.markAsRead`
+  ///      already enqueues on failure (offline queue), so the catch here is not
+  ///      a swallow: the operation is durable and replays on reconnect.
+  ///   2. THEN the tap is routed, from the link the SERVER resolved and put on
+  ///      `data.deepLink`. `parseDeepLink` is total and `DeepLinkRouter.follow`
+  ///      is total, so there is no tap that throws and no tap that does nothing
+  ///      silently — a destination this app cannot open says so in a snackbar
+  ///      and leaves the parent here, in the inbox, where the notification is.
+  ///
+  /// The list is refreshed LAST, after navigation has been asked for, so the
+  /// unread dot clears without making the parent wait on a round trip before
+  /// the screen moves.
+  Future<void> _onNotificationTap(Map<String, dynamic> notification) async {
+    final destination = parseDeepLink(deepLinkFromNotification(notification));
+    final isUnread = notification['readAt'] == null;
+    final id = notification['id'];
+
+    if (isUnread && id is String) {
+      try {
+        await ref.read(notificationsApiProvider).markAsRead(id);
+      } catch (_) {
+        // Already enqueued by NotificationsApi — replayed on reconnect.
+      }
+    }
+    if (!mounted) return;
+
+    final t = ref.read(localeControllerProvider.notifier).t;
+    DeepLinkRouter.follow(context, destination, t: t);
+
+    if (isUnread) await _load();
   }
 
   Future<void> _markAllRead() async {
@@ -212,16 +252,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                                 style: TextStyle(fontWeight: isUnread ? FontWeight.w600 : FontWeight.w400),
                               ),
                               subtitle: Text(n['body'] as String? ?? ''),
-                              onTap: isUnread
-                                  ? () async {
-                                      try {
-                                        await ref.read(notificationsApiProvider).markAsRead(n['id'] as String);
-                                      } catch (_) {
-                                        // Already enqueued by NotificationsApi.
-                                      }
-                                      await _load();
-                                    }
-                                  : null,
+                              // EVERY row is tappable now, not just the unread
+                              // ones: a read notification still has a
+                              // destination, and a row that goes dead the
+                              // moment it is read is the same no-op with an
+                              // extra step.
+                              onTap: () => _onNotificationTap(n),
                             ),
                           );
                         },
