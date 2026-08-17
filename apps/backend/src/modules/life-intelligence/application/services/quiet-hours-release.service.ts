@@ -296,6 +296,11 @@ export class QuietHoursReleaseService {
             // still collides with `notifications (family_id, source_event_id,
             // user_id)` and no reward is announced twice.
             sourceEventId: row.sourceEventId,
+            // PHASE E (`PD-N-004`) — AND THE PAYLOAD IS UNCHANGED TOO. The
+            // notification released at 07:00 is the notification composed at
+            // 00:30 rather than a reconstruction of it, so a policy-violation
+            // alert still names the package it was about.
+            data: row.data ?? undefined,
           },
           // PHASE D: THIS ROW OWNS THE PUSH RETRY. The repository would
           // otherwise fire a best-effort push and swallow its failure, burning

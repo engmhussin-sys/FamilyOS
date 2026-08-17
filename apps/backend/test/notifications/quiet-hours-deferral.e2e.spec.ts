@@ -27,6 +27,7 @@ import { runAsSystemAsync } from '../../src/common/tenancy/system-context';
 import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { getBusinessTimeHHMM } from '../../src/common/time/family-date';
 import { FamilyDateService } from '../../src/common/time/family-date.service';
+import { DigitalWellbeingEngineService } from '../../src/modules/life-intelligence/application/services/digital-wellbeing-engine.service';
 import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
 import { QuietHoursReleaseService } from '../../src/modules/life-intelligence/application/services/quiet-hours-release.service';
 import { NOTIFICATION_DELIVERY_REPOSITORY } from '../../src/modules/notifications/application/ports/notification-delivery.repository.port';
@@ -81,6 +82,8 @@ describeIfDb('PHASE D — quiet-hours deferral (real PostgreSQL)', () => {
   let deliveries: INotificationDeliveryRepository;
   let runner: JobRunner;
   let familyDate: FamilyDateService;
+  /** PHASE E (`PD-N-004`) — the producer that used to skip this whole file. */
+  let wellbeing: DigitalWellbeingEngineService;
 
   const stamp = Date.now();
   const createdFamilies: string[] = [];
@@ -197,6 +200,7 @@ describeIfDb('PHASE D — quiet-hours deferral (real PostgreSQL)', () => {
     deliveries = app.get(NOTIFICATION_DELIVERY_REPOSITORY);
     runner = app.get(JobRunner);
     familyDate = app.get(FamilyDateService);
+    wellbeing = app.get(DigitalWellbeingEngineService);
   }, 180_000);
 
   afterAll(async () => {
@@ -846,6 +850,140 @@ describeIfDb('PHASE D — quiet-hours deferral (real PostgreSQL)', () => {
       expect(claimed[0].familyId).toBe(a.familyId);
       // B's row is untouched — still PENDING, still unclaimed.
       expect((await deferredRows(b.familyId))[0].state).toBe('PENDING');
+    }, 180_000);
+  });
+
+  // ==========================================================================
+  /**
+   * PHASE E (`PD-N-004`) — THE PRODUCER THAT NEVER REACHED THE GATE.
+   *
+   * Phase D built the matrix, the queue and the release job, then recorded in
+   * its own report that three of the five wellbeing event types were
+   * classified `DEFER` and still bypassed all of it:
+   * `DigitalWellbeingEngineService.recordCriticalEvent` called
+   * `createForFamilyOwner` directly, so a parent in Cairo could be woken at
+   * 02:00 by a SCREEN-TIME LIMIT — the exact product failure the phase
+   * existed to remove, on a producer it did not route.
+   *
+   * Everything below is asserted against rows, for the same reason section 1
+   * is: the defect it replaces already had a green test.
+   */
+  describe('8. PHASE E (`PD-N-004`): the Digital Wellbeing producer goes through the SAME gate', () => {
+    it('THE DEFECT: a screen-time alert at 00:30 local is QUEUED, not pushed at a sleeping parent', async () => {
+      const f = await createFamily('pdn004-defer', 'Africa/Cairo');
+
+      await runWithTenant({ familyId: f.familyId, actorType: 'SYSTEM', actorId: 'phase-e-test' }, () =>
+        wellbeing.recordCriticalEvent(
+          f.childId,
+          f.familyId,
+          {
+            eventType: 'SCREEN_TIME_EXCEEDED',
+            title: 'تجاوز وقت الشاشة',
+            body: 'تم تجاوز الحد اليومي.',
+            metadata: { limitMinutes: 120, usedMinutes: 143 },
+          },
+          DEEP_NIGHT,
+        ),
+      );
+
+      // No notification yet — nobody is woken.
+      expect(await notificationRows(f.familyId)).toHaveLength(0);
+
+      const queued = await deferredRows(f.familyId);
+      expect(queued).toHaveLength(1);
+      // AND THE TYPE IS THE REAL ONE. Before this fix the producer passed no
+      // `type` at all, so every wellbeing alert was stored as the generic
+      // `RUNTIME_ALERT` — which is why the matrix, which keys on type, could
+      // never have classified one of them even if the producer had reached it.
+      expect(queued[0].type).toBe('SCREEN_TIME_EXCEEDED');
+      expect(queued[0].state).toBe('PENDING');
+      expect(queued[0].defer_reason).toBe('QUIET_HOURS');
+      // The device's own metadata survives the night in the queue rather than
+      // being reconstructed (i.e. guessed at) on release.
+      expect(queued[0].data).toMatchObject({ alertType: 'SCREEN_TIME_EXCEEDED', usedMinutes: 143 });
+    }, 180_000);
+
+    it('and the morning sweep delivers it ONCE, carrying the metadata through to the notification row', async () => {
+      const f = await createFamily('pdn004-release', 'Africa/Cairo');
+
+      await runWithTenant({ familyId: f.familyId, actorType: 'SYSTEM', actorId: 'phase-e-test' }, () =>
+        wellbeing.recordCriticalEvent(
+          f.childId,
+          f.familyId,
+          {
+            eventType: 'POLICY_VIOLATION',
+            title: 'مخالفة سياسة',
+            body: 'فُتح تطبيق محظور.',
+            metadata: { packageName: 'com.example.blocked' },
+          },
+          DEEP_NIGHT,
+        ),
+      );
+
+      await release.sweep(NEXT_MORNING);
+
+      const delivered = await notificationRows(f.familyId);
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0].type).toBe('POLICY_VIOLATION');
+      expect(delivered[0].data).toMatchObject({ packageName: 'com.example.blocked' });
+
+      // A second sweep delivers nothing more.
+      await release.sweep(NEXT_MORNING);
+      expect(await notificationRows(f.familyId)).toHaveLength(1);
+    }, 180_000);
+
+    it('A SAFETY BYPASS IS STILL A BYPASS: ACCESSIBILITY_DISABLED at 00:30 goes out NOW, and is not queued', async () => {
+      const f = await createFamily('pdn004-deliver', 'Africa/Cairo');
+
+      await runWithTenant({ familyId: f.familyId, actorType: 'SYSTEM', actorId: 'phase-e-test' }, () =>
+        wellbeing.recordCriticalEvent(
+          f.childId,
+          f.familyId,
+          {
+            eventType: 'ACCESSIBILITY_DISABLED',
+            title: 'أُوقفت الحماية',
+            body: 'أُوقفت خدمة الوصولية على الجهاز.',
+          },
+          DEEP_NIGHT,
+        ),
+      );
+
+      expect(await deferredRows(f.familyId)).toHaveLength(0);
+      const delivered = await notificationRows(f.familyId);
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0].type).toBe('ACCESSIBILITY_DISABLED');
+      expect(delivered[0].priority).toBe('CRITICAL');
+    }, 180_000);
+
+    it('a DELIVER-class safety alert is NOT silenced by the daily cap either — the bypass is total, by type', async () => {
+      const f = await createFamily('pdn004-cap', 'Africa/Cairo');
+
+      // Burn the daily budget with ordinary, already-delivered notifications.
+      for (let i = 0; i < 12; i += 1) {
+        await notify(
+          f.familyId,
+          f.childId,
+          { type: 'REWARD_GRANTED', sourceEventId: `evt:pdn004-cap-${stamp}-${i}` },
+          // Daytime, so these deliver rather than defer.
+          new Date('2026-01-15T10:00:00.000Z'),
+        );
+      }
+
+      await runWithTenant({ familyId: f.familyId, actorType: 'SYSTEM', actorId: 'phase-e-test' }, () =>
+        wellbeing.recordCriticalEvent(
+          f.childId,
+          f.familyId,
+          {
+            eventType: 'PROTECTION_BYPASS_ATTEMPT',
+            title: 'محاولة تجاوز الحماية',
+            body: 'رُصدت محاولة تجاوز.',
+          },
+          new Date('2026-01-15T10:30:00.000Z'),
+        ),
+      );
+
+      const rows = await notificationRows(f.familyId);
+      expect(rows.some((r: any) => r.type === 'PROTECTION_BYPASS_ATTEMPT')).toBe(true);
     }, 180_000);
   });
 });

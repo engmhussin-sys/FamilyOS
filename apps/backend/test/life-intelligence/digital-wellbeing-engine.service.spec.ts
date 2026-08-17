@@ -4,7 +4,7 @@ import { DigitalWellbeingEngineService } from '../../src/modules/life-intelligen
 import { PrismaDigitalWellbeingRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
-import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
+import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
 import { ConsentCheckService } from '../../src/modules/consent-check/application/consent-check.service';
 import { BaselineCalculatorService } from '../../src/modules/life-intelligence/application/services/baseline-calculator.service';
 import { PatternDetectionService } from '../../src/modules/life-intelligence/application/services/pattern-detection.service';
@@ -21,7 +21,21 @@ describe('DigitalWellbeingEngineService', () => {
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
-  const runtimeAlertsMock = { createForFamilyOwner: jest.fn(), listForUser: jest.fn() };
+  /**
+   * PHASE E (`PD-N-004`). This used to be a `RUNTIME_ALERT_REPOSITORY` mock,
+   * because `recordCriticalEvent` wrote to that repository DIRECTLY and
+   * therefore never met the quiet-hours classification Phase D built.
+   *
+   * It is not that the old assertions were wrong — the mechanism they assert
+   * («reuses the existing RuntimeAlert path, never a second notification
+   * system») is still exactly what happens, one call deeper:
+   * `notifyEvent` -> `deliverNow` -> `createForFamilyOwner`. What changed is
+   * that the producer now reaches it THROUGH the gate, so this is where the
+   * outgoing notification is now observable from a unit test. Every property
+   * the old assertions checked is re-checked below, on the candidate handed to
+   * the gate.
+   */
+  const notificationIntegrationMock = { notifyEvent: jest.fn() };
   const consentCheckMock = { hasConsent: jest.fn() };
   const baselineCalculatorMock = { compute: jest.fn() };
   const patternDetectionMock = { detect: jest.fn() };
@@ -64,7 +78,7 @@ describe('DigitalWellbeingEngineService', () => {
         { provide: PrismaDigitalWellbeingRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
-        { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertsMock },
+        { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
         { provide: ConsentCheckService, useValue: consentCheckMock },
         { provide: BaselineCalculatorService, useValue: baselineCalculatorMock },
         { provide: PatternDetectionService, useValue: patternDetectionMock },
@@ -136,15 +150,63 @@ describe('DigitalWellbeingEngineService', () => {
   });
 
   describe('recordCriticalEvent', () => {
-    it('reuses the EXISTING RuntimeAlert mechanism — never a duplicate notification system', async () => {
+    it('reuses the EXISTING notification path — never a duplicate notification system', async () => {
       await service.recordCriticalEvent(childId, familyId, {
         eventType: 'PROTECTION_BYPASS_ATTEMPT',
         title: 'Protection bypass detected',
         body: 'A bypass attempt was detected on the device.',
       });
 
-      expect(runtimeAlertsMock.createForFamilyOwner).toHaveBeenCalledWith(
-        expect.objectContaining({ familyId, childId, data: expect.objectContaining({ alertType: 'PROTECTION_BYPASS_ATTEMPT' }) }),
+      // PHASE E (`PD-N-004`): the assertion moved one call outward, from the
+      // repository to the gate that reaches it. The property asserted is
+      // unchanged — one shared delivery path, no second engine.
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
+        childId,
+        familyId,
+        expect.objectContaining({ data: expect.objectContaining({ alertType: 'PROTECTION_BYPASS_ATTEMPT' }) }),
+        expect.any(Date),
+      );
+    });
+
+    /**
+     * PHASE E (`PD-N-004`) — THE DEFECT THIS ROUTE CLOSES, at unit level.
+     *
+     * The producer passed NO `type`, so every wellbeing alert was written as
+     * the generic `RUNTIME_ALERT` and the real event type survived only inside
+     * `data.alertType`. Since the quiet-hours matrix keys on type, all five
+     * event types were indistinguishable to it — as were the per-type dedup
+     * window, the cooldown and the category cap.
+     */
+    it('sends the REAL event type, not the generic RUNTIME_ALERT the old path stored', async () => {
+      await service.recordCriticalEvent(childId, familyId, {
+        eventType: 'SCREEN_TIME_EXCEEDED',
+        title: 'Screen time limit reached',
+        body: 'The daily limit was passed.',
+      });
+
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
+        childId,
+        familyId,
+        expect.objectContaining({ type: 'SCREEN_TIME_EXCEEDED', targetAudience: 'PARENT' }),
+        expect.any(Date),
+      );
+    });
+
+    it('evaluates at the instant it is given, so a deferral decision is provable without faking the machine clock', async () => {
+      const at = new Date('2026-01-15T22:30:00.000Z');
+
+      await service.recordCriticalEvent(
+        childId,
+        familyId,
+        { eventType: 'CHILD_REQUEST', title: 't', body: 'b' },
+        at,
+      );
+
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
+        childId,
+        familyId,
+        expect.any(Object),
+        at,
       );
     });
 
@@ -165,7 +227,12 @@ describe('DigitalWellbeingEngineService', () => {
         body: 'Device protection was disabled.',
       });
 
-      expect(runtimeAlertsMock.createForFamilyOwner).toHaveBeenCalledWith(expect.objectContaining({ priority: 'CRITICAL' }));
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
+        childId,
+        familyId,
+        expect.objectContaining({ priority: 'CRITICAL' }),
+        expect.any(Date),
+      );
     });
 
     it('marks CHILD_REQUEST as NORMAL priority — a routine ask, not a security event', async () => {
@@ -175,7 +242,12 @@ describe('DigitalWellbeingEngineService', () => {
         body: 'Your child asked for extra screen time.',
       });
 
-      expect(runtimeAlertsMock.createForFamilyOwner).toHaveBeenCalledWith(expect.objectContaining({ priority: 'NORMAL' }));
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
+        childId,
+        familyId,
+        expect.objectContaining({ priority: 'NORMAL' }),
+        expect.any(Date),
+      );
     });
 
     it('does NOT write CHILD_REQUEST to the Timeline — an in-the-moment ask, not a behavior-history event', async () => {
@@ -186,7 +258,7 @@ describe('DigitalWellbeingEngineService', () => {
       });
 
       expect(timelineMock.record).not.toHaveBeenCalled();
-      expect(runtimeAlertsMock.createForFamilyOwner).toHaveBeenCalled(); // still alerts the parent, just skips Timeline
+      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalled(); // still alerts the parent, just skips Timeline
     });
   });
 

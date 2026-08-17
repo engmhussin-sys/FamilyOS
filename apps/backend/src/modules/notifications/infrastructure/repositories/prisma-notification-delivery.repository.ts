@@ -38,6 +38,7 @@ interface ClaimedRow {
   title: string;
   body: string;
   source_event_id: string;
+  data: Record<string, unknown> | null;
   scheduled_for: Date | string;
   business_date: Date | string;
   attempt_count: number | bigint;
@@ -77,6 +78,12 @@ export class PrismaNotificationDeliveryRepository implements INotificationDelive
       input.deferReason,
       input.scheduledFor,
       input.businessDate,
+      // PHASE E (`PD-N-004`). `$13::jsonb` — a JS object handed to a `jsonb`
+      // parameter through the raw driver is serialised by the driver, so it is
+      // stringified here explicitly rather than relying on that: `undefined`
+      // and `null` must both reach the column as SQL NULL, and only one of them
+      // does implicitly.
+      input.data == null ? null : JSON.stringify(input.data),
     );
     return rows[0]?.id ?? null;
   }
@@ -127,6 +134,7 @@ export class PrismaNotificationDeliveryRepository implements INotificationDelive
       title: r.title,
       body: r.body,
       sourceEventId: r.source_event_id,
+      data: r.data ?? null,
       scheduledFor: new Date(r.scheduled_for),
       businessDate: new Date(r.business_date).toISOString().slice(0, 10),
       attemptCount: Number(r.attempt_count),

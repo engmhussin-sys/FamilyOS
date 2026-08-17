@@ -2,16 +2,13 @@ import { Inject, Injectable, ForbiddenException } from '@nestjs/common';
 
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
-import {
-  RUNTIME_ALERT_REPOSITORY,
-  type IRuntimeAlertRepository,
-} from '../../../pairing/application/ports/runtime-alert.repository.port';
 import { forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 import { PrismaDigitalWellbeingRepository } from '../../infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { ConsentCheckService } from '../../../consent-check/application/consent-check.service';
 import { BaselineCalculatorService } from './baseline-calculator.service';
 import { PatternDetectionService } from './pattern-detection.service';
 import { AnomalyDetectionService } from './anomaly-detection.service';
+import { SmartNotificationIntegrationService } from './smart-notification-integration.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessDayOfWeek } from '../../../../common/time/family-date';
 import {
@@ -58,7 +55,11 @@ export class DigitalWellbeingEngineService {
     private readonly repository: PrismaDigitalWellbeingRepository,
     private readonly childrenService: ChildrenService,
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
-    @Inject(RUNTIME_ALERT_REPOSITORY) private readonly runtimeAlerts: IRuntimeAlertRepository,
+    /** PHASE E (`PD-N-004`) — the one gate, replacing a direct
+     * `IRuntimeAlertRepository` write. That repository is still the writer;
+     * this producer simply no longer reaches it without passing the
+     * quiet-hours classification first. */
+    private readonly notificationIntegration: SmartNotificationIntegrationService,
     private readonly consentCheck: ConsentCheckService,
     private readonly baselineCalculator: BaselineCalculatorService,
     private readonly patternDetection: PatternDetectionService,
@@ -195,35 +196,71 @@ export class DigitalWellbeingEngineService {
     return day === 0 || day === 6;
   }
 
-  /** The near-real-time critical-event channel — mirrors
-   * RuntimeAlertService's own transition-based pattern (Sprint 6)
-   * exactly, generalized to the five event types the brief asked for,
-   * reusing the SAME underlying repository/Notification mechanism. */
+  /**
+   * The near-real-time critical-event channel.
+   *
+   * PHASE E (`PD-N-004`) — THIS PRODUCER NOW GOES THROUGH THE GATE.
+   *
+   * It used to call `createForFamilyOwner` directly. Phase D built the
+   * quiet-hours matrix, the deferral queue and the release job, classified
+   * `SCREEN_TIME_EXCEEDED`, `POLICY_VIOLATION` and `CHILD_REQUEST` as `DEFER`
+   * with a written justification each — and recorded, honestly, that this
+   * method reached none of it. A parent in Cairo could be woken at 02:00 by a
+   * SCREEN-TIME LIMIT: not a safety risk, precisely the product failure the
+   * phase existed to remove, on three of its five types.
+   *
+   * TWO THINGS CHANGE BESIDES THE ROUTE, and both were latent defects the
+   * route was hiding:
+   *
+   *   1. `type` IS NOW SENT. This call passed no `type`, so every wellbeing
+   *      alert was stored as the generic `RUNTIME_ALERT` and the real event
+   *      type survived only inside `data.alertType`. The matrix keys on type,
+   *      so even a routed call would have classified all five identically —
+   *      and the per-type dedup window, cooldown and category cap were all
+   *      counting five different events as one.
+   *   2. `now` IS A PARAMETER. A deferral computes a persisted instant on the
+   *      family's calendar, and Phase D named an injectable clock here as the
+   *      minimum precondition for this fix, because the alternative is a suite
+   *      whose result depends on what time CI runs. Defaulted, so the one
+   *      production call site is unchanged.
+   *
+   * The two DELIVER-class types (`ACCESSIBILITY_DISABLED`,
+   * `PROTECTION_BYPASS_ATTEMPT`) still bypass quiet hours AND the fatigue
+   * caps — see `evaluateAndDeliver`, where that bypass now happens before the
+   * guard rather than behind it. Safety behaviour is preserved deliberately;
+   * what changed is that the three types nobody argued should wake a household
+   * no longer do.
+   */
   async recordCriticalEvent(
     childId: string,
     familyId: string,
     input: ICriticalWellbeingEventInput,
+    now: Date = new Date(),
   ): Promise<void> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
     const priority: 'CRITICAL' | 'NORMAL' = input.eventType === 'CHILD_REQUEST' ? 'NORMAL' : 'CRITICAL';
 
-    // B9 (PA-B-007 / PA-B-008) — producer 6 of 7, the other full bypass of the
-    // fatigue guard. Same reasoning as `RuntimeAlertService`: the
-    // discriminator is the EVENT TYPE (one of five), so two DIFFERENT critical
-    // events inside the same five minutes are two notifications, while the
-    // same event type retried by a flaky device sync is one — which is what
-    // the five-minute window already did in code and now also does in the
-    // schema, where a concurrent retry cannot slip past it.
-    await this.runtimeAlerts.createForFamilyOwner({
-      familyId,
+    // B9 (PA-B-007 / PA-B-008) — the causal key is composed HERE, by the
+    // producer, and is unchanged: the discriminator is the EVENT TYPE, so two
+    // DIFFERENT critical events inside the same window are two notifications
+    // while the same event retried by a flaky device sync is one. Carrying it
+    // through the gate is what makes that hold across a deferral too — the key
+    // composed at 00:30 is the key inserted at 07:00.
+    await this.notificationIntegration.notifyEvent(
       childId,
-      title: input.title,
-      body: input.body,
-      data: { alertType: input.eventType, ...input.metadata },
-      priority,
-      sourceEventId: forRecurringSignal('wellbeing', childId, input.eventType, new Date()),
-    });
+      familyId,
+      {
+        type: input.eventType,
+        priority,
+        title: input.title,
+        body: input.body,
+        targetAudience: 'PARENT',
+        data: { alertType: input.eventType, ...input.metadata },
+        sourceEventId: forRecurringSignal('wellbeing', childId, input.eventType, now),
+      },
+      now,
+    );
 
     if (input.eventType !== 'CHILD_REQUEST') {
       await this.timeline.record({

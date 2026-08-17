@@ -3137,6 +3137,13 @@ model NotificationDelivery {
   title           String  @db.VarChar(200)
   body            String  @db.VarChar(500)
   sourceEventId   String  @map("source_event_id") @db.VarChar(200)
+  /// PHASE E (`PD-N-004`, migration 0017). The producer's payload, carried
+  /// verbatim into `notifications.data` on release. Added when
+  /// `DigitalWellbeingEngineService` was routed through this queue: its alerts
+  /// carry device metadata (which package, which limit, how far over) that the
+  /// parent app reads, and a queue that reconstructs a message instead of
+  /// holding it would replace a silent drop with a silent truncation.
+  data            Json?
 
   /// PENDING | DELIVERING | DELIVERED | SUPPRESSED | DEAD — closed by a CHECK
   /// constraint in migration 0014, not only by a TypeScript union.

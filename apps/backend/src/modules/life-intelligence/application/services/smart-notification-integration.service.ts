@@ -49,6 +49,17 @@ export interface IDeliverableNotification extends ICandidateNotification {
   /** Composed with one of the three documented forms in
    * `src/shared/notifications/notification-source-key.ts`. */
   readonly sourceEventId: string;
+  /**
+   * PHASE E (`PD-N-004`) — the producer's own payload, written verbatim into
+   * `notifications.data` and held verbatim in `notification_deliveries.data`
+   * across a deferral.
+   *
+   * It exists because `DigitalWellbeingEngineService` was routed through this
+   * gate and its alerts carry device specifics the parent app reads (which
+   * package, which limit, how far over). Optional, so every producer written
+   * before today is unchanged.
+   */
+  readonly data?: Record<string, unknown>;
 }
 
 const HISTORY_WINDOW_HOURS = 24;
@@ -204,6 +215,40 @@ export class SmartNotificationIntegrationService {
     const currentLocalTime = getBusinessTimeHHMM(now, timeZone);
     const businessDayStart = getStartOfBusinessDay(now, timeZone);
 
+    // PHASE E (`PD-N-004`) — THE DELIVER CLASS IS CHECKED BEFORE THE GUARD, NOT
+    // INSIDE IT.
+    //
+    // Phase D put the matrix behind `evaluateFatigue`: a candidate had to be
+    // BLOCKED for `QUIET_HOURS` before `handleQuietHours` ever asked what class
+    // it was. That ordering has two consequences, and the second is a defect.
+    //
+    // First, `evaluateFatigue` decides the quiet-hours question on
+    // `priority !== 'CRITICAL'` — the old implicit rule the matrix was written
+    // to replace — so a DELIVER-class type at NORMAL priority reached the gate
+    // only by accident of that comparison.
+    //
+    // Second and worse: a DELIVER-class safety alert blocked for DAILY_MAX,
+    // CATEGORY_MAX or COOLDOWN returned SUPPRESS and never reached
+    // `handleQuietHours` at all. A household that had already had twelve
+    // notifications today would have had `ACCESSIBILITY_DISABLED` — the alert
+    // that says the entire enforcement surface is off — silenced by a fatigue
+    // cap. The matrix says in words that DELIVER «bypasses quiet hours
+    // entirely, SAFETY-CRITICAL ONLY»; this is that sentence expressed as
+    // control flow instead of trusted to a downstream branch.
+    //
+    // The list is three types long and `notification-class.spec.ts` fails if it
+    // grows without a written justification, which is what keeps this from
+    // being a hole. Duplicate suppression is NOT lost with it: the unique index
+    // `notifications (family_id, source_event_id, user_id)` still collapses a
+    // redelivered cause to one row, and it is stricter than the five-minute
+    // window because it never forgets.
+    if (quietHoursClassOf(candidate.type, candidate.priority) === 'DELIVER') {
+      this.logger.log(
+        `notification.safety_bypass type=${candidate.type} audience=${candidate.targetAudience}`,
+      );
+      return this.deliverEvaluated(childId, familyId, candidate);
+    }
+
     const decision = evaluateFatigue(candidate, history, now, currentLocalTime, businessDayStart);
 
     if (!decision.allowed) {
@@ -276,9 +321,11 @@ export class SmartNotificationIntegrationService {
     const quietHoursClass = quietHoursClassOf(candidate.type, candidate.priority);
 
     if (quietHoursClass === 'DELIVER') {
-      // Safety-critical: quiet hours do not apply, and the caps behind them do
-      // not either — this is the escalation policy the fatigue guard already
-      // encoded for CRITICAL, now stated by type instead of inferred.
+      // PHASE E: `evaluateAndDeliver` now short-circuits this class BEFORE the
+      // fatigue guard, so this branch is reached only by a future caller that
+      // enters here directly. Kept, and kept identical, because a gate whose
+      // safety case depends on nobody ever calling it by a second door is a
+      // gate with a second door.
       this.logger.log(
         `notification.quiet_hours_bypassed type=${candidate.type} audience=${candidate.targetAudience}`,
       );
@@ -321,6 +368,9 @@ export class SmartNotificationIntegrationService {
         // is the key inserted into `notifications` at 07:00, so a redelivery of
         // the same cause still collides with B9's unique index.
         sourceEventId: candidate.sourceEventId,
+        // PHASE E (`PD-N-004`) — the payload travels with the message. See
+        // `IDeliverableNotification.data`.
+        data: candidate.data ?? null,
         deferReason: 'QUIET_HOURS',
         scheduledFor,
         businessDate: getBusinessDate(now, timeZone),
@@ -410,6 +460,10 @@ export class SmartNotificationIntegrationService {
         body: candidate.body,
         priority: candidate.priority === 'HIGH' || candidate.priority === 'LOW' ? 'NORMAL' : candidate.priority,
         type: candidate.type,
+        // PHASE E (`PD-N-004`) — carried through to `notifications.data`
+        // unchanged, which is where the parent app reads a wellbeing alert's
+        // specifics.
+        data: candidate.data,
         sourceEventId: candidate.sourceEventId,
         // PHASE D: only the release path sets this, and only because it owns a
         // durable retry the repository's best-effort push would otherwise burn.

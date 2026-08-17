@@ -32,6 +32,9 @@ function row(
     title: `t-${seq}`,
     body: `b-${seq}`,
     sourceEventId: `evt:${seq}`,
+    // PHASE E (`PD-N-004`): every queued row now carries the producer's own
+    // payload. These fixtures have none, and `null` is the honest value.
+    data: null,
     scheduledFor: new Date(BASE + 36_000_000),
     businessDate: '2026-01-15',
     attemptCount: 1,

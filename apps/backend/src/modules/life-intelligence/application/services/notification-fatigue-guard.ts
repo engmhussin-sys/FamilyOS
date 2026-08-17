@@ -12,7 +12,16 @@
  * The caller (a real service, querying the existing Notification
  * table — no new table needed) is responsible for fetching that
  * history; this function only decides.
+ *
+ * PHASE E (`PD-N-004`) — THE ONE IMPORT, and it is to a framework-free data
+ * table (`shared/notifications/notification-class.ts`), never to a service.
+ * The function stays pure: it reads a constant, performs no I/O, and every
+ * caller still gets the same answer for the same inputs. Importing it is the
+ * point — the quiet-hours question now has ONE answer in this codebase,
+ * instead of a justified table in one file and a `priority !== 'CRITICAL'`
+ * shortcut quietly overriding it in another.
  */
+import { quietHoursClassOf } from '../../../../shared/notifications/notification-class';
 
 export interface IRecentNotification {
   type: string;
@@ -98,11 +107,32 @@ export function evaluateFatigue(
   businessDayStart: Date,
   policy: IFatiguePolicy = DEFAULT_FATIGUE_POLICY,
 ): IFatigueDecision {
-  // CRITICAL bypasses quiet hours (escalation policy) but NOT
-  // duplicate prevention or cooldown — a genuine critical event
-  // firing twice in one minute due to a client retry is still a
-  // duplicate, not two real events.
-  if (candidate.priority !== 'CRITICAL' && isWithinQuietHours(currentLocalTimeHHMM, policy)) {
+  // PHASE E (`PD-N-004`) — THE BYPASS IS DECIDED BY THE MATRIX, NOT BY
+  // `priority`.
+  //
+  // This line read `candidate.priority !== 'CRITICAL'`, which is the implicit
+  // rule Phase D's `notification-class.ts` was written to replace and whose
+  // docstring explains why it is the wrong axis: priority describes how LOUD a
+  // notification is, not whether the fact it carries survives the night. Left
+  // in place it silently overrode the table — `SCREEN_TIME_EXCEEDED` is
+  // classified DEFER with a written justification and is raised at CRITICAL
+  // priority by its producer, so a screen-time limit went through at 02:00
+  // BECAUSE of a field that was never meant to answer this question.
+  //
+  // `quietHoursClassOf` preserves the old rule exactly where nothing has
+  // overridden it: an UNCLASSIFIED type at CRITICAL priority still resolves to
+  // DELIVER, so every caller that predates the matrix behaves identically. What
+  // changes is that an explicit classification now wins, which is the entire
+  // reason the classification exists.
+  //
+  // Bypassing quiet hours still does NOT bypass duplicate prevention or
+  // cooldown here — a genuine critical event firing twice in a minute from a
+  // client retry is still a duplicate, not two real events. (The full
+  // safety bypass, caps included, is applied one layer up in
+  // `evaluateAndDeliver`, which never reaches this function for a DELIVER-class
+  // type; the rule below is what protects a direct caller of this pure
+  // function.)
+  if (quietHoursClassOf(candidate.type, candidate.priority) !== 'DELIVER' && isWithinQuietHours(currentLocalTimeHHMM, policy)) {
     return { allowed: false, blockedReason: 'QUIET_HOURS' };
   }
 

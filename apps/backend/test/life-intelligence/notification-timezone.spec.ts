@@ -109,11 +109,74 @@ describe('B2 — quiet hours and daily caps on the family calendar', () => {
       }
     });
 
-    it('CRITICAL still pierces quiet hours — the escalation policy is untouched by B2', () => {
+    /**
+     * PHASE E (`PD-N-004`) — THIS TEST WAS CORRECT AND IS NOW SPLIT IN TWO,
+     * because the rule it described has been narrowed on purpose.
+     *
+     * B2 wrote it against `candidate`, whose type is `REWARD_GRANTED`, at a
+     * time when `priority === 'CRITICAL'` WAS the whole quiet-hours escalation
+     * rule and no notification type had been classified. Phase D then wrote
+     * `notification-class.ts`, which classifies `REWARD_GRANTED` as `DEFER`
+     * with a written justification, and whose own docstring says an explicit
+     * classification wins «including when it DOWNGRADES a CRITICAL type».
+     * Those two statements contradict each other, and until Phase E the
+     * `priority` shortcut silently won — which is how a `SCREEN_TIME_EXCEEDED`
+     * alert, classified DEFER and raised CRITICAL by its producer, went
+     * through at 02:00.
+     *
+     * So the escalation policy is asserted on an UNCLASSIFIED type, where it
+     * still holds byte for byte, and the new narrowing is asserted beside it
+     * rather than replacing it silently.
+     */
+    it('CRITICAL still pierces quiet hours for an UNCLASSIFIED type — the escalation policy is untouched', () => {
       const instant = new Date('2026-08-15T19:00:00.000Z'); // 22:00 Cairo
-      const critical: ICandidateNotification = { ...candidate, priority: 'CRITICAL' };
+      const critical: ICandidateNotification = {
+        ...candidate,
+        // Not in `NOTIFICATION_CLASSES`; `quietHoursClassOf` falls back to the
+        // pre-matrix rule for exactly this case.
+        type: 'PROTECTION_ALERT',
+        priority: 'CRITICAL',
+      };
       const result = evaluateFatigue(
         critical,
+        [],
+        instant,
+        getBusinessTimeHHMM(instant, CAIRO),
+        getStartOfBusinessDay(instant, CAIRO),
+      );
+      expect(result.allowed).toBe(true);
+    });
+
+    it('but a CLASSIFIED DEFER type does NOT pierce quiet hours, even at CRITICAL priority', () => {
+      const instant = new Date('2026-08-15T19:00:00.000Z'); // 22:00 Cairo
+      // Classified DEFER in `notification-class.ts` with a written reason, and
+      // raised CRITICAL by `DigitalWellbeingEngineService`. This exact
+      // combination is `PD-N-004`.
+      const classifiedButLoud: ICandidateNotification = {
+        ...candidate,
+        type: 'SCREEN_TIME_EXCEEDED',
+        priority: 'CRITICAL',
+      };
+      const result = evaluateFatigue(
+        classifiedButLoud,
+        [],
+        instant,
+        getBusinessTimeHHMM(instant, CAIRO),
+        getStartOfBusinessDay(instant, CAIRO),
+      );
+      expect(result.allowed).toBe(false);
+      expect(result.blockedReason).toBe('QUIET_HOURS');
+    });
+
+    it('and a DELIVER-classified type pierces them at NORMAL priority — the axis is the type, not the volume', () => {
+      const instant = new Date('2026-08-15T19:00:00.000Z'); // 22:00 Cairo
+      const safety: ICandidateNotification = {
+        ...candidate,
+        type: 'ACCESSIBILITY_DISABLED',
+        priority: 'NORMAL',
+      };
+      const result = evaluateFatigue(
+        safety,
         [],
         instant,
         getBusinessTimeHHMM(instant, CAIRO),

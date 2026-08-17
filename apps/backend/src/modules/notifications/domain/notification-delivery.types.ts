@@ -64,6 +64,10 @@ export interface DeferredNotificationRow {
   readonly title: string;
   readonly body: string;
   readonly sourceEventId: string;
+  /** PHASE E (`PD-N-004`) — the producer payload, held verbatim so the message
+   * released at 07:00 is the message composed at 00:30 and not a
+   * reconstruction of it. `null` for every producer that has none. */
+  readonly data: Record<string, unknown> | null;
   readonly scheduledFor: Date;
   readonly businessDate: string;
   readonly attemptCount: number;
@@ -82,6 +86,8 @@ export interface EnqueueDeferredInput {
   readonly title: string;
   readonly body: string;
   readonly sourceEventId: string;
+  /** PHASE E (`PD-N-004`) — see `DeferredNotificationRow.data`. */
+  readonly data?: Record<string, unknown> | null;
   readonly deferReason: DeferReason;
   readonly scheduledFor: Date;
   readonly businessDate: string;

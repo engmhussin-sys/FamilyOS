@@ -22,15 +22,16 @@
  *
  * $1 familyId · $2 childId · $3 type · $4 category · $5 priority ·
  * $6 targetAudience · $7 title · $8 body · $9 sourceEventId · $10 deferReason ·
- * $11 scheduledFor · $12 businessDate
+ * $11 scheduledFor · $12 businessDate · $13 data (PHASE E, `PD-N-004`)
  */
 export const SQL_ENQUEUE_DEFERRED = `
 INSERT INTO "notification_deliveries" (
   "family_id", "child_id", "type", "category", "priority", "target_audience",
-  "title", "body", "source_event_id", "defer_reason", "scheduled_for", "business_date"
+  "title", "body", "source_event_id", "defer_reason", "scheduled_for", "business_date", "data"
 ) VALUES (
   $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text,
-  left($7::text, 200), left($8::text, 500), $9::text, $10::text, $11::timestamp, $12::date
+  left($7::text, 200), left($8::text, 500), $9::text, $10::text, $11::timestamp, $12::date,
+  $13::jsonb
 )
 ON CONFLICT ("family_id", "source_event_id") DO NOTHING
 RETURNING "id"`;
@@ -96,6 +97,7 @@ RETURNING d."id"              AS id,
           d."title"           AS title,
           d."body"            AS body,
           d."source_event_id" AS source_event_id,
+          d."data"            AS data,
           d."scheduled_for"   AS scheduled_for,
           d."business_date"   AS business_date,
           d."attempt_count"   AS attempt_count,
