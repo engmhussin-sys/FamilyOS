@@ -623,4 +623,73 @@ describeIfDb('PHASE F — the smart notification decision layer (real PostgreSQL
     const [row] = await decisionRows(f.familyId);
     expect(JSON.stringify(row)).not.toContain('محمد');
   });
+
+  // ==========================================================================
+  // 12. THE TAP LANDS SOMEWHERE — PHASE F (`F6-007`)
+  // ==========================================================================
+  /**
+   * WHY THIS IS ASSERTED AGAINST THE ROW AND NOT AGAINST THE RESULT OBJECT.
+   * Same reason as every other assertion in this file, and this feature is the
+   * clearest case of it: the deep link exists to be READ BY A CLIENT, and the
+   * client reads `notifications.data`. A test that asserted the resolver's
+   * return value would stay green for a link that never reached the column —
+   * which is precisely the state the product was in before this phase, where
+   * `NotificationDecision`'s contract listed a destination that nothing wrote.
+   */
+  it('the persisted notification carries a routable deep link on `data`, beside the producer payload', async () => {
+    const f = await createFamily('deep-link');
+    await fire({
+      familyId: f.familyId,
+      childId: f.childId,
+      eventType: 'REWARD_GRANTED',
+      sourceEventId: `evt:${stamp}:deep-link`,
+      trigger: 'DOMAIN_EVENT',
+      variables: { goalTitle: 'الآيات 1–5 من سورة الملك', points: 20 },
+      data: { completionKind: 'GOAL', goalTitle: 'الآيات 1–5 من سورة الملك', points: 20 },
+      now: AFTERNOON,
+    });
+
+    const [row] = await notificationRows(f.familyId);
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+
+    // THE LINK IS THERE, and it is the parent's destination for a reward that
+    // named a goal — the goal they set, not the reward catalogue.
+    expect(data.deepLink).toBe('abny://goals');
+    // THE PRODUCER'S OWN PAYLOAD IS UNTOUCHED. The link is added to `data`,
+    // never instead of it (`PD-N-004`).
+    expect(data.points).toBe(20);
+    expect(data.completionKind).toBe('GOAL');
+
+    // NO TENANT ID, NO PERSON, NO SECRET IN THE LINK. `e2e-13 STEP 14` pins the
+    // whole payload; this pins the field this phase added to it.
+    for (const id of [f.familyId, f.childId, f.userId]) {
+      expect(data.deepLink).not.toContain(id);
+    }
+    expect(data.deepLink).not.toContain('محمد');
+    expect(data.deepLink.startsWith('abny://')).toBe(true);
+    expect(data.deepLink).not.toContain('?');
+  });
+
+  it('the SERVER decides the destination — a producer payload cannot choose the screen', async () => {
+    // `DigitalWellbeingEngineService` spreads a DEVICE-SUPPLIED `metadata`
+    // object into `data`. A device that supplied its own `deepLink` would
+    // otherwise be choosing which screen a parent's tap opens, which is the one
+    // thing this feature exists to keep on the server.
+    const f = await createFamily('deep-link-authority');
+    await fire({
+      familyId: f.familyId,
+      childId: f.childId,
+      eventType: 'REWARD_GRANTED',
+      sourceEventId: `evt:${stamp}:deep-link-authority`,
+      trigger: 'DOMAIN_EVENT',
+      data: { deepLink: 'https://evil.example/steal', alertType: 'SPOOF' },
+      now: AFTERNOON,
+    });
+
+    const [row] = await notificationRows(f.familyId);
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+    // A reward with no goal named: the parent lands on the child's progress.
+    expect(data.deepLink).toBe('abny://progress');
+    expect(JSON.stringify(data)).not.toContain('evil.example');
+  });
 });

@@ -67,6 +67,10 @@ import {
 } from '../../../notifications/application/ports/notification-decision.repository.port';
 import type { NotificationDecision } from '../../../notifications/domain/engine/notification-decision.types';
 import {
+  NOTIFICATION_DEEP_LINK_DATA_KEY,
+  resolveNotificationDestination,
+} from '../../../notifications/domain/engine/notification-destination';
+import {
   NotificationContextAssembler,
   type NotificationEventInput,
 } from './notification-context.assembler';
@@ -155,7 +159,43 @@ export class SmartNotificationEngineService {
       body: composed.body,
       targetAudience: decision.targetAudience,
       sourceEventId: input.sourceEventId,
-      data: input.data,
+      /**
+       * PHASE F (`F6-007`) — WHERE THE TAP LANDS, RESOLVED HERE AND NOWHERE
+       * ELSE.
+       *
+       * `notification-destination.ts` holds the map; this line is the only
+       * thing that puts its answer on the wire. It goes on `data` — already
+       * persisted to `notifications.data`, already carried verbatim across a
+       * quiet-hours deferral, already read by the parent app (`PD-N-004`) — so
+       * a destination costs no column, no migration and no backfill.
+       *
+       * IT IS SPREAD LAST, and that is a security property rather than a style
+       * choice: `DigitalWellbeingEngineService` spreads a DEVICE-SUPPLIED
+       * `metadata` object into `data`, so a payload carrying its own `deepLink`
+       * would otherwise choose the screen. The server's answer overwrites the
+       * producer's, always.
+       *
+       * `composed.resolvedCopyKey` RATHER THAN `copyKey`, so the destination
+       * and the sentence can never describe different things: when a template
+       * is rejected by the safety gate and `GENERIC` ships instead, the link
+       * degrades to the inbox with it, and `notification_decisions.copy_key` —
+       * which stores the same resolved key — explains both.
+       *
+       * NO IDS ARE PASSED, and that is a decision rather than a gap:
+       * `e2e-13 STEP 14` reads this exact payload back and asserts it contains
+       * no `familyId`, `childId`, `deviceId`, `programId` or `achievementId`
+       * («CONTEXT §3 principle 8 … just as much as of the FCM one»), and no
+       * producer on this path carries a row id anyway. The resolver therefore
+       * emits the LIST form of every surface — `abny://goals`, not
+       * `abny://goal/<unknown>`. Its own header carries the full argument.
+       */
+      data: {
+        ...(input.data ?? {}),
+        [NOTIFICATION_DEEP_LINK_DATA_KEY]: resolveNotificationDestination({
+          copyKey: composed.resolvedCopyKey,
+          audience: decision.targetAudience,
+        }),
+      },
       // The child branch must not rephrase a second time through a weaker
       // filter — see `IDeliverableNotification.preComposed`.
       preComposed: true,
