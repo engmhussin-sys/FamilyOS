@@ -62,3 +62,33 @@ export function createTestPrisma(): TestPrismaHandle {
     disconnect: () => raw.$disconnect(),
   };
 }
+
+/**
+ * PHASE F (`F6-009`) — THE SAME CLIENT, SHAPED AS A `PrismaService` SUBSTITUTE.
+ *
+ * WHY THIS LIVES HERE AND NOT IN THE GOLDEN SUITE. Five e2e specs already
+ * carry a private, byte-identical `offlinePrismaService()` copy
+ * (`reward-engine`, `intra-family-authorization`, `smart-notification-engine`,
+ * `event-pipeline`, `cross-tenant-probe`). Adding a sixth copy for the golden
+ * suite would have been the exact duplication CONTEXT §3 principle 1 forbids,
+ * so the golden suite calls THIS function — the one that already knows how to
+ * open the connection in both modes — and adds only the two Nest lifecycle
+ * hooks a DI substitute needs.
+ *
+ * The existing copies are deliberately NOT rewritten to call it: that would be
+ * an unrelated edit to five green suites inside a phase whose subject is the
+ * golden scenarios, and a diff nobody could attribute.
+ */
+export function createTestPrismaService(): TestPrismaHandle['scoped'] {
+  const handle = createTestPrisma();
+  const scoped = handle.scoped;
+  // `onModuleInit` is a no-op in adapter mode: `PrismaPg` connects lazily and
+  // an explicit `$connect()` on the WASM client is not required.
+  scoped.onModuleInit = async (): Promise<void> => {
+    if (process.env.PRISMA_DRIVER_ADAPTER !== 'pg') await handle.raw.$connect();
+  };
+  scoped.onModuleDestroy = async (): Promise<void> => {
+    await handle.disconnect();
+  };
+  return scoped;
+}
