@@ -199,6 +199,27 @@ export const RETENTION_TARGETS: readonly RetentionTarget[] = [
       'Already enforced before this step (at 90 days) but never scheduled. KEPT AT 90 rather than raised to the target schedule\'s 180: nothing downstream reads an old notification, and for a child-data product the shorter of two defensible numbers is the right one to default to. The divergence from the written target is recorded as an open decision rather than silently reconciled in either direction — see PC-D-004.',
   },
   {
+    // PHASE E (`PD-N-005`) — the table Phase D created and left unswept.
+    key: 'notification_deliveries',
+    table: 'notification_deliveries',
+    timeColumn: 'created_at',
+    retentionDays: 90,
+    mechanism: 'HARD_DELETE',
+    tenantScoped: true,
+    decision: 'ENGINEERING_DEFAULT',
+    // THE PREDICATE IS THE WHOLE POINT, and it is the same sentence
+    // `outbox_messages` already carries one target above: a DEAD row is the
+    // EVIDENCE that a household never received something the product promised
+    // it, and sweeping evidence on the same schedule as routine history
+    // deletes the answer to the only question anyone asks this table
+    // afterwards. DEAD rows are retained until an operator resolves them, and
+    // the backlog gauge counts them separately precisely so they are visible
+    // rather than accumulating unread.
+    extraPredicate: `"state" <> 'DEAD'`,
+    rationale:
+      "The deferral queue. It grows one row per deferred notification forever, including DELIVERED and SUPPRESSED rows whose purpose ended the morning they resolved, on a table written to every night by every family with a quiet window — the same unbounded-growth defect PC-D-003 recorded for the event backbone, on the surface Phase D added. 90 days matches `notifications` itself, which is the table a delivered row's content ends up in, so the queue never outlives the thing it was queueing for. DEAD is excluded: a permanently undeliverable notification is the record of a promise the product did not keep, and Phase D built a gauge and an endpoint specifically to make those readable — deleting them at 90 days would quietly reset that number.",
+  },
+  {
     key: 'daily_behavioral_snapshots',
     table: 'daily_behavioral_snapshots',
     timeColumn: 'usage_date',

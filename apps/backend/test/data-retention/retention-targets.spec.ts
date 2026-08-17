@@ -125,6 +125,23 @@ describe('PHASE C P4 — retention targets', () => {
     expect(events?.extraPredicate).toContain(`om."status" <> 'PUBLISHED'`);
   });
 
+  /**
+   * PHASE E (`PD-N-005`). Phase D created `notification_deliveries`, added the
+   * `created_at` index a sweep would need, and then did not add the sweep —
+   * recorded honestly in its own report as open. The table takes one row per
+   * deferred notification per night per family and nothing ever removed one.
+   */
+  it('sweeps the deferral queue Phase D created — and never sweeps a DEAD row out of it', () => {
+    const deliveries = RETENTION_TARGETS.find((t) => t.table === 'notification_deliveries');
+    expect(deliveries).toBeDefined();
+    expect(deliveries?.timeColumn).toBe('created_at');
+    // A DEAD row is the evidence that a household never received something.
+    // Sweeping it on the ordinary schedule would silently reset the very gauge
+    // (`GET /system/notifications/deliveries`) Phase D built to make permanent
+    // failure visible — the same argument, word for word, as `outbox_messages`.
+    expect(deliveries?.extraPredicate).toContain(`"state" <> 'DEAD'`);
+  });
+
   it('never deletes a job_run that is still RUNNING', () => {
     const runs = RETENTION_TARGETS.find((t) => t.table === 'job_runs');
     expect(runs?.extraPredicate).toContain(`"status" <> 'RUNNING'`);
