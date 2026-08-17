@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -17,7 +19,9 @@ class BillingHistoryScreen extends ConsumerStatefulWidget {
 
 class _BillingHistoryScreenState extends ConsumerState<BillingHistoryScreen> {
   List<dynamic>? _invoices;
-  String? _errorMessage;
+
+  /// The B3 envelope rather than `e.toString()` — see [_load].
+  ApiFailure? _failure;
 
   @override
   void initState() {
@@ -26,33 +30,36 @@ class _BillingHistoryScreenState extends ConsumerState<BillingHistoryScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
       final result = await ref.read(billingApiProvider).getBillingHistory();
       if (mounted) setState(() => _invoices = result);
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      // The server's own sentence, kept whole. A billing failure is the one a
+      // parent is most likely to quote to support, which is also why the
+      // requestId is rendered with it.
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('billingHistory.title'))),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
+              child: SingleChildScrollView(
+                child: DsErrorState(
+                  failure: _failure!,
+                  title: t('common.error'),
+                  retryLabel: t('common.retry'),
+                  requestIdLabel: t('common.requestId'),
+                  arabic: locale.isRtl,
+                  onRetry: _load,
                 ),
               ),
             )
@@ -101,6 +108,28 @@ class _InvoiceRow extends StatelessWidget {
     }
   }
 
+  /// `PAID` / `OPEN` / `DRAFT` / `VOID` / `UNCOLLECTIBLE` are the five values
+  /// of the server's `InvoiceStatus` enum, and NONE of them is a sentence a
+  /// parent should be shown. This chip used to render the raw value.
+  ///
+  /// The keys are written out as LITERALS rather than built with
+  /// `t('invoiceStatus.$status')`, for the same reason
+  /// `create_family_screen.dart` writes its country labels out: an
+  /// interpolated key is invisible to `scripts/verify_l10n_parity.py`, so a
+  /// missing Arabic translation would ship silently. An unrecognised value —
+  /// a status this app has not been taught yet — falls back to a neutral
+  /// «قيد المعالجة» line rather than leaking the code.
+  String _statusLabel(String status) {
+    final labels = <String, String>{
+      'PAID': t('invoiceStatus.PAID'),
+      'OPEN': t('invoiceStatus.OPEN'),
+      'DRAFT': t('invoiceStatus.DRAFT'),
+      'VOID': t('invoiceStatus.VOID'),
+      'UNCOLLECTIBLE': t('invoiceStatus.UNCOLLECTIBLE'),
+    };
+    return labels[status] ?? t('invoiceStatus.unknown');
+  }
+
   String _formatDate(String? iso) {
     if (iso == null) return '';
     final date = DateTime.tryParse(iso);
@@ -129,7 +158,10 @@ class _InvoiceRow extends StatelessWidget {
         trailing: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(20)),
-          child: Text(status, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12)),
+          child: Text(
+            _statusLabel(status),
+            style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
+          ),
         ),
       ),
     );

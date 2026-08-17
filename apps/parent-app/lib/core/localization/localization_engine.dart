@@ -509,6 +509,19 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'deleteAccount.currentPassword': 'Enter your current password to confirm',
     'deleteAccount.submit': 'Permanently Delete My Account',
     'auth.acceptTerms': 'I agree to the Terms of Service and Privacy Policy',
+    // This form's own precondition, not the server's — no request is sent
+    // until the box is ticked, so there is no `messageAr` to render and this
+    // sentence is the app's to write. It replaced a hardcoded English literal.
+    'auth.acceptTermsRequired':
+        'Please agree to the Terms of Service and Privacy Policy to continue.',
+
+    'invoiceStatus.PAID': 'Paid',
+    'invoiceStatus.OPEN': 'Due',
+    'invoiceStatus.DRAFT': 'Not issued yet',
+    'invoiceStatus.VOID': 'Cancelled',
+    'invoiceStatus.UNCOLLECTIBLE': 'Could not be collected',
+    'invoiceStatus.unknown': 'Being processed',
+
     'redeemCode.entryPoint': 'Have a Partner Code?',
     'redeemCode.title': 'Redeem a Code',
     'redeemCode.explanation': 'Enter a code from a partner (like your employer, bank, or telecom provider) to unlock a benefit for your account.',
@@ -1138,6 +1151,16 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'deleteAccount.currentPassword': 'اكتب كلمة السر الحالية للتأكيد',
     'deleteAccount.submit': 'احذف حسابي نهائيًا',
     'auth.acceptTerms': 'أوافق على شروط الاستخدام وسياسة الخصوصية',
+    'auth.acceptTermsRequired':
+        'من فضلك وافق على شروط الاستخدام وسياسة الخصوصية للمتابعة.',
+
+    'invoiceStatus.PAID': 'مدفوعة',
+    'invoiceStatus.OPEN': 'مستحقّة',
+    'invoiceStatus.DRAFT': 'لم تُصدر بعد',
+    'invoiceStatus.VOID': 'ملغاة',
+    'invoiceStatus.UNCOLLECTIBLE': 'تعذّر تحصيلها',
+    'invoiceStatus.unknown': 'قيد المعالجة',
+
     'redeemCode.entryPoint': 'عندك كود شراكة؟',
     'redeemCode.title': 'استبدال كود',
     'redeemCode.explanation': 'اكتب كود من شريك (زي جهة عملك، بنكك، أو شركة الاتصالات بتاعتك) عشان تفتح ميزة لحسابك.',
