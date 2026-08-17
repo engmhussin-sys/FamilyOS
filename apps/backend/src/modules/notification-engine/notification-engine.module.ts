@@ -21,6 +21,29 @@
  * `test/notifications/notification-provider-swap.e2e.spec.ts` proves it by
  * overriding this exact token and asserting the rest of the pipeline behaves
  * identically. A seam that requires touching a second file is not a seam.
+ *
+ * ---------------------------------------------------------------------------
+ * PHASE F (`F6-003`, closing `PF-E-001`) — WHERE THE PROVIDERS ACTUALLY LIVE
+ * NOW, AND WHY THE PARAGRAPH ABOVE IS STILL TRUE.
+ *
+ * F6-002 shipped this module with no producer wired to it, and the question of
+ * WHO CALLS THE ENGINE was therefore never asked of the module graph. It has an
+ * answer this phase had to find: two of the six producers —
+ * `RewardsEngineService` and `DigitalWellbeingEngineService` — are inside
+ * `LifeIntelligenceModule`, the module this one imports. Injecting the engine
+ * into them from here would close the loop `life-intelligence ->
+ * notification-engine -> life-intelligence`, and `forwardRef` is not an answer,
+ * it is a way of not having one.
+ *
+ * So the four provider REGISTRATIONS moved into `LifeIntelligenceModule` (which
+ * already imported everything they need) and this module now IMPORTS and
+ * RE-EXPORTS them. Nothing else changed: the source files are still here, the
+ * two controllers are still here, every existing importer of this module gets
+ * the same `SmartNotificationEngineService` singleton it got before, and the
+ * `NOTIFICATION_DECISION_PROVIDER` seam is one binding in one file exactly as
+ * it was — `notification-provider-swap.e2e.spec.ts` overrides the same token
+ * and is unmodified by this phase.
+ * ---------------------------------------------------------------------------
  */
 
 import { Module } from '@nestjs/common';
@@ -28,26 +51,19 @@ import { Module } from '@nestjs/common';
 import { AiCoreModule } from '../ai-core/ai-core.module';
 import { LifeIntelligenceModule } from '../life-intelligence/life-intelligence.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { NOTIFICATION_DECISION_PROVIDER } from '../notifications/application/ports/notification-decision.provider';
-import { RuleBasedNotificationDecisionProvider } from '../notifications/application/providers/rule-based-notification-decision.provider';
-import { NotificationComposerService } from './application/services/notification-composer.service';
-import { NotificationContextAssembler } from './application/services/notification-context.assembler';
-import { SmartNotificationEngineService } from './application/services/smart-notification-engine.service';
 import { NotificationAnalyticsController } from './presentation/controllers/notification-analytics.controller';
 import { NotificationPolicyController } from './presentation/controllers/notification-policy.controller';
 
 @Module({
   imports: [NotificationsModule, LifeIntelligenceModule, AiCoreModule],
   controllers: [NotificationAnalyticsController, NotificationPolicyController],
-  providers: [
-    NotificationContextAssembler,
-    NotificationComposerService,
-    SmartNotificationEngineService,
-    // THE SEAM. One binding, one implementation, and the implementation is
-    // deterministic — CONTEXT §3 principle 2: the AI advises, it does not
-    // decide whether to notify.
-    { provide: NOTIFICATION_DECISION_PROVIDER, useClass: RuleBasedNotificationDecisionProvider },
-  ],
-  exports: [SmartNotificationEngineService, NOTIFICATION_DECISION_PROVIDER],
+  providers: [],
+  // RE-EXPORTED AS A MODULE, not re-provided. A second `providers` entry would
+  // build a SECOND engine with its own composer and its own assembler, and the
+  // two would write to the same ledger while disagreeing about nothing visible
+  // — the worst kind of duplicate, because it works. Nest re-exports a
+  // provider only by re-exporting the module that owns it, so that is what
+  // this line does, and `LifeIntelligenceModule`'s export list is the contract.
+  exports: [LifeIntelligenceModule],
 })
 export class NotificationEngineModule {}

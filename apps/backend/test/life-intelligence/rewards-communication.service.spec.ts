@@ -5,7 +5,7 @@ import { RewardsEngineService } from '../../src/modules/life-intelligence/applic
 import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-rewards.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
-import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
+import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
 import { FamilyDateService } from '../../src/common/time/family-date.service';
 import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
@@ -25,7 +25,10 @@ describe('RewardsEngineService', () => {
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
-  const notificationIntegrationMock = { notifyEvent: jest.fn() };
+  // PHASE F (`F6-003`) — the decision layer, not the delivery pipeline. This
+  // suite is about ownership checks and redemption arithmetic; the double only
+  // has to exist and resolve.
+  const notificationEngineMock = { handleEvent: jest.fn() };
   // B4: rule caps are counted on the FAMILY's business day, so the engine now
   // depends on B1+B2's single date authority. No rule in this suite declares a
   // cap, so nothing here is ever called.
@@ -36,14 +39,22 @@ describe('RewardsEngineService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    notificationIntegrationMock.notifyEvent.mockResolvedValue({ type: 'x', targetAudience: 'CHILD', decision: 'SEND' });
+    notificationEngineMock.handleEvent.mockResolvedValue({
+      decision: { verdict: 'SEND', targetAudience: 'CHILD', score: 40, reason: 'SCORE_IN_DEFER_BAND' },
+      decisionId: 'decision-1',
+      outcome: { type: 'x', targetAudience: 'CHILD', decision: 'SEND' },
+      title: 'x',
+      body: 'y',
+      aiRewritten: false,
+      aiFailed: false,
+    });
     const moduleRef = await Test.createTestingModule({
       providers: [
         RewardsEngineService,
         { provide: PrismaRewardsRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
-        { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
+        { provide: SmartNotificationEngineService, useValue: notificationEngineMock },
         { provide: FamilyDateService, useValue: familyDateMock },
         // PHASE D (GROWTH). `GrowthEventEmitter.emit` never throws by contract
         // (see its class docstring: analytics must never be able to fail a

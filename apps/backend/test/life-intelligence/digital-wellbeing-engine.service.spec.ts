@@ -4,7 +4,8 @@ import { DigitalWellbeingEngineService } from '../../src/modules/life-intelligen
 import { PrismaDigitalWellbeingRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
-import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
+import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
+import { quietHoursClassOf } from '../../src/shared/notifications/notification-class';
 import { ConsentCheckService } from '../../src/modules/consent-check/application/consent-check.service';
 import { BaselineCalculatorService } from '../../src/modules/life-intelligence/application/services/baseline-calculator.service';
 import { PatternDetectionService } from '../../src/modules/life-intelligence/application/services/pattern-detection.service';
@@ -34,8 +35,17 @@ describe('DigitalWellbeingEngineService', () => {
    * outgoing notification is now observable from a unit test. Every property
    * the old assertions checked is re-checked below, on the candidate handed to
    * the gate.
+   *
+   * PHASE F (`F6-003`, closing `PF-E-001`) — AND IT MOVES ONE CALL OUTWARD
+   * AGAIN, for the same reason it moved the first time. The producer now hands
+   * a CAUSE to `SmartNotificationEngineService`, which scores it, records the
+   * decision in `notification_decisions`, renders the sentence from
+   * `COPY_CATALOGUE` and then calls the very same `notifyEvent` -> `deliverNow`
+   * -> `createForFamilyOwner` chain. One shared delivery path, still no second
+   * engine; what is observable from a unit test is now the cause rather than
+   * the candidate.
    */
-  const notificationIntegrationMock = { notifyEvent: jest.fn() };
+  const notificationEngineMock = { handleEvent: jest.fn() };
   const consentCheckMock = { hasConsent: jest.fn() };
   const baselineCalculatorMock = { compute: jest.fn() };
   const patternDetectionMock = { detect: jest.fn() };
@@ -78,7 +88,7 @@ describe('DigitalWellbeingEngineService', () => {
         { provide: PrismaDigitalWellbeingRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
-        { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
+        { provide: SmartNotificationEngineService, useValue: notificationEngineMock },
         { provide: ConsentCheckService, useValue: consentCheckMock },
         { provide: BaselineCalculatorService, useValue: baselineCalculatorMock },
         { provide: PatternDetectionService, useValue: patternDetectionMock },
@@ -160,11 +170,12 @@ describe('DigitalWellbeingEngineService', () => {
       // PHASE E (`PD-N-004`): the assertion moved one call outward, from the
       // repository to the gate that reaches it. The property asserted is
       // unchanged — one shared delivery path, no second engine.
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
-        childId,
-        familyId,
-        expect.objectContaining({ data: expect.objectContaining({ alertType: 'PROTECTION_BYPASS_ATTEMPT' }) }),
-        expect.any(Date),
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          childId,
+          familyId,
+          data: expect.objectContaining({ alertType: 'PROTECTION_BYPASS_ATTEMPT' }),
+        }),
       );
     });
 
@@ -184,12 +195,19 @@ describe('DigitalWellbeingEngineService', () => {
         body: 'The daily limit was passed.',
       });
 
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
-        childId,
-        familyId,
-        expect.objectContaining({ type: 'SCREEN_TIME_EXCEEDED', targetAudience: 'PARENT' }),
-        expect.any(Date),
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ childId, familyId, eventType: 'SCREEN_TIME_EXCEEDED', trigger: 'SAFETY_SIGNAL' }),
       );
+
+      // PHASE F (`F6-003`) — AND THE DEVICE'S OWN TEXT NO LONGER REACHES THE
+      // PARENT. `title` and `body` above arrive on a DTO posted by a paired
+      // device; they were written verbatim into a parent's notification. The
+      // producer now passes neither, and the sentence comes from
+      // `COPY_CATALOGUE.SCREEN_TIME_EXCEEDED` — written in this repository,
+      // naming the child, which the device could not do.
+      const sent = notificationEngineMock.handleEvent.mock.calls[0][0];
+      expect(sent.title).toBeUndefined();
+      expect(sent.body).toBeUndefined();
     });
 
     it('evaluates at the instant it is given, so a deferral decision is provable without faking the machine clock', async () => {
@@ -202,12 +220,7 @@ describe('DigitalWellbeingEngineService', () => {
         at,
       );
 
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
-        childId,
-        familyId,
-        expect.any(Object),
-        at,
-      );
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(expect.objectContaining({ now: at }));
     });
 
     it('writes security-relevant events to the Timeline', async () => {
@@ -220,34 +233,56 @@ describe('DigitalWellbeingEngineService', () => {
       expect(timelineMock.record).toHaveBeenCalledWith(expect.objectContaining({ category: 'SAFETY', eventType: 'policy_violation' }));
     });
 
-    it('CLOSES A REAL GAP (Master Completeness Audit): marks the 4 genuine security event types as CRITICAL priority', async () => {
+    /**
+     * PHASE F (`F6-003`) — THE SAME GUARANTEE, ASSERTED WHERE IT NOW LIVES.
+     *
+     * These two tests used to read `expect(…).objectContaining({ priority:
+     * 'CRITICAL' })` and `{ priority: 'NORMAL' }`, pinning a ternary in the
+     * producer: `eventType === 'CHILD_REQUEST' ? 'NORMAL' : 'CRITICAL'`. That
+     * ternary was the PRE-PHASE-D IMPLICIT RULE — «CRITICAL bypasses quiet
+     * hours» — which `notification-class.ts` was written to replace, and which
+     * it has already overridden for all five of this producer's types by name.
+     * The producer's string could not change any outcome; it only looked as if
+     * it could, which is worse.
+     *
+     * So the ternary is gone and the assertion is restated against the thing
+     * that actually decides: the matrix. That is STRONGER, not weaker — a table
+     * entry carries a written justification and `notification-class.spec.ts`
+     * fails if the DELIVER list grows, whereas a string on a candidate carried
+     * neither. The producer is still asserted to route every one of the five
+     * through the engine.
+     */
+    it('the SAFETY bypass is a property of the matrix, not of a priority string this producer picks', async () => {
       await service.recordCriticalEvent(childId, familyId, {
         eventType: 'ACCESSIBILITY_DISABLED',
         title: 'Protection turned off',
         body: 'Device protection was disabled.',
       });
 
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
-        childId,
-        familyId,
-        expect.objectContaining({ priority: 'CRITICAL' }),
-        expect.any(Date),
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'ACCESSIBILITY_DISABLED' }),
       );
+      // The alert that says the whole enforcement surface is off bypasses quiet
+      // hours — decided by the type, at 02:00 as at 14:00.
+      expect(quietHoursClassOf('ACCESSIBILITY_DISABLED')).toBe('DELIVER');
+      expect(quietHoursClassOf('PROTECTION_BYPASS_ATTEMPT')).toBe('DELIVER');
     });
 
-    it('marks CHILD_REQUEST as NORMAL priority — a routine ask, not a security event', async () => {
+    it('a routine ask is DEFERred and not a bypass — CHILD_REQUEST is not a security event', async () => {
       await service.recordCriticalEvent(childId, familyId, {
         eventType: 'CHILD_REQUEST',
         title: 'Child requested more time',
         body: 'Your child asked for extra screen time.',
       });
 
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
-        childId,
-        familyId,
-        expect.objectContaining({ priority: 'NORMAL' }),
-        expect.any(Date),
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'CHILD_REQUEST' }),
       );
+      expect(quietHoursClassOf('CHILD_REQUEST')).toBe('DEFER');
+      // …and so are the other two the old ternary called CRITICAL. This is the
+      // distinction the matrix exists to make and the ternary could not.
+      expect(quietHoursClassOf('SCREEN_TIME_EXCEEDED')).toBe('DEFER');
+      expect(quietHoursClassOf('POLICY_VIOLATION')).toBe('DEFER');
     });
 
     it('does NOT write CHILD_REQUEST to the Timeline — an in-the-moment ask, not a behavior-history event', async () => {
@@ -258,7 +293,7 @@ describe('DigitalWellbeingEngineService', () => {
       });
 
       expect(timelineMock.record).not.toHaveBeenCalled();
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalled(); // still alerts the parent, just skips Timeline
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalled(); // still alerts the parent, just skips Timeline
     });
   });
 

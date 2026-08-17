@@ -153,6 +153,13 @@ export const NOTIFICATION_CLASSES: Readonly<Record<string, NotificationClassEntr
     why:
       'A badge is permanent. Seeing it at 07:00 is the product working; never seeing it is the product lying about a reward it granted.',
   },
+  BADGE_EARNED_PARENT: {
+    quietHours: 'DEFER',
+    audience: 'PARENT',
+    category: 'ACHIEVEMENT',
+    why:
+      'The parent half of a badge, which `rewards-engine.service.ts` has notified since Sprint 16.2 and which had no row here because it shared the CHILD type name. Same argument as BADGE_EARNED: a badge is permanent, seeing it at 07:00 is the product working, never seeing it is the product lying about a reward it granted.',
+  },
   LEVEL_UP: {
     quietHours: 'DEFER',
     audience: 'CHILD',
@@ -191,6 +198,23 @@ export const NOTIFICATION_CLASSES: Readonly<Record<string, NotificationClassEntr
     audience: 'BOTH',
     category: 'GOAL',
     why: 'Same as DAILY_GOAL_COMPLETED, on the Education/Faith engine.',
+  },
+
+  // -- PHASE F (`PF-E-003`) — the parent-facing halves, which had copy and no row
+
+  GOAL_COMPLETED_PARENT: {
+    quietHours: 'DEFER',
+    audience: 'PARENT',
+    category: 'GOAL',
+    why:
+      'PF-E-003, and the defect is what this row is for: `COPY_CATALOGUE` has carried the sentence the product advertises («محمد أكمل هدفه في سورة الملك، وهذه ثالث مرة هذا الأسبوع») since F6-002, and this table had no entry for it — so its category was the raw type string, its per-category cap counted against nothing, and its quiet-hours class was the unconsidered default. Same fact as DAILY_GOAL_COMPLETED, told to the other audience: the completion row exists and the receipt is still a receipt in the morning.',
+  },
+  GOAL_STALLED_PARENT: {
+    quietHours: 'DEFER',
+    audience: 'PARENT',
+    category: 'GOAL',
+    why:
+      'The «بدأ محمد هدف العلوم ولم يكمله» sentence. DEFER rather than SUPPRESS even though it describes a day that is over, because the ACTION it invites — a nudge — belongs to the next morning rather than to the night the goal stalled in, and because dropping only the unwelcome half of the goal surface would make the parent stream a systematically optimistic view of the week (the ACHIEVEMENT_REJECTED argument, one audience over).',
   },
 
   // -- REMINDER: the entire SUPPRESS list, and why it is the whole of it -----

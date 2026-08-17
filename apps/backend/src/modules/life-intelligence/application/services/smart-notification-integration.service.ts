@@ -32,6 +32,22 @@ export interface INotificationOutcome {
   targetAudience: 'PARENT' | 'CHILD';
   decision: 'SEND' | 'DEFER' | 'SUPPRESS';
   reason?: string;
+  /**
+   * PHASE F (`F6-003`) — THE ROOT-CAUSE STRING, and it exists for exactly one
+   * caller.
+   *
+   * `reason` is a CLOSED vocabulary a dashboard can count (`DELIVERY_ERROR`,
+   * `DAILY_MAX`, `QUIET_HOURS`). `detail` is the underlying message, present
+   * ONLY on the two failure branches, and it is here because
+   * `NotificationRewardConsumer` turns a `DELIVERY_ERROR` into a thrown error
+   * so the relay retries — and `outbox_messages.last_error` has to say
+   * «notification store unavailable», not «something went wrong». An operator
+   * reading a dead letter needs the cause, not the category.
+   *
+   * Optional and never set on a success path, so nothing that existed before
+   * this phase reads or writes it.
+   */
+  detail?: string;
 }
 
 /**
@@ -440,15 +456,14 @@ export class SmartNotificationIntegrationService {
             reason: 'ALREADY_NOTIFIED',
           };
     } catch (err) {
-      this.logger.warn(
-        `Failed to deliver Smart Notification (${candidate.type})`,
-        err instanceof Error ? err.message : err,
-      );
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to deliver Smart Notification (${candidate.type})`, detail);
       return {
         type: candidate.type,
         targetAudience: candidate.targetAudience,
         decision: 'SUPPRESS',
         reason: 'DELIVERY_ERROR',
+        detail,
       };
     }
   }

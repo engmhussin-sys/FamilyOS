@@ -22,11 +22,28 @@
  *          the public entry point Phase F shipped, in the same booted app,
  *          against the same PostgreSQL.
  *
- * THE TWO ANSWERS DISAGREE, AND THAT DISAGREEMENT IS THIS PHASE'S PRINCIPAL
- * FINDING — recorded as PF-E-001, measured here rather than argued. Nothing in
- * this file is weakened to make it pass: every expectation below is what the
- * product does today, pinned exactly, so that wiring the producer to the engine
- * turns these assertions red and forces a deliberate update.
+ * THE TWO ANSWERS DISAGREED, AND THAT DISAGREEMENT WAS THIS SUITE'S PRINCIPAL
+ * FINDING — recorded as PF-E-001, measured here rather than argued. Every
+ * expectation was pinned exactly, so that wiring the producer to the engine
+ * would turn these assertions red and force a deliberate update.
+ *
+ * ---------------------------------------------------------------------------
+ * `F6-003` — THE PRODUCER IS WIRED, AND THIS FILE IS THE UPDATE IT FORCED.
+ *
+ * ACT I is unchanged as a SCENARIO — the same six HTTP calls, the same outbox
+ * drain, no test double anywhere — and its assertions are rewritten to the new
+ * answer, each one carrying the line it replaced so the diff is the evidence:
+ *
+ *   BEFORE  body = «حصل طفلك على مكافأة جديدة اليوم…»   ·  decisions = 0 rows
+ *   AFTER   body = «حصل محمد على مكافأة جديدة اليوم…»   ·  decisions = 1 row,
+ *           trigger DOMAIN_EVENT, decision SEND, outcome SEND, score ≥ 25, and
+ *           the eight components reconciling to the stored total.
+ *
+ * ACT I AND ACT II NOW AGREE, which is the whole point: the product path and
+ * the engine's public entry point produce the same shape of row, because they
+ * are the same code. Two households are still used so the two acts' scoring
+ * histories stay separate.
+ * ---------------------------------------------------------------------------
  *
  * WHAT «CONTEXTUAL, NOT A GENERIC TEMPLATE» IS ASSERTED TO MEAN, so it is not a
  * matter of taste:
@@ -178,52 +195,89 @@ describeGolden('GOLDEN E2E-05 — what the parent is actually told, and whether 
     });
 
     /**
-     * PF-E-001, HALF ONE — THE COPY.
+     * PF-E-001, HALF ONE — THE COPY. **CLOSED BY `F6-003`, AND THIS IS THE
+     * PROOF, FROM THE PRODUCTION PATH.**
      *
-     * `NotificationRewardConsumer` composes the parent's sentence itself, inline,
-     * as two constant strings. It cannot say the child's name and it cannot say
-     * the goal, because it has neither: it holds a `REWARD_GRANTED` envelope and
-     * calls `notifyEvent` with literals.
+     * WHAT THIS TEST SAID BEFORE, VERBATIM:
      *
-     * The engine's `COPY_CATALOGUE` DOES contain a `REWARD_GRANTED` entry that
-     * interpolates `{childName}`, and `GOAL_COMPLETED_PARENT` contains the
-     * «ثالث مرة هذا الأسبوع» sentence the Phase F report advertises — and no
-     * producer in the codebase emits either. See ACT II.
+     *     expect(row.body).toBe('حصل طفلك على مكافأة جديدة اليوم. …');
+     *     expect(row.body).not.toContain(home.childName);
+     *
+     * `NotificationRewardConsumer` composed the parent's sentence itself,
+     * inline, as two constant strings. It could not say the child's name and it
+     * could not say the goal, because it had neither: it held a
+     * `REWARD_GRANTED` envelope and called `notifyEvent` with literals. The
+     * assertion was pinned to the byte on purpose, with a note saying that
+     * wiring the engine SHOULD turn it red and force a deliberate update. It
+     * did, and this is that update.
+     *
+     * NOTHING ABOVE THIS TEST CHANGED. The loop is the same HTTP loop — goal,
+     * start, submit, approve, drain — and no test double is involved. What
+     * changed is one call inside the consumer, from `notifyEvent` to
+     * `handleEvent`, and the sentence is now rendered from
+     * `COPY_CATALOGUE.REWARD_GRANTED` with `{childName}` resolved by the
+     * context assembler.
      */
-    it('MEASURED — the sentence the parent receives is a CONSTANT: no child, no goal, no number', async () => {
+    it('the sentence the parent receives NAMES THE CHILD, and comes from the catalogue', async () => {
       const [row] = await notificationRows();
 
-      // Pinned to the byte. If somebody wires the engine, this fails, and it
-      // SHOULD fail — the copy changing is the whole point of wiring it.
       expect(row.title).toBe('مكافأة جديدة');
-      expect(row.body).toBe('حصل طفلك على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.');
+      // «حصل محمد على …» rather than «حصل طفلك على …». Pinned to the byte
+      // again, in the new state, so the NEXT change to the product's copy is
+      // also deliberate.
+      expect(row.body).toBe(`حصل ${home.childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.`);
+      expect(row.body).toContain(home.childName);
 
-      // «طفلك» — "your child" — in a household with three children.
-      expect(row.body).not.toContain(home.childName);
-      expect(row.body).not.toContain('الملك');
-      expect(row.body).not.toMatch(/\d/);
+      // Still Arabic, still no raw enum, still no unresolved placeholder — the
+      // three properties that were true of the literal and must stay true of
+      // the rendered sentence.
+      expect(row.body).toMatch(/[؀-ۿ]/);
+      expect(row.body).not.toMatch(/[A-Z]{3,}_[A-Z_]+/);
+      expect(row.body).not.toMatch(/[{}]/);
     });
 
     /**
-     * PF-E-001, HALF TWO — THE EXPLANATION.
+     * PF-E-001, HALF TWO — THE EXPLANATION. **CLOSED BY `F6-003`.**
      *
-     * Phase F built `notification_decisions` so that «why did / did not this
-     * notification arrive» is answerable, and so that the suppression rate is
-     * computable at all (`notifications` only holds what WAS sent). Every real
-     * notification the product sends bypasses that ledger, so both numbers
-     * describe an empty set in production.
+     * WHAT THIS TEST SAID BEFORE: `expect(await decisionRows()).toHaveLength(0)`
+     * and an empty `GET /notifications/decisions`. Phase F built
+     * `notification_decisions` so that «why did / did not this notification
+     * arrive» is answerable and so that the suppression rate is computable at
+     * all — `notifications` only holds what WAS sent — and every real
+     * notification the product sent bypassed that ledger, so both numbers
+     * described an empty set in production.
+     *
+     * The row below is written by the PRODUCTION PATH: no engine call appears
+     * anywhere in ACT I. The only thing this scenario did was approve an
+     * achievement over HTTP and drain the outbox.
      */
-    it('MEASURED — the product wrote a notification and recorded NO decision: the explainability ledger is empty', async () => {
-      expect(await decisionRows()).toHaveLength(0);
+    it('the product wrote a notification AND recorded the decision behind it — the ledger is populated from production', async () => {
+      const rows = await decisionRows();
+      expect(rows).toHaveLength(1);
 
-      // And the parent-facing read of that ledger is therefore an empty list —
-      // the endpoint works; there is simply nothing for the product to show.
+      const [row] = rows;
+      expect(row.event_type).toBe('REWARD_GRANTED');
+      expect(row.target_audience).toBe('PARENT');
+      // The four columns the brief names, from a path no test called directly.
+      expect(row.trigger).toBe('DOMAIN_EVENT');
+      expect(row.decision).toBe('SEND');
+      expect(['SCORE_ABOVE_SEND_THRESHOLD', 'SCORE_IN_DEFER_BAND']).toContain(row.reason);
+      expect(Number(row.score)).toBeGreaterThanOrEqual(25);
+      expect(row.priority_band).toBeTruthy();
+      // And the ENGINE's verdict and the PIPELINE's outcome agree, which is
+      // what «the notification actually arrived» looks like in this table.
+      expect(row.outcome).toBe('SEND');
+      assertTheArithmeticReconciles(row);
+
+      // And the parent-facing read of that ledger now returns it.
       const decisions = await request(world.http)
         .get(`${P}/notifications/decisions`)
         .set(asParent(home));
       expect(decisions.status).toBe(200);
-      expect(decisions.body).toHaveLength(0);
+      expect(decisions.body).toHaveLength(1);
+      expect(decisions.body[0].decision).toBe('SEND');
     });
+
   });
 
   // =========================================================================
@@ -324,45 +378,83 @@ describeGolden('GOLDEN E2E-05 — what the parent is actually told, and whether 
     });
 
     /**
-     * PF-E-003 — MEASURED, PINNED, AND NOT WEAKENED.
+     * PF-E-003 — **CLOSED BY `F6-003`**, and the two rows now tell two
+     * DIFFERENT stories, which is the whole distinction the defect erased.
      *
-     * The sentence above is the one the Phase F report puts forward as the
-     * example of a meaningful parent notification. Driven through the real
-     * engine it is composed correctly and then SUPPRESSED, because
-     * `GOAL_COMPLETED_PARENT` is a copy key with no entries anywhere else:
-     * not in `notification-class.ts` (so its category is the raw type string
-     * and its quiet-hours class is the default), not in `URGENCY_BY_TYPE` (so
-     * it takes `DEFAULT_URGENCY`), and not in `ACHIEVEMENT_BASELINE_BY_TYPE`
-     * (so «a child completed a goal» is worth ZERO on the achievement axis).
+     * WHAT THIS TEST ASSERTED BEFORE: both rows `SUPPRESS` / `SCORE_BELOW_FLOOR`
+     * with `score < 25` and `ACHIEVEMENT_VALUE = 0`. The sentence the Phase F
+     * report puts forward as ITS example of a meaningful parent notification was
+     * composed correctly and then dropped, every time, because
+     * `GOAL_COMPLETED_PARENT` was a copy key with no row anywhere else: not in
+     * `notification-class.ts` (so its category was the raw type string), not in
+     * `URGENCY_BY_TYPE` (so it took `DEFAULT_URGENCY`), and not in
+     * `ACHIEVEMENT_BASELINE_BY_TYPE` (so «a child completed a goal» was worth
+     * ZERO on the achievement axis). ≈23 against a floor of 25.
      *
-     * The arithmetic lands around 23 against a floor of 25. The scenario asserts
-     * the SUPPRESS rather than tolerating it, so that adding the three missing
-     * table entries — the fix — turns this red and is noticed.
+     * THE FIX IS THREE DATA ROWS and it is asserted here in the only way that
+     * matters — by what the household actually receives:
+     *
+     *   THE FIRST completion is now SENT. Same event, same household, same
+     *   instant; the achievement axis is no longer zero and the score clears
+     *   the floor.
+     *
+     *   THE SECOND, fifteen minutes later, is still SUPPRESSED — and the
+     *   scenario asserts WHY, because «suppressed» meaning two different things
+     *   is exactly what made the defect invisible. It is refused by the
+     *   FATIGUE_PENALTY: this household has now had two notifications in one
+     *   hour against a cap of three, and the ACHIEVEMENT axis is IDENTICAL to
+     *   the first row's. That is the guard working as designed on a real load,
+     *   not a table with a hole in it, and the stored components say which.
      */
-    it('PF-E-003 — and that advertised sentence is then SUPPRESSED, because its type is in no scoring table', async () => {
+    it('PF-E-003 — the advertised sentence now ARRIVES, and a second one is refused by the household load, not by a missing table', async () => {
       const rows = (await decisionRows(lab.familyId)).filter(
         (row) => row.event_type === 'GOAL_COMPLETED_PARENT',
       );
       expect(rows).toHaveLength(2);
 
-      for (const row of rows) {
-        expect(row.decision).toBe('SUPPRESS');
-        expect(row.reason).toBe('SCORE_BELOW_FLOOR');
-        expect(Number(row.score)).toBeLessThan(25);
-        assertTheArithmeticReconciles(row);
+      // THE ROW THAT COULD NOT EXIST BEFORE.
+      const [first, second] = rows;
+      expect(first.decision).toBe('SEND');
+      expect(Number(first.score)).toBeGreaterThanOrEqual(25);
+      expect(first.outcome).toBe('SEND');
+      assertTheArithmeticReconciles(first);
 
-        // The engine suppressed, so the pipeline was never called and there is
-        // NO outcome — which is itself the honest record, not a missing value.
-        expect(row.outcome).toBeNull();
+      // THE MISSING TABLE ROW, now visible as a POSITIVE contribution in the
+      // stored arithmetic. This is the byte-level proof of the fix: the axis
+      // that read 0 for «a child completed a goal» now reads the same baseline
+      // the child's own `DAILY_GOAL_COMPLETED` carries.
+      const firstComponents = new Map(componentsOf(first).map((c) => [c.name, c]));
+      expect(Number(firstComponents.get('ACHIEVEMENT_VALUE').contribution)).toBeGreaterThan(0);
+      expect(firstComponents.get('URGENCY').note).toContain('GOAL_COMPLETED_PARENT');
 
-        // The three absent table entries, visible in the stored arithmetic.
-        const byName = new Map(componentsOf(row).map((c) => [c.name, c]));
-        expect(Number(byName.get('ACHIEVEMENT_VALUE').contribution)).toBe(0);
+      // THE SECOND — suppressed, and suppressed for a NAMED, DIFFERENT reason.
+      expect(second.decision).toBe('SUPPRESS');
+      expect(second.reason).toBe('SCORE_BELOW_FLOOR');
+      // The engine suppressed, so the pipeline was never called and there is
+      // NO outcome — which is itself the honest record, not a missing value.
+      expect(second.outcome).toBeNull();
+      assertTheArithmeticReconciles(second);
+
+      const secondComponents = new Map(componentsOf(second).map((c) => [c.name, c]));
+      // NOT A HOLE: every positive axis is identical to the first row's — same
+      // type, same tables, same answer. What differs is one penalty, and it is
+      // a fact about this household rather than about this type.
+      for (const axis of ['URGENCY', 'ACHIEVEMENT_VALUE', 'PARENT_PREFERENCE']) {
+        expect(Number(secondComponents.get(axis).contribution)).toBe(
+          Number(firstComponents.get(axis).contribution),
+        );
       }
+      expect(Number(secondComponents.get('FATIGUE_PENALTY').contribution)).toBeLessThan(
+        Number(firstComponents.get('FATIGUE_PENALTY').contribution),
+      );
+      // And the penalty names the load in its own note, so «why did the second
+      // one not arrive» is answerable from the row without this file open.
+      expect(secondComponents.get('FATIGUE_PENALTY').note).toContain('hour=2/3');
 
-      // And the parent received nothing for either of them.
+      // And the parent received the first one and not the second.
       const notifications = await notificationRows(lab.familyId);
-      expect(notifications).toHaveLength(1); // the REWARD_GRANTED one only
+      expect(notifications).toHaveLength(2); // REWARD_GRANTED + the first goal
+      expect(notifications.map((n) => n.type)).toContain('GOAL_COMPLETED_PARENT');
     });
 
     it('the ledger cannot leak a child: no title column, no body column, and no name in any stored value', async () => {
@@ -391,10 +483,19 @@ describeGolden('GOLDEN E2E-05 — what the parent is actually told, and whether 
         expect(typeof decision.score).toBe('number');
       }
 
-      // The household from ACT I has no decisions at all — PF-E-001 again, and
-      // proof that this read is tenant-scoped rather than global.
+      // AND THE TENANT SCOPE, restated on the new state. This line used to read
+      // `toHaveLength(0)` and prove two things at once — that the read is
+      // tenant-scoped, and PF-E-001's «the product records nothing». The second
+      // is closed, so the assertion now proves only the first: ACT I's
+      // household has its OWN decisions, written by the production path, and
+      // none of ACT II's appear in them.
       const theirs = await request(world.http).get(`${P}/notifications/decisions`).set(asParent(home));
-      expect(theirs.body).toHaveLength(0);
+      expect(theirs.status).toBe(200);
+      expect(theirs.body.length).toBeGreaterThanOrEqual(1);
+      const mineIds = new Set(mine.body.map((d: any) => d.id));
+      for (const decision of theirs.body) {
+        expect(mineIds.has(decision.id)).toBe(false);
+      }
     });
 
     it('the same cause fired again writes NO second decision and NO second notification', async () => {

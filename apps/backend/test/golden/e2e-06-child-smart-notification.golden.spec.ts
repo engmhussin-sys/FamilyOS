@@ -108,11 +108,19 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
       h.familyId,
     );
 
-  const decisionRows = (h: GoldenHousehold): Promise<any[]> =>
-    world.raw<any[]>(
-      `SELECT * FROM "notification_decisions" WHERE "family_id" = $1::uuid ORDER BY "created_at", "id"`,
-      h.familyId,
-    );
+  const decisionRows = (h: GoldenHousehold, eventType?: string): Promise<any[]> =>
+    eventType
+      ? world.raw<any[]>(
+          `SELECT * FROM "notification_decisions"
+             WHERE "family_id" = $1::uuid AND "event_type" = $2
+             ORDER BY "created_at", "id"`,
+          h.familyId,
+          eventType,
+        )
+      : world.raw<any[]>(
+          `SELECT * FROM "notification_decisions" WHERE "family_id" = $1::uuid ORDER BY "created_at", "id"`,
+          h.familyId,
+        );
 
   const fire = (input: NotificationEventInput) =>
     runWithTenant({ familyId: input.familyId, actorType: 'SYSTEM', actorId: 'golden-e2e-06' }, () =>
@@ -260,7 +268,10 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
       // FROM LOCALIZATION — byte-identical to what the catalogue renders for
       // this key, this tone band and this locale. Nothing was typed in a
       // service, and no enum or unresolved placeholder survived.
-      const [decision] = await decisionRows(older);
+      // FILTERED BY CAUSE. ACT I's reward loop now writes decision rows of its
+      // own (`F6-003`), so «the first row for this household» is no longer the
+      // same thing as «the row for this streak».
+      const [decision] = await decisionRows(older, 'STREAK_ACHIEVED');
       expect(decision.age_band).toBe('11-13');
       expect(decision.locale).toBe('ar');
       const rendered = renderNotificationCopy({
@@ -296,7 +307,7 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
       const [message] = await childMessageRows(younger);
       bodies.younger = message.body;
 
-      const [decision] = await decisionRows(younger);
+      const [decision] = await decisionRows(younger, 'STREAK_ACHIEVED');
       expect(decision.age_band).toBe('5-7');
       expect(decision.locale).toBe('ar');
 

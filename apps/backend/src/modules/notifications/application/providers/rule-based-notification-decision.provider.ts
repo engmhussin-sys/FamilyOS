@@ -61,7 +61,7 @@ import {
 } from '../../domain/engine/notification-decision.types';
 import type { NotificationPolicy } from '../../domain/engine/notification-policy';
 import { COPY_CATALOGUE, GENERIC_COPY_KEY, ordinal } from '../../domain/engine/notification-copy';
-import { scoreNotification } from '../../domain/engine/notification-scoring';
+import { bandForScore, scoreNotification } from '../../domain/engine/notification-scoring';
 
 /**
  * Categories a FREE household does not receive. Deliberately EMPTY today and
@@ -149,12 +149,25 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
         Math.max(score.total, policy.scoring.thresholdHigh),
         'SAFETY_CRITICAL_OVERRIDE',
         score,
+        // PHASE F (`F6-003`) — CRITICAL BY CONSTRUCTION, not by arithmetic.
+        //
+        // `priorityForBand('HIGH')` is `HIGH`, and `deliverNow` folds HIGH down
+        // to NORMAL when it writes the row. So deriving this branch's priority
+        // from its band would have stored `ACCESSIBILITY_DISABLED` — the alert
+        // that says the entire enforcement surface is off — at the same
+        // priority as a badge, and the parent app renders on that column.
+        // Measured by `quiet-hours-deferral.e2e.spec.ts §8`, which has pinned
+        // `priority = 'CRITICAL'` on that row since Phase E.
+        //
+        // The DELIVER class IS the statement «this is safety-critical»; letting
+        // a weighted sum quietly demote it is `PD-N-004` in a third costume.
+        'CRITICAL',
       );
     }
 
     // ---- 3..5. Score, band, verdict ---------------------------------------
     const score = scoreNotification(context, policy, category);
-    const { verdict, reason, band } = this.verdictFor(context, score);
+    const { verdict, reason, band } = this.verdictFor(context, score, policy);
 
     return this.output(context, category, audience, verdict, band, score.total, reason, score);
   }
@@ -195,6 +208,7 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
   private verdictFor(
     context: NotificationContext,
     score: NotificationScore,
+    policy: NotificationPolicy,
   ): { verdict: NotificationDecisionVerdict; reason: NotificationDecisionReason; band: NotificationPriorityBand } {
     // THE QUIET-HOURS CLASS IS ASKED BEFORE THE FLOOR, and the order is a
     // reporting decision rather than a behavioural one: both branches suppress a
@@ -208,10 +222,53 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
       if (klass === 'SUPPRESS') {
         return { verdict: 'SUPPRESS', reason: 'QUIET_HOURS_CLASS_SUPPRESS', band: 'SUPPRESS' };
       }
-      if (score.band === 'SUPPRESS') {
+      /**
+       * PHASE F (`F6-003`) — THE LINE THAT WOULD HAVE RE-OPENED `PC-D-005`,
+       * MEASURED THE DAY A PRODUCER WAS FINALLY WIRED TO THIS PROVIDER.
+       *
+       * What was here: `if (score.band === 'SUPPRESS') return SUPPRESS`. Read
+       * with the penalty table beside it, that line says: inside quiet hours,
+       * subtract 20 points and drop anything left under 25. A `REWARD_GRANTED`
+       * in a bare household scores 38 by day and 18 at 22:00; a
+       * `SCREEN_TIME_EXCEEDED` scores 31 and 11. So EVERY DEFER-CLASS TYPE IN
+       * THE PRODUCT would have been DROPPED inside the ten-hour window instead
+       * of queued — which is `PC-D-005` exactly, one layer up, in the layer
+       * that was added to explain `PC-D-005`.
+       *
+       * It was invisible for a whole phase because nothing called this
+       * provider. `quiet-hours-deferral.e2e.spec.ts §8` turned red on the first
+       * commit that did.
+       *
+       * THE DISTINCTION THE FIX DRAWS. Inside quiet hours there are two
+       * questions and they have different owners:
+       *
+       *   «should this exist at all?»  -> `notification-class.ts`. SUPPRESS
+       *       means the premise expires overnight (a hydration nudge);
+       *       DEFER means the fact survives the night (an earned reward).
+       *   «how loud is it?»            -> the score.
+       *
+       * The quiet-hours penalty belongs to the second question and was
+       * answering the first. So the band is now computed on the score the
+       * notification WILL HAVE WHEN IT ARRIVES — in the morning, outside the
+       * window — because the morning is when a parent reads it, and a fact
+       * held until 07:00 is not worth less at 07:00 for having been true at
+       * 22:00.
+       *
+       * `SCORE_BELOW_FLOOR` REMAINS REACHABLE HERE, and that matters: a
+       * genuine duplicate (−40) or a household already at its caps (−25) still
+       * falls under the floor on its own merits and is still dropped with a
+       * reason. Only the hour itself has stopped being able to delete a fact.
+       *
+       * THE STORED SCORE IS UNCHANGED — it is still the true sum of the eight
+       * components, so `notification_decisions.explanation` still reconciles to
+       * `notification_decisions.score` and the penalty is still visible in the
+       * row. What changed is which number the VERDICT reads.
+       */
+      const arrivalBand = bandForScore(this.scoreOnArrival(score), policy.scoring);
+      if (arrivalBand === 'SUPPRESS') {
         return { verdict: 'SUPPRESS', reason: 'SCORE_BELOW_FLOOR', band: 'SUPPRESS' };
       }
-      return { verdict: 'DEFER', reason: 'QUIET_HOURS_ACTIVE', band: score.band };
+      return { verdict: 'DEFER', reason: 'QUIET_HOURS_ACTIVE', band: arrivalBand };
     }
 
     if (score.band === 'SUPPRESS') {
@@ -222,6 +279,18 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
       reason: score.band === 'LOW' ? 'SCORE_IN_DEFER_BAND' : 'SCORE_ABOVE_SEND_THRESHOLD',
       band: score.band,
     };
+  }
+
+  /**
+   * The score this notification will carry when it is actually delivered — i.e.
+   * with the quiet-hours penalty removed, because by then the quiet hours are
+   * over. Derived from the component the scorer already emits rather than by
+   * re-running the scorer with a doctored context, so there is exactly one
+   * arithmetic and this method cannot disagree with the stored explanation.
+   */
+  private scoreOnArrival(score: NotificationScore): number {
+    const penalty = score.components.find((c) => c.name === 'QUIET_HOURS_PENALTY');
+    return score.total - (penalty ? penalty.contribution : 0);
   }
 
   /**
@@ -276,6 +345,9 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
     score: number,
     reason: NotificationDecisionReason,
     scored: NotificationScore,
+    /** Set ONLY by the DELIVER-class override. Everything else derives its
+     * priority from the band, which is the single origin of «how loud». */
+    priorityOverride?: 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW',
   ): NotificationDecisionOutput {
     const copy = this.copyFor(context, audience);
     const decision: NotificationDecision = {
@@ -288,7 +360,7 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
       notificationType: context.event.eventType,
       category,
       targetAudience: audience,
-      priority: priorityForBand(band),
+      priority: priorityOverride ?? priorityForBand(band),
       providerId: this.id,
     };
     return { decision, copyKey: copy.key, copyVariables: copy.variables };

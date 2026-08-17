@@ -423,6 +423,30 @@ export const COPY_CATALOGUE: Readonly<Record<string, CopyEntry>> = Object.freeze
     },
   },
 
+  /**
+   * PHASE F (`F6-003`) — the parent's half of a badge.
+   *
+   * A SEPARATE KEY rather than a second variant under `BADGE_EARNED`, because
+   * `audience` is a property of the ENTRY in this catalogue and the child's
+   * badge sentence and the parent's are two different messages about one fact.
+   * `rewards-engine.service.ts` notified BOTH audiences long before this phase
+   * — in English, from two string literals — and this key is where the parent
+   * half now comes from.
+   */
+  BADGE_EARNED_PARENT: {
+    category: 'ACHIEVEMENT',
+    audience: 'PARENT',
+    variables: ['childName', 'badgeTitle'],
+    variants: {
+      PARENT: t(
+        'وسام جديد',
+        'حصل {childName} على وسام {badgeTitle}. التفاصيل داخل التطبيق.',
+        'New badge',
+        '{childName} earned the {badgeTitle} badge. Details are in the app.',
+      ),
+    },
+  },
+
   SCREEN_TIME_EXCEEDED: {
     category: 'SAFETY',
     audience: 'PARENT',
@@ -531,6 +555,28 @@ export const COPY_CATALOGUE: Readonly<Record<string, CopyEntry>> = Object.freeze
         'لم تكتمل عملية الدفع الأخيرة. يمكنك المحاولة مرة أخرى من داخل التطبيق.',
         'Payment did not go through',
         'The last payment did not complete. You can try again from the app.',
+      ),
+    },
+  },
+
+  /**
+   * PHASE F (`F6-003`) — the generic runtime alert, which had no sentence here
+   * because its two producers (`RuntimeAlertService`,
+   * `DistressEscalationService`) write to `IRuntimeAlertRepository` DIRECTLY
+   * and never reach the composer. They are the two paths this phase did not
+   * wire — see the Wiring Report's open risks — and the entry exists so that
+   * the day they are routed, the parent reads a sentence rather than `GENERIC`.
+   */
+  RUNTIME_ALERT: {
+    category: 'SYSTEM',
+    audience: 'PARENT',
+    variables: [],
+    variants: {
+      PARENT: t(
+        'تنبيه من الجهاز',
+        'هناك تنبيه جديد من جهاز طفلك. افتح التطبيق للاطلاع عليه.',
+        'Device alert',
+        "There is a new alert from your child's device. Open the app to review it.",
       ),
     },
   },

@@ -8,7 +8,7 @@ import { ConsentCheckService } from '../../../consent-check/application/consent-
 import { BaselineCalculatorService } from './baseline-calculator.service';
 import { PatternDetectionService } from './pattern-detection.service';
 import { AnomalyDetectionService } from './anomaly-detection.service';
-import { SmartNotificationIntegrationService } from './smart-notification-integration.service';
+import { SmartNotificationEngineService } from '../../../notification-engine/application/services/smart-notification-engine.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessDayOfWeek } from '../../../../common/time/family-date';
 import {
@@ -59,7 +59,13 @@ export class DigitalWellbeingEngineService {
      * `IRuntimeAlertRepository` write. That repository is still the writer;
      * this producer simply no longer reaches it without passing the
      * quiet-hours classification first. */
-    private readonly notificationIntegration: SmartNotificationIntegrationService,
+    /**
+     * PHASE F (`F6-003`, closing `PF-E-001`) — the DECISION layer. Phase E
+     * routed this producer through the delivery gate; this phase routes it
+     * through the layer that decides, records and WORDS the notification. The
+     * gate itself is unchanged and is still what the engine calls.
+     */
+    private readonly notifications: SmartNotificationEngineService,
     private readonly consentCheck: ConsentCheckService,
     private readonly baselineCalculator: BaselineCalculatorService,
     private readonly patternDetection: PatternDetectionService,
@@ -239,28 +245,49 @@ export class DigitalWellbeingEngineService {
   ): Promise<void> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const priority: 'CRITICAL' | 'NORMAL' = input.eventType === 'CHILD_REQUEST' ? 'NORMAL' : 'CRITICAL';
-
     // B9 (PA-B-007 / PA-B-008) — the causal key is composed HERE, by the
     // producer, and is unchanged: the discriminator is the EVENT TYPE, so two
     // DIFFERENT critical events inside the same window are two notifications
     // while the same event retried by a flaky device sync is one. Carrying it
     // through the gate is what makes that hold across a deferral too — the key
     // composed at 00:30 is the key inserted at 07:00.
-    await this.notificationIntegration.notifyEvent(
-      childId,
+    // PHASE F (`F6-003`) — AND THE TITLE AND BODY ARE NO LONGER THE CALLER'S.
+    //
+    // `input.title` and `input.body` arrive on a DTO from
+    // `POST /life-intelligence/:childId/wellbeing/critical-event`, which a
+    // paired DEVICE calls. They were written verbatim into a parent's
+    // notification. Routing through the engine replaces them with the
+    // `COPY_CATALOGUE` entry for the type — «انتهى وقت الشاشة المخصص لـ محمد
+    // اليوم. التفاصيل داخل التطبيق.» — so the parent-facing sentence is written
+    // in this repository rather than supplied by a client, and it names the
+    // child, which the DTO could not do without being told the name.
+    //
+    // The caller's text is NOT discarded: `input.title` still labels the
+    // timeline entry below, where it is the device's own account of what it
+    // observed and is read inside the app by an authenticated parent.
+    //
+    // AND THE `priority` THIS METHOD USED TO COMPUTE IS GONE, deliberately.
+    // It was `eventType === 'CHILD_REQUEST' ? 'NORMAL' : 'CRITICAL'` — the
+    // pre-Phase-D implicit rule, kept alive as a fallback for a type nobody
+    // had classified. All five of this producer's types ARE classified by
+    // name in `notification-class.ts` (two DELIVER, three DEFER, each with a
+    // written justification), so `quietHoursClassOf` reaches the table before
+    // it ever reaches the CRITICAL rule and the value could not change any
+    // outcome. Priority now follows the SCORED BAND, which is the axis it was
+    // pretending to be — and the safety bypass is unchanged, because the
+    // provider's DELIVER override reads the type, never the priority.
+    await this.notifications.handleEvent({
       familyId,
-      {
-        type: input.eventType,
-        priority,
-        title: input.title,
-        body: input.body,
-        targetAudience: 'PARENT',
-        data: { alertType: input.eventType, ...input.metadata },
-        sourceEventId: forRecurringSignal('wellbeing', childId, input.eventType, now),
-      },
+      childId,
+      eventType: input.eventType,
+      sourceEventId: forRecurringSignal('wellbeing', childId, input.eventType, now),
+      trigger: 'SAFETY_SIGNAL',
+      // PHASE E (`PD-N-004`) — the producer's payload, carried verbatim into
+      // `notifications.data`, where the parent app reads a wellbeing alert's
+      // specifics. The engine passes it through untouched.
+      data: { alertType: input.eventType, ...input.metadata },
       now,
-    );
+    });
 
     if (input.eventType !== 'CHILD_REQUEST') {
       await this.timeline.record({

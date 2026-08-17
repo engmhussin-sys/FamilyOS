@@ -4,7 +4,7 @@ import { RewardsEngineService } from '../../src/modules/life-intelligence/applic
 import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-rewards.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
-import { SmartNotificationIntegrationService } from '../../src/modules/life-intelligence/application/services/smart-notification-integration.service';
+import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
 import { FamilyDateService } from '../../src/common/time/family-date.service';
 import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
@@ -21,7 +21,16 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const timelineMock = { record: jest.fn() };
-  const notificationIntegrationMock = { notifyEvent: jest.fn() };
+  /**
+   * PHASE F (`F6-003`) — the double is now the DECISION LAYER, not the delivery
+   * pipeline. `RewardsEngineService` no longer knows how a notification is
+   * worded or who it is for; it names a cause and hands over a key. What this
+   * suite asserts about that has NOT been weakened — every «notifies», «does
+   * not notify» and «not twice» expectation below is intact, restated against
+   * `handleEvent` and, where it used to check a hardcoded Arabic title, it now
+   * checks the STRONGER property: that the producer supplies NO copy at all.
+   */
+  const notificationEngineMock = { handleEvent: jest.fn() };
   // B4: the engine now counts maxPerDay/maxPerWeek on the FAMILY's business
   // day, so it depends on the single date authority B1+B2 introduced. Every
   // rule in this suite is uncapped, so none of these is ever called — which is
@@ -51,7 +60,15 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    notificationIntegrationMock.notifyEvent.mockResolvedValue({ type: 'x', targetAudience: 'CHILD', decision: 'SEND' });
+    notificationEngineMock.handleEvent.mockResolvedValue({
+      decision: { verdict: 'SEND', targetAudience: 'CHILD', score: 40, reason: 'SCORE_IN_DEFER_BAND' },
+      decisionId: 'decision-1',
+      outcome: { type: 'x', targetAudience: 'CHILD', decision: 'SEND' },
+      title: 'x',
+      body: 'y',
+      aiRewritten: false,
+      aiFailed: false,
+    });
     repositoryMock.listActiveRewardRules.mockResolvedValue([xpRule]);
     repositoryMock.getOrCreateAccount.mockResolvedValue({ childId, xp: 0, coins: 0, stars: 0, level: 1 });
 
@@ -61,7 +78,7 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
         { provide: PrismaRewardsRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
-        { provide: SmartNotificationIntegrationService, useValue: notificationIntegrationMock },
+        { provide: SmartNotificationEngineService, useValue: notificationEngineMock },
         { provide: FamilyDateService, useValue: familyDateMock },
         // PHASE D (GROWTH). `GrowthEventEmitter.emit` never throws by contract
         // (see its class docstring: analytics must never be able to fail a
@@ -203,8 +220,24 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
 
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(childId, familyId, expect.objectContaining({ targetAudience: 'CHILD', type: 'BADGE_EARNED' }));
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(childId, familyId, expect.objectContaining({ targetAudience: 'PARENT', type: 'BADGE_EARNED' }));
+      // PHASE F (`F6-003`) — TWO TYPES, ONE CAUSE. The audience used to be a
+      // positional argument beside a single `BADGE_EARNED` type, which is how
+      // one name came to mean two different messages to two different people.
+      // The catalogue entry declares the audience now, so the parent's badge
+      // sentence has its own key — and the SHARED `sourceEventId` is what keeps
+      // «one cause» true across the split.
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ childId, familyId, eventType: 'BADGE_EARNED' }),
+      );
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ childId, familyId, eventType: 'BADGE_EARNED_PARENT' }),
+      );
+      const [childCall, parentCall] = notificationEngineMock.handleEvent.mock.calls.map((c) => c[0]);
+      expect(childCall.sourceEventId).toBe(parentCall.sourceEventId);
+      // The badge's own title reaches the SENTENCE as a variable, not as a
+      // pre-written string: «كسبت وسام First Habit 🏅» for a young child and a
+      // different register for a teenager, both from one catalogue key.
+      expect(childCall.variables).toEqual({ badgeTitle: 'First Habit' });
     });
 
     it('a level-up notifies the CHILD', async () => {
@@ -214,7 +247,9 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
 
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(childId, familyId, expect.objectContaining({ type: 'LEVEL_UP', targetAudience: 'CHILD' }));
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ childId, familyId, eventType: 'LEVEL_UP', variables: { level: expect.any(Number) } }),
+      );
     });
 
     /**
@@ -244,17 +279,25 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
 
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(1);
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledWith(
-        childId,
-        familyId,
-        expect.objectContaining({ type: 'REWARD_GRANTED', targetAudience: 'PARENT' }),
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(1);
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ childId, familyId, eventType: 'REWARD_GRANTED', trigger: 'DOMAIN_EVENT' }),
       );
-      // CONTEXT §3 principle 8: the push carries no child name and no habit
-      // title — it is a pointer, and the app fetches the detail over an
-      // authenticated GET.
-      const sent = notificationIntegrationMock.notifyEvent.mock.calls[0][2];
-      expect(sent.title).toBe('مكافأة جديدة');
+      // PHASE F (`F6-003`) — THE STRONGER ASSERTION THAT REPLACED
+      // `expect(sent.title).toBe('مكافأة جديدة')`.
+      //
+      // That line pinned a literal this file used to own. Owning it was the
+      // defect: the same sentence was written out a second time in
+      // `notification-reward.consumer.ts`, kept in sync by a comment, and
+      // neither copy could name the child because neither producer knew it.
+      // The producer now supplies NO user-facing text whatsoever — asserted
+      // here, so a future edit that re-introduces a literal fails loudly rather
+      // than quietly re-forking the product's copy.
+      const sent = notificationEngineMock.handleEvent.mock.calls[0][0];
+      expect(sent.title).toBeUndefined();
+      expect(sent.body).toBeUndefined();
+      expect(sent.targetAudience).toBeUndefined();
+      expect(sent.sourceEventId).toBeTruthy();
     });
 
     /**
@@ -276,7 +319,7 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
         announcedViaOutbox: true,
       });
 
-      expect(notificationIntegrationMock.notifyEvent).not.toHaveBeenCalled();
+      expect(notificationEngineMock.handleEvent).not.toHaveBeenCalled();
       // The TIMELINE entry is still written on both paths — it is the half the
       // outbox path never had.
       expect(timelineMock.record).toHaveBeenCalledWith(
@@ -291,7 +334,7 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'dup-key' });
 
-      expect(notificationIntegrationMock.notifyEvent).not.toHaveBeenCalled();
+      expect(notificationEngineMock.handleEvent).not.toHaveBeenCalled();
     });
 
     it('CRITICAL: a retry (same idempotencyKey, second call) does NOT notify a second time', async () => {
@@ -304,11 +347,11 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
       // milestone LEVEL_UP notification to the child, and B4's single
       // REWARD_GRANTED notification to the parent. The NUMBER is not the
       // property under test — the property is that the RETRY below adds none.
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(2);
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(2);
 
       repositoryMock.applyEarn.mockResolvedValueOnce(false); // the retry — correctly rejected as a duplicate
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'retry-key' });
-      expect(notificationIntegrationMock.notifyEvent).toHaveBeenCalledTimes(2); // still 2, not 4
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(2); // still 2, not 4
     });
 
     it('CRITICAL: a FAILED reward (real error, not a duplicate) does NOT notify — the error propagates before notification code is ever reached', async () => {
@@ -318,14 +361,14 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
         service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} }),
       ).rejects.toThrow('transient DB error');
 
-      expect(notificationIntegrationMock.notifyEvent).not.toHaveBeenCalled();
+      expect(notificationEngineMock.handleEvent).not.toHaveBeenCalled();
     });
 
     it('a notification delivery failure never blocks the reward grant itself — best-effort, matching every other side-effect in this file', async () => {
       const bigXpRule = { ...xpRule, rewardAmountOrBadgeId: '10000' };
       repositoryMock.listActiveRewardRules.mockResolvedValue([bigXpRule]);
       repositoryMock.applyEarn.mockResolvedValue(true);
-      notificationIntegrationMock.notifyEvent.mockRejectedValueOnce(new Error('notification service down'));
+      notificationEngineMock.handleEvent.mockRejectedValueOnce(new Error('notification service down'));
 
       const count = await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
 

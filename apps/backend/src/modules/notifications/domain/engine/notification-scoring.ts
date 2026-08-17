@@ -54,7 +54,7 @@ import {
  * everything to CRITICAL should not thereby win the ranking. Types not listed
  * fall to `DEFAULT_URGENCY`, which is the middle rather than the top.
  */
-const URGENCY_BY_TYPE: Readonly<Record<string, number>> = Object.freeze({
+export const URGENCY_BY_TYPE: Readonly<Record<string, number>> = Object.freeze({
   // Safety: the only 1.0s in the product, and they are the DELIVER class.
   ACCESSIBILITY_DISABLED: 1,
   PROTECTION_BYPASS_ATTEMPT: 1,
@@ -75,11 +75,32 @@ const URGENCY_BY_TYPE: Readonly<Record<string, number>> = Object.freeze({
   LEARNING_GOAL_ACHIEVED: 0.35,
   ACHIEVEMENT_VERIFIED: 0.4,
   ACHIEVEMENT_REJECTED: 0.4,
+  // PHASE F (`PF-E-003`) — the parent-facing goal types, and the reward the
+  // CHILD is told about. Each of these was a copy key with no row in this
+  // table, which meant `DEFAULT_URGENCY` and a measured suppression; see
+  // `ACHIEVEMENT_BASELINE_BY_TYPE` below for the half that actually sank them.
+  // The parent's «your child finished a goal» is the same fact as the child's
+  // own DAILY_GOAL_COMPLETED and carries the same urgency; the stalled one is
+  // lower because a nudge has all of tomorrow to be useful.
+  GOAL_COMPLETED_PARENT: 0.35,
+  GOAL_STALLED_PARENT: 0.25,
+  REWARD_GRANTED_CHILD: 0.4,
+  BADGE_EARNED_PARENT: 0.35,
   // Moments. High urgency and LOW durability at the same time — the pair of
   // properties that makes them SUPPRESS-class overnight rather than DEFER.
   HYDRATION_REMINDER: 0.5,
   STUDY_REMINDER: 0.55,
   EXERCISE_ENCOURAGEMENT: 0.3,
+  QUIET_HOURS_DIGEST: 0.4,
+  // Classified in `notification-class.ts` ahead of their producers; listed here
+  // for the same reason it lists them — so the number is chosen by the person
+  // who understands the type rather than by the default, on the day the
+  // producer ships.
+  RUNTIME_ALERT: 0.4,
+  SUBSCRIPTION_EXPIRED: 0.4,
+  PAYMENT_SUCCEEDED: 0.15,
+  AI_RECOMMENDATION: 0.25,
+  FAMILY_INSIGHT: 0.2,
 });
 
 const DEFAULT_URGENCY = 0.4;
@@ -101,7 +122,7 @@ const DEFAULT_URGENCY = 0.4;
  * producer happens to attach is evidence, not the fact. A type that names an
  * achievement HAS achievement value whether or not anyone passed a coin count.
  */
-const ACHIEVEMENT_BASELINE_BY_TYPE: Readonly<Record<string, number>> = Object.freeze({
+export const ACHIEVEMENT_BASELINE_BY_TYPE: Readonly<Record<string, number>> = Object.freeze({
   BADGE_EARNED: 0.75,
   LEVEL_UP: 0.75,
   STREAK_ACHIEVED: 0.7,
@@ -110,6 +131,53 @@ const ACHIEVEMENT_BASELINE_BY_TYPE: Readonly<Record<string, number>> = Object.fr
   LEARNING_GOAL_ACHIEVED: 0.7,
   DAILY_GOAL_COMPLETED: 0.6,
   REWARD_GRANTED: 0.5,
+  /**
+   * PHASE F (`PF-E-003`) — THE ROW WHOSE ABSENCE WAS THE DEFECT, AND THE SECOND
+   * TIME THIS TABLE HAS BEEN INCOMPLETE IN EXACTLY THE SAME WAY.
+   *
+   * The docstring above already tells the BADGE_EARNED version of this story:
+   * a type that NAMES an achievement scored zero on the achievement axis
+   * because no payload happened to be attached, and fell under the floor. The
+   * golden suite then measured the identical shape on the parent side —
+   * `GOAL_COMPLETED_PARENT` composed correctly, scored ≈23 against a floor of
+   * 25, and was suppressed every single time. A parent who is never told their
+   * child completed a goal is the product loop failing silently.
+   *
+   * The value is the CHILD's own `DAILY_GOAL_COMPLETED` baseline, deliberately:
+   * «a child completed a goal» is one fact with one worth, and letting the two
+   * audiences disagree about it would mean the axis measures the recipient
+   * rather than the achievement. The stalled variant is lower but NOT zero —
+   * it is still news about the child's day, and zero is what this table has
+   * twice been wrong by.
+   */
+  GOAL_COMPLETED_PARENT: 0.6,
+  GOAL_STALLED_PARENT: 0.3,
+  REWARD_GRANTED_CHILD: 0.5,
+  BADGE_EARNED_PARENT: 0.75,
+  /**
+   * EXPLICIT ZEROS, and they are the point of the guard test rather than an
+   * oversight it tolerates. «Drink water» celebrates nothing and «protection is
+   * off» is not a celebration either; writing the zero down is how
+   * `notification-scoring-coverage.spec.ts` can tell a considered zero from a
+   * missing row, which is the exact distinction `PF-E-003` turned on.
+   */
+  HYDRATION_REMINDER: 0,
+  STUDY_REMINDER: 0,
+  EXERCISE_ENCOURAGEMENT: 0,
+  ACCESSIBILITY_DISABLED: 0,
+  PROTECTION_BYPASS_ATTEMPT: 0,
+  CHILD_WELLBEING_CHECKIN: 0,
+  POLICY_VIOLATION: 0,
+  SCREEN_TIME_EXCEEDED: 0,
+  CHILD_REQUEST: 0,
+  RUNTIME_ALERT: 0,
+  QUIET_HOURS_DIGEST: 0,
+  SUBSCRIPTION_EXPIRING: 0,
+  SUBSCRIPTION_EXPIRED: 0,
+  PAYMENT_FAILED: 0,
+  PAYMENT_SUCCEEDED: 0,
+  AI_RECOMMENDATION: 0,
+  FAMILY_INSIGHT: 0,
 });
 
 function clamp01(v: number): number {

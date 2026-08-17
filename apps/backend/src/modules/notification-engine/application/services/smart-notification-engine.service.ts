@@ -174,16 +174,20 @@ export class SmartNotificationEngineService {
       // catch is for the paths that are not delivery — a lost connection during
       // the history read — and it exists so that a notification problem still
       // cannot fail the business event, which is this pipeline's standing rule.
-      this.logger.error(
-        `notification.pipeline_failed type=${decision.notificationType} ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+      //
+      // PHASE F (`F6-003`) — the message is CARRIED, not only logged. A caller
+      // whose entire job is the notification (`NotificationRewardConsumer`)
+      // rethrows on `DELIVERY_ERROR` so the outbox retries, and the operator
+      // reading `outbox_messages.last_error` needs the cause rather than the
+      // category. See `INotificationOutcome.detail`.
+      const detail = err instanceof Error ? err.message : String(err);
+      this.logger.error(`notification.pipeline_failed type=${decision.notificationType} ${detail}`);
       outcome = {
         type: decision.notificationType,
         targetAudience: decision.targetAudience,
         decision: 'SUPPRESS',
         reason: 'DELIVERY_ERROR',
+        detail,
       };
     }
 

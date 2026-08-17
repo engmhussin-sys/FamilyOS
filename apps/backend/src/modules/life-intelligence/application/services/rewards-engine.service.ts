@@ -10,7 +10,7 @@ import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-tim
 import { IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { IRewardRule, IRewardRedemption, IRewardsAccount, IRewardTriggerEvent, RewardType } from '../../domain/rewards.types';
 import { computeLevelFromXp, evaluateRewardRules, selectApplicableRules } from './rewards-rules';
-import { SmartNotificationIntegrationService } from './smart-notification-integration.service';
+import { SmartNotificationEngineService } from '../../../notification-engine/application/services/smart-notification-engine.service';
 
 /**
  * Architecture 1.0 §5/§7: full family economy — wallet, ledger,
@@ -50,7 +50,18 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     private readonly repository: PrismaRewardsRepository,
     private readonly childrenService: ChildrenService,
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
-    private readonly notificationIntegration: SmartNotificationIntegrationService,
+    /**
+     * PHASE F (`F6-003`, closing `PF-E-001`) — THE DECISION LAYER, NOT THE
+     * DELIVERY PIPELINE.
+     *
+     * This was `SmartNotificationIntegrationService`, called with four English
+     * string literals and a `targetAudience` this file asserted for itself.
+     * The pipeline is still the only thing that writes a row — the engine calls
+     * it — but the SENTENCE now comes from `COPY_CATALOGUE`, the AUDIENCE comes
+     * from the catalogue entry rather than from a positional argument here, and
+     * every decision leaves a row in `notification_decisions`.
+     */
+    private readonly notifications: SmartNotificationEngineService,
     // B4 — the ONE source of "which day is it for this family?" (B1+B2).
     // Daily and weekly rule caps are counted on the family's calendar, so a
     // Cairo child completing a habit at 00:30 is counted against TODAY.
@@ -254,8 +265,19 @@ export class RewardsEngineService implements IRewardTriggerWriter {
             // audiences — a deliberate product decision recorded above — stays
             // possible without weakening anything.
             const badgeKey = forEntity('badge', childId, badge.id);
-            await this.notifyGrant(childId, familyId, 'CHILD', 'BADGE_EARNED', `You earned a badge!`, `You earned the "${badge.title}" badge — awesome work!`, badgeKey);
-            await this.notifyGrant(childId, familyId, 'PARENT', 'BADGE_EARNED', 'New badge earned', `Your child earned the "${badge.title}" badge.`, badgeKey);
+            // PHASE F (`F6-003`) — ONE CAUSE, ONE KEY, TWO AUDIENCES, and the
+            // two types are what makes that legible. `BADGE_EARNED` is the
+            // child's entry in `COPY_CATALOGUE` (four tone bands, Arabic first);
+            // `BADGE_EARNED_PARENT` is the parent's. They share `badgeKey`
+            // because they share a cause, and neither deduplicates the other:
+            // the ledger separates them on `target_audience` and the delivery
+            // layer separates them with the `:child` facet.
+            await this.notifyGrant(childId, familyId, 'BADGE_EARNED', badgeKey, {
+              badgeTitle: badge.title,
+            });
+            await this.notifyGrant(childId, familyId, 'BADGE_EARNED_PARENT', badgeKey, {
+              badgeTitle: badge.title,
+            });
           }
         }
       } else {
@@ -326,13 +348,14 @@ export class RewardsEngineService implements IRewardTriggerWriter {
 
     if (event.announcedViaOutbox) return;
 
-    // The SAME Arabic, non-punitive, PII-free copy `NotificationRewardConsumer`
-    // sends (CONTEXT §3 principles 7 and 8: the message is a pointer, the app
-    // fetches the detail over an authenticated GET). `notifyGrant` is the
-    // existing wrapper around `SmartNotificationIntegrationService.notifyEvent`,
-    // so this runs the SAME fatigue guard — cooldown, duplicate window, quiet
-    // hours, daily and category caps — as every other notification. No new
-    // notification logic is built here.
+    // PHASE F (`F6-003`) — THE SAME ENGINE `NotificationRewardConsumer` NOW
+    // CALLS, so the two paths that announce a grant cannot drift into two
+    // different sentences. What was here was a copy of the consumer's two
+    // literals, kept in sync by a comment saying they were the same; they are
+    // now the same because there is one `COPY_CATALOGUE.REWARD_GRANTED` entry
+    // and both paths render it. Below the engine nothing changed: the same
+    // fatigue guard — cooldown, duplicate window, quiet hours, daily and
+    // category caps — as every other notification.
     // B9 — THE DIRECT PATH's key, and the one place where the composition has
     // to fall back. `event.idempotencyKey` is the same value that protects the
     // ledger row this notification is announcing (`rewards_ledger_entries
@@ -351,15 +374,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       ? forEntity('reward', childId, event.idempotencyKey)
       : forRecurringSignal('reward', childId, `${event.engine}:${event.type}`, new Date());
 
-    await this.notifyGrant(
-      childId,
-      familyId,
-      'PARENT',
-      'REWARD_GRANTED',
-      'مكافأة جديدة',
-      'حصل طفلك على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.',
-      sourceEventId,
-    );
+    await this.notifyGrant(childId, familyId, 'REWARD_GRANTED', sourceEventId);
   }
 
   /**
@@ -444,11 +459,12 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       await this.notifyGrant(
         childId,
         familyId,
-        'CHILD',
         'LEVEL_UP',
-        `Level ${newLevel}!`,
-        `You reached Level ${newLevel} — keep it up!`,
         forEntity('levelup', childId, String(newLevel)),
+        // PHASE F (`F6-003`) — «وصلت للمستوى ٧ 🚀» for a six-year-old and
+        // «وصلت إلى المستوى ٧، وهذه نتيجة أسابيع من العمل» for a sixteen-year-old,
+        // both rendered from one catalogue key. What was here was `Level 7!`.
+        { level: newLevel },
       );
     }
 
@@ -456,37 +472,60 @@ export class RewardsEngineService implements IRewardTriggerWriter {
   }
 
   /** Sprint 16.2 Phases 1-2 — CLOSES A REAL GAP: routes a real,
-   * non-duplicate grant event through
-   * SmartNotificationIntegrationService's own fatigue-guarded
-   * pipeline (built Sprint 16.1 Phase 3, extended Sprint 16.2 Phase 1
-   * with the single-candidate notifyEvent() entry point this calls).
+   * non-duplicate grant event through the fatigue-guarded pipeline.
    * Best-effort — a notification failure must never affect whether
    * the reward itself was granted, matching this file's own
    * established error-handling discipline for every other
-   * side-effect (Timeline writes, etc.). */
+   * side-effect (Timeline writes, etc.).
+   *
+   * PHASE F (`F6-003`) — WHAT THIS METHOD STOPPED TAKING, AND WHY EACH
+   * REMOVAL IS THE POINT.
+   *
+   *   `title` / `body`   Four English literals lived at this file's call sites
+   *                      («You earned a badge!», «Level 7!», «You reached Level
+   *                      7 — keep it up!») and were written into
+   *                      `child_messages` for an Egyptian seven-year-old. They
+   *                      are gone: the sentence is rendered from
+   *                      `COPY_CATALOGUE` at the child's own tone band, in the
+   *                      household's locale, and validated against that child's
+   *                      `age-band.ts` safety ceiling before it can be written.
+   *   `targetAudience`   Asserted here as a positional argument, which is how
+   *                      `BADGE_EARNED` came to mean two different messages to
+   *                      two different people under one name. The catalogue
+   *                      entry declares the audience now, and the parent's
+   *                      badge sentence has its own key
+   *                      (`BADGE_EARNED_PARENT`).
+   *   `priority`         Was always `'NORMAL'`. It is now derived from the
+   *                      scored band, which is the axis it was pretending to be.
+   *
+   * `sourceEventId` STAYS REQUIRED and stays the caller's. B9's argument is
+   * unchanged and the engine explicitly does not compose one: «what makes this
+   * notification the same notification» is a decision the call site has to
+   * have made.
+   */
   private async notifyGrant(
     childId: string,
     familyId: string,
-    targetAudience: 'PARENT' | 'CHILD',
-    type: string,
-    title: string,
-    body: string,
-    /** B9 — REQUIRED, not optional. Every one of this file's three call sites
+    eventType: string,
+    /** B9 — REQUIRED, not optional. Every one of this file's four call sites
      * composes it explicitly above, and making it optional here would have
      * re-opened the exact hole the constraint closes. */
     sourceEventId: string,
+    /** The numbers that go INSIDE the sentence — «وسام القارئ», «المستوى ٧».
+     * A closed record of primitives, never a free-form payload. */
+    variables: Readonly<Record<string, string | number>> = {},
   ): Promise<void> {
     try {
-      await this.notificationIntegration.notifyEvent(childId, familyId, {
-        type,
-        priority: 'NORMAL',
-        title,
-        body,
-        targetAudience,
+      await this.notifications.handleEvent({
+        familyId,
+        childId,
+        eventType,
         sourceEventId,
+        trigger: 'DOMAIN_EVENT',
+        variables,
       });
     } catch (err) {
-      this.logger.warn(`Failed to notify reward grant (${type})`, err instanceof Error ? err.message : err);
+      this.logger.warn(`Failed to notify reward grant (${eventType})`, err instanceof Error ? err.message : err);
     }
   }
 
