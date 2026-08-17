@@ -141,6 +141,36 @@ class ApiClient {
     }
   }
 
+  /// FOR A ROUTE THAT ANSWERS 204 BY CONTRACT — no cast, because there is no
+  /// body to cast.
+  ///
+  /// [post] above ends in `response.data as Map<String, dynamic>`. A 204 has
+  /// an empty body, which Dio surfaces as `null` or `''` depending on its
+  /// transformer, and either one makes that cast throw a `TypeError` — a
+  /// failure that is NOT a `DioException`, so `_toApiException` never sees it
+  /// and the caller is handed a client-side crash for a request the server
+  /// completed. Every caller that has one of these today
+  /// (`heartbeat`, `reportCapabilities`, `verify`) is fire-and-forget and
+  /// swallows whatever it gets, which is exactly why the shape has never been
+  /// noticed; the push-token registration below is NOT fire-and-forget (it
+  /// records what it sent so it never re-sends it), so it cannot inherit that
+  /// ambiguity. Same interceptor path, same refresh-and-retry, same error
+  /// translation — only the unread body differs.
+  ///
+  /// NOT VERIFIED AT RUNTIME: no Dart SDK exists in this environment, so which
+  /// of `null`/`''` Dio actually produces was read from its documented
+  /// behaviour, not observed. This method is correct under both.
+  Future<void> postNoContent(
+    String path, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      await _dio.post(path, data: body);
+    } on DioException catch (e) {
+      throw _toApiException(e);
+    }
+  }
+
   /// THE [post] EQUIVALENT OF [getList], AND IT CLOSES A LIVE DEFECT.
   ///
   /// [post] above casts the body to a Map, exactly as [get] did before

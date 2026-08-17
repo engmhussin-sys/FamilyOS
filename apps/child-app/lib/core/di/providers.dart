@@ -9,6 +9,7 @@ import '../storage/secure_token_storage.dart';
 import '../../features/pairing/api/pairing_api.dart';
 import '../../features/pairing/application/device_registration_service.dart';
 import '../../features/pairing/application/heartbeat_service.dart';
+import '../../features/pairing/application/push_token_registration_service.dart';
 import '../../features/device_status/application/capability_reporting_service.dart';
 import '../../plugins/permissions/application/permission_status_service.dart';
 import '../../plugins/policy/application/policy_cache_service.dart';
@@ -80,6 +81,22 @@ final pairingApiProvider = Provider<PairingApi>((ref) {
 
 final antiTamperProvider = Provider<IAntiTamper>((ref) {
   return PlatformAntiTamper(ref.watch(agentPlatformChannelProvider));
+});
+
+/// The child device's push-token registration — `POST
+/// /pairing/device/push-token`, a route that shipped with no consumer.
+///
+/// DELIBERATELY HAS NO CALLER YET. Token ACQUISITION (FCM) is a separate
+/// workstream and this app declares no `firebase_messaging` dependency; when
+/// that lands, its `onTokenRefresh` callback calls
+/// `ref.read(pushTokenRegistrationServiceProvider).onTokenAvailable(token)`.
+/// Nothing here fabricates a token to fill the gap — see the service's own
+/// header for the whole boundary.
+final pushTokenRegistrationServiceProvider = Provider<PushTokenRegistrationService>((ref) {
+  return PushTokenRegistrationService(
+    ref.watch(pairingApiProvider),
+    ref.watch(secureStorageProvider),
+  );
 });
 
 final deviceRegistrationServiceProvider = Provider<DeviceRegistrationService>((ref) {
