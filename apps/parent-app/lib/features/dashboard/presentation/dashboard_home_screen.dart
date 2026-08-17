@@ -160,9 +160,57 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
                 )
               : RefreshIndicator(
               onRefresh: _load,
+              // -------------------------------------------------------------
+              // PHASE E (§6). THE ORDER OF THIS LIST IS THE FIX.
+              //
+              // §6 asks this one screen to answer two questions:
+              //   «هل ابني بخير اليوم؟»  and  «هل هناك شيء يحتاج مني؟»
+              //
+              // BEFORE, the first thing a parent saw was `_FamilySummaryCard`:
+              // how many children, how many DEVICES, how many alerts. That is
+              // an INVENTORY — a monitoring console's opening statistic — and
+              // it answers neither question. Worse, both answers sat below it
+              // and were scattered: "is my child OK" lived in a risk chip
+              // inside the third block, and "does anything need me" was split
+              // across an app-bar badge (pending messages), a button label
+              // inside the goals hub (pending reviews) and an "alerts" tile —
+              // three places, none of them the top of the screen.
+              //
+              // AFTER: the two answers lead, in the order the questions are
+              // asked, and the inventory moves below them. NOTHING IS DELETED
+              // — `_FamilySummaryCard` is byte-identical and still shows every
+              // number it showed before, one scroll lower, where an inventory
+              // belongs.
+              // -------------------------------------------------------------
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  // Question 2 first, deliberately. A parent who opens this app
+                  // between two errands mostly needs to know whether they can
+                  // close it again; this card answers that in one line.
+                  _NeedsYouCard(
+                    pendingReviews: _pendingGoalReviewCount,
+                    pendingMessages: _pendingApprovalsCount,
+                    t: t,
+                  ),
+                  const SizedBox(height: 16),
+                  // Question 1: one row per child, each carrying a plain
+                  // answer for that child rather than a severity code.
+                  if (_children != null && _children!.isEmpty)
+                    _FirstChildEmptyState(t: t)
+                  else ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        t('dashboard.childStatusTitle'),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    ...?_children?.map((child) => _ChildCard(child: child, devices: _devices ?? [], t: t)),
+                  ],
+                  const SizedBox(height: 16),
+                  _GoalsHubCard(t: t, pendingReviews: _pendingGoalReviewCount),
+                  const SizedBox(height: 16),
                   _FamilySummaryCard(
                     childrenCount: _children?.length ?? 0,
                     devicesCount: _devices?.length ?? 0,
@@ -170,17 +218,110 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
                     t: t,
                   ),
                   const SizedBox(height: 16),
-                  _GoalsHubCard(t: t, pendingReviews: _pendingGoalReviewCount),
-                  const SizedBox(height: 16),
-                  if (_children != null && _children!.isEmpty)
-                    _FirstChildEmptyState(t: t)
-                  else
-                    ...?_children?.map((child) => _ChildCard(child: child, devices: _devices ?? [], t: t)),
-                  const SizedBox(height: 16),
                   _QuickActions(t: t),
                 ],
               ),
             ),
+    );
+  }
+}
+
+/// PHASE E (§6) — «هل هناك شيء يحتاج مني؟», answered in one block.
+///
+/// Both queues this card reads already existed and were already fetched by
+/// `_load`; what did not exist was a single place that ANSWERS the question.
+/// `_pendingGoalReviewCount` (achievements waiting on this parent) was only
+/// legible as a number inside a button label in the goals hub, and
+/// `_pendingApprovalsCount` (messages waiting on this parent) only as a badge
+/// on an app-bar icon. A parent had to know to look in two places, and to know
+/// that the two counts mean different things — which audit P12 already
+/// recorded as having been conflated once by name.
+///
+/// WHEN BOTH ARE ZERO THIS CARD STILL RENDERS, and says so. "Nothing is
+/// waiting for you" is a real answer to the question and the most common one;
+/// hiding the card would make its absence indistinguishable from a screen that
+/// had not finished loading.
+class _NeedsYouCard extends StatelessWidget {
+  const _NeedsYouCard({
+    required this.pendingReviews,
+    required this.pendingMessages,
+    required this.t,
+  });
+
+  final int pendingReviews;
+  final int pendingMessages;
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = pendingReviews + pendingMessages;
+    final calm = total == 0;
+    final accent = calm ? AppTheme.sage500 : AppTheme.amber500;
+
+    return DsCard(
+      accent: accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(calm ? Icons.check_circle_outline_rounded : Icons.pending_actions_rounded,
+                  color: accent, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(t('dashboard.needsYouTitle'), style: DsText.sectionTitle(context)),
+              ),
+            ],
+          ),
+          DsSpace.gapSm,
+          if (calm)
+            Text(t('dashboard.needsYouNothing'), style: DsText.caption(context))
+          else ...[
+            if (pendingReviews > 0)
+              _NeedsYouRow(
+                icon: Icons.fact_check_outlined,
+                label: t('dashboard.needsYouReviews', options: {'count': pendingReviews}),
+                onTap: () => Navigator.of(context).pushNamed(AppRoutes.goalReviewQueue),
+              ),
+            if (pendingMessages > 0)
+              _NeedsYouRow(
+                icon: Icons.mark_email_unread_outlined,
+                label: t('dashboard.needsYouMessages', options: {'count': pendingMessages}),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PendingApprovalsScreen()),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NeedsYouRow extends StatelessWidget {
+  const _NeedsYouRow({required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
+            const SizedBox(width: 10),
+            Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyLarge)),
+            Icon(Icons.chevron_right_rounded,
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -334,7 +475,7 @@ class _ChildCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (childDevice != null) _RiskChip(riskLevel: riskLevel),
+              if (childDevice != null) _RiskChip(riskLevel: riskLevel, t: t),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right_rounded, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
             ],
@@ -503,9 +644,26 @@ class _ChildCard extends StatelessWidget {
   }
 }
 
+/// PHASE E (§6) — this chip IS the answer to «هل ابني بخير اليوم؟», and it
+/// used to render the backend's raw enum.
+///
+/// `Text(riskLevel ?? 'UNKNOWN')` put `HIGH` / `CRITICAL` / `UNKNOWN` on the
+/// parent's home screen: hardcoded, untranslated, in Latin letters, inside an
+/// Arabic-first product — on the single most important word on the screen. A
+/// parent seeing «CRITICAL» learns a severity code, not whether their child is
+/// all right, and a parent seeing «UNKNOWN» is told nothing at all when the
+/// honest statement is "no data arrived from this device today".
+///
+/// The enum values are unchanged and still come from the backend; only their
+/// PRESENTATION moved into the localization engine, phrased as answers rather
+/// than as levels. An unrecognised value falls back to the same key as
+/// `null` rather than leaking whatever string the server sent.
 class _RiskChip extends StatelessWidget {
-  const _RiskChip({required this.riskLevel});
+  const _RiskChip({required this.riskLevel, required this.t});
   final String? riskLevel;
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  static const _known = {'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'};
 
   Color _colorFor(String? level) {
     switch (level) {
@@ -524,11 +682,12 @@ class _RiskChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _colorFor(riskLevel);
+    final key = _known.contains(riskLevel) ? riskLevel! : 'UNKNOWN';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(20)),
       child: Text(
-        riskLevel ?? 'UNKNOWN',
+        t('riskLevel.$key'),
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color, fontWeight: FontWeight.w600),
       ),
     );

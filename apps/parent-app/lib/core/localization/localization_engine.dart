@@ -525,6 +525,24 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'family.numberOfChildren': 'Number of Children',
     'family.continueButton': 'Continue',
     'dashboard.title': 'Home',
+    // PHASE E (§6). The parent home has to answer two questions on one
+    // screen. These are the words it answers them with.
+    'dashboard.needsYouTitle': 'Anything that needs you?',
+    'dashboard.needsYouNothing': 'Nothing is waiting for you right now.',
+    'dashboard.needsYouReviews': '{{count}} achievements waiting for your review',
+    'dashboard.needsYouReviews_one': 'One achievement is waiting for your review',
+    'dashboard.needsYouReviews_other': '{{count}} achievements waiting for your review',
+    'dashboard.needsYouMessages': '{{count}} messages waiting for your approval',
+    'dashboard.needsYouMessages_one': 'One message is waiting for your approval',
+    'dashboard.needsYouMessages_other': '{{count}} messages waiting for your approval',
+    'dashboard.childStatusTitle': 'Is your child OK today?',
+    // The backend's risk enum, phrased as an ANSWER rather than as a
+    // severity code. `_RiskChip` used to print the enum itself.
+    'riskLevel.LOW': 'All good',
+    'riskLevel.MEDIUM': 'Worth a look',
+    'riskLevel.HIGH': 'Needs you today',
+    'riskLevel.CRITICAL': 'Needs you now',
+    'riskLevel.UNKNOWN': 'No data today',
     'dashboard.familySummary': 'Family Summary',
     'dashboard.children': '{{count}} children',
     'dashboard.children_one': '{{count}} child',
@@ -1064,6 +1082,22 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'family.numberOfChildren': 'عدد الأطفال',
     'family.continueButton': 'متابعة',
     'dashboard.title': 'الرئيسية',
+    // PHASE E (§6) — العربية أولًا: هذه هي الإجابتان اللتان تُفتح بهما الشاشة.
+    'dashboard.needsYouTitle': 'هل هناك شيء يحتاج مني؟',
+    'dashboard.needsYouNothing': 'لا شيء ينتظرك الآن.',
+    'dashboard.needsYouReviews': '{{count}} إنجازات تنتظر مراجعتك',
+    'dashboard.needsYouReviews_one': 'إنجاز واحد ينتظر مراجعتك',
+    'dashboard.needsYouReviews_other': '{{count}} إنجازات تنتظر مراجعتك',
+    'dashboard.needsYouMessages': '{{count}} رسائل تنتظر موافقتك',
+    'dashboard.needsYouMessages_one': 'رسالة واحدة تنتظر موافقتك',
+    'dashboard.needsYouMessages_other': '{{count}} رسائل تنتظر موافقتك',
+    'dashboard.childStatusTitle': 'هل ابنك بخير اليوم؟',
+    // enum المخاطر من الـ backend، مصاغًا كإجابة لا كدرجة خطورة.
+    'riskLevel.LOW': 'كل شيء تمام',
+    'riskLevel.MEDIUM': 'يستحق نظرة',
+    'riskLevel.HIGH': 'يحتاج منك اليوم',
+    'riskLevel.CRITICAL': 'يحتاج منك الآن',
+    'riskLevel.UNKNOWN': 'لا توجد بيانات اليوم',
     'dashboard.familySummary': 'ملخص العائلة',
     // F2: the BASE key was missing from Arabic while _one/_other were
     // present. Latent rather than active (every call site passes a
