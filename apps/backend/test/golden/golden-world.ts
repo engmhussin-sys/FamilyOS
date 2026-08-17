@@ -105,6 +105,20 @@ export interface RegisterOptions {
   readonly childDateOfBirth?: string;
   readonly childName?: string;
   readonly familyTimeZone?: string;
+  /**
+   * ISO-3166-1 alpha-2, passed straight through to `/auth/register`.
+   *
+   * Left UNSET by default on purpose: most golden scenarios are not about
+   * markets, and a default of 'EG' would quietly make every one of them a
+   * country-attributed family — which is exactly the kind of invented market
+   * data the growth module's NOT MEASURED discipline exists to prevent. A
+   * scenario that cares about country says so.
+   *
+   * The value must exist and be active in the `countries` catalogue; the
+   * database's own foreign key refuses anything else, so an unsupported code
+   * here fails the registration rather than being silently dropped.
+   */
+  readonly countryCode?: string;
 }
 
 export async function clearThrottleCounters(): Promise<void> {
@@ -202,6 +216,9 @@ export async function bootGoldenWorld(
       fullName: `Golden Parent ${label}`,
       familyName: `Golden Family ${label}`,
       acceptedTerms: true,
+      // Omitted entirely when unset — `forbidNonWhitelisted` is on, and sending
+      // `countryCode: undefined` is not the same request as not sending it.
+      ...(options.countryCode ? { countryCode: options.countryCode } : {}),
     });
     if (![200, 201].includes(registered.status)) {
       throw new Error(`register(${label}) -> ${registered.status} ${JSON.stringify(registered.body)}`);
