@@ -528,6 +528,18 @@ describeIfDb('PHASE C P4 — the scheduler (real PostgreSQL)', () => {
   });
 
   // ==========================================================================
+  /**
+   * WHY THIS SECTION USED TO BE FLAKY, and is not any more. The fan-out was
+   * `LIMIT 200 OFFSET 0` with no pagination loop, so on a shared database with
+   * more than 200 households the two families created below usually landed
+   * outside the only page the sweep ever read — ordered by uuid, so WHICH runs
+   * were lost changed every time. The sweep now pages to the end of the table
+   * (`SQL_LIST_ACTIVE_FAMILIES_PAGE`), which is why the first test can assert
+   * that it saw EVERY active family rather than hoping ours were near the
+   * front. `test/scheduler/family-sweep-pagination.e2e.spec.ts` is the proof of
+   * that property at 220 households; this section keeps asserting what it
+   * always asserted — the timezone behaviour — and now does so unconditionally.
+   */
   describe('6. TIMEZONE-CORRECT — two families, ONE instant, two different days', () => {
     let cairo: { familyId: string; childId: string };
     let riyadh: { familyId: string; childId: string };
@@ -553,6 +565,15 @@ describeIfDb('PHASE C P4 — the scheduler (real PostgreSQL)', () => {
         trigger: 'MANUAL',
       });
       expect(report.claimed).toBe(true);
+
+      // THE SWEEP REACHED EVERY HOUSEHOLD, ours included, whatever the uuid
+      // order put first. Without this the two assertions below are a statement
+      // about luck on a shared database.
+      const active = await raw<Array<{ c: string }>>(
+        `SELECT count(*)::int AS c FROM "families" WHERE "deleted_at" IS NULL`,
+      );
+      expect(report.familiesSeen).toBe(Number(active[0].c));
+      expect(report.truncated).toBe(false);
 
       const riyadhDate = await businessDateFor(riyadh.familyId);
       const cairoDate = await businessDateFor(cairo.familyId);
@@ -594,16 +615,30 @@ describeIfDb('PHASE C P4 — the scheduler (real PostgreSQL)', () => {
       expect(again.claimed).toBe(true);
       expect(again.executed).toBe(0);
       expect(again.skipped).toBeGreaterThan(0);
+      // The sweep now PAGES to the end of the family table rather than stopping
+      // at the first 200 rows, so `skipped` accounts for every household — and
+      // `familiesSeen` says how many that was, which is the number a future
+      // silent truncation would quietly make smaller.
+      expect(again.skipped).toBe(again.familiesSeen);
+      expect(again.truncated).toBe(false);
 
       // And exactly one row per (family, business date) — the unique index, not
-      // a check in code.
-      const rows = await raw<Array<{ c: string }>>(
-        `SELECT count(*)::int AS c FROM "job_runs"
-          WHERE "job_name" = $1 AND "family_id" = $2::uuid AND "business_date" = DATE '2026-01-15'`,
-        FAMILY_DAILY_ROLLOVER_JOB,
-        cairo.familyId,
-      );
-      expect(Number(rows[0].c)).toBe(1);
+      // a check in code. Asserted for BOTH households this suite created,
+      // because "the fan-out reached my two families and ran each of them once"
+      // is the claim, and a total over a shared database cannot make it.
+      for (const familyId of [cairo.familyId, riyadh.familyId]) {
+        const rows = await raw<Array<{ c: string; attempts: string }>>(
+          `SELECT count(*)::int AS c, coalesce(max("attempt"), 0)::int AS attempts
+             FROM "job_runs"
+            WHERE "job_name" = $1 AND "family_id" = $2::uuid AND "business_date" = DATE '2026-01-15'`,
+          FAMILY_DAILY_ROLLOVER_JOB,
+          familyId,
+        );
+        expect(Number(rows[0].c)).toBe(1);
+        // The claim REFUSED the re-run instead of taking it over; a second
+        // execution of the body would have incremented `attempt`.
+        expect(Number(rows[0].attempts)).toBe(1);
+      }
     }, 120_000);
 
     it('actually writes the MISSED rows that nothing in production has ever written', async () => {
