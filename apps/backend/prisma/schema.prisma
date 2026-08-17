@@ -372,6 +372,8 @@ model Family {
   aiMemoryEntries AiMemoryEntry[]
   notifications Notification[]
   notificationDeliveries NotificationDelivery[]
+  notificationDecisions NotificationDecision[]
+  notificationPolicySettings NotificationPolicySetting[]
   habits Habit[]
   habitCompletions HabitCompletion[]
   rewardsAccounts RewardsAccount[]
@@ -493,6 +495,7 @@ model Child {
   aiAlerts            AiAlert[]
   notifications       Notification[]
   notificationDeliveries NotificationDelivery[]
+  notificationDecisions NotificationDecision[]
   aiMemoryEntries     AiMemoryEntry[]
   habits              Habit[]
   habitCompletions    HabitCompletion[]
@@ -4114,4 +4117,128 @@ model GrowthSetting {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@map("growth_settings")
+}
+
+// ============================================================
+// PHASE F (`F6-002`) — THE SMART NOTIFICATION DECISION LAYER.
+//
+// Two ADDITIVE tables (migration 0018). Zero existing model is touched; the
+// only edits to pre-existing declarations are two back-relations on `Family`
+// and one on `Child`.
+//
+// The argument for each table, the privacy argument for what is NOT stored,
+// and the tenancy classification are all written out at length in
+// `prisma/migrations/0018_smart_notification_decision_ledger/migration.sql`
+// rather than duplicated here.
+// ============================================================
+
+/// PHASE F — ONE ROW PER DECISION, INCLUDING THE ONES THAT SENT NOTHING.
+///
+/// This is the table that makes «why did this household not get the reward
+/// notification on Tuesday?» answerable. Before it, every decision this system
+/// made was a local variable and one `logger.debug` line.
+///
+/// IT DELIBERATELY HOLDS NO TITLE, NO BODY, NO CHILD NAME AND NO GOAL TITLE.
+/// The rendered sentence already exists in `notifications.body` /
+/// `child_messages.body` under the household's own tenancy; copying it here —
+/// into the table a platform operator queries cross-tenant — would make an
+/// admin dashboard the place a child's messages are readable. What is stored is
+/// the DECISION: numbers, enums and a reason.
+model NotificationDecision {
+  familyId String  @map("family_id") @db.Uuid
+  id       String  @id @default(uuid()) @db.Uuid
+  childId  String? @map("child_id") @db.Uuid
+
+  /// The causal key, identical to the one on `notifications` /
+  /// `notification_deliveries`. It is the join to both, and it is what makes a
+  /// retry, a redelivery and a concurrent double-fire produce ONE row rather
+  /// than inflating a suppression rate.
+  sourceEventId String @map("source_event_id") @db.VarChar(200)
+
+  trigger          String @db.VarChar(40)
+  eventType        String @map("event_type") @db.VarChar(60)
+  notificationType String @map("notification_type") @db.VarChar(60)
+  category         String @db.VarChar(30)
+  targetAudience   String @map("target_audience") @db.VarChar(10)
+
+  /// SEND | DEFER | SUPPRESS — closed by a CHECK in 0018, not only by a union.
+  decision     String @db.VarChar(10)
+  /// HIGH | MEDIUM | LOW | SUPPRESS.
+  priorityBand String @map("priority_band") @db.VarChar(10)
+  /// 0..100, bounded by a CHECK as well as by the scorer's own clamp.
+  score        Int    @db.SmallInt
+  reason       String @db.VarChar(60)
+
+  /// The component-by-component arithmetic: name, raw, weight, contribution and
+  /// an English note naming the fact that produced it. Stored rather than
+  /// recomputed, so a decision read back after the weights are retuned still
+  /// adds up.
+  explanation Json @default("[]")
+
+  providerId String @map("provider_id") @db.VarChar(40)
+
+  /// A BAND, never an age and never a date of birth.
+  ageBand     String? @map("age_band") @db.VarChar(10)
+  locale      String  @default("ar") @db.VarChar(5)
+  countryCode String? @map("country_code") @db.VarChar(2)
+
+  aiRewritten Boolean @default(false) @map("ai_rewritten")
+  aiFailed    Boolean @default(false) @map("ai_failed")
+  copyKey     String  @default("GENERIC") @map("copy_key") @db.VarChar(60)
+
+  /// What the PIPELINE did, as opposed to what the ENGINE decided. The two
+  /// disagreeing is the most useful row in this table.
+  outcome       String? @db.VarChar(10)
+  outcomeReason String? @map("outcome_reason") @db.VarChar(40)
+
+  businessDate DateTime @map("business_date") @db.Date
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// The audience is IN the key: one event legitimately notifies both a child
+  /// and a parent (`ACHIEVEMENT_VERIFIED` is classified BOTH), and those are two
+  /// decisions with two scores.
+  @@unique([familyId, sourceEventId, targetAudience])
+  @@index([familyId, createdAt])
+  @@index([decision, businessDate])
+  @@index([category, businessDate])
+  @@index([countryCode, businessDate])
+  @@index([notificationType, businessDate])
+  @@map("notification_decisions")
+}
+
+/// PHASE F — THE CAPS, COOLDOWNS, QUIET HOURS AND SCORE THRESHOLDS, PER FAMILY.
+///
+/// `DEFAULT_FATIGUE_POLICY`'s five constants were a deploy away from being
+/// changed, and its own docstring called them «easily-adjustable-later». This
+/// table is what makes that sentence true.
+///
+/// KEY/VALUE for `growth_settings`' reason: the set of knobs will grow, and a
+/// migration per knob is how a product ends up with knobs that stay in code.
+/// The vocabulary is closed in `NOTIFICATION_POLICY_SCHEMAS` and validated on
+/// write, so an unknown key is refused rather than silently ignored forever.
+///
+/// EVERY KEY IS OPTIONAL. A household with no rows gets
+/// `DEFAULT_NOTIFICATION_POLICY`, whose numbers are byte-for-byte the old ones.
+model NotificationPolicySetting {
+  familyId String @map("family_id") @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
+
+  key   String @db.VarChar(80)
+  value String @db.VarChar(200)
+
+  /// Who last changed it. Nullable because a platform-level default applied by
+  /// an operator has no family user behind it, and a fabricated actor is worse
+  /// than an honest NULL.
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, key])
+  @@index([familyId])
+  @@map("notification_policy_settings")
 }

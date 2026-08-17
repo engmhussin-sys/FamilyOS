@@ -7,6 +7,14 @@ import { PrismaNotificationDeliveryRepository } from './infrastructure/repositor
 import { NOTIFICATION_REPOSITORY } from './application/ports/notification.repository.port';
 import { NOTIFICATION_DELIVERY_REPOSITORY } from './application/ports/notification-delivery.repository.port';
 import { NotificationOperationsController } from './presentation/controllers/notification-operations.controller';
+import {
+  NOTIFICATION_DECISION_REPOSITORY,
+  NOTIFICATION_POLICY_REPOSITORY,
+} from './application/ports/notification-decision.repository.port';
+import {
+  PrismaNotificationDecisionRepository,
+  PrismaNotificationPolicyRepository,
+} from './infrastructure/repositories/prisma-notification-decision.repository';
 
 /**
  * Sprint 8's Notification Center. Deliberately a NEW, standalone module
@@ -30,7 +38,21 @@ import { NotificationOperationsController } from './presentation/controllers/not
     // module graph acyclic while the release path still lives next to the
     // delivery routing it reuses.
     { provide: NOTIFICATION_DELIVERY_REPOSITORY, useClass: PrismaNotificationDeliveryRepository },
+    // PHASE F (`F6-002`): the decision ledger and the per-family policy, both
+    // provided HERE — in the module that owns the notification tables — and
+    // consumed by `NotificationEngineModule` through their ports. Same reason
+    // the deferral repository is here: the dependency stays a contract rather
+    // than a Prisma model, and the module graph stays acyclic while the engine
+    // that reads them lives next to the pipeline it calls.
+    { provide: NOTIFICATION_DECISION_REPOSITORY, useClass: PrismaNotificationDecisionRepository },
+    { provide: NOTIFICATION_POLICY_REPOSITORY, useClass: PrismaNotificationPolicyRepository },
   ],
-  exports: [NotificationsService, NOTIFICATION_REPOSITORY, NOTIFICATION_DELIVERY_REPOSITORY],
+  exports: [
+    NotificationsService,
+    NOTIFICATION_REPOSITORY,
+    NOTIFICATION_DELIVERY_REPOSITORY,
+    NOTIFICATION_DECISION_REPOSITORY,
+    NOTIFICATION_POLICY_REPOSITORY,
+  ],
 })
 export class NotificationsModule {}

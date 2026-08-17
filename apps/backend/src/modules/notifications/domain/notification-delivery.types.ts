@@ -37,6 +37,11 @@ export type ResolutionReason =
   /** The fatigue guard refused it AT DELIVERY TIME, not at enqueue time. */
   | 'COOLDOWN'
   | 'DAILY_MAX'
+  /** PHASE F (`F6-002`) — the guard's new rolling-hour ceiling. Added to this
+   * union in the same commit as `IFatigueDecision.blockedReason` gained it,
+   * because `QuietHoursReleaseService` casts one to the other and a cast that
+   * outruns its target union writes a value no reader can interpret. */
+  | 'HOURLY_MAX'
   | 'CATEGORY_MAX'
   | 'DUPLICATE'
   /** A newer notification of the same (audience, type) superseded it. */

@@ -22,6 +22,7 @@ import { AccountDeletionModule } from './modules/account-deletion/account-deleti
 import { OrganizationModule } from './modules/organization/organization.module';
 import { PairingModule } from './modules/pairing/pairing.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { NotificationEngineModule } from './modules/notification-engine/notification-engine.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module';
 import { ProfileModule } from './modules/profile/profile.module';
@@ -89,6 +90,11 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
     OrganizationModule,
     PairingModule,
     NotificationsModule,
+    // PHASE F (`F6-002`): the smart notification DECISION layer. It imports
+    // `NotificationsModule` and `LifeIntelligenceModule` and is imported by
+    // neither — the one-way direction that keeps the graph acyclic without a
+    // `forwardRef`.
+    NotificationEngineModule,
     BillingModule,
     FeatureFlagsModule,
     ProfileModule,

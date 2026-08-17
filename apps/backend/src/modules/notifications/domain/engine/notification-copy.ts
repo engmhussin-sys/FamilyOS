@@ -1,0 +1,720 @@
+/**
+ * PHASE F (`F6-002`) — THE LOCALISATION TABLE, AND THE ONLY PLACE A USER-FACING
+ * STRING EXISTS IN THIS PIPELINE.
+ *
+ * WHAT WAS THERE, MEASURED. Three English sentences in
+ * `smart-notification-decision-engine.ts` («Water break?», «Study time», «Keep
+ * your N-day streak going!»), two Arabic sentences in
+ * `notification-reward.consumer.ts`, and one Arabic sentence in
+ * `digital-wellbeing-engine.service.ts`. Six strings, three files, two
+ * languages, zero age adaptation, and every one of them written next to the
+ * logic that decided to send it — so changing a word meant editing an engine.
+ *
+ * THE RULES THIS FILE ENFORCES, each of them asserted by
+ * `test/notifications/notification-copy.spec.ts`:
+ *
+ *   1. ARABIC IS FIRST-CLASS, not a translation. `ar` is the fallback locale
+ *      (CONTEXT §1), and every entry has a complete `ar` variant. An `en`
+ *      variant that is missing falls back to `ar`, never the other way round.
+ *   2. NO RAW ENUM EVER REACHES A HUMAN. The renderer refuses to emit a string
+ *      containing an unresolved `{placeholder}` or an `ALL_CAPS_SNAKE` token,
+ *      and falls back to the generic entry instead. `REWARD_GRANTED` is a
+ *      database value; «مكافأة جديدة» is what a parent reads.
+ *   3. A NEW CATEGORY NEEDS NO ENGINE CHANGE. Adding a key to `COPY_CATALOGUE`
+ *      is the entire work of adding a notification kind: the scorer reads
+ *      `notification-class.ts`, the tone comes from the band, and the copy comes
+ *      from here.
+ *   4. CHILD COPY IS PER TONE BAND. Four variants per child-facing key, because
+ *      «أنجزت ٤ من ٥ آيات — تكمل الأخيرة؟» is the wrong sentence for a
+ *      six-year-old and «أنجزت ٤ من ٥ — تكمل؟ 🎉» is the wrong sentence for a
+ *      sixteen-year-old, and one of the two being wrong for half the users was
+ *      the state before this file.
+ *   5. PARENT COPY IS ONE REGISTER: respectful, specific, non-alarming,
+ *      actionable. CONTEXT §3 principle 7 (NO PUNITIVE UX) applies to the parent
+ *      surface too — nothing here says «تجاوز» or «مخالفة» at a parent.
+ *
+ * LENGTH. Every child template is held to the STRICTEST safety ceiling of any
+ * age that maps into its tone band (`notification-tone.ts` explains the
+ * overlap), and the spec asserts that against `ChildSafetyFilterService`'s own
+ * numbers rather than against a copy of them.
+ */
+
+import type { NotificationLocale } from './notification-context';
+import type { ToneAudience, ToneBand } from './notification-tone';
+
+export interface CopyTemplate {
+  readonly title: string;
+  readonly body: string;
+}
+
+export type LocalisedTemplate = Readonly<Record<NotificationLocale, CopyTemplate>>;
+
+/**
+ * `PARENT` for the single parent register; a `ToneBand` for each child variant.
+ * One union rather than two fields, so an entry cannot declare itself CHILD and
+ * then supply only a parent variant.
+ */
+export type CopyVariantKey = 'PARENT' | ToneBand;
+
+export interface CopyEntry {
+  /** The `notification-class.ts` category, so analytics and the per-category cap
+   * agree with the copy without a second mapping. */
+  readonly category: string;
+  readonly audience: ToneAudience;
+  /** Placeholders this entry expects. Declared, so the renderer can detect a
+   * producer that forgot one BEFORE a `{goalTitle}` reaches a child. */
+  readonly variables: readonly string[];
+  readonly variants: Readonly<Partial<Record<CopyVariantKey, LocalisedTemplate>>>;
+}
+
+/** Shorthand: an entry whose `ar` and `en` are both given. */
+function t(arTitle: string, arBody: string, enTitle: string, enBody: string): LocalisedTemplate {
+  return { ar: { title: arTitle, body: arBody }, en: { title: enTitle, body: enBody } };
+}
+
+/**
+ * THE CATALOGUE.
+ *
+ * Keyed by COPY KEY, which is usually the notification type but does not have to
+ * be: `GOAL_ALMOST_DONE` and `GOAL_DEADLINE_NEAR` are two different sentences
+ * about the same `LEARNING_GOAL_ACHIEVED` category, and forcing them to be two
+ * notification types in order to be two sentences is how a type vocabulary rots.
+ */
+export const COPY_CATALOGUE: Readonly<Record<string, CopyEntry>> = Object.freeze({
+  // ===================================================================== CHILD
+
+  GOAL_DEADLINE_NEAR: {
+    category: 'GOAL',
+    audience: 'CHILD',
+    variables: ['minutes', 'goalTitle'],
+    variants: {
+      '5-7': t('باقي وقت قليل', 'باقي {minutes} دقائق لهدفك 🌟', 'Almost time', '{minutes} minutes left 🌟'),
+      '8-10': t(
+        'باقي وقت قليل',
+        'باقي {minutes} دقائق لتُنهي {goalTitle} ✨',
+        'Almost time',
+        '{minutes} minutes left for {goalTitle} ✨',
+      ),
+      '11-13': t(
+        'اقترب الوقت',
+        'باقي لك {minutes} دقائق فقط لإكمال هدفك في {goalTitle}',
+        'Time is close',
+        'You have {minutes} minutes left to finish {goalTitle}',
+      ),
+      '14-17': t(
+        'اقترب الوقت',
+        'باقي لك {minutes} دقائق فقط لإكمال هدفك في {goalTitle}',
+        'Time is close',
+        '{minutes} minutes left to close out {goalTitle} today',
+      ),
+    },
+  },
+
+  GOAL_ALMOST_DONE: {
+    category: 'GOAL',
+    audience: 'CHILD',
+    variables: ['done', 'total', 'unitNoun'],
+    variants: {
+      '5-7': t('كمان شوية', 'أنجزت {done} من {total} — تكمل؟ 🎉', 'Nearly there', '{done} of {total} done — finish? 🎉'),
+      '8-10': t(
+        'كمان شوية',
+        'أنجزت {done} من {total} {unitNoun} — تكمل الأخيرة؟',
+        'Nearly there',
+        '{done} of {total} {unitNoun} — finish the last?',
+      ),
+      '11-13': t(
+        'بقيت خطوة',
+        'أنجزت {done} من {total} {unitNoun} — هل تكمل الأخيرة الآن؟',
+        'One step left',
+        'You finished {done} of {total} {unitNoun} — finish the last one now?',
+      ),
+      '14-17': t(
+        'بقيت خطوة',
+        'أنجزت {done} من {total} {unitNoun} — هل تكمل الأخيرة الآن؟',
+        'One step left',
+        '{done} of {total} {unitNoun} done — want to close it out now?',
+      ),
+    },
+  },
+
+  STREAK_AT_RISK: {
+    category: 'ACHIEVEMENT',
+    audience: 'CHILD',
+    variables: ['days'],
+    variants: {
+      '5-7': t('سلسلتك', 'خطوة واحدة وتحافظ على سلسلتك 🔥', 'Your streak', 'One step keeps your streak 🔥'),
+      '8-10': t('سلسلتك', 'أنت على بعد خطوة من سلسلتك 🔥', 'Your streak', 'One step away from your streak 🔥'),
+      '11-13': t(
+        'سلسلتك',
+        'أنت على بعد خطوة من الحفاظ على سلسلتك',
+        'Your streak',
+        'You are one step from keeping your streak',
+      ),
+      '14-17': t(
+        'سلسلتك',
+        'خطوة واحدة تفصلك عن الحفاظ على سلسلتك التي بنيتها',
+        'Your streak',
+        'One step stands between you and the streak you built',
+      ),
+    },
+  },
+
+  STREAK_ACHIEVED: {
+    category: 'ACHIEVEMENT',
+    audience: 'CHILD',
+    variables: ['days'],
+    variants: {
+      '5-7': t('أحسنت', 'سلسلتك وصلت {days} أيام 🎉', 'Nice', 'Your streak hit {days} days 🎉'),
+      '8-10': t('أحسنت', 'حافظت على سلسلتك {days} أيام 🎉', 'Nice', 'You kept your streak {days} days 🎉'),
+      '11-13': t(
+        'إنجاز جديد',
+        'حافظت على سلسلتك {days} أيام متتالية — استمر',
+        'New milestone',
+        'You kept your streak {days} days in a row — keep going',
+      ),
+      '14-17': t(
+        'إنجاز جديد',
+        'سلسلتك بلغت {days} أيام متتالية، وهذا لا يحدث بالصدفة',
+        'New milestone',
+        'Your streak is at {days} straight days — that is not luck',
+      ),
+    },
+  },
+
+  BADGE_EARNED: {
+    category: 'ACHIEVEMENT',
+    audience: 'CHILD',
+    variables: ['badgeTitle'],
+    variants: {
+      '5-7': t('وسام جديد', 'كسبت وسام {badgeTitle} 🏅', 'New badge', 'You earned {badgeTitle} 🏅'),
+      '8-10': t('وسام جديد', 'كسبت وسام {badgeTitle} اليوم 🏅', 'New badge', 'You earned the {badgeTitle} badge 🏅'),
+      '11-13': t(
+        'وسام جديد',
+        'حصلت على وسام {badgeTitle} — يستحق أن تراه',
+        'New badge',
+        'You earned the {badgeTitle} badge — worth a look',
+      ),
+      '14-17': t(
+        'وسام جديد',
+        'حصلت على وسام {badgeTitle}، وهو محفوظ في سجلك',
+        'New badge',
+        'You earned {badgeTitle}, and it is saved to your record',
+      ),
+    },
+  },
+
+  LEVEL_UP: {
+    category: 'ACHIEVEMENT',
+    audience: 'CHILD',
+    variables: ['level'],
+    variants: {
+      '5-7': t('مستوى جديد', 'وصلت للمستوى {level} 🚀', 'Level up', 'You reached level {level} 🚀'),
+      '8-10': t('مستوى جديد', 'وصلت إلى المستوى {level} 🚀', 'Level up', 'You reached level {level} 🚀'),
+      '11-13': t(
+        'مستوى جديد',
+        'وصلت إلى المستوى {level} — تقدّم واضح',
+        'Level up',
+        'You reached level {level} — clear progress',
+      ),
+      '14-17': t(
+        'مستوى جديد',
+        'وصلت إلى المستوى {level}، وهذه نتيجة أسابيع من العمل',
+        'Level up',
+        'Level {level} reached — that is weeks of work',
+      ),
+    },
+  },
+
+  DAILY_GOAL_COMPLETED: {
+    category: 'GOAL',
+    audience: 'CHILD',
+    variables: ['goalTitle'],
+    variants: {
+      '5-7': t('أنهيت هدفك', 'أنهيت {goalTitle} اليوم 🌟', 'Goal done', 'You finished {goalTitle} 🌟'),
+      '8-10': t('أنهيت هدفك', 'أنهيت هدف {goalTitle} اليوم 🌟', 'Goal done', 'You finished {goalTitle} today 🌟'),
+      '11-13': t(
+        'أنهيت هدفك',
+        'أكملت هدف {goalTitle} اليوم كما خططت',
+        'Goal done',
+        'You completed {goalTitle} today as planned',
+      ),
+      '14-17': t(
+        'أنهيت هدفك',
+        'أكملت هدف {goalTitle} اليوم كما خططت له',
+        'Goal done',
+        'You completed {goalTitle} today, as planned',
+      ),
+    },
+  },
+
+  LEARNING_GOAL_ACHIEVED: {
+    category: 'GOAL',
+    audience: 'CHILD',
+    variables: ['goalTitle'],
+    variants: {
+      '5-7': t('أحسنت', 'أنهيت {goalTitle} كله 🎉', 'Well done', 'You finished all of {goalTitle} 🎉'),
+      '8-10': t('أحسنت', 'أنهيت هدف {goalTitle} بالكامل 🎉', 'Well done', 'You finished all of {goalTitle} 🎉'),
+      '11-13': t(
+        'هدف مكتمل',
+        'أنهيت هدف {goalTitle} بالكامل — إنجاز حقيقي',
+        'Goal complete',
+        'You finished {goalTitle} end to end — real progress',
+      ),
+      '14-17': t(
+        'هدف مكتمل',
+        'أنهيت هدف {goalTitle} بالكامل، وهذا يفتح الهدف التالي',
+        'Goal complete',
+        'You finished {goalTitle} — the next goal is open',
+      ),
+    },
+  },
+
+  ACHIEVEMENT_VERIFIED: {
+    category: 'ACHIEVEMENT',
+    audience: 'CHILD',
+    variables: ['goalTitle'],
+    variants: {
+      '5-7': t('تم التأكيد', 'أهلك أكدوا {goalTitle} ✅', 'Confirmed', 'Your family confirmed {goalTitle} ✅'),
+      '8-10': t('تم التأكيد', 'أهلك أكدوا إنجازك في {goalTitle} ✅', 'Confirmed', 'Your family confirmed {goalTitle} ✅'),
+      '11-13': t(
+        'تم التأكيد',
+        'تم تأكيد إنجازك في {goalTitle} من أهلك',
+        'Confirmed',
+        'Your achievement in {goalTitle} was confirmed',
+      ),
+      '14-17': t(
+        'تم التأكيد',
+        'تم تأكيد إنجازك في {goalTitle}، وأُضيف إلى سجلك',
+        'Confirmed',
+        'Your {goalTitle} achievement was confirmed and recorded',
+      ),
+    },
+  },
+
+  ACHIEVEMENT_REJECTED: {
+    category: 'ACHIEVEMENT',
+    audience: 'CHILD',
+    variables: ['goalTitle'],
+    variants: {
+      '5-7': t('نحتاج مراجعة', 'راجع {goalTitle} مع أهلك', 'Let us check', 'Check {goalTitle} with your family'),
+      '8-10': t(
+        'نحتاج مراجعة',
+        'راجع هدف {goalTitle} مع أهلك اليوم',
+        'Let us check',
+        'Review {goalTitle} with your family today',
+      ),
+      '11-13': t(
+        'نحتاج مراجعة',
+        'يحتاج {goalTitle} مراجعة بسيطة مع أهلك',
+        'Needs a look',
+        '{goalTitle} needs a quick review with your family',
+      ),
+      '14-17': t(
+        'نحتاج مراجعة',
+        'يحتاج {goalTitle} مراجعة مع أهلك قبل اعتماده',
+        'Needs a look',
+        '{goalTitle} needs a review with your family before it counts',
+      ),
+    },
+  },
+
+  HYDRATION_REMINDER: {
+    category: 'REMINDER',
+    audience: 'CHILD',
+    variables: [],
+    variants: {
+      '5-7': t('وقت الماء', 'خذ رشفة ماء الآن 💧', 'Water time', 'Take a sip of water 💧'),
+      '8-10': t('وقت الماء', 'خذ استراحة قصيرة واشرب ماء 💧', 'Water time', 'Take a short break and drink 💧'),
+      '11-13': t('وقت الماء', 'مرّ وقت طويل — استراحة قصيرة وكوب ماء', 'Water time', 'It has been a while — a short break and water'),
+      '14-17': t(
+        'وقت الماء',
+        'مرّ وقت طويل على الشاشة — استراحة قصيرة وكوب ماء',
+        'Water time',
+        'Long stretch on screen — take a break and some water',
+      ),
+    },
+  },
+
+  STUDY_REMINDER: {
+    category: 'REMINDER',
+    audience: 'CHILD',
+    variables: ['goalTitle'],
+    variants: {
+      '5-7': t('وقت المذاكرة', 'وقت {goalTitle} بدأ 📘', 'Study time', '{goalTitle} time 📘'),
+      '8-10': t('وقت المذاكرة', 'بدأ وقتك المعتاد لـ {goalTitle} 📘', 'Study time', 'Your usual {goalTitle} time started 📘'),
+      '11-13': t(
+        'وقت المذاكرة',
+        'بدأ وقتك المعتاد لـ {goalTitle} — جاهز تبدأ؟',
+        'Study time',
+        'Your usual {goalTitle} time started — ready?',
+      ),
+      '14-17': t(
+        'وقت المذاكرة',
+        'بدأ وقتك المعتاد لـ {goalTitle} — عشرون دقيقة تكفي للبداية',
+        'Study time',
+        'Your usual {goalTitle} window started — twenty minutes is enough to start',
+      ),
+    },
+  },
+
+  EXERCISE_ENCOURAGEMENT: {
+    category: 'REMINDER',
+    audience: 'CHILD',
+    variables: ['days'],
+    variants: {
+      '5-7': t('حركة صغيرة', 'حركة صغيرة تكفي اليوم ⚡', 'Move a bit', 'A little movement is enough ⚡'),
+      '8-10': t('حركة صغيرة', 'حركة بسيطة تبقي سلسلتك حية ⚡', 'Move a bit', 'A little movement keeps your streak ⚡'),
+      '11-13': t(
+        'حركة صغيرة',
+        'لم تسجل نشاطًا اليوم — حركة بسيطة تكفي',
+        'Move a bit',
+        'No activity logged today — a little is enough',
+      ),
+      '14-17': t(
+        'حركة صغيرة',
+        'لم تسجّل نشاطًا اليوم، وحركة قصيرة تكفي للحفاظ على {days} أيام',
+        'Move a bit',
+        'Nothing logged today — a short session protects {days} days',
+      ),
+    },
+  },
+
+  // ==================================================================== PARENT
+
+  GOAL_COMPLETED_PARENT: {
+    category: 'GOAL',
+    audience: 'PARENT',
+    variables: ['childName', 'goalTitle', 'weekCount'],
+    variants: {
+      PARENT: t(
+        'هدف مكتمل',
+        '{childName} أكمل هدفه في {goalTitle}، وهذه {weekCount} مرة هذا الأسبوع',
+        'Goal completed',
+        '{childName} completed the {goalTitle} goal — time number {weekCount} this week',
+      ),
+    },
+  },
+
+  GOAL_STALLED_PARENT: {
+    category: 'GOAL',
+    audience: 'PARENT',
+    variables: ['childName', 'goalTitle'],
+    variants: {
+      PARENT: t(
+        'هدف بدأ ولم يكتمل',
+        'بدأ {childName} هدف {goalTitle} ولم يكمله — ربما يحتاج دفعة اليوم',
+        'Goal started, not finished',
+        '{childName} started {goalTitle} and did not finish — a nudge today may help',
+      ),
+    },
+  },
+
+  REWARD_GRANTED: {
+    category: 'REWARD',
+    audience: 'PARENT',
+    variables: ['childName'],
+    variants: {
+      PARENT: t(
+        'مكافأة جديدة',
+        'حصل {childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.',
+        'New reward',
+        '{childName} earned a new reward today. Open the app for details.',
+      ),
+    },
+  },
+
+  SCREEN_TIME_EXCEEDED: {
+    category: 'SAFETY',
+    audience: 'PARENT',
+    variables: ['childName'],
+    variants: {
+      PARENT: t(
+        'انتهى وقت الشاشة',
+        'انتهى وقت الشاشة المخصص لـ {childName} اليوم. التفاصيل داخل التطبيق.',
+        'Screen time ended',
+        "{childName}'s screen time for today has ended. Details are in the app.",
+      ),
+    },
+  },
+
+  POLICY_VIOLATION: {
+    category: 'SAFETY',
+    audience: 'PARENT',
+    variables: ['childName'],
+    variants: {
+      PARENT: t(
+        'تحديث على الإعدادات',
+        'هناك ما يستحق مراجعتك في إعدادات {childName}. افتح التطبيق للاطلاع.',
+        'Worth a look',
+        "Something in {childName}'s settings is worth your review. Open the app.",
+      ),
+    },
+  },
+
+  ACCESSIBILITY_DISABLED: {
+    category: 'SAFETY',
+    audience: 'PARENT',
+    variables: ['childName'],
+    variants: {
+      PARENT: t(
+        'الحماية متوقفة',
+        'خدمة الحماية على جهاز {childName} متوقفة الآن. تفعيلها يستغرق دقيقة.',
+        'Protection is off',
+        "Protection on {childName}'s device is off right now. Turning it on takes a minute.",
+      ),
+    },
+  },
+
+  PROTECTION_BYPASS_ATTEMPT: {
+    category: 'SAFETY',
+    audience: 'PARENT',
+    variables: ['childName'],
+    variants: {
+      PARENT: t(
+        'محاولة تعطيل الحماية',
+        'سُجّلت محاولة لتعطيل الحماية على جهاز {childName}. راجع الإعدادات.',
+        'Protection change attempt',
+        "An attempt to turn off protection on {childName}'s device was recorded. Review settings.",
+      ),
+    },
+  },
+
+  CHILD_WELLBEING_CHECKIN: {
+    category: 'SAFETY',
+    audience: 'PARENT',
+    variables: ['childName'],
+    variants: {
+      PARENT: t(
+        'اطمئن على {childName}',
+        'ظهرت إشارات تستحق اطمئنانك على {childName} الآن.',
+        'Check in on {childName}',
+        'Signals worth a check-in with {childName} right now.',
+      ),
+    },
+  },
+
+  CHILD_REQUEST: {
+    category: 'SAFETY',
+    audience: 'PARENT',
+    variables: ['childName'],
+    variants: {
+      PARENT: t(
+        'طلب من {childName}',
+        'أرسل {childName} طلبًا ينتظر ردّك داخل التطبيق.',
+        'Request from {childName}',
+        '{childName} sent a request waiting for your answer in the app.',
+      ),
+    },
+  },
+
+  SUBSCRIPTION_EXPIRING: {
+    category: 'SUBSCRIPTION',
+    audience: 'PARENT',
+    variables: ['days'],
+    variants: {
+      PARENT: t(
+        'اشتراكك يقترب من التجديد',
+        'يتبقى {days} يومًا على تجديد اشتراكك. يمكنك المراجعة داخل التطبيق.',
+        'Renewal is near',
+        'Your subscription renews in {days} days. You can review it in the app.',
+      ),
+    },
+  },
+
+  PAYMENT_FAILED: {
+    category: 'PAYMENT',
+    audience: 'PARENT',
+    variables: [],
+    variants: {
+      PARENT: t(
+        'تعذّر إتمام الدفع',
+        'لم تكتمل عملية الدفع الأخيرة. يمكنك المحاولة مرة أخرى من داخل التطبيق.',
+        'Payment did not go through',
+        'The last payment did not complete. You can try again from the app.',
+      ),
+    },
+  },
+
+  QUIET_HOURS_DIGEST: {
+    category: 'SYSTEM',
+    audience: 'PARENT',
+    variables: ['count'],
+    variants: {
+      PARENT: t(
+        'ملخّص الليلة',
+        'لديك {count} تحديثات من الليلة الماضية. افتح التطبيق للاطلاع عليها.',
+        'Overnight summary',
+        'You have {count} updates from last night. Open the app to review them.',
+      ),
+    },
+  },
+
+  /**
+   * THE FALLBACK, and it is deliberately CONTENTLESS.
+   *
+   * It is reached when a producer sends a type nobody has written copy for. The
+   * alternative — echoing `candidate.type` into the body — is precisely the
+   * «render a raw backend enum to a user» failure this file exists to make
+   * impossible, and it is what `parent-app`'s home screen was doing with a risk
+   * enum before Phase E fixed it. A vague-but-human sentence plus a pointer into
+   * the app is the honest degraded state.
+   */
+  GENERIC: {
+    category: 'SYSTEM',
+    audience: 'PARENT',
+    variables: [],
+    variants: {
+      PARENT: t(
+        'تحديث جديد',
+        'لديك تحديث جديد داخل التطبيق.',
+        'New update',
+        'You have a new update in the app.',
+      ),
+      '5-7': t('تحديث جديد', 'لديك جديد في التطبيق ✨', 'Something new', 'Something new in the app ✨'),
+      '8-10': t('تحديث جديد', 'لديك جديد في التطبيق ✨', 'Something new', 'Something new in the app ✨'),
+      '11-13': t('تحديث جديد', 'لديك تحديث جديد في التطبيق', 'Something new', 'You have a new update in the app'),
+      '14-17': t('تحديث جديد', 'لديك تحديث جديد في التطبيق', 'Something new', 'You have a new update in the app'),
+    },
+  },
+});
+
+export const GENERIC_COPY_KEY = 'GENERIC';
+
+/** Arabic-Indic digits. The samples in the brief are written «٥ دقائق», not «5
+ * دقائق», and a product that writes Arabic prose with Latin numerals reads as a
+ * translation — which CONTEXT §1 explicitly rejects. */
+const ARABIC_INDIC = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+
+export function formatNumber(value: number | string, locale: NotificationLocale): string {
+  const text = String(value);
+  if (locale !== 'ar') return text;
+  return text.replace(/[0-9]/g, (d) => ARABIC_INDIC[Number(d)]);
+}
+
+/**
+ * Arabic ordinals for the «وهذه ثالث مرة هذا الأسبوع» sentence. Data, not a
+ * formatter: Arabic ordinals below ten are irregular and a numeric fallback
+ * («المرة ٤») is correct rather than wrong for the rest.
+ */
+const AR_ORDINALS = ['', 'أول', 'ثاني', 'ثالث', 'رابع', 'خامس', 'سادس', 'سابع', 'ثامن', 'تاسع'];
+
+export function ordinal(n: number, locale: NotificationLocale): string {
+  if (locale === 'ar') {
+    return n >= 1 && n < AR_ORDINALS.length ? AR_ORDINALS[n] : `المرة ${formatNumber(n, 'ar')}`;
+  }
+  const suffix = n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th';
+  return `${n}${suffix}`;
+}
+
+export interface RenderCopyRequest {
+  readonly key: string;
+  readonly audience: ToneAudience;
+  readonly toneBand: ToneBand;
+  readonly locale: NotificationLocale;
+  readonly variables: Readonly<Record<string, string | number>>;
+}
+
+export interface RenderedCopy {
+  readonly title: string;
+  readonly body: string;
+  /** Which catalogue key actually produced the text — `GENERIC` when the
+   * requested key had no entry. Persisted on the decision so «why did this read
+   * like a stub» has an answer. */
+  readonly resolvedKey: string;
+  /** Which variant was used, after the nearest-band walk. */
+  readonly resolvedVariant: CopyVariantKey;
+  readonly locale: NotificationLocale;
+}
+
+/**
+ * The nearest-band walk. A child-facing entry that defines only some bands still
+ * resolves, and it resolves DOWNWARD first — towards simpler language — because
+ * a sentence that is too simple for a fourteen-year-old is a smaller failure
+ * than one that is too complex for a six-year-old.
+ */
+const BAND_FALLBACK: Readonly<Record<ToneBand, readonly ToneBand[]>> = Object.freeze({
+  '5-7': ['5-7', '8-10', '11-13', '14-17'],
+  '8-10': ['8-10', '5-7', '11-13', '14-17'],
+  '11-13': ['11-13', '8-10', '14-17', '5-7'],
+  '14-17': ['14-17', '11-13', '8-10', '5-7'],
+});
+
+/** An unresolved placeholder, or a bare backend enum token that leaked into
+ * copy. Either one means the string must not ship. */
+const LEAK_PATTERN = /\{[a-zA-Z0-9_]+\}|(?:^|[\s(])[A-Z][A-Z0-9]*_[A-Z0-9_]+/;
+
+export function hasEnumOrPlaceholderLeak(text: string): boolean {
+  return LEAK_PATTERN.test(text);
+}
+
+function substitute(
+  template: string,
+  variables: Readonly<Record<string, string | number>>,
+  locale: NotificationLocale,
+): string {
+  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (whole, name: string) => {
+    const value = variables[name];
+    if (value === undefined || value === null || value === '') return whole;
+    return typeof value === 'number' ? formatNumber(value, locale) : String(value);
+  });
+}
+
+/**
+ * RENDER, AND NEVER RETURN SOMETHING A HUMAN SHOULD NOT READ.
+ *
+ * The function is total. Every failure mode — unknown key, missing band, missing
+ * locale, a producer that forgot a variable — degrades to the generic entry in
+ * the requested locale rather than throwing or emitting a half-substituted
+ * string. A notification pipeline that throws on a copy problem turns a wording
+ * bug into a lost reward.
+ */
+export function renderNotificationCopy(request: RenderCopyRequest): RenderedCopy {
+  const attempt = (key: string): RenderedCopy | null => {
+    const entry = COPY_CATALOGUE[key];
+    if (!entry) return null;
+
+    const order: readonly CopyVariantKey[] =
+      request.audience === 'PARENT' ? ['PARENT'] : BAND_FALLBACK[request.toneBand];
+
+    for (const variantKey of order) {
+      const localised = entry.variants[variantKey];
+      if (!localised) continue;
+      // Arabic is the fallback, never English — CONTEXT §1.
+      const template = localised[request.locale] ?? localised.ar;
+      const title = substitute(template.title, request.variables, request.locale);
+      const body = substitute(template.body, request.variables, request.locale);
+      if (hasEnumOrPlaceholderLeak(title) || hasEnumOrPlaceholderLeak(body)) return null;
+      return {
+        title,
+        body,
+        resolvedKey: key,
+        resolvedVariant: variantKey,
+        locale: request.locale,
+      };
+    }
+    return null;
+  };
+
+  const rendered = attempt(request.key);
+  if (rendered) return rendered;
+
+  const generic = attempt(GENERIC_COPY_KEY);
+  /* istanbul ignore next — `GENERIC` has a variant for every audience and band,
+     asserted by `notification-copy.spec.ts`; this branch exists so the function
+     is total in the type system as well as in fact. */
+  if (!generic) {
+    return {
+      title: request.locale === 'en' ? 'New update' : 'تحديث جديد',
+      body: request.locale === 'en' ? 'You have a new update in the app.' : 'لديك تحديث جديد داخل التطبيق.',
+      resolvedKey: GENERIC_COPY_KEY,
+      resolvedVariant: request.audience === 'PARENT' ? 'PARENT' : request.toneBand,
+      locale: request.locale,
+    };
+  }
+  return generic;
+}
+
+/** Every key in the catalogue, for the exhaustiveness spec and the report. */
+export function copyKeys(): readonly string[] {
+  return Object.keys(COPY_CATALOGUE);
+}

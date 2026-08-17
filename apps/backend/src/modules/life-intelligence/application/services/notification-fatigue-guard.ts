@@ -51,6 +51,43 @@ export interface IFatiguePolicy {
   categoryDailyMax: number;
   quietHoursStart: string;
   quietHoursEnd: string;
+
+  /**
+   * PHASE F (`F6-002`) — THE THREE FIELDS THAT MAKE THIS POLICY CONFIGURATION
+   * INSTEAD OF A CONSTANT, AND WHY ALL THREE ARE OPTIONAL.
+   *
+   * Every caller written before F6 — `SmartNotificationIntegrationService` and
+   * `QuietHoursReleaseService`, both of which pass no policy argument at all —
+   * must keep `DEFAULT_FATIGUE_POLICY`'s exact previous behaviour. An absent
+   * field is therefore not «zero», it is «this rule did not exist for you», and
+   * each branch below is written that way. The values come from
+   * `notifications/domain/engine/notification-policy.ts` via `toFatiguePolicy`,
+   * which resolves them per family from `notification_policy_settings`.
+   *
+   * The guard stays a PURE function of (candidate, history, clock, policy).
+   * Nothing here reads a database or a wall clock.
+   */
+
+  /**
+   * Ceiling per rolling 60 minutes. THE GAP IT CLOSES: `dailyMax` alone made
+   * six notifications inside four minutes legal, followed by silence for the
+   * rest of the day — a burst and then a blackout, which is the exact shape of
+   * the complaint an anti-fatigue guard exists to prevent. Undefined = no
+   * hourly ceiling, precisely as before F6.
+   */
+  hourlyMax?: number;
+
+  /**
+   * Cooldown for a type with no entry in `cooldownMinutesByType`. Undefined =
+   * no cooldown for unlisted types, which was the pre-F6 behaviour: the three
+   * types Sprint 16 happened to name were the only ones with any cooldown at
+   * all, so `REWARD_GRANTED` and every type added after it had none.
+   */
+  defaultCooldownMinutes?: number;
+
+  /** The sliding duplicate window. Undefined = the five minutes this function
+   * has always used, and which `NOTIFICATION_DEDUPE_WINDOW_MS` also states. */
+  duplicateWindowMs?: number;
 }
 
 /** A reasonable, explicitly-stated, easily-adjustable-later default
@@ -71,7 +108,13 @@ export const DEFAULT_FATIGUE_POLICY: IFatiguePolicy = {
 
 export interface IFatigueDecision {
   allowed: boolean;
-  blockedReason?: 'COOLDOWN' | 'DAILY_MAX' | 'CATEGORY_MAX' | 'DUPLICATE' | 'QUIET_HOURS';
+  /** PHASE F — `HOURLY_MAX` is the one new member, and it is added to the union
+   * rather than folded into `DAILY_MAX` because `QuietHoursReleaseService`
+   * writes this value straight into `notification_deliveries.resolution_reason`
+   * and an operator reading «DAILY_MAX» about a household that received two
+   * notifications would be reading a lie. `ResolutionReason` gained the same
+   * member in the same commit. */
+  blockedReason?: 'COOLDOWN' | 'DAILY_MAX' | 'HOURLY_MAX' | 'CATEGORY_MAX' | 'DUPLICATE' | 'QUIET_HOURS';
 }
 
 /**
@@ -143,7 +186,13 @@ export function evaluateFatigue(
   // between two triggers), not a second real notification — tighter
   // than the per-type cooldown below, which governs normal repeat
   // frequency, not near-simultaneous duplicates.
-  const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
+  //
+  // PHASE F — the five minutes is now the DEFAULT rather than the only value.
+  // It stays exactly five minutes for every caller that does not configure it,
+  // which is all of them today, and it stays deliberately equal to
+  // `NOTIFICATION_DEDUPE_WINDOW_MS`'s bucket width so the product behaviour and
+  // the database backstop keep agreeing.
+  const DUPLICATE_WINDOW_MS = policy.duplicateWindowMs ?? 5 * 60 * 1000;
   const isDuplicate = recentHistory.some(
     (n) => n.type === candidate.type && now.getTime() - n.createdAt.getTime() < DUPLICATE_WINDOW_MS,
   );
@@ -155,12 +204,35 @@ export function evaluateFatigue(
     return { allowed: false, blockedReason: 'DAILY_MAX' };
   }
 
+  // PHASE F — THE HOURLY CEILING, and it is checked AFTER the daily one on
+  // purpose: when a household is over both, «you have had six today» is the
+  // more useful thing for an operator to read than «you have had three in the
+  // last hour», and the reason is written into `resolution_reason`.
+  //
+  // A ROLLING sixty minutes, not a clock hour. A clock hour would let three
+  // notifications at 10:58 be followed by three more at 11:01 — six in four
+  // minutes, which is the exact burst this rule exists to prevent, arriving
+  // legally through the rule meant to stop it.
+  if (policy.hourlyMax !== undefined) {
+    const hourAgo = now.getTime() - 60 * 60 * 1000;
+    const lastHourCount = recentHistory.filter((n) => n.createdAt.getTime() >= hourAgo).length;
+    if (lastHourCount >= policy.hourlyMax) {
+      return { allowed: false, blockedReason: 'HOURLY_MAX' };
+    }
+  }
+
   const categoryCountToday = todayHistory.filter((n) => n.type === candidate.type).length;
   if (categoryCountToday >= policy.categoryDailyMax) {
     return { allowed: false, blockedReason: 'CATEGORY_MAX' };
   }
 
-  const cooldownMinutes = policy.cooldownMinutesByType[candidate.type];
+  // PHASE F — an unlisted type now falls back to `defaultCooldownMinutes` when
+  // one is configured. Before this, `cooldownMinutesByType` named three types
+  // and every other type in the product — `REWARD_GRANTED`, `BADGE_EARNED`,
+  // every safety type — had NO cooldown whatsoever; the daily and category caps
+  // were the only thing between a misbehaving producer and a stream. Still
+  // `undefined` when nobody configured it, so pre-F6 behaviour is unchanged.
+  const cooldownMinutes = policy.cooldownMinutesByType[candidate.type] ?? policy.defaultCooldownMinutes;
   if (cooldownMinutes !== undefined) {
     const lastOfType = recentHistory
       .filter((n) => n.type === candidate.type)

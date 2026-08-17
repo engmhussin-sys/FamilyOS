@@ -88,8 +88,15 @@ describe('tenant model registry', () => {
   // `GrowthDailyMetric`, `GrowthQuarterlyTarget`, `GrowthForecastScenario`,
   // `GrowthSetting` — platform configuration and cross-tenant aggregates that
   // belong to no household).
-  it('the schema still has 98 models — the number this classification was built against', () => {
-    expect(prismaModels).toHaveLength(98);
+  // PHASE F (`F6-002`): 98 -> 100. Migration 0018 adds TWO STRICT tables.
+  // `NotificationDecision` is the decision ledger — one row per decision,
+  // including the ones that sent nothing, which is the only place a suppression
+  // rate can come from. `NotificationPolicySetting` is the per-family caps,
+  // cooldowns and quiet hours, which turns `DEFAULT_FATIGUE_POLICY`'s five
+  // constants into configuration. Both are one household's business and neither
+  // has a tenant-less case.
+  it('the schema still has 100 models — the number this classification was built against', () => {
+    expect(prismaModels).toHaveLength(100);
   });
 
   it.each([...STRICT_TENANT_MODELS])(
@@ -161,8 +168,11 @@ describe('tenant model registry', () => {
   // row describes ONE household (where it came from, whether it activated, who
   // it referred) and GLOBAL when it is platform configuration or a
   // cross-tenant aggregate that would tell one family about another.
-  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008 + 1 from 0014 + 5 from 0013 + 6 from 0015', () => {
-    expect(STRICT_TENANT_MODELS.size).toBe(66);
+  // PHASE F, migration 0018: STRICT 66 -> 68. Neither new table has a
+  // platform-level or un-tenanted case, so the other three classes are
+  // unchanged — which is itself the assertion worth making.
+  it('the strict class is 44 from 0003 + 3 from 0005 + 5 from 0006 + 2 from 0008 + 1 from 0014 + 5 from 0013 + 6 from 0015 + 2 from 0018', () => {
+    expect(STRICT_TENANT_MODELS.size).toBe(68);
     expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(9);
     expect(SELF_TENANT_MODELS.size).toBe(1);
     expect(GLOBAL_MODELS.size).toBe(22);

@@ -61,6 +61,19 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   // household's business, is meaningless outside it, and is read back by that
   // household's own release path from inside `runWithTenant`.
   'NotificationDelivery',
+  // PHASE F (F6-002): the two tables of the smart notification decision layer,
+  // migration 0018. `NotificationDecision` is the same class as `Notification`
+  // and `NotificationDelivery` for the same reason — a decision about one
+  // household's notification is that household's business and is meaningless
+  // outside it; the platform analytics surface reads it CROSS-TENANT through
+  // `runAsSystemAsync` and a `@SystemRoute`, exactly as the delivery backlog
+  // gauge does, and never by weakening the tenant filter.
+  // `NotificationPolicySetting` is the household's OWN caps and quiet hours —
+  // it is deliberately NOT the `GrowthSetting` case: growth settings are
+  // platform configuration with one global value, and these have one value PER
+  // FAMILY, which is the whole reason the table exists.
+  'NotificationDecision',
+  'NotificationPolicySetting',
   'Habit',
   'HabitCompletion',
   'RewardsAccount',
