@@ -13,6 +13,7 @@ import {
 } from '../domain/growth-events';
 import { rate } from '../domain/kpi-definitions';
 import { ACQUISITION_CHANNELS, type AcquisitionChannel } from '../domain/attribution';
+import { familyCountryWhere } from '../domain/country-attribution';
 
 export interface IFunnelStepResult {
   readonly step: FunnelStep;
@@ -88,14 +89,21 @@ export class FunnelService {
         // The attribution predicate every family-level step is filtered by.
         // A step that ignored it would silently report the WHOLE funnel under
         // one channel's name.
+        //
+        // F1 SPLIT THIS IN TWO, and the split is the point. CHANNEL and CAMPAIGN
+        // are properties of the acquisition record — there is nowhere else they
+        // could come from. COUNTRY is a property of the HOUSEHOLD, and now has a
+        // server-held, foreign-key-backed column of its own; reading it off the
+        // marketing label meant a family that told us its market at registration
+        // but arrived without UTM parameters appeared in NO country's funnel.
         const attributionWhere: Record<string, unknown> = {};
-        if (params.countryCode !== PLATFORM_SCOPE) attributionWhere.countryCode = params.countryCode;
         if (params.channel) attributionWhere.channel = params.channel;
         if (params.campaignId) attributionWhere.campaignId = params.campaignId;
 
         const familyWhere = {
           deletedAt: null,
           createdAt: window,
+          ...familyCountryWhere(params.countryCode),
           ...(Object.keys(attributionWhere).length > 0
             ? { acquisitionAttribution: attributionWhere }
             : {}),
@@ -250,13 +258,14 @@ export class FunnelService {
       async () => {
         const out = [];
         for (const channel of ACQUISITION_CHANNELS) {
+          // F1: the CHANNEL still comes from the acquisition record (it can come
+          // from nowhere else); the COUNTRY comes from the shared household
+          // predicate, so this view counts the same families as every other one.
           const where = {
             deletedAt: null,
             createdAt: window,
-            acquisitionAttribution: {
-              channel,
-              ...(params.countryCode === PLATFORM_SCOPE ? {} : { countryCode: params.countryCode }),
-            },
+            ...familyCountryWhere(params.countryCode),
+            acquisitionAttribution: { channel },
           };
           const [registrations, paid] = await Promise.all([
             this.prisma.family.count({ where }),

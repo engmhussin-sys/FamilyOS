@@ -5,6 +5,7 @@ import { runInSystemScope } from './system-scope';
 import { getBusinessDate, getBusinessDayRange } from '../../../common/time/family-date';
 import { GrowthSettingsService } from './growth-settings.service';
 import { KpiService, PLATFORM_SCOPE } from './kpi.service';
+import { familyCountryWhere } from '../domain/country-attribution';
 import { medianHours } from '../domain/kpi-definitions';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -102,10 +103,16 @@ export class GrowthAggregationService {
       'SCHEDULED_JOB',
       'Writing one cross-tenant daily aggregate row; growth_daily_metrics is a global table with no family_id.',
       async () => {
-        const countryFilter =
-          countryCode === PLATFORM_SCOPE
-            ? {}
-            : { OR: [{ acquisitionAttribution: { countryCode } }, { subscription: { countryCode } }] };
+        // F1 — «REGISTERED FAMILIES IN SA» BECOMES A REAL NUMBER HERE.
+        //
+        // `new_registrations` below is a `family.count` filtered by this
+        // predicate, and until F1 the predicate could not see a family's own
+        // country at all: it ORed the untrusted marketing label with the
+        // subscription's country, so a household that told us it was in Saudi
+        // Arabia at registration and had not yet bought anything counted in no
+        // market. The inline copy is gone; this is the SAME predicate
+        // `KpiService` uses, from the one file that defines it.
+        const countryFilter = familyCountryWhere(countryCode);
         const subscriptionFilter = countryCode === PLATFORM_SCOPE ? {} : { countryCode };
         const window = { gte: start, lt: endExclusive };
 

@@ -149,11 +149,23 @@ export class ActivationService {
 
   /**
    * The country a household is attributed to, for slicing activation by market.
-   * Attribution first (it is what the family told us at registration), then the
-   * subscription's country (what it actually bought in). `null` when neither
-   * exists — an honest "unknown market", never a defaulted 'EG'.
+   *
+   * F1 PUT `families.country_code` AT THE FRONT of the order, and the ordering
+   * is now stated once, in `domain/country-attribution.ts`, so the country
+   * STAMPED on an activation row is resolved by the same rule the queries that
+   * COUNT those rows use. Server record first, then the untrusted marketing
+   * label, then the subscription's country.
+   *
+   * `null` when none of the three exists — an honest "unknown market", never a
+   * defaulted 'EG'.
    */
   private async countryOf(familyId: string): Promise<string | null> {
+    const family = await this.prisma.family.findUnique({
+      where: { id: familyId },
+      select: { countryCode: true },
+    });
+    if (family?.countryCode) return family.countryCode;
+
     const attribution = await this.prisma.acquisitionAttribution.findFirst({
       where: { familyId },
       select: { countryCode: true },

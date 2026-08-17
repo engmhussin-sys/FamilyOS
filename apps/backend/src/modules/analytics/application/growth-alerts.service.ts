@@ -5,6 +5,7 @@ import { runInSystemScope } from './system-scope';
 import { getBusinessDate, getBusinessDayRange, addBusinessDays } from '../../../common/time/family-date';
 import { GrowthSettingsService } from './growth-settings.service';
 import { rate } from '../domain/kpi-definitions';
+import { familyCountryWhere } from '../domain/country-attribution';
 
 /** The eight conditions an operator is paged about. A closed vocabulary. */
 export const GROWTH_ALERT_TYPES = [
@@ -181,7 +182,11 @@ export class GrowthAlertsService {
   ): Promise<number | null> {
     const range = getBusinessDayRange(endAt, timeZone);
     const start = new Date(range.endExclusive.getTime() - days * DAY_MS);
-    const familyFilter = { acquisitionAttribution: { countryCode } };
+    // F1: the ONE definition of "a family belongs to this market", shared with
+    // `KpiService` and the daily aggregate. This used to be the marketing label
+    // alone, so the conversion alert and the conversion KPI could be computed
+    // over different sets of households and disagree with no way to tell why.
+    const familyFilter = familyCountryWhere(countryCode);
 
     return this.sys(async () => {
       const registrations = await this.prisma.family.count({
@@ -471,7 +476,9 @@ export class GrowthAlertsService {
         where: {
           deletedAt: null,
           createdAt: { gte: start, lt: range.endExclusive },
-          acquisitionAttribution: { countryCode },
+          // F1: same shared predicate — a country's registration count in an
+          // alert must be the same number the dashboard shows for it.
+          ...familyCountryWhere(countryCode),
         },
       }),
     );

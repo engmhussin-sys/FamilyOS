@@ -26,9 +26,17 @@ import {
   type MoneyKpi,
   type RetentionDay,
 } from '../domain/kpi-definitions';
+import { PLATFORM_SCOPE, familyCountryWhere } from '../domain/country-attribution';
 
-/** The platform-wide sentinel used by `growth_daily_metrics.country_code`. */
-export const PLATFORM_SCOPE = '**';
+/**
+ * The platform-wide sentinel used by `growth_daily_metrics.country_code`.
+ *
+ * F1: it now LIVES in `domain/country-attribution.ts`, beside the predicate
+ * that interprets it, and is RE-EXPORTED here so every existing importer
+ * (`funnel.service.ts`, `growth-aggregation.service.ts`, the admin controller,
+ * the e2e suite) keeps reading one constant rather than two.
+ */
+export { PLATFORM_SCOPE };
 
 export interface IKpiQuery {
   /** ISO-3166 alpha-2, or `**` for the whole platform. */
@@ -98,18 +106,24 @@ export class KpiService {
   }
 
   /**
-   * `where` fragment restricting families to a market. A family's market is
-   * what it told us at registration; the fallback to `subscriptions
-   * .country_code` is deliberate for the households that predate attribution.
+   * `where` fragment restricting families to a market.
+   *
+   * F1 — THIS METHOD NO LONGER DECIDES ANYTHING; it delegates to
+   * `domain/country-attribution.ts`, which is now the single definition of "a
+   * family belongs to this market" for the KPIs, the daily aggregate, the alerts
+   * and the funnel. Before F1 this class ORed the marketing label with the
+   * subscription's country and `GrowthAlertsService` used the label alone, so
+   * two surfaces answered "families in SA" with two different sets.
+   *
+   * WHAT CHANGED IN THE ANSWER: `families.country_code` — the server's own,
+   * foreign-key-backed record — now takes precedence, and the marketing label is
+   * consulted only for households that have none. Read that file for what
+   * happens to a family with no country anywhere (short version: excluded from
+   * every country, included in the platform total, never silently folded into
+   * EG).
    */
   private familyCountryFilter(countryCode: string): Record<string, unknown> {
-    if (countryCode === PLATFORM_SCOPE) return {};
-    return {
-      OR: [
-        { acquisitionAttribution: { countryCode } },
-        { subscription: { countryCode } },
-      ],
-    };
+    return familyCountryWhere(countryCode);
   }
 
   async snapshot(query: IKpiQuery): Promise<IKpiSnapshot> {
