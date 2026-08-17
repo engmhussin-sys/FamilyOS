@@ -350,24 +350,25 @@ describeIfDb('the child learning catalogue over the real deployed HTTP pipeline'
   describe('the surface is read-only over HTTP as well as in metadata', () => {
     it('POST, PATCH, PUT and DELETE do not exist on any catalogue path', async () => {
       const paths = ['/self/catalogue', '/self/catalogue/domains', '/self/catalogue/QURAN'];
+      const observed: Array<{ call: string; status: number }> = [];
+
       for (const path of paths) {
         for (const verb of ['post', 'patch', 'put', 'delete'] as const) {
           const res = await (request(http) as any)
             [verb](`${V}${path}`)
             .set(asChild(A))
-            .send({ points: 9999 });
-          // 404 (no such route) or 405 (method not allowed) — never a 2xx, and
-          // never a validation error, which would mean a handler ran.
-          expect({ path, verb, status: res.status }).toEqual({
-            path,
-            verb,
-            status: res.status,
-          });
-          expect(res.status).toBeGreaterThanOrEqual(400);
-          expect(res.status).not.toBe(200);
-          expect(res.status).not.toBe(201);
+            .send({ points: 9999, verificationLevel: 'SELF_CHECK', maxPerDay: 50 });
+          observed.push({ call: `${verb.toUpperCase()} ${path}`, status: res.status });
         }
       }
+
+      // 404 (no such route) or 405 (method not allowed). NEVER a 2xx, and
+      // never a 400 either — a 400 would mean a handler with a body ran and
+      // VALIDATED it, i.e. a write surface exists here. Collecting first and
+      // asserting once means a failure names every offending call rather than
+      // stopping at the first.
+      expect(observed.length).toBe(paths.length * 4);
+      expect(observed.filter((o) => ![404, 405].includes(o.status))).toEqual([]);
     });
   });
 
