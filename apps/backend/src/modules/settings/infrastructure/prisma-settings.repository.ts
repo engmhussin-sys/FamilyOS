@@ -25,12 +25,17 @@ export class PrismaSettingsRepository implements ISettingsRepository {
     id: string;
     name: string;
     timezone: string;
+    countryCode: string | null;
     subscriptionPlan: string;
   }): IFamilySettings {
     return {
       id: family.id,
       name: family.name,
       timezone: family.timezone,
+      // F1. `GET /settings` now ECHOES the country. Until this line the column
+      // could be written and never read back — the shape of an orphan field,
+      // which is exactly the state `Family.timezone` was in before B2.
+      countryCode: family.countryCode,
       subscriptionPlan: family.subscriptionPlan,
     };
   }
