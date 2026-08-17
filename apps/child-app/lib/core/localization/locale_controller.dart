@@ -114,6 +114,22 @@ class LocaleController extends StateNotifier<AppLocale> {
     return translate(state, key, count: count, options: options);
   }
 
+  /// FOR A KEY BUILT FROM A SERVER VALUE, AND ONLY FOR THOSE.
+  ///
+  /// `t('attemptStage.${attempt.status}')` and `t('category.${goal.category}')`
+  /// assemble a key from an open backend string. When that string is one this
+  /// app knows, the child reads «عند ولي أمرك»; when it is one it does not —
+  /// a status the backend added this morning, or an empty string on a row
+  /// missing the field — [t]'s last-resort fallback puts «attemptStage.» or
+  /// «category.CHESS» in front of a child. This returns [fallback] instead,
+  /// which the caller passes as a real translated sentence.
+  ///
+  /// Deliberately NOT the default behaviour of [t]: a missing key for app
+  /// chrome SHOULD be loud, and silencing every one of them would hide the
+  /// class of bug the parity checker exists to catch.
+  String tOrElse(String key, String fallback) =>
+      hasTranslation(state, key) ? t(key) : fallback;
+
   bool get isRtl => rtlLocales.contains(state);
 
   /// Bridges this app's own AppLocale enum to Flutter's real `dart:ui`

@@ -223,7 +223,8 @@ class DomainChooser extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     // One domain is not a choice. Showing a chooser with a single chip and an
     // "everything" chip that select the same set is chrome pretending to be a
@@ -257,7 +258,11 @@ class DomainChooser extends ConsumerWidget {
                   // sentence with an unfiltered one. The app's own key is the
                   // fallback for a catalogue that could not be read — and for
                   // a category the catalogue never listed.
-                  label: domain.labelAr ?? t('category.${domain.category}'),
+                  label: domain.labelAr ??
+                      locale.tOrElse(
+                        'category.${domain.category}',
+                        t('category.unknown'),
+                      ),
                   icon: iconForCategory(domain.category),
                   isSelected: selected == domain.category,
                   isDim: !domain.hasSomethingToDoNow,

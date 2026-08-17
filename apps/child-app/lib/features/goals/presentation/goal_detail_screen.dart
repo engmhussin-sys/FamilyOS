@@ -60,7 +60,10 @@ class GoalDetailScreen extends ConsumerWidget {
               children: [
                 Text(
                   goal.targetSummaryAr.isEmpty
-                      ? t('category.${goal.category}')
+                      ? locale.tOrElse(
+                          'category.${goal.category}',
+                          t('category.unknown'),
+                        )
                       : goal.targetSummaryAr,
                   style: KidText.sectionTitle(context),
                 ),

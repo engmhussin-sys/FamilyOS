@@ -187,7 +187,8 @@ class GoalCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
     final reason = goal.unavailableReason;
 
     return KidCard(
@@ -204,7 +205,10 @@ class GoalCard extends ConsumerWidget {
         children: [
           Text(
             goal.targetSummaryAr.isEmpty
-                ? t('category.${goal.category}')
+                ? locale.tOrElse(
+                    'category.${goal.category}',
+                    t('category.unknown'),
+                  )
                 : goal.targetSummaryAr,
             style: KidText.cardTitle(context),
           ),

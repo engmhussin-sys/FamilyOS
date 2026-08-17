@@ -62,7 +62,14 @@ class MyAttemptsScreen extends ConsumerWidget {
                             ),
                           ),
                           KidBadge(
-                            label: t('attemptStage.${attempt.status}'),
+                            // NEVER THE RAW STATUS. `status` is an open
+                            // `VarChar` on the backend, so a value this app
+                            // has not been taught renders as the key —
+                            // «attemptStage.CANCELLED» in front of a child.
+                            label: locale.tOrElse(
+                              'attemptStage.${attempt.status}',
+                              t('attemptStage.unknown'),
+                            ),
                             color: attempt.isVerified
                                 ? KidColor.done
                                 : attempt.isWaiting

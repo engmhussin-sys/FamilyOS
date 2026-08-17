@@ -81,7 +81,15 @@ class _GoalSessionScreenState extends ConsumerState<GoalSessionScreen> {
       padding: KidSpace.screen,
       children: [
         Text(
-          goal.targetSummaryAr.isEmpty ? t('category.${goal.category}') : goal.targetSummaryAr,
+          // The server's own sentence when there is one; otherwise this app's
+          // name for the category — and never the raw category CODE, which is
+          // what `t('category.<something new>')` would have rendered.
+          goal.targetSummaryAr.isEmpty
+              ? ref.read(localeControllerProvider.notifier).tOrElse(
+                    'category.${goal.category}',
+                    t('category.unknown'),
+                  )
+              : goal.targetSummaryAr,
           style: KidText.sectionTitle(context),
           textAlign: TextAlign.center,
         ),
@@ -135,9 +143,29 @@ class _GoalSessionScreenState extends ConsumerState<GoalSessionScreen> {
                   ],
                 ),
                 KidSpace.gapSm,
-                // Same honesty: there is no upload endpoint yet. The attempt
-                // still reaches a parent, who decides — which is what this
-                // verification method does anyway (`canAutoApprove: false`).
+                // THE HONEST MESSAGE, AND WHY IT IS STILL A MESSAGE AND NOT A
+                // CONTROL — corrected in F1, because the sentence that used to
+                // stand here («there is no upload endpoint yet») is no longer
+                // true and the copy it justified was making a promise this
+                // screen does not keep.
+                //
+                // The server route EXISTS: `POST /self/achievements/:id/
+                // evidence` takes one multipart `file`, sniffs its real type
+                // from the bytes, hashes it and returns a ref that
+                // `submit`'s `submissionRef` must then resolve to. What is
+                // missing is entirely on THIS side: acquiring the bytes needs
+                // a recorder or a file picker — `record`, `image_picker`,
+                // `file_picker` — and no package can be added in an
+                // environment where pub.dev returns 403, so a control here
+                // would be a button that cannot open anything.
+                //
+                // WHAT THIS MEANS FOR THE CHILD, stated rather than hidden:
+                // `RECITATION_SUBMISSION` and `COMPLETION_ARTIFACT` fail
+                // server-side without a ref («لم يُرفَق تسجيل التسميع.») and
+                // escalate to a parent after `MAX_VERIFICATION_ATTEMPTS`. So
+                // the copy points at the person who actually decides —
+                // `canAutoApprove: false` for both methods — and does not
+                // claim the send button delivers anything by itself.
                 Text(t('session.uploadNotReady'), style: KidText.body(context)),
               ],
             ),

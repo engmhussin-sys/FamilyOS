@@ -28,6 +28,10 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'attemptStage.REQUESTED': 'Just started',
     'attemptStage.SUBMITTED': 'Being checked',
     'attemptStage.VERIFIED': 'Done!',
+    // The safety net for a status this app has never seen. `status` is an
+    // open string on the backend, so an unmapped one would otherwise render
+    // as the key — a backend status code in front of a child.
+    'attemptStage.unknown': 'Your try',
     'attempts.earned': '{{count}} points',
     'attempts.emptyBody': 'Start a goal and you\'ll find it here.',
     'attempts.emptyTitle': 'You haven\'t tried one yet',
@@ -53,6 +57,9 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'category.SPORT': 'Sport',
     'category.STUDY': 'Study',
     'category.VOLUNTEERING': 'Volunteering',
+    // Same safety net, for a category the server adds before this app knows
+    // its name.
+    'category.unknown': 'An activity',
     'celebrate.attemptsLeft': '{{count}} tries left',
     'celebrate.backToGoals': 'Back to my goals',
     'celebrate.notYetFallback': 'A little bit more. Give it another go!',
@@ -149,7 +156,13 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'session.somethingHappenedTitle': 'Small hiccup',
     'session.targetReached': 'You finished the time!',
     'session.title': 'Working on it',
-    'session.uploadNotReady': 'Sending files isn\'t ready yet. We\'ll send your attempt to a grown-up to look at.',
+    // ACCURATE AS OF F1, and the previous wording was not: the server's
+    // upload route EXISTS (`POST /self/achievements/:id/evidence`); what is
+    // missing is on this side — no recorder and no file picker, neither of
+    // which can be added without a package this environment cannot resolve.
+    // So this says what a child can actually do instead, and promises
+    // nothing about what the send button will do.
+    'session.uploadNotReady': 'Recording inside the app isn\'t ready yet. Read it out to a grown-up — they\'re the one who says you\'re done.',
     'session.uploadTitle': 'Recording or a picture',
     'shell.coach': 'Coach',
     'shell.deviceSettings': 'Device settings',
@@ -397,6 +410,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'attemptStage.REQUESTED': 'لسه بادي',
     'attemptStage.SUBMITTED': 'بنتأكد منه',
     'attemptStage.VERIFIED': 'خلصت!',
+    'attemptStage.unknown': 'محاولتك',
     'attempts.earned': '{{count}} نقطة',
     'attempts.emptyBody': 'أول ما تبدأ هدف، هتلاقيه هنا.',
     'attempts.emptyTitle': 'لسه مجربتش',
@@ -422,6 +436,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'category.SPORT': 'رياضة',
     'category.STUDY': 'دراسة',
     'category.VOLUNTEERING': 'تطوع',
+    'category.unknown': 'نشاط',
     'celebrate.attemptsLeft': 'فاضل لك {{count}} محاولة',
     'celebrate.backToGoals': 'رجوع لأهدافي',
     'celebrate.notYetFallback': 'فاضل شوية صغيرين. جرّب تاني!',
@@ -525,7 +540,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'session.somethingHappenedTitle': 'حصلت حاجة صغيرة',
     'session.targetReached': 'كمّلت الوقت!',
     'session.title': 'شغّال عليه',
-    'session.uploadNotReady': 'رفع الملفات لسه مش جاهز. هنبعت محاولتك لحد كبير يشوفها.',
+    'session.uploadNotReady': 'التسجيل من جوّه التطبيق لسه مش جاهز. سمّع لحد كبير عندك — هو اللي هيأكد إنك خلّصت.',
     'session.uploadTitle': 'تسميع أو صورة',
     'shell.coach': 'مدرّبي',
     'shell.deviceSettings': 'إعدادات الجهاز',
@@ -809,6 +824,22 @@ String _interpolate(String template, Map<String, Object>? options) {
   }
   return result;
 }
+
+/// IS THIS KEY REAL? — and the reason a child app needs to be able to ask.
+///
+/// [translate]'s last resort is THE KEY ITSELF, which is the right answer for
+/// a missing piece of app chrome (a visible `today.title` on one screen is a
+/// bug report) and the WRONG one for a key assembled at runtime from a server
+/// value: `t('attemptStage.${attempt.status}')` and `t('category.${goal
+/// .category}')` are built from open strings the backend can widen at any
+/// time — `status` is a plain `VarChar(20)` — so an unmapped value renders
+/// «attemptStage.CANCELLED» to a nine-year-old. That is a backend status code
+/// on a child's screen, which this product does not do.
+///
+/// Callers pair this with a real fallback; see `LocaleController.tOrElse`.
+bool hasTranslation(AppLocale locale, String key) =>
+    (_resources[locale] ?? const <String, String>{}).containsKey(key) ||
+    _resources[defaultLocale]!.containsKey(key);
 
 /// Same fallback strategy as Parent App/Dashboard's own translate():
 /// requested locale -> default locale -> the raw key itself (never blank).
