@@ -60,6 +60,23 @@ export interface IDeliverableNotification extends ICandidateNotification {
    * before today is unchanged.
    */
   readonly data?: Record<string, unknown>;
+  /**
+   * PHASE F (`F6-005`) — set by `SmartNotificationEngineService` and by nothing
+   * else. It means «title and body were already composed from the localisation
+   * catalogue, already offered to the AI once, and already validated against
+   * THIS CHILD'S OWN age band by `ChildSafetyFilterService`».
+   *
+   * It exists because the CHILD branch of `deliverNow` routes through
+   * `FamilyCommunicationService.draftAiMessageIfAbsent`, which rephrases again
+   * and re-validates with the PARENT-facing `SafetyEngineService` — a filter
+   * that knows nothing about age or shaming. Measured, not inferred: an AI
+   * returning «أنت كسول …» was refused at the engine's gate and then written
+   * into `child_messages` verbatim by that second rephrase.
+   *
+   * Optional and default-absent, so every producer written before F6 keeps the
+   * old two-rephrase behaviour unchanged.
+   */
+  readonly preComposed?: boolean;
 }
 
 const HISTORY_WINDOW_HOURS = 24;
@@ -497,6 +514,9 @@ export class SmartNotificationIntegrationService {
       // dead, behind a constraint protecting a table nothing could write to
       // through this path.
       'CHILD_MESSAGE',
+      // PHASE F (`F6-005`) — see `IDeliverableNotification.preComposed`. `false`
+      // for every pre-F6 producer, so nothing about their behaviour changes.
+      candidate.preComposed === true,
     );
     return drafted !== null;
   }

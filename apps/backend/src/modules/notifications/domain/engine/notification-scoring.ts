@@ -84,6 +84,34 @@ const URGENCY_BY_TYPE: Readonly<Record<string, number>> = Object.freeze({
 
 const DEFAULT_URGENCY = 0.4;
 
+/**
+ * INTRINSIC ACHIEVEMENT VALUE per type, and this table exists because leaving it
+ * out was a MEASURED defect rather than a hypothetical one.
+ *
+ * The first draft scored `ACHIEVEMENT_VALUE` only from an attached reward or a
+ * completed goal, so `BADGE_EARNED` — a permanent fact about a child, and one
+ * `notification-class.ts` argues in writing must never be lost — contributed
+ * ZERO on that axis and fell under the floor as soon as the household had ONE
+ * other notification that day. `smart-notification-engine.e2e.spec.ts` caught it
+ * on the multi-channel case: a badge earned an hour after a reward was
+ * suppressed with `SCORE_BELOW_FLOOR`.
+ *
+ * The lesson is the one `notification-class.ts` states about its own table: a
+ * notification's worth is a property of WHAT HAPPENED, and the payload a
+ * producer happens to attach is evidence, not the fact. A type that names an
+ * achievement HAS achievement value whether or not anyone passed a coin count.
+ */
+const ACHIEVEMENT_BASELINE_BY_TYPE: Readonly<Record<string, number>> = Object.freeze({
+  BADGE_EARNED: 0.75,
+  LEVEL_UP: 0.75,
+  STREAK_ACHIEVED: 0.7,
+  ACHIEVEMENT_VERIFIED: 0.7,
+  ACHIEVEMENT_REJECTED: 0.6,
+  LEARNING_GOAL_ACHIEVED: 0.7,
+  DAILY_GOAL_COMPLETED: 0.6,
+  REWARD_GRANTED: 0.5,
+});
+
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
@@ -96,11 +124,17 @@ function component(
 ): NotificationScoreComponent {
   const bounded = clamp01(raw);
   const magnitude = Math.round(bounded * weight * 100) / 100;
+  // `magnitude === 0 ? 0` rather than `-magnitude`, because `-0` is a real
+  // JavaScript value that survives into a JSONB column and reads as a negative
+  // contribution of nothing. An explanation a human squints at is an
+  // explanation that has failed at its one job.
+  const signed =
+    NOTIFICATION_PENALTY_COMPONENTS.has(name) && magnitude !== 0 ? -magnitude : magnitude;
   return {
     name,
     raw: Math.round(bounded * 1000) / 1000,
     weight,
-    contribution: NOTIFICATION_PENALTY_COMPONENTS.has(name) ? -magnitude : magnitude,
+    contribution: signed,
     note,
   };
 }
@@ -158,16 +192,33 @@ function relevance(context: NotificationContext, cfg: NotificationScoringConfig)
  * interrupting a parent for than 5 coins.
  */
 function achievement(context: NotificationContext, cfg: NotificationScoringConfig): NotificationScoreComponent {
+  // The type's own worth, before any payload is considered. Zero for a
+  // reminder, which is correct: «drink water» celebrates nothing.
+  const baseline = ACHIEVEMENT_BASELINE_BY_TYPE[context.event.eventType] ?? 0;
   const reward = context.reward;
+
   if (!reward) {
     const goal = context.goal;
     if (goal && goal.totalUnits > 0 && goal.completedUnits >= goal.totalUnits) {
-      return component('ACHIEVEMENT_VALUE', 0.8, cfg.weightAchievement, `goal "${goal.title}" completed`);
+      return component(
+        'ACHIEVEMENT_VALUE',
+        Math.max(baseline, 0.8),
+        cfg.weightAchievement,
+        `goal "${goal.title}" completed`,
+      );
     }
-    return component('ACHIEVEMENT_VALUE', 0, cfg.weightAchievement, 'no reward or completion attached');
+    return component(
+      'ACHIEVEMENT_VALUE',
+      baseline,
+      cfg.weightAchievement,
+      baseline > 0
+        ? `type baseline for ${context.event.eventType}`
+        : 'no reward or completion attached',
+    );
   }
+
   const magnitude = clamp01(Math.log10(Math.max(1, reward.amount) + 1) / 2.5);
-  const raw = reward.isMilestone ? Math.max(0.85, magnitude) : magnitude;
+  const raw = reward.isMilestone ? Math.max(0.85, magnitude) : Math.max(baseline, magnitude);
   return component(
     'ACHIEVEMENT_VALUE',
     raw,

@@ -117,6 +117,32 @@ export class FamilyCommunicationService {
      * caller it was written for.
      */
     categoryVocabulary: 'AI_RECOMMENDATION' | 'CHILD_MESSAGE' = 'AI_RECOMMENDATION',
+    /**
+     * PHASE F (`F6-005`) — «THIS TEXT HAS ALREADY BEEN THROUGH A REPHRASE AND A
+     * STRONGER FILTER THAN MINE.»
+     *
+     * A REAL HOLE, FOUND BY EXECUTION, NOT BY READING. `tryPhraseWithAI` below
+     * re-validates the model's output with `SafetyEngineService` — which is the
+     * PARENT-facing filter: a no-spyware whitelist plus a small unsafe-pattern
+     * list, and it knows nothing about age or about shaming. It does NOT run
+     * `ChildSafetyFilterService`, which is the one that holds the §11.3 length
+     * ceilings and the banned-content list. `smart-notification-engine.e2e.spec.ts`
+     * measured the consequence: an AI returning «أنت كسول ولم تنجز شيئًا اليوم»
+     * was refused at the engine's own gate and then written into
+     * `child_messages` VERBATIM by this method's second rephrase.
+     *
+     * When the caller has already composed AND validated the text — which
+     * `NotificationComposerService` does, against the CHILD'S OWN age band —
+     * a second rephrase is not a second opportunity, it is a bypass. It is also
+     * a second LLM call for one event, which CONTEXT §3 principle 5 argues
+     * against on its own.
+     *
+     * Defaulted to `false`, so every caller written before F6 — the parent draft
+     * route, the coaching paths — behaves exactly as it did. The Safety Engine
+     * seed check above still runs for BOTH, because a caller asserting «already
+     * validated» must not thereby skip this method's own gate.
+     */
+    skipAiRephrase = false,
   ): Promise<IChildMessage | null> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
@@ -126,7 +152,9 @@ export class FamilyCommunicationService {
       throw new BadRequestException(`Message rejected by Safety Engine: ${seedSafety.rejectionReason}`);
     }
 
-    const { title: finalTitle, body: finalBody } = await this.tryPhraseWithAI(title, body);
+    const { title: finalTitle, body: finalBody } = skipAiRephrase
+      ? { title, body }
+      : await this.tryPhraseWithAI(title, body);
 
     return this.repository.createIfAbsent(
       { childId, authorType: 'AI', category, title: finalTitle, body: finalBody, sourceEventId },

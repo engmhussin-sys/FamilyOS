@@ -102,6 +102,17 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         childId, familyId, 'HYDRATION_REMINDER', 'Water break?', expect.any(String),
         expect.stringMatching(/^signal:child-1:HYDRATION_REMINDER:w\d+:child$/),
         'CHILD_MESSAGE',
+        // PHASE F (`F6-005`) — `skipAiRephrase`, and it is FALSE here.
+        //
+        // This assertion is the point of adding it to the expected argument
+        // list rather than loosening the matcher: the flag exists so that
+        // `SmartNotificationEngineService`, which has ALREADY rephrased and
+        // ALREADY validated against the child's own age band, does not go
+        // through a second rephrase whose only safety gate is the PARENT-facing
+        // `SafetyEngineService`. Every producer that predates F6 — including
+        // this one — must still get the old two-rephrase behaviour, and `false`
+        // is that fact asserted rather than assumed.
+        false,
       );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
@@ -266,6 +277,17 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         expect.stringMatching(/^signal:child-1:STUDY_REMINDER:w\d+:child$/),
         // PHASE E (`PE-N-001`) — see the hydration case above.
         'CHILD_MESSAGE',
+        // PHASE F (`F6-005`) — `skipAiRephrase`, and it is FALSE here.
+        //
+        // This assertion is the point of adding it to the expected argument
+        // list rather than loosening the matcher: the flag exists so that
+        // `SmartNotificationEngineService`, which has ALREADY rephrased and
+        // ALREADY validated against the child's own age band, does not go
+        // through a second rephrase whose only safety gate is the PARENT-facing
+        // `SafetyEngineService`. Every producer that predates F6 — including
+        // this one — must still get the old two-rephrase behaviour, and `false`
+        // is that fact asserted rather than assumed.
+        false,
       );
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
@@ -317,6 +339,17 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         'evt:11111111-1111-4111-8111-111111111111:child',
         // PHASE E (`PE-N-001`) — see the hydration case above.
         'CHILD_MESSAGE',
+        // PHASE F (`F6-005`) — `skipAiRephrase`, and it is FALSE here.
+        //
+        // This assertion is the point of adding it to the expected argument
+        // list rather than loosening the matcher: the flag exists so that
+        // `SmartNotificationEngineService`, which has ALREADY rephrased and
+        // ALREADY validated against the child's own age band, does not go
+        // through a second rephrase whose only safety gate is the PARENT-facing
+        // `SafetyEngineService`. Every producer that predates F6 — including
+        // this one — must still get the old two-rephrase behaviour, and `false`
+        // is that fact asserted rather than assumed.
+        false,
       );
     });
 

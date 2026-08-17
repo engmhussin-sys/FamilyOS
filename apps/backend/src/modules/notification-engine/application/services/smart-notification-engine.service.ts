@@ -156,6 +156,9 @@ export class SmartNotificationEngineService {
       targetAudience: decision.targetAudience,
       sourceEventId: input.sourceEventId,
       data: input.data,
+      // The child branch must not rephrase a second time through a weaker
+      // filter — see `IDeliverableNotification.preComposed`.
+      preComposed: true,
     };
 
     let outcome: INotificationOutcome;

@@ -196,16 +196,26 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
     context: NotificationContext,
     score: NotificationScore,
   ): { verdict: NotificationDecisionVerdict; reason: NotificationDecisionReason; band: NotificationPriorityBand } {
-    if (score.band === 'SUPPRESS') {
-      return { verdict: 'SUPPRESS', reason: 'SCORE_BELOW_FLOOR', band: 'SUPPRESS' };
-    }
+    // THE QUIET-HOURS CLASS IS ASKED BEFORE THE FLOOR, and the order is a
+    // reporting decision rather than a behavioural one: both branches suppress a
+    // low-scoring reminder at 00:30, but only one of them tells the truth about
+    // why. «Its premise expires overnight» is a permanent property of
+    // `HYDRATION_REMINDER`; «it scored 11» is an accident of that household's
+    // evening. A support engineer reading `SCORE_BELOW_FLOOR` would go looking
+    // for a scoring bug that does not exist.
     if (context.quietHours.isActiveNow) {
       const klass = quietHoursClassOf(context.event.eventType);
       if (klass === 'SUPPRESS') {
-        // The premise expires overnight — `HYDRATION_REMINDER`'s whole argument.
-        return { verdict: 'SUPPRESS', reason: 'QUIET_HOURS_CLASS_SUPPRESS', band: score.band };
+        return { verdict: 'SUPPRESS', reason: 'QUIET_HOURS_CLASS_SUPPRESS', band: 'SUPPRESS' };
+      }
+      if (score.band === 'SUPPRESS') {
+        return { verdict: 'SUPPRESS', reason: 'SCORE_BELOW_FLOOR', band: 'SUPPRESS' };
       }
       return { verdict: 'DEFER', reason: 'QUIET_HOURS_ACTIVE', band: score.band };
+    }
+
+    if (score.band === 'SUPPRESS') {
+      return { verdict: 'SUPPRESS', reason: 'SCORE_BELOW_FLOOR', band: 'SUPPRESS' };
     }
     return {
       verdict: 'SEND',
