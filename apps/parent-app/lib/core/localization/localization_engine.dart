@@ -442,6 +442,17 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'subscription.choosePlan': 'Choose Plan',
     'subscription.cancel': 'Cancel Subscription',
     'subscription.viewHistory': 'View Billing History',
+    // PHASE G — four DIFFERENT facts, four different sentences. Previously the
+    // purchase button always succeeded (it called the MANUAL adapter), so none of
+    // these states could occur and none of these strings existed.
+    'subscription.purchaseMarketUnknown':
+        'We cannot tell which country this account is billed in yet, so we will not guess a price. Please contact support and we will set it up.',
+    'subscription.purchaseNotConfigured':
+        'This plan is not on sale yet. Pricing has not been published for your country. Nothing has been charged.',
+    'subscription.purchaseStoreUnavailable':
+        'This plan is sold through the app store, and this version of the app cannot open the store checkout. Please update the app and try again. Nothing has been charged.',
+    'subscription.purchaseFailed':
+        'The purchase did not complete. Nothing has been charged. Please try again, or contact support if it keeps happening.',
     'billingHistory.title': 'Billing History',
     'billingHistory.empty': 'No invoices yet.',
     'support.title': 'Help & Support',
@@ -999,6 +1010,17 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'subscription.choosePlan': 'اختر الخطة',
     'subscription.cancel': 'إلغاء الاشتراك',
     'subscription.viewHistory': 'عرض تاريخ الفوترة',
+    // PHASE G — العربية أولًا، وكل حالة جملة مختلفة: «لا نعرف بلد الفاتورة»
+    // و«لم يُنشر سعر بعد» و«لا يستطيع هذا الإصدار فتح المتجر» ثلاث حقائق
+    // مختلفة، وكلها تنتهي بـ«لم يُخصم شيء» لأن ذلك هو ما يطمئن الوالد فعلًا.
+    'subscription.purchaseMarketUnknown':
+        'لم نتعرّف بعد على بلد الفاتورة لهذا الحساب، ولن نخمّن سعرًا. تواصل مع الدعم وسنضبطها لك.',
+    'subscription.purchaseNotConfigured':
+        'هذه الخطة غير معروضة للبيع بعد — لم يُنشر سعرها في بلدك. لم يُخصم أي مبلغ.',
+    'subscription.purchaseStoreUnavailable':
+        'تُباع هذه الخطة عبر متجر التطبيقات، وهذا الإصدار من التطبيق لا يستطيع فتح صفحة الدفع في المتجر. حدّث التطبيق ثم أعد المحاولة. لم يُخصم أي مبلغ.',
+    'subscription.purchaseFailed':
+        'لم تكتمل عملية الشراء، ولم يُخصم أي مبلغ. أعد المحاولة، أو تواصل مع الدعم إن تكرّر الأمر.',
     'billingHistory.title': 'تاريخ الفوترة',
     'billingHistory.empty': 'لا توجد فواتير بعد.',
     'support.title': 'المساعدة والدعم',

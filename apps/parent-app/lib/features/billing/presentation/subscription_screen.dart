@@ -5,6 +5,7 @@ import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/routing/app_routes.dart';
+import '../application/subscription_purchase_coordinator.dart';
 
 /// CLOSES A REAL GAP flagged in the full-project audit: the backend's
 /// SubscriptionStatus (TRIALING/ACTIVE/PAST_DUE/CANCELED/EXPIRED) was
@@ -25,6 +26,18 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   Map<String, dynamic>? _subscriptionInfo;
   bool _isSubmitting = false;
   String? _errorMessage;
+
+  /// The REASON, not a message and not a key. A parent reading
+  /// "PurchaseFailure(channelUnconfigured)" learns nothing; the localised
+  /// sentence tells them whether to wait, to contact support, or to update the
+  /// app. `_errorMessage` is still used for genuinely unexpected failures.
+  ///
+  /// Holding the enum rather than a key string is deliberate: the four `t('...')`
+  /// calls in `_purchaseMessage` are then LITERALS, which is what
+  /// `scripts/verify_l10n_parity.py` can actually check. A key assembled at
+  /// runtime is invisible to it, so a typo would ship as an untranslated string
+  /// on the one screen that handles money.
+  PurchaseFailureReason? _purchaseFailure;
 
   @override
   void initState() {
@@ -48,20 +61,59 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     }
   }
 
+  /// PHASE G — THE `MANUAL` LITERAL IS GONE.
+  ///
+  /// WHAT THIS USED TO DO: `billingApi.subscribe(planTier, 'MANUAL')`. `MANUAL`
+  /// is the payment adapter that always succeeds, so this button granted the
+  /// household any tier it named, for free, and the server had no way to tell
+  /// the difference. The old comment described it as a placeholder until a
+  /// market's gateway was chosen; the shape of the call was the problem, not the
+  /// value in it.
+  ///
+  /// WHAT IT DOES NOW: asks `SubscriptionPurchaseCoordinator`, which asks the
+  /// SERVER which channel sells this tier in this market and routes to the store
+  /// path (token only, server verifies against Play) or the direct path (the
+  /// server's own gateway for the market). This screen chooses nothing.
+  ///
+  /// AND WHEN NOTHING IS CONFIGURED IT SAYS SO. Every `PurchaseFailureReason`
+  /// gets its own translated message, because "we do not know which market you
+  /// are in", "no price is set for this plan yet" and "this build cannot talk to
+  /// the store" are three different facts and a parent deserves to be told
+  /// which. None of them silently grants anything.
   Future<void> _subscribe(String planTier) async {
-    setState(() => _isSubmitting = true);
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+      _purchaseFailure = null;
+    });
     try {
-      // MANUAL is the one provider guaranteed to exist in every
-      // environment (Stripe/Paymob/Fawry/Apple/Google all need live
-      // credentials this screen has no way to configure itself) —
-      // the provider PICKER is a real follow-up once a specific
-      // market's preferred gateway is chosen, not invented here.
-      await ref.read(billingApiProvider).subscribe(planTier, 'MANUAL');
+      await ref.read(subscriptionPurchaseCoordinatorProvider).purchase(planTier: planTier);
       await _load();
+    } on PurchaseFailure catch (failure) {
+      if (mounted) {
+        setState(() => _purchaseFailure = failure.reason);
+      }
     } catch (e) {
       if (mounted) setState(() => _errorMessage = e.toString());
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  /// Every branch is a LITERAL key, so the l10n verifier can see all four.
+  String _purchaseMessage(
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    PurchaseFailureReason reason,
+  ) {
+    switch (reason) {
+      case PurchaseFailureReason.marketUnknown:
+        return t('subscription.purchaseMarketUnknown');
+      case PurchaseFailureReason.channelUnconfigured:
+        return t('subscription.purchaseNotConfigured');
+      case PurchaseFailureReason.storeUnavailable:
+        return t('subscription.purchaseStoreUnavailable');
+      case PurchaseFailureReason.failed:
+        return t('subscription.purchaseFailed');
     }
   }
 
@@ -107,6 +159,26 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                     children: [
                       _StatusBanner(info: _subscriptionInfo!, t: t),
                       const SizedBox(height: 20),
+                      // Shown INSTEAD of nothing happening. The previous code
+                      // could not reach this state because it always succeeded.
+                      if (_purchaseFailure != null) ...[
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: AppTheme.amber500.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.info_outline_rounded, color: AppTheme.amber500),
+                              const SizedBox(width: 12),
+                              Expanded(child: Text(_purchaseMessage(t, _purchaseFailure!))),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
                       Text(t('subscription.availablePlans'), style: Theme.of(context).textTheme.titleLarge),
                       const SizedBox(height: 12),
                       ..._plans!.map((p) => _PlanCard(

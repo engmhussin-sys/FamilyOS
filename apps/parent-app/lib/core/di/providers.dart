@@ -15,6 +15,8 @@ import '../../features/notifications/api/notifications_api.dart';
 import '../../features/settings/api/settings_api.dart';
 import '../../features/life_intelligence/api/life_intelligence_api.dart';
 import '../../features/billing/api/billing_api.dart';
+import '../../features/billing/application/subscription_purchase_coordinator.dart';
+import '../../features/billing/domain/store_billing_client.dart';
 import '../../features/support/api/support_api.dart';
 import '../../features/family/api/consent_api.dart';
 import '../../features/settings/api/account_api.dart';
@@ -59,6 +61,33 @@ final notificationsApiProvider = Provider<NotificationsApi>(
 final settingsApiProvider = Provider<SettingsApi>((ref) => SettingsApi(ref.watch(apiClientProvider)));
 final lifeIntelligenceApiProvider = Provider<LifeIntelligenceApi>((ref) => LifeIntelligenceApi(ref.watch(apiClientProvider)));
 final billingApiProvider = Provider<BillingApi>((ref) => BillingApi(ref.watch(apiClientProvider)));
+
+// PHASE G — THE STORE BILLING SEAM, AND THE ONE LINE THAT CLOSES IT.
+//
+// `UnavailableStoreBillingClient` refuses every purchase and says why. It is the
+// only implementation in this repository, and that is a recorded decision rather
+// than an omission: getting a Play `purchaseToken` needs `in_app_purchase` or a
+// platform channel onto Android `BillingClient`, and a new dependency cannot be
+// resolved or locked from the authoring environment (`pub.dev` blocked, no
+// `pubspec.lock` committed — audit PA-M-016). See
+// `features/billing/domain/store_billing_client.dart` for the full argument.
+//
+// WHEN THE PLUGIN IS ADDED, THIS LINE IS THE ONLY CHANGE HERE: swap
+// `UnavailableStoreBillingClient()` for the real client. Nothing else in the app
+// refers to a store SDK.
+//
+// It does NOT fall back to a path that grants a paid tier without a payment.
+// That is exactly what `subscribe(tier, 'MANUAL')` used to do.
+final storeBillingClientProvider = Provider<StoreBillingClient>(
+  (ref) => const UnavailableStoreBillingClient(),
+);
+
+final subscriptionPurchaseCoordinatorProvider = Provider<SubscriptionPurchaseCoordinator>(
+  (ref) => SubscriptionPurchaseCoordinator(
+    ref.watch(billingApiProvider),
+    ref.watch(storeBillingClientProvider),
+  ),
+);
 final pushRegistrationServiceProvider = Provider<PushRegistrationService>((ref) => PushRegistrationService(ref.watch(pairingApiProvider)));
 final supportApiProvider = Provider<SupportApi>((ref) => SupportApi(ref.watch(apiClientProvider)));
 final consentApiProvider = Provider<ConsentApi>((ref) => ConsentApi(ref.watch(apiClientProvider)));

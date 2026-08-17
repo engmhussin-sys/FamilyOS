@@ -270,6 +270,8 @@ describe('R14 — every route in the application is guarded or explicitly public
       'After it, someone else can delete the family. The single most dangerous non-deleting action in the product.',
     'DELETE /families/members/:userId':
       'One parent removing the other. Named explicitly in A4 as the adversarial-parent case.',
+    'GET /billing/store-account-ref':
+      'PHASE G. Returns the opaque household reference the client hands to the store as obfuscatedExternalAccountId / appAccountToken, which is what makes the server resolve the tenant from the STORE\'s echo rather than from the session. Symmetric with the two routes below by intent: only the party permitted to start a purchase needs the value that binds a purchase to this household, and handing it to a co-parent would let them attach this family to a store account they control.',
     'POST /billing/purchases/verify':
       'PHASE D. Symmetric with /billing/subscribe: it converts a store purchase into an entitlement for the WHOLE household and binds the household to a store account through provider_account_links. A co-parent may read the catalogue and the entitlements; committing the family to a purchase is the billing owner\'s. (Note that even the OWNER does not get to decide WHOSE purchase it is — the tenant is resolved from the provider\'s own account reference, and a mismatch is a 403.)',
   };

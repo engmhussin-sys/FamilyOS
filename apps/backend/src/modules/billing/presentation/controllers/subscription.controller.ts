@@ -95,6 +95,42 @@ export class SubscriptionController {
   }
 
   /**
+   * PHASE G — THE OPAQUE HOUSEHOLD REFERENCE THE CLIENT HANDS TO THE STORE.
+   *
+   * WHY THIS ENDPOINT HAD TO EXIST. `PaymentVerificationService.resolveTenant`
+   * resolves the household from the reference the STORE echoes back — Play's
+   * `obfuscatedExternalAccountId`, Apple's `appAccountToken` — and NOT from the
+   * session. That is the cross-tenant defence. But it only works if the client
+   * actually sets that field when it starts the purchase, and the client had no
+   * way to obtain a value to set. Without it, `resolveTenant` falls back to the
+   * session with a logged warning: a materially weaker binding, on every
+   * purchase, silently.
+   *
+   * WHY IT IS THE FAMILY ID AND NOT AN HMAC. An HMAC of the family id under a
+   * server secret would keep the internal identifier off the store — genuinely
+   * nicer — and it would be a trap: rotating that secret orphans EVERY existing
+   * store link, so every subsequent renewal arrives with a reference we no
+   * longer recognise and resolves to nobody. The family id is a v4 UUID: not
+   * guessable, not enumerable, stable for the lifetime of the household, and it
+   * is exactly the shape Apple documents `appAccountToken` for. It is also not a
+   * secret from THIS client, which is the only party that receives it.
+   *
+   * The value is returned to the caller's OWN family, derived from the verified
+   * JWT. There is no parameter.
+   */
+  @Get('store-account-ref')
+  @OwnerOnly()
+  storeAccountRef(@CurrentUser() user: IJwtPayload) {
+    return {
+      accountRef: user.familyId!,
+      // Play caps obfuscatedExternalAccountId at 64 characters; a UUID is 36.
+      // Stated so a future change to this value is measured against the limit
+      // rather than discovered by Play rejecting the purchase.
+      maxLength: 64,
+    };
+  }
+
+  /**
    * Verifies a store purchase the app has just completed.
    *
    * THE CLIENT'S CLAIM OF "PAYMENT SUCCESSFUL" IS NOT AN INPUT HERE. The body

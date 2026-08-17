@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Inject, Injectable, Logger } f
 
 import {
   PAYMENT_PROVIDER_REGISTRY,
+  type IPaymentProvider,
   type IPaymentProviderRegistry,
   type IVerifiedPurchase,
 } from '../ports/payment-provider.port';
@@ -29,7 +30,7 @@ import { splitVat } from '../../domain/money';
  * sandbox check and the idempotency defence are written a single time, so a
  * new provider cannot arrive with a subtly weaker version of any of them.
  *
- * =================== THE SEVEN CHECKS, IN ORDER ===================
+ * ============ THE EIGHT CHECKS, IN ORDER (PHASE G ADDED THE EIGHTH) ========
  *
  *  1. VERIFY WITH THE PROVIDER. The adapter talks to Apple / Google / the
  *     gateway. A forged token dies here and never reaches step 2.
@@ -48,8 +49,16 @@ import { splitVat } from '../../domain/money';
  *     bearing and the transaction was recorded in this call or already
  *     entitled the family.
  *
- * There is no order in which these can be skipped, because each one's output
- * is the next one's input.
+ *  8. ACKNOWLEDGE TO THE STORE — PHASE G, and only for providers whose
+ *     `supports('ACKNOWLEDGE')` says they require it. LAST, deliberately: it
+ *     tells the store "delivered", and it must not be able to say that before
+ *     the transaction row and the entitlement exist. Google Play automatically
+ *     refunds and cancels an unacknowledged purchase after three days, and
+ *     before Phase G nothing in this system ever called it.
+ *
+ * There is no order in which 1–7 can be skipped, because each one's output is
+ * the next one's input. Step 8 is the one step that CANNOT fail the request —
+ * see `acknowledgeIfRequired` for why that asymmetry is correct.
  */
 @Injectable()
 export class PaymentVerificationService {
@@ -193,7 +202,62 @@ export class PaymentVerificationService {
       });
     }
 
+    // ---- 8. ACKNOWLEDGE, LAST AND ONLY LAST -------------------------------
+    await this.acknowledgeIfRequired(adapter, verified, familyId);
+
     return { transaction, verified, entitlementGranted, wasDuplicate: !wasCreated };
+  }
+
+  /**
+   * PHASE G — STEP 8. Tell the store we delivered, once we actually have.
+   *
+   * WHY THIS IS A STEP AND NOT A DETAIL. Google Play automatically refunds and
+   * cancels any purchase not acknowledged within three days. Before this,
+   * `GooglePlayProvider.acknowledge` existed, was unit-tested, and was called by
+   * nothing: the client path would have verified correctly, recorded correctly,
+   * granted correctly — and then had every Play purchase silently reversed on
+   * day three. Nothing in the system would have looked broken until the refunds
+   * arrived.
+   *
+   * IT IS LAST, AND THE ORDER IS THE POINT. Acknowledging before the transaction
+   * and the entitlement exist would tell the store "delivered" about access the
+   * family does not have — and acknowledgement is precisely what closes the
+   * automatic-remedy window. This way round, the worst case is that a family who
+   * paid keeps their access and the store refunds them: bad, visible,
+   * recoverable. The other way round has no remedy at all.
+   *
+   * IT NEVER THROWS. By the time it runs, the money is recorded and the
+   * entitlement is granted. Propagating a failure would return an error to a
+   * client whose purchase actually succeeded, and that client would retry —
+   * re-entering a path whose only protection against double-granting is
+   * idempotency we would then be leaning on for no reason. A failure is logged
+   * at ERROR with what an operator must do about it, and the request still
+   * succeeds.
+   *
+   * PROVIDER-NEUTRAL BY MECHANISM. No provider name appears here: it asks
+   * `supports('ACKNOWLEDGE')` and calls an optional port method. A provider with
+   * no acknowledgement step is neither named nor excluded by name —
+   * `test/billing/provider-neutrality.spec.ts` scans this very file for exactly
+   * that, because the rule does not survive on review alone.
+   */
+  private async acknowledgeIfRequired(
+    adapter: IPaymentProvider,
+    verified: IVerifiedPurchase,
+    familyId: string,
+  ): Promise<void> {
+    if (!adapter.supports('ACKNOWLEDGE') || !adapter.acknowledgePurchase) return;
+    try {
+      await adapter.acknowledgePurchase(verified);
+    } catch (error) {
+      this.logger.error(
+        `ACKNOWLEDGEMENT FAILED for a verified ${verified.provider} purchase ` +
+          `(family ${familyId}, transaction ${verified.providerTransactionId}). The entitlement WAS ` +
+          'granted and the payment IS recorded — this request is not being failed. But a store that ' +
+          'requires acknowledgement reverses the charge if it never arrives, and the window is days, ' +
+          'not weeks. Re-acknowledge this purchase, or expect a refund and a support contact. Cause: ' +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**
