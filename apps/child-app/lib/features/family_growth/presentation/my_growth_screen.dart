@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../../core/routing/child_deep_link_router.dart';
+import '../../../core/routing/deep_link.dart';
 import '../../../core/theme/kid_theme.dart';
 import '../../../core/widgets/celebration_overlay.dart';
 import '../../../core/widgets/daily_progress_ring.dart';
@@ -765,13 +767,37 @@ class _TaskCard extends StatelessWidget {
   }
 }
 
-class _MessageCard extends StatelessWidget {
+/// ONE MESSAGE, AND THE TAP THAT NOW LANDS SOMEWHERE.
+///
+/// F1 — THE IN-APP HALF OF `abny://`. This card was inert: it rendered a
+/// server-authored sentence, the screen acknowledged it on load, and a tap did
+/// nothing at all. The server now resolves a destination for every
+/// notification it sends and delivers it under `deepLink` (see
+/// `core/routing/deep_link.dart`), so a row that carries one is now openable,
+/// and it opens through `ChildDeepLinkRouter` — the same resolver a future
+/// push handler will call, never a second one.
+///
+/// TAPPABLE EXACTLY WHEN THERE IS SOMEWHERE TO GO, and this is deliberate
+/// rather than defensive. `/life-intelligence/self/messages` rows do NOT carry
+/// `deepLink` today — the field travels on the `notifications` table, whose
+/// read endpoints are parent-guarded — so a card without one stays exactly as
+/// inert as it looks. A card that offered a tap and then did nothing, or that
+/// quietly re-opened the screen the child is already on, would be the same
+/// dead end in a nicer coat.
+///
+/// The message's own words are server-authored and rendered VERBATIM: they
+/// passed the safety engine at this child's own age band, and nothing here
+/// rewrites, keys or truncates them.
+class _MessageCard extends ConsumerWidget {
   const _MessageCard({required this.message});
   final Map<String, dynamic> message;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isNew = message['acknowledgedAt'] == null;
+    final link = deepLinkFromNotification(message);
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -783,29 +809,47 @@ class _MessageCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: isNew ? Border.all(color: KidTheme.messagesAccent, width: 1.5) : null,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('\u{1F48C}', style: TextStyle(fontSize: 24)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+      // Transparency, so the ripple draws over the gradient above instead of
+      // under it.
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: link == null
+              ? null
+              : () => ChildDeepLinkRouter.followLink(context, ref, link),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('\u{1F48C}', style: TextStyle(fontSize: 24)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(child: Text(message['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium)),
-                      if (isNew) Container(width: 8, height: 8, margin: const EdgeInsets.only(left: 6), decoration: const BoxDecoration(color: KidTheme.messagesAccent, shape: BoxShape.circle)),
+                      Row(
+                        children: [
+                          Expanded(child: Text(message['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium)),
+                          if (isNew) Container(width: 8, height: 8, margin: const EdgeInsets.only(left: 6), decoration: const BoxDecoration(color: KidTheme.messagesAccent, shape: BoxShape.circle)),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(message['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyLarge),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(message['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyLarge),
-                ],
-              ),
+                ),
+                // The one affordance, and only when the tap leads somewhere.
+                // Mirrored by hand: the glyph points the way the child reads.
+                if (link != null)
+                  Icon(
+                    isRtl ? Icons.chevron_left_rounded : Icons.chevron_right_rounded,
+                    color: KidTheme.messagesAccent,
+                  ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/design_system/design_system.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../../core/routing/child_deep_link_router.dart';
+import '../../../core/routing/child_home_tab.dart';
 import '../../coach/presentation/coach_screen.dart';
 import '../../device_status/presentation/device_home_screen.dart';
 import '../../family_growth/presentation/my_growth_screen.dart';
@@ -31,20 +33,21 @@ import 'today_goals_screen.dart';
 /// step; a parent (or an older child) who needs it can still reach it in
 /// one tap. What changed is which of the two things the product opens with,
 /// and that is the entire finding.
-class ChildHomeShell extends ConsumerStatefulWidget {
+/// F1 — THE SELECTED TAB MOVED OUT OF THIS CLASS, into
+/// `childHomeTabProvider`. It was private `int _index` state, which no
+/// notification tap could reach without either a `GlobalKey` into this `State`
+/// or a second navigation system pushing tab screens on top of the shell. The
+/// bottom bar still writes it and this widget still watches it — the shell is
+/// simply no longer the only thing allowed to say which tab is showing. See
+/// `core/routing/child_home_tab.dart`.
+class ChildHomeShell extends ConsumerWidget {
   const ChildHomeShell({super.key});
 
   @override
-  ConsumerState<ChildHomeShell> createState() => _ChildHomeShellState();
-}
-
-class _ChildHomeShellState extends ConsumerState<ChildHomeShell> {
-  int _index = 0;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(localeControllerProvider);
     final t = ref.watch(localeControllerProvider.notifier).t;
+    final tab = ref.watch(childHomeTabProvider);
 
     final titles = [
       t('today.title'),
@@ -55,13 +58,21 @@ class _ChildHomeShellState extends ConsumerState<ChildHomeShell> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(titles[_index]),
+        title: Text(titles[tab.index]),
         actions: [
           IconButton(
             icon: const Icon(Icons.auto_awesome_outlined),
             tooltip: t('shell.myGrowth'),
+            // The SAME route name the deep-link router pushes this screen
+            // under, so a link that lands on «نموّي» while the child is already
+            // reading it is a no-op instead of a second copy.
             onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const MyGrowthScreen()),
+              MaterialPageRoute(
+                builder: (_) => const MyGrowthScreen(),
+                settings: const RouteSettings(
+                  name: ChildDeepLinkRouter.myGrowthRouteName,
+                ),
+              ),
             ),
           ),
           // THE DEMOTION, in one widget. Everything the child used to land
@@ -77,7 +88,7 @@ class _ChildHomeShellState extends ConsumerState<ChildHomeShell> {
         ],
       ),
       body: IndexedStack(
-        index: _index,
+        index: tab.index,
         children: const [
           TodayGoalsScreen(),
           MyRewardsScreen(),
@@ -88,8 +99,10 @@ class _ChildHomeShellState extends ConsumerState<ChildHomeShell> {
         ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (value) => setState(() => _index = value),
+        selectedIndex: tab.index,
+        onDestinationSelected: (value) => ref
+            .read(childHomeTabProvider.notifier)
+            .state = childHomeTabFromIndex(value),
         // 68px — above Material's default, matching KidTheme's commitment to
         // large targets for a young reader on a cheap phone.
         height: 68,
