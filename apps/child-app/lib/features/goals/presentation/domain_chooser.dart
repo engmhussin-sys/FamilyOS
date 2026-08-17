@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/design_system/design_system.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../domain/catalogue_domain.dart';
 import '../domain/child_goal.dart';
 
 /// «إيه اللي عايز تتعلمه النهاردة؟» — THE DOMAIN CHOOSER.
@@ -18,15 +19,22 @@ import '../domain/child_goal.dart';
 /// tapping «القرآن» shows the Quran goals that exist, and does not conjure
 /// one if none does.
 ///
-/// The fuller flow in the product brief — child picks a domain, the Smart
-/// Reward Engine proposes a suitable activity and duration inside it — needs
-/// a child-facing route that does not exist. `reward-programs` is parent-only
-/// (`@Controller('reward-programs')`, parent guard), and the only two
-/// `self/*` controllers are `self/achievements` and `self/coach`; neither
-/// serves a catalogue or an activity proposal. That is recorded as a backend
-/// gap, NOT faked on the device: a client that invented a suggestion would be
-/// a client deciding what a child should study, which is the server's job and
-/// the parent's decision.
+/// THE ROW NOW COMES FROM THE SERVER. This file used to say that the real
+/// catalogue route did not exist and that the domains were therefore derived
+/// from whatever categories happened to appear in today's goals — so a child
+/// with two Quran goals was shown a product with exactly one subject in it,
+/// and could not learn that SCIENCE or PROGRAMMING existed at all.
+/// `GET /self/catalogue/domains` exists now, and [domainsFromCatalogue] uses
+/// it: the domain vocabulary, in the server's own Arabic, at this child's own
+/// age band, with today's goals counted into it.
+///
+/// WHAT HAS NOT CHANGED, AND MUST NOT. This is still a chooser over the goals
+/// a PARENT has programmed. Tapping «القرآن» shows the Quran goals that
+/// exist; it does not conjure one, does not request one, and does not start
+/// anything nobody programmed. A domain with nothing today says so plainly
+/// and names the way forward («كلّم ولي أمرك»), because the way forward is a
+/// person, not a button. See `catalogue_api.dart` for why the activity lists
+/// on `GET /self/catalogue` are deliberately not rendered here.
 ///
 /// A domain with nothing available today is DIMMED, never hidden and never
 /// locked — the same treatment `GoalCard` gives an unavailable goal, for the
@@ -73,13 +81,38 @@ class GoalDomain {
     required this.category,
     required this.total,
     required this.available,
+    this.labelAr,
   });
 
   final String category;
   final int total;
   final int available;
 
+  /// The SERVER'S Arabic name for this domain, when the catalogue supplied
+  /// one. Rendered verbatim; `null` falls back to this app's own
+  /// `category.*` string.
+  final String? labelAr;
+
   bool get hasSomethingToDoNow => available > 0;
+
+  /// True when the catalogue lists this domain but the parent has programmed
+  /// nothing in it today. Not a failure and not the child's fault — it is the
+  /// case the empty-state sentence exists for.
+  bool get hasNothingToday => total == 0;
+}
+
+/// Counts today's goals per category. Shared by both builders below so
+/// «how many goals are in this domain» has exactly one implementation.
+Map<String, List<int>> _countsByCategory(List<TodayGoal> goals) {
+  final counts = <String, List<int>>{};
+  for (final goal in goals) {
+    final category = goal.category.trim();
+    if (category.isEmpty) continue;
+    final entry = counts.putIfAbsent(category, () => <int>[0, 0]);
+    entry[0] += 1;
+    if (goal.available) entry[1] += 1;
+  }
+  return counts;
 }
 
 /// Groups today's goals by category, ordered so the domains a child can
@@ -87,21 +120,19 @@ class GoalDomain {
 /// `TodayGoalsController` applies to the goals themselves, for the same
 /// reason. Ties keep a stable alphabetical order so the row does not
 /// reshuffle between two refreshes that returned the same day.
+///
+/// STILL THE FALLBACK, NOT DEAD CODE: this is what the chooser shows when
+/// `GET /self/catalogue/domains` could not be read. A child whose catalogue
+/// call failed keeps a working chooser over the goals they do have, rather
+/// than losing the row entirely.
 List<GoalDomain> domainsOf(List<TodayGoal> goals) {
-  final totals = <String, int>{};
-  final availables = <String, int>{};
-  for (final goal in goals) {
-    final category = goal.category.trim();
-    if (category.isEmpty) continue;
-    totals[category] = (totals[category] ?? 0) + 1;
-    if (goal.available) availables[category] = (availables[category] ?? 0) + 1;
-  }
+  final counts = _countsByCategory(goals);
 
-  final domains = totals.entries
+  final domains = counts.entries
       .map((entry) => GoalDomain(
             category: entry.key,
-            total: entry.value,
-            available: availables[entry.key] ?? 0,
+            total: entry.value[0],
+            available: entry.value[1],
           ))
       .toList();
 
@@ -110,6 +141,67 @@ List<GoalDomain> domainsOf(List<TodayGoal> goals) {
       return a.hasSomethingToDoNow ? -1 : 1;
     }
     return a.category.compareTo(b.category);
+  });
+  return domains;
+}
+
+/// THE REAL VOCABULARY, WITH TODAY'S GOALS COUNTED INTO IT.
+///
+/// [catalogue] is `GET /self/catalogue/domains` in the order the server sent
+/// it — which already puts the domains it suggests at this child's age first,
+/// stably. That order is preserved here; the only re-ordering is the one this
+/// row has always applied, «what you can start now, first», so a child does
+/// not scroll past a dozen dim chips to reach the one they can tap. Within
+/// each of those two groups the server's order is kept exactly, which is what
+/// makes two refreshes of the same day render the same row.
+///
+/// A category that appears in today's goals but NOT in the catalogue is still
+/// listed, at the end. That should not happen — both come from the same
+/// server — but a real goal a child can start must never be unreachable
+/// because a chip was missing.
+///
+/// An empty [catalogue] (the call failed, or the body was malformed) falls
+/// back to [domainsOf].
+List<GoalDomain> domainsFromCatalogue(
+  List<CatalogueDomainRow> catalogue,
+  List<TodayGoal> goals,
+) {
+  if (catalogue.isEmpty) return domainsOf(goals);
+
+  final counts = _countsByCategory(goals);
+  final domains = <GoalDomain>[];
+  final listed = <String>{};
+
+  for (final row in catalogue) {
+    if (!listed.add(row.code)) continue;
+    final entry = counts[row.code];
+    domains.add(GoalDomain(
+      category: row.code,
+      labelAr: row.labelAr,
+      total: entry?[0] ?? 0,
+      available: entry?[1] ?? 0,
+    ));
+  }
+
+  for (final entry in counts.entries) {
+    if (listed.contains(entry.key)) continue;
+    domains.add(GoalDomain(
+      category: entry.key,
+      total: entry.value[0],
+      available: entry.value[1],
+    ));
+  }
+
+  final order = <String, int>{
+    for (var i = 0; i < domains.length; i++) domains[i].category: i,
+  };
+  domains.sort((a, b) {
+    if (a.hasSomethingToDoNow != b.hasSomethingToDoNow) {
+      return a.hasSomethingToDoNow ? -1 : 1;
+    }
+    // `List.sort` is not stable, so the server's order is restored
+    // explicitly rather than assumed.
+    return order[a.category]!.compareTo(order[b.category]!);
   });
   return domains;
 }
@@ -159,7 +251,13 @@ class DomainChooser extends ConsumerWidget {
               ),
               for (final domain in domains)
                 _DomainChip(
-                  label: t('category.${domain.category}'),
+                  // SERVER ARABIC WINS, VERBATIM. `labelAr` was written for
+                  // this child's age band and has already passed the safety
+                  // engine; routing it through `t()` would replace a filtered
+                  // sentence with an unfiltered one. The app's own key is the
+                  // fallback for a catalogue that could not be read — and for
+                  // a category the catalogue never listed.
+                  label: domain.labelAr ?? t('category.${domain.category}'),
                   icon: iconForCategory(domain.category),
                   isSelected: selected == domain.category,
                   isDim: !domain.hasSomethingToDoNow,

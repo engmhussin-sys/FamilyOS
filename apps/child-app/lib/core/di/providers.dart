@@ -30,10 +30,13 @@ import '../../features/coach/api/coach_api.dart';
 import '../../features/coach/application/coach_controller.dart';
 import '../../features/coach/data/coach_repository.dart';
 import '../../features/goals/api/achievements_api.dart';
+import '../../features/goals/api/catalogue_api.dart';
 import '../../features/goals/application/goal_session_controller.dart';
 import '../../features/goals/application/progress_controller.dart';
 import '../../features/goals/application/today_goals_controller.dart';
 import '../../features/goals/data/achievements_repository.dart';
+import '../../features/goals/data/catalogue_repository.dart';
+import '../../features/goals/domain/catalogue_domain.dart';
 import '../../features/goals/domain/child_achievement.dart';
 import '../../features/goals/domain/child_goal.dart';
 import '../../features/goals/domain/child_rewards.dart';
@@ -244,6 +247,30 @@ final childAchievementsRepositoryProvider = Provider<ChildAchievementsRepository
 final todayGoalsControllerProvider =
     StateNotifierProvider<TodayGoalsController, UiState<List<TodayGoal>>>((ref) {
   return TodayGoalsController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+// --- The real learning catalogue — `GET /self/catalogue/domains` ---
+
+final childCatalogueApiProvider = Provider<ChildCatalogueApi>((ref) {
+  return ChildCatalogueApi(ref.watch(apiClientProvider));
+});
+
+final childCatalogueRepositoryProvider = Provider<ChildCatalogueRepository>((ref) {
+  return ChildCatalogueRepository(ref.watch(childCatalogueApiProvider));
+});
+
+/// The domain vocabulary for the chooser row.
+///
+/// A `FutureProvider` rather than a `UiState` controller ON PURPOSE: this list
+/// is not a screen, it is a decoration on one. There is no loading spinner and
+/// no error state for it anywhere, because a child whose catalogue call failed
+/// must still get a working chooser over the goals they actually have —
+/// `TodayGoalsScreen` reads `valueOrNull` and `domainsFromCatalogue` falls back
+/// to `domainsOf(goals)`. The catalogue is age-derived and effectively static
+/// per child, so it is deliberately NOT `autoDispose`: switching tabs should
+/// not re-hit a throttled route for an answer that cannot have changed.
+final catalogueDomainsProvider = FutureProvider<List<CatalogueDomainRow>>((ref) {
+  return ref.watch(childCatalogueRepositoryProvider).domains();
 });
 
 final myAttemptsControllerProvider =

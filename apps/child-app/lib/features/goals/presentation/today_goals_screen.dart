@@ -5,6 +5,7 @@ import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/widgets/sparky_mascot.dart';
+import '../domain/catalogue_domain.dart';
 import '../domain/child_goal.dart';
 import 'domain_chooser.dart';
 import 'goal_detail_screen.dart';
@@ -63,7 +64,14 @@ class _TodayGoalsScreenState extends ConsumerState<TodayGoalsScreen> {
         emptyActionLabel: t('common.retry'),
         onEmptyAction: controller.load,
         builder: (context, goals) {
-          final domains = domainsOf(goals);
+          // THE REAL DOMAIN VOCABULARY, when it can be read. `valueOrNull` is
+          // null while the call is in flight AND after it fails, and both
+          // cases fall back to the domains of today's own goals — the chooser
+          // is a decoration on this screen, never a reason for it to show a
+          // spinner or an error.
+          final catalogue = ref.watch(catalogueDomainsProvider).valueOrNull;
+          final domains =
+              domainsFromCatalogue(catalogue ?? const <CatalogueDomainRow>[], goals);
 
           // A domain that disappears between two loads must not leave the
           // screen filtered to nothing with no way back — the chip the child
@@ -95,8 +103,18 @@ class _TodayGoalsScreenState extends ConsumerState<TodayGoalsScreen> {
               ],
               if (visible.isEmpty)
                 // Reachable only with a filter on: the unfiltered empty day is
-                // `KidStateView`'s own empty state, one level up. Non-punitive
-                // and with the way out named.
+                // `KidStateView`'s own empty state, one level up.
+                //
+                // THE HONEST LIMIT, SAID OUT LOUD. Now that the chooser shows
+                // the REAL catalogue, a child can pick a domain their parent
+                // has programmed nothing in — and there is no button that can
+                // fix that, because programs are parent-authored and the
+                // server is the authority on what exists. So this says what is
+                // true and names the actual way forward, which is a person:
+                // «لسه مفيش هدف في المجال ده — كلّم ولي أمرك». No request
+                // button, no "start something anyway", nothing that would let
+                // a child believe they had asked for something when nobody
+                // heard them.
                 KidCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,

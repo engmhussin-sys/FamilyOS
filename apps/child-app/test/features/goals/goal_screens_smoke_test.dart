@@ -33,6 +33,7 @@ import 'package:child_app/core/localization/locale_controller.dart';
 import 'package:child_app/core/localization/localization_engine.dart';
 import 'package:child_app/core/theme/kid_theme.dart';
 import 'package:child_app/features/goals/data/achievements_repository.dart';
+import 'package:child_app/features/goals/domain/catalogue_domain.dart';
 import 'package:child_app/features/goals/domain/child_achievement.dart';
 import 'package:child_app/features/goals/domain/child_goal.dart';
 import 'package:child_app/features/goals/domain/child_rewards.dart';
@@ -92,13 +93,19 @@ String _ar(String key) => translate(AppLocale.ar, key);
 Future<void> _pump(
   WidgetTester tester,
   Widget screen,
-  _FakeAchievementsRepository repo,
-) async {
+  _FakeAchievementsRepository repo, {
+  List<CatalogueDomainRow> catalogue = const <CatalogueDomainRow>[],
+}) async {
   GoogleFonts.config.allowRuntimeFetching = false;
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         childAchievementsRepositoryProvider.overrideWithValue(repo),
+        // The chooser's catalogue, stubbed so nothing in this file reaches for
+        // a real `ApiClient`. The default — an empty list — is also exactly
+        // what the screen sees when the catalogue call FAILS, so every test
+        // that does not pass one is asserting the fallback path.
+        catalogueDomainsProvider.overrideWith((ref) async => catalogue),
         localeControllerProvider.overrideWith(
           (ref) => LocaleController(storage: InMemoryLocaleStorage(AppLocale.ar)),
         ),
@@ -180,6 +187,44 @@ void main() {
 
       expect(find.text('احفظ سورة الفاتحة'), findsOneWidget);
       expect(find.byType(KidEmptyState), findsNothing);
+    });
+
+    testWidgets('the chooser shows the server’s domains, including ones with no goal today',
+        (tester) async {
+      await _pump(
+        tester,
+        const TodayGoalsScreen(),
+        _FakeAchievementsRepository(onToday: () async => [_goal()]),
+        catalogue: const [
+          CatalogueDomainRow(code: 'FAITH', labelAr: 'إيمان', suggestedAtThisAge: true),
+          CatalogueDomainRow(
+              code: 'PROGRAMMING', labelAr: 'برمجة', suggestedAtThisAge: true),
+        ],
+      );
+      // One pump for the goals future, one for the catalogue's.
+      await tester.pump();
+      await tester.pump();
+
+      // The server's own Arabic, verbatim — not `t('category.PROGRAMMING')`.
+      expect(find.text('إيمان'), findsOneWidget);
+      // DIMMED, NEVER HIDDEN: nothing is programmed in PROGRAMMING today and
+      // the child still learns that it exists.
+      expect(find.text('برمجة'), findsOneWidget);
+    });
+
+    testWidgets('an unreadable catalogue still leaves a usable screen', (tester) async {
+      // The empty catalogue is what a failed `GET /self/catalogue/domains`
+      // produces. The day's goal must render exactly as before.
+      await _pump(
+        tester,
+        const TodayGoalsScreen(),
+        _FakeAchievementsRepository(onToday: () async => [_goal()]),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('احفظ سورة الفاتحة'), findsOneWidget);
+      expect(find.byType(KidErrorState), findsNothing);
     });
   });
 
