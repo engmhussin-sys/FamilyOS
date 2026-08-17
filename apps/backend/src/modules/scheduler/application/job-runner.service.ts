@@ -20,7 +20,7 @@ import {
   SQL_FINISH_JOB_SUCCESS,
   SQL_FINISH_RUN_FAILURE,
   SQL_FINISH_RUN_SUCCESS,
-  SQL_LIST_ACTIVE_FAMILIES,
+  SQL_LIST_ACTIVE_FAMILIES_PAGE,
   SQL_TRY_JOB_LOCK,
 } from '../infrastructure/scheduler.sql';
 import { JobRegistry } from './job-registry.service';
@@ -38,6 +38,21 @@ export interface JobExecutionReport {
   readonly affectedRows: number;
   readonly durationMs: number;
   /**
+   * How many families this sweep ENUMERATED (0 for PLATFORM). `executed +
+   * skipped + failed` for a FAMILY job, and the number a future silent
+   * truncation would make smaller than the household count.
+   */
+  readonly familiesSeen: number;
+  /** How many pages the keyset cursor walked. 0 for PLATFORM, >= 1 otherwise. */
+  readonly pages: number;
+  /**
+   * TRUE means the sweep stopped before the table was exhausted, i.e. it hit
+   * `maxFamilyPagesPerRun`. It is never a success: `runJob` turns it into a
+   * FAILED registry row with a stated reason, because a partial fan-out that
+   * reports green is the defect this field exists to make impossible.
+   */
+  readonly truncated: boolean;
+  /**
    * The first error text from an executed run, propagated so
    * `scheduled_jobs.last_error` carries the REAL message rather than a summary.
    * «1 family run(s) failed» tells an operator nothing they could act on;
@@ -54,6 +69,9 @@ const EMPTY_REPORT = (job: string): JobExecutionReport => ({
   failed: 0,
   affectedRows: 0,
   durationMs: 0,
+  familiesSeen: 0,
+  pages: 0,
+  truncated: false,
 });
 
 /**
@@ -131,14 +149,25 @@ export class JobRunner {
     const durationMs = Date.now() - startedAt;
     // A FAMILY sweep in which some families failed is itself a FAILURE. Anything
     // else would let a job whose every fan-out run threw report green forever.
-    const jobFailed = failure !== null || report.failed > 0;
+    //
+    // A TRUNCATED sweep is a failure for the same reason and one more: it did
+    // not do the work it was asked to do, and the ONLY thing distinguishing it
+    // from a healthy run is this flag. Reporting it green is precisely the
+    // silent-truncation bug in a new place.
+    const jobFailed = failure !== null || report.failed > 0 || report.truncated;
+    const reasons: string[] = [];
+    if (failure) reasons.push(failure.message);
+    if (report.truncated) {
+      reasons.push(
+        `family sweep TRUNCATED after ${report.pages} page(s) / ${report.familiesSeen} families — maxFamilyPagesPerRun reached, some households were NOT processed`,
+      );
+    }
+    if (report.failed > 0) {
+      reasons.push(`${report.failed} run(s) failed — first: ${report.lastError ?? 'unknown'}`);
+    }
     await this.release(name, {
       failed: jobFailed,
-      error:
-        failure?.message ??
-        (report.failed > 0
-          ? `${report.failed} run(s) failed — first: ${report.lastError ?? 'unknown'}`
-          : null),
+      error: reasons.length > 0 ? reasons.join(' · ') : null,
       durationMs,
       affectedRows: report.affectedRows,
       cadenceSeconds: claim.cadenceSeconds,
@@ -284,16 +313,34 @@ export class JobRunner {
    * which is the same statement as "they roll over at different instants" seen
    * from the other side.
    *
-   * BOUNDED PER TICK, and resumable for free: a family already rolled over for
-   * the day it is currently closing is refused by the unique index, counted as
-   * `skipped`, and costs one round trip. There is no cursor to persist because
-   * the database already knows who is done.
+   * EVERY FAMILY, PAGED — the fix for the defect this method used to carry.
+   * It issued ONE `LIMIT 200 OFFSET 0` enumeration and stopped, so household
+   * 201 and beyond were never reached, in an order determined by uuid, with no
+   * error and no log and no metric. The next tick did not "pick up the
+   * remainder": it re-read the same first 200, found them done, and skipped
+   * them. This now walks a KEYSET cursor (`WHERE id > $lastId ORDER BY id`)
+   * until the table is exhausted. See `SQL_LIST_ACTIVE_FAMILIES_PAGE` for why
+   * keyset and not OFFSET.
+   *
+   * MEMORY IS BOUNDED to one page — `familyBatchSize` rows — however many
+   * households exist. Nothing accumulates across pages except six integers.
+   *
+   * RESUMABLE, AND THE CURSOR DOES NOT FIGHT THE CLAIM. The cursor decides
+   * WHICH families this pass looks at; `job_runs (job_name, family_id,
+   * business_date)` decides which of them still need work. So a sweep that dies
+   * half-way and re-runs restarts the cursor at the beginning, re-enumerates
+   * the families it already finished, and every one of them is refused by
+   * `SQL_CLAIM_RUN`'s unique key — counted as `skipped`, one round trip each,
+   * no second execution of any job body. There is no cursor to persist because
+   * the database already knows who is done; the cursor is per-pass state only,
+   * and it is what guarantees the pass REACHES everyone rather than what
+   * guarantees each of them runs once.
    *
    * ONE FAMILY'S FAILURE DOES NOT STOP THE SWEEP. It is recorded on that
-   * family's run row and counted; the loop continues. The alternative — abort
-   * the sweep — would let one household with corrupt data stop every other
-   * household's rollover indefinitely, which is the worst possible coupling
-   * between tenants.
+   * family's run row and counted; the loop continues to the next family and the
+   * next page. The alternative — abort the sweep — would let one household with
+   * corrupt data stop every other household's rollover indefinitely, which is
+   * the worst possible coupling between tenants.
    */
   private async executeFamilies(
     definition: JobDefinition,
@@ -303,57 +350,108 @@ export class JobRunner {
   ): Promise<JobExecutionReport> {
     if (definition.scope !== 'FAMILY') throw new Error('executeFamilies called with a PLATFORM job');
     const hour = localHour ?? SCHEDULER_DEFAULTS.defaultRolloverLocalHour;
-
-    const families = await runAsSystemAsync(
-      'SCHEDULED_JOB',
-      'Scheduler enumerates the families a family-scoped job must fan out to; each family is then executed inside its own runWithTenant scope.',
-      async () =>
-        this.prismaRaw().$queryRawUnsafe<Array<{ id: string; timezone: string }>>(
-          SQL_LIST_ACTIVE_FAMILIES,
-          SCHEDULER_DEFAULTS.familyBatchSize,
-          0,
-        ),
-    );
+    const pageSize = SCHEDULER_DEFAULTS.familyBatchSize;
 
     let executed = 0;
     let skipped = 0;
     let failed = 0;
     let affectedRows = 0;
+    let familiesSeen = 0;
+    let pages = 0;
+    let truncated = false;
     let lastError: string | undefined;
 
-    for (const family of families) {
-      const timeZone = resolveTimeZone(family.timezone);
-      const businessDate = closableBusinessDate(now, timeZone, hour);
+    /** The keyset cursor — the id of the last family of the previous page. */
+    let lastId: string | null = null;
 
-      const run = await this.claimRun(definition.name, family.id, businessDate, trigger);
-      if (!run) {
-        skipped += 1;
-        continue;
+    for (;;) {
+      const page: Array<{ id: string; timezone: string }> = await runAsSystemAsync(
+        'SCHEDULED_JOB',
+        'Scheduler enumerates one page of the families a family-scoped job must fan out to; each family is then executed inside its own runWithTenant scope.',
+        async () =>
+          this.prismaRaw().$queryRawUnsafe<Array<{ id: string; timezone: string }>>(
+            SQL_LIST_ACTIVE_FAMILIES_PAGE,
+            pageSize,
+            lastId,
+          ),
+      );
+      if (page.length === 0) break;
+      pages += 1;
+
+      for (const family of page) {
+        familiesSeen += 1;
+        const timeZone = resolveTimeZone(family.timezone);
+        const businessDate = closableBusinessDate(now, timeZone, hour);
+
+        const run = await this.claimRun(definition.name, family.id, businessDate, trigger);
+        if (!run) {
+          skipped += 1;
+          continue;
+        }
+
+        const runStartedAt = Date.now();
+        try {
+          // THE TENANT RE-ENTRY. Everything the job body does happens inside
+          // this, exactly as in `OutboxRelay.dispatch`. It is entered and left
+          // ONCE PER FAMILY, inside the page loop rather than around it, so a
+          // page cannot carry one household's context into the next
+          // household's handler.
+          const outcome = await runWithTenant(
+            {
+              familyId: family.id,
+              actorType: 'SYSTEM',
+              actorId: `scheduler:${definition.name}`,
+            },
+            () => definition.handler({ scope: 'FAMILY', familyId: family.id, timeZone, businessDate, now }),
+          );
+          await this.finishRunSuccess(run.id, outcome, Date.now() - runStartedAt);
+          executed += 1;
+          affectedRows += outcome.affectedRows;
+        } catch (err) {
+          await this.finishRunFailure(run.id, err, Date.now() - runStartedAt);
+          failed += 1;
+          lastError ??= errorText(err);
+        }
       }
 
-      const runStartedAt = Date.now();
-      try {
-        // THE TENANT RE-ENTRY. Everything the job body does happens inside
-        // this, exactly as in `OutboxRelay.dispatch`.
-        const outcome = await runWithTenant(
-          {
-            familyId: family.id,
-            actorType: 'SYSTEM',
-            actorId: `scheduler:${definition.name}`,
-          },
-          () => definition.handler({ scope: 'FAMILY', familyId: family.id, timeZone, businessDate, now }),
-        );
-        await this.finishRunSuccess(run.id, outcome, Date.now() - runStartedAt);
-        executed += 1;
-        affectedRows += outcome.affectedRows;
-      } catch (err) {
-        await this.finishRunFailure(run.id, err, Date.now() - runStartedAt);
-        failed += 1;
-        lastError ??= errorText(err);
+      // A SHORT PAGE IS THE END OF THE TABLE. Seeking again would cost a round
+      // trip to learn the same thing.
+      if (page.length < pageSize) break;
+      lastId = page[page.length - 1].id;
+
+      if (pages >= SCHEDULER_DEFAULTS.maxFamilyPagesPerRun) {
+        truncated = true;
+        break;
       }
     }
 
-    return { ...EMPTY_REPORT(definition.name), executed, skipped, failed, affectedRows, lastError };
+    // THE LINE THAT MAKES A FUTURE TRUNCATION VISIBLE. It states what was
+    // actually enumerated rather than what was intended, so «pages=1
+    // families=200» against a 560-household database reads as the bug it would
+    // be. Counts only — no family id, nothing a log aggregator turns into a
+    // profile.
+    const summary =
+      `scheduler.family_sweep job=${definition.name} pages=${pages} families=${familiesSeen} ` +
+      `executed=${executed} skipped=${skipped} failed=${failed} truncated=${truncated}`;
+    if (truncated) {
+      this.logger.error(
+        `${summary} — STOPPED AT maxFamilyPagesPerRun=${SCHEDULER_DEFAULTS.maxFamilyPagesPerRun}; households past the cursor were NOT processed`,
+      );
+    } else {
+      this.logger.log(summary);
+    }
+
+    return {
+      ...EMPTY_REPORT(definition.name),
+      executed,
+      skipped,
+      failed,
+      affectedRows,
+      familiesSeen,
+      pages,
+      truncated,
+      lastError,
+    };
   }
 
   // -- run rows -------------------------------------------------------------

@@ -133,14 +133,31 @@ export const SCHEDULER_DEFAULTS = {
    */
   leaseSeconds: 600,
   /**
-   * A FAMILY sweep processes at most this many households per tick. Bounded on
-   * purpose: an unbounded fan-out over 60,000 families inside one tick would
-   * hold the lease past its own expiry and be stolen mid-flight. The remainder
-   * is picked up by the next tick, and the `job_runs` unique key makes that
-   * resumption free — an already-rolled-over family is skipped by the
-   * database, not by a cursor the scheduler would have to persist.
+   * THE PAGE SIZE of a FAMILY sweep — how many households are held in memory
+   * at once, NOT how many are processed.
+   *
+   * It used to be the second thing as well, and that was the bug: the sweep
+   * issued ONE `LIMIT 200 OFFSET 0` query and stopped, so with 560 households
+   * an arbitrary 360 of them — arbitrary because the order is by uuid — never
+   * had their day rolled over, and nothing said so. The comment here claimed
+   * «the remainder is picked up by the next tick», which was false: the next
+   * tick re-read the SAME first 200, found them already done, and skipped them.
+   * The remainder was unreachable, not deferred.
+   *
+   * The sweep now pages with a keyset cursor (`SQL_LIST_ACTIVE_FAMILIES_PAGE`)
+   * until the table is exhausted, so every eligible family is processed
+   * whatever the household count. Memory stays bounded to one page.
    */
   familyBatchSize: 200,
+  /**
+   * THE SAFETY VALVE, and it is a valve rather than a cap: hitting it is an
+   * ERROR, not a quiet stop. 500 pages x 200 = 100,000 households in one sweep,
+   * comfortably beyond any real tick and comfortably short of a runaway loop
+   * against a corrupt cursor. A sweep that reaches it records the job FAILED
+   * with an explicit «truncated» error rather than reporting success over a
+   * partial fan-out — the exact silence this whole change exists to remove.
+   */
+  maxFamilyPagesPerRun: 500,
   /**
    * Retry-with-backoff. `nextRunAt = now + min(cadence, base * 2^failures)`,
    * capped. A job that fails does not spin, and a job that has failed many

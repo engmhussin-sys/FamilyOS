@@ -191,28 +191,55 @@ UPDATE "job_runs"
  WHERE "id" = $1::uuid`;
 
 /**
- * The fan-out enumeration for a FAMILY-scoped job.
+ * ONE PAGE of the fan-out enumeration for a FAMILY-scoped job.
  *
- * BOUNDED AND RESUMABLE. It returns families that do NOT already have a
- * SUCCEEDED run for the business date they are currently able to close — but
- * the business date is per-family and depends on the family's own timezone, so
- * it cannot be computed in SQL without re-implementing `family-date.ts` in
- * PL/pgSQL. Instead this returns the CANDIDATE set (families not soft-deleted,
- * with their timezone) in a stable order, and `SQL_CLAIM_RUN` does the
- * exactly-once filtering per family. That keeps ONE implementation of the
- * business calendar in the codebase, which is the entire point of B1/B2.
+ * WHAT THIS RETURNS. The CANDIDATE set — families not soft-deleted, with their
+ * timezone — rather than "families that still need a run". The business date a
+ * family is currently able to close is per-family and depends on that family's
+ * own timezone, so it cannot be computed in SQL without re-implementing
+ * `family-date.ts` in PL/pgSQL. `SQL_CLAIM_RUN` does the exactly-once filtering
+ * per family instead, which keeps ONE implementation of the business calendar
+ * in the codebase — the entire point of B1/B2.
+ *
+ * KEYSET (SEEK), NOT OFFSET — and the choice is load-bearing, not stylistic.
+ * The previous version of this statement was `LIMIT $1 OFFSET $2` and was
+ * called exactly once with `OFFSET 0`, so every family past the first page was
+ * silently never enumerated. Fixing that needs a loop; the question is what the
+ * loop pages BY:
+ *
+ *   - `OFFSET n` counts rows from the start of a re-executed query. A family
+ *     INSERTed or soft-deleted between two pages shifts the window by one, and
+ *     the row that moved across the boundary is either skipped or returned
+ *     twice. A skip is invisible (exactly the failure class this statement is
+ *     being repaired for) and a repeat is only harmless because `SQL_CLAIM_RUN`
+ *     happens to absorb it. Relying on that is relying on a second mechanism to
+ *     cover for a first one that is simply wrong.
+ *   - `WHERE "id" > $2 ORDER BY "id"` names a POSITION, not a count. `id` is
+ *     the primary key: unique, non-null and totally ordered by PostgreSQL's
+ *     uuid comparison, so "everything after this id" means the same thing on
+ *     every execution no matter what was inserted or deleted in between. A
+ *     family inserted mid-sweep is either after the cursor (picked up) or
+ *     before it (already passed, and picked up by the next tick — never
+ *     half-processed). It is also the index-friendly form: each page is a
+ *     primary-key range scan rather than a scan-and-discard of `n` rows.
+ *
+ * The ordering is a TOTAL order over a primary key, which is what makes a
+ * resumed or retried sweep safe: two runs enumerate the same families in the
+ * same sequence, so a page boundary cannot fall in a different place and let a
+ * family fall between two pages.
  *
  * `deleted_at IS NULL` matters: rolling over a deleted family would resurrect
  * work for a household that has asked to be gone.
  *
- * $1 limit · $2 offset
+ * $1 pageSize · $2 lastId (NULL = first page)
  */
-export const SQL_LIST_ACTIVE_FAMILIES = `
+export const SQL_LIST_ACTIVE_FAMILIES_PAGE = `
 SELECT "id", "timezone"
   FROM "families"
  WHERE "deleted_at" IS NULL
+   AND ($2::uuid IS NULL OR "id" > $2::uuid)
  ORDER BY "id"
- LIMIT $1::int OFFSET $2::int`;
+ LIMIT $1::int`;
 
 export const SQL_COUNT_ACTIVE_FAMILIES = `
 SELECT count(*)::int AS total FROM "families" WHERE "deleted_at" IS NULL`;
