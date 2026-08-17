@@ -578,6 +578,28 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'pairing.selectChild': 'Select Child',
     'pairing.generateCode': 'Generate Pairing Code',
     'pairing.validFor': 'Valid for',
+    // The screen used to end at the code. These are the sentences that
+    // answer "did it work?" — the question it exists to answer.
+    'pairing.waitingTitle': 'Waiting for your child’s device',
+    'pairing.waitingBody':
+        'Keep this screen open. As soon as the code is entered on your child’s phone, you will see it here.',
+    'pairing.connectedTitle': 'Your child’s device is connected',
+    'pairing.connectedActiveBody': 'The device is linked to your family and is active.',
+    'pairing.connectedPendingBody':
+        'The device is linked to your family. It will appear in your device list, where you can follow its status.',
+    'pairing.notYetTitle': 'No device has connected yet',
+    'pairing.notYetBody':
+        'The code is valid for {{minutes}} minutes, and this one has run out. Nothing went wrong — generate a new code whenever you are ready with your child’s phone.',
+    'pairing.cannotConfirmTitle': 'The code is ready',
+    'pairing.cannotConfirmBody':
+        'We could not read your device list just now, so this screen cannot confirm the pairing on its own. The code still works — check your device list afterwards.',
+    'pairing.revokeAction': 'Unlink this device',
+    'pairing.revokeHint': 'Use this if the code was entered on the wrong phone.',
+    'pairing.revokeConfirmTitle': 'Unlink this device?',
+    'pairing.revokeConfirmBody':
+        'The device will lose access to your family straight away. You can pair it again later with a new code.',
+    'pairing.revokedTitle': 'The device was unlinked',
+    'pairing.revokedBody': 'It no longer has access to your family. Generate a new code to pair a device again.',
     'notifications.title': 'Notifications',
     'notifications.empty': 'No notifications yet.',
     'notifications.markAllRead': 'Mark all as read',
@@ -1173,6 +1195,26 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'pairing.selectChild': 'اختر الطفل',
     'pairing.generateCode': 'إنشاء رمز إقران',
     'pairing.validFor': 'صالح لمدة',
+    'pairing.waitingTitle': 'في انتظار جهاز طفلك',
+    'pairing.waitingBody':
+        'أبقِ هذه الشاشة مفتوحة. بمجرد إدخال الرمز على هاتف طفلك ستظهر النتيجة هنا.',
+    'pairing.connectedTitle': 'تم اتصال جهاز طفلك',
+    'pairing.connectedActiveBody': 'الجهاز مرتبط بعائلتك وحالته نشطة.',
+    'pairing.connectedPendingBody':
+        'الجهاز مرتبط بعائلتك، وسيظهر في قائمة الأجهزة حيث يمكنك متابعة حالته.',
+    'pairing.notYetTitle': 'لم يتصل أي جهاز بعد',
+    'pairing.notYetBody':
+        'الرمز صالح لمدة {{minutes}} دقائق، وقد انتهت مدة هذا الرمز. لم يحدث أي خطأ — أنشئ رمزًا جديدًا متى كان هاتف طفلك بين يديك.',
+    'pairing.cannotConfirmTitle': 'الرمز جاهز',
+    'pairing.cannotConfirmBody':
+        'تعذّرت قراءة قائمة أجهزتك في هذه اللحظة، لذا لا تستطيع هذه الشاشة تأكيد الإقران بنفسها. الرمز يعمل كالمعتاد — راجع قائمة الأجهزة بعد ذلك.',
+    'pairing.revokeAction': 'إلغاء ربط هذا الجهاز',
+    'pairing.revokeHint': 'استخدم هذا إذا أُدخل الرمز على هاتف غير المقصود.',
+    'pairing.revokeConfirmTitle': 'إلغاء ربط هذا الجهاز؟',
+    'pairing.revokeConfirmBody':
+        'سيفقد الجهاز الوصول إلى عائلتك فورًا، ويمكنك إقرانه مجددًا لاحقًا برمز جديد.',
+    'pairing.revokedTitle': 'تم إلغاء ربط الجهاز',
+    'pairing.revokedBody': 'لم يعد لديه وصول إلى عائلتك. أنشئ رمزًا جديدًا لإقران جهاز مرة أخرى.',
     'notifications.title': 'الإشعارات',
     'notifications.empty': 'لا يوجد إشعارات بعد.',
     'notifications.markAllRead': 'تعليم الكل كمقروء',
