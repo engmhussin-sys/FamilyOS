@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/routing/app_routes.dart';
@@ -25,12 +27,16 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   List<dynamic>? _plans;
   Map<String, dynamic>? _subscriptionInfo;
   bool _isSubmitting = false;
-  String? _errorMessage;
+
+  /// The B3 envelope for a genuinely failed CALL — rendered as the server's own
+  /// Arabic sentence with its requestId, not as `e.toString()`. Distinct from
+  /// [_purchaseFailure], which is a STORE outcome and never reached the server.
+  ApiFailure? _failure;
 
   /// The REASON, not a message and not a key. A parent reading
   /// "PurchaseFailure(channelUnconfigured)" learns nothing; the localised
   /// sentence tells them whether to wait, to contact support, or to update the
-  /// app. `_errorMessage` is still used for genuinely unexpected failures.
+  /// app. [_failure] is still used for genuinely unexpected failures.
   ///
   /// Holding the enum rather than a key string is deliberate: the four `t('...')`
   /// calls in `_purchaseMessage` are then LITERALS, which is what
@@ -46,7 +52,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
       final api = ref.read(billingApiProvider);
       final results = await Future.wait([api.getPlans(), api.getSubscription()]);
@@ -57,7 +63,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
     }
   }
 
@@ -83,7 +89,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   Future<void> _subscribe(String planTier) async {
     setState(() {
       _isSubmitting = true;
-      _errorMessage = null;
+      _failure = null;
       _purchaseFailure = null;
     });
     try {
@@ -94,7 +100,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
         setState(() => _purchaseFailure = failure.reason);
       }
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -123,7 +129,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
       await ref.read(billingApiProvider).cancel();
       await _load();
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -132,21 +138,21 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('subscription.title'))),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
+              child: SingleChildScrollView(
+                child: DsErrorState(
+                  failure: _failure!,
+                  title: t('common.error'),
+                  retryLabel: t('common.retry'),
+                  requestIdLabel: t('common.requestId'),
+                  arabic: locale.isRtl,
+                  onRetry: _load,
                 ),
               ),
             )

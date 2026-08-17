@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
@@ -45,12 +46,12 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
   String _countryCode = supportedFamilyCountries.first;
 
   bool _isSubmitting = false;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   Future<void> _submit() async {
     setState(() {
       _isSubmitting = true;
-      _errorMessage = null;
+      _failure = null;
     });
 
     try {
@@ -61,7 +62,7 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
       if (!mounted) return;
       Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
     } catch (e) {
-      setState(() => _errorMessage = e.toString());
+      setState(() => _failure = ApiFailure.from(e));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -70,7 +71,8 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     // Resolved through LITERAL `t('...')` keys on purpose: a key built by
     // string interpolation is invisible to `scripts/verify_l10n_parity.py`,
@@ -124,7 +126,11 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                     ),
                   ],
                 ),
-                if (_errorMessage != null) ...[
+                // THE SERVER'S OWN SENTENCE, ARABIC FIRST AND VERBATIM.
+                // This banner used to render `e.toString()` — «ApiException:
+                // Instance of 'DioException'» — which told a parent nothing and
+                // threw away the `messageAr` the B3 envelope already carried.
+                if (_failure != null) ...[
                   const SizedBox(height: 12),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -133,7 +139,12 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                       children: [
                         const Icon(Icons.error_outline_rounded, color: AppTheme.brick500, size: 18),
                         const SizedBox(width: 8),
-                        Expanded(child: Text(_errorMessage!, style: const TextStyle(color: AppTheme.brick500))),
+                        Expanded(
+                          child: Text(
+                            _failure!.displayFor(arabic: locale.isRtl),
+                            style: const TextStyle(color: AppTheme.brick500),
+                          ),
+                        ),
                       ],
                     ),
                   ),

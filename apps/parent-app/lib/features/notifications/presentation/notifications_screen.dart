@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/notifications/push_registration_service.dart';
 import '../../../core/routing/deep_link.dart';
@@ -20,7 +22,12 @@ class NotificationsScreen extends ConsumerStatefulWidget {
 
 class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   List<dynamic>? _notifications;
-  String? _errorMessage;
+
+  /// THE B3 ENVELOPE, not `e.toString()`. The error state used to render a
+  /// fixed `t('common.error')` line and throw the server's own `messageAr`
+  /// away — so a parent whose inbox failed to load was told «حدث خطأ» while
+  /// the server had already written the reason in Arabic.
+  ApiFailure? _failure;
 
   /// G18. Null until the first read completes, so nothing is claimed about the
   /// permission before it has actually been checked.
@@ -75,12 +82,12 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
       final result = await ref.read(notificationsApiProvider).list();
       if (mounted) setState(() => _notifications = result);
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
     }
   }
 
@@ -146,7 +153,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       body: Column(
         children: [
           _permissionBanner(t),
-          Expanded(child: _body(t)),
+          Expanded(child: _body(t, ref.watch(localeControllerProvider.notifier).isRtl)),
         ],
       ),
     );
@@ -206,18 +213,19 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     );
   }
 
-  Widget _body(String Function(String) t) {
-    return _errorMessage != null
+  Widget _body(String Function(String) t, bool arabic) {
+    return _failure != null
+          // THE LINE THE B3 ENVELOPE EXISTS FOR — the server's own Arabic
+          // sentence, verbatim, with its requestId for a support ticket.
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
+              child: SingleChildScrollView(
+                child: DsErrorState(
+                  failure: _failure!,
+                  title: t('common.error'),
+                  retryLabel: t('common.retry'),
+                  requestIdLabel: t('common.requestId'),
+                  arabic: arabic,
+                  onRetry: _load,
                 ),
               ),
             )

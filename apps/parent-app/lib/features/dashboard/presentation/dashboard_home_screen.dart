@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
@@ -38,7 +39,12 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   /// that the two had been conflated by name.
   int _pendingGoalReviewCount = 0;
   bool _isLoading = true;
-  String? _errorMessage;
+
+  /// The B3 envelope, not `e.toString()`. The retry-and-explain state was
+  /// already here (an earlier review added it); what was missing is the
+  /// EXPLANATION — it rendered a fixed `t('common.error')` and discarded the
+  /// Arabic sentence the server had already written for this exact failure.
+  ApiFailure? _failure;
 
   @override
   void initState() {
@@ -49,7 +55,7 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   Future<void> _load() async {
     setState(() {
       _isLoading = true;
-      _errorMessage = null;
+      _failure = null;
     });
     final api = ref.read(dashboardApiProvider);
     try {
@@ -75,7 +81,7 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = e.toString();
+          _failure = ApiFailure.from(e);
         });
       }
       return;
@@ -107,7 +113,8 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(
@@ -142,19 +149,16 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null
+          : _failure != null
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.wifi_off, size: 40, color: Theme.of(context).colorScheme.error),
-                        const SizedBox(height: 12),
-                        Text(t('common.error'), textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                      ],
+                  child: SingleChildScrollView(
+                    child: DsErrorState(
+                      failure: _failure!,
+                      title: t('common.error'),
+                      retryLabel: t('common.retry'),
+                      requestIdLabel: t('common.requestId'),
+                      arabic: locale.isRtl,
+                      onRetry: _load,
                     ),
                   ),
                 )

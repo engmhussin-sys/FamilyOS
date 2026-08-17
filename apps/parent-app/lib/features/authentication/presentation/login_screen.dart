@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
@@ -23,12 +24,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isSubmitting = false;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   Future<void> _submit() async {
     setState(() {
       _isSubmitting = true;
-      _errorMessage = null;
+      _failure = null;
     });
 
     final success = await ref
@@ -45,14 +46,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ref.read(pushRegistrationServiceProvider).initializeAndRegister();
       Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
     } else {
-      setState(() => _errorMessage = ref.read(authControllerProvider).errorMessage);
+      setState(() => _failure = ref.read(authControllerProvider).failure);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       body: SafeArea(
@@ -100,7 +102,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   obscureText: true,
                   decoration: InputDecoration(labelText: t('auth.password'), prefixIcon: const Icon(Icons.lock_outline_rounded)),
                 ),
-                if (_errorMessage != null) ...[
+                // THE SERVER'S OWN SENTENCE, ARABIC FIRST AND VERBATIM.
+                // This banner used to render `e.toString()` — «ApiException:
+                // Instance of 'DioException'» — which told a parent nothing and
+                // threw away the `messageAr` the B3 envelope already carried.
+                if (_failure != null) ...[
                   const SizedBox(height: 12),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -112,7 +118,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       children: [
                         const Icon(Icons.error_outline_rounded, color: AppTheme.brick500, size: 18),
                         const SizedBox(width: 8),
-                        Expanded(child: Text(_errorMessage!, style: const TextStyle(color: AppTheme.brick500))),
+                        Expanded(
+                          child: Text(
+                            _failure!.displayFor(arabic: locale.isRtl),
+                            style: const TextStyle(color: AppTheme.brick500),
+                          ),
+                        ),
                       ],
                     ),
                   ),
