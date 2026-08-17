@@ -459,6 +459,86 @@ export const COPY_CATALOGUE: Readonly<Record<string, CopyEntry>> = Object.freeze
     },
   },
 
+  /**
+   * ==========================================================================
+   * THE PARENT'S REWARD SENTENCE WHEN THE CAUSE IS A GOAL THE PARENT SET.
+   * ==========================================================================
+   *
+   * WHAT WAS MEASURED, and `e2e-13 STEP 14` pinned it to the byte: a household
+   * whose whole chain started at «حفظ سورة الملك، الآيات ١–٥» was told «حصل محمد
+   * على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.» and `notifications.data`
+   * was NULL — so the goal was unreachable from the notification by ANY field.
+   * The parent learned THAT something happened and had to open the app to learn
+   * WHAT, which is a broadcast with a pointer attached, not a coach.
+   *
+   * --------------------------------------------------------------------------
+   * WHY A SIBLING KEY RATHER THAN `GOAL_COMPLETED_PARENT`, WHICH ALREADY TAKES
+   * A `goalTitle`. Four reasons, and the first one is decisive on its own:
+   *
+   *   1. IT WOULD MAKE THE PRODUCT INVENT A FACT. `GOAL_COMPLETED_PARENT`
+   *      declares `weekCount` and its sentence ends «…وهذه ثالث مرة هذا
+   *      الأسبوع». The reward path has no week count — `REWARD_GRANTED` is
+   *      emitted by `RewardsCompletionConsumer` from a ledger grant, which knows
+   *      nothing about how many times this happened this week. Supplying a
+   *      number would publish an invented fact; omitting it makes the renderer
+   *      treat the template as leaking and fall through to `GENERIC`, which is
+   *      «لديك تحديث جديد داخل التطبيق» — strictly worse than what is there now.
+   *   2. THE SENTENCE HAS TO CARRY THE POINTS, and points are a REWARD fact.
+   *      `GOAL_COMPLETED_PARENT` has nowhere to put «وحصل على ٢٠ نقطة» without
+   *      being rewritten into a reward sentence — at which point it is this
+   *      entry with an older name and one extra caller to keep in step.
+   *   3. ONE CAUSE, ONE TEMPLATE. `GOAL_COMPLETED_PARENT` is the sentence for a
+   *      goal COMPLETION (`e2e-05 ACT II` pins it), and a completion and a paid
+   *      reward are two different causes that can occur without each other — a
+   *      completion no Reward Rule matched pays nothing and must still be
+   *      announceable. Overloading one template would make «which event am I
+   *      reading about?» unanswerable from the row.
+   *   4. THE TYPE VOCABULARY STAYS TRUE. `notifications.type` remains
+   *      `REWARD_GRANTED`, which is what `notification-scoring.ts` weights,
+   *      what `notification-class.ts` classifies for quiet hours, and what the
+   *      analytics count. Only the COPY KEY differs — and this catalogue's
+   *      header already states that a key need not be a type, because
+   *      `GOAL_ALMOST_DONE` and `GOAL_DEADLINE_NEAR` are two sentences about one
+   *      category.
+   *
+   * WHICH OF THE TWO REWARD ENTRIES IS USED is decided by
+   * `RuleBasedNotificationDecisionProvider`'s `COPY_RULES` — the existing,
+   * data-driven seam that already picks a better child sentence when the context
+   * carries a goal — and it requires BOTH variables to be present and non-empty.
+   * A producer that has only one of them gets `REWARD_GRANTED` below, which is a
+   * complete sentence rather than a half-filled one.
+   *
+   * `goalTitle` IS `RewardProgram.targetSummaryAr` — «الآيات 1–5 من سورة الملك» —
+   * derived ONCE by `describeTargetSpec` at program creation. Nothing in this
+   * layer assembles Arabic out of a surah number and two ayah indices, and
+   * nothing in it should: three clients read that same derived string.
+   *
+   * IT ANSWERS THE THREE QUESTIONS A PARENT NOTIFICATION OWES:
+   *   WHY am I being told   — «أكمل … اليوم»: their child finished the goal
+   *                            they themselves set.
+   *   WHAT happened          — the goal, by name, and the points, from the ledger.
+   *   WHAT DO I DO           — «افتح التطبيق لتشجيعه»: an action, not a dead end.
+   */
+  REWARD_GRANTED_WITH_GOAL: {
+    category: 'REWARD',
+    audience: 'PARENT',
+    variables: ['childName', 'goalTitle', 'points'],
+    variants: {
+      PARENT: t(
+        'مكافأة جديدة',
+        '🌟 {childName} أكمل {goalTitle} اليوم وحصل على {points} نقطة. افتح التطبيق لتشجيعه.',
+        'New reward',
+        '🌟 {childName} completed {goalTitle} today and earned {points} points. Open the app to cheer them on.',
+      ),
+    },
+  },
+
+  /**
+   * The reward sentence for every cause that is NOT a parent-authored goal — a
+   * habit tick, a hydration target, a streak milestone — and the honest fallback
+   * whenever the goal facts are missing. It names the child and it does not
+   * pretend to know what was achieved, because on those paths nothing does.
+   */
   REWARD_GRANTED: {
     category: 'REWARD',
     audience: 'PARENT',

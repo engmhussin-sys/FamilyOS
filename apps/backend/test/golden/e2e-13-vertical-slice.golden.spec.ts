@@ -124,6 +124,19 @@ const THE_OTHER_MARKET = 'EG';
 /** `growth_settings.reporting.timezone.SA`, chosen by the SERVER from the country. */
 const THE_MARKET_CALENDAR = 'Asia/Riyadh';
 
+/**
+ * THE ARABIC SENTENCE FOR THE GOAL, AND IT IS DERIVED ONCE, SERVER-SIDE.
+ *
+ * `RewardProgram.targetSummaryAr`, composed by `describeTargetSpec` from the
+ * parent's own form and the real Quran table when the program is created. STEP 8
+ * asserts the program row carries exactly this; every later assertion that a
+ * sentence «names the achievement» is written against THIS CONSTANT rather than
+ * against a re-typed string, because the whole product rule under test is that
+ * three clients and two server surfaces read one derived summary instead of each
+ * re-assembling Arabic out of a surah number and two ayah indices.
+ */
+const THE_TARGET_SUMMARY = 'الآيات 1–5 من سورة الملك';
+
 /** The parent's form, field for field, exactly as the product brief words it. */
 const THE_QURAN_GOAL = {
   category: 'QURAN',
@@ -660,7 +673,7 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       // It reads back as a SENTENCE. The parent typed a surah number and a
       // range; they expect to see a surah and a range.
       expect(created.body.category).toBe('QURAN');
-      expect(created.body.targetSummaryAr).toBe('الآيات 1–5 من سورة الملك');
+      expect(created.body.targetSummaryAr).toBe(THE_TARGET_SUMMARY);
       expect(created.body.durationMinutes).toBe(20);
       expect(created.body.rewardSpec).toMatchObject({ type: 'POINTS', amount: 20 });
       expect(created.body.verificationLevel).toBe('PARENT_CONFIRMATION');
@@ -936,11 +949,12 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       expect(child.body).not.toBe(parent.body);
       expect(child.title === parent.title && child.body === parent.body).toBe(false);
 
-      // THE PARENT'S NAMES THE CHILD. «حصل محمد على…» and not «حصل طفلك على…»,
-      // pinned to the byte so the next change to this copy is deliberate.
+      // THE PARENT'S NAMES THE CHILD AND NAMES THE WORK. «محمد أكمل الآيات 1–5
+      // من سورة الملك» and not «حصل طفلك على مكافأة», pinned to the byte so the
+      // next change to this copy is deliberate.
       expect(parent.title).toBe('مكافأة جديدة');
       expect(parent.body).toBe(
-        `حصل ${home.childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.`,
+        `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
       );
       expect(parent.body).toContain(home.childName);
 
@@ -960,37 +974,185 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
 
     /**
      * ========================================================================
-     * A GAP, MEASURED AND PINNED RATHER THAN ASSERTED AWAY.
+     * THE GAP THIS FILE MEASURED, NOW CLOSED — AND PINNED FROM THE OTHER SIDE.
      * ========================================================================
      *
+     * WHAT THIS TEST SAID BEFORE, VERBATIM, AND WHY:
+     *
+     *     expect(parent.body).not.toContain('سورة الملك');
+     *     expect(parent.body).not.toContain('الملك');
+     *     expect(data ?? null).toBeNull();
+     *
      * The chain this scenario walks starts at «حفظ سورة الملك، الآيات ١–٥» and
-     * the parent's notification about its completion does NOT name it — not in
-     * the body, and not in `data`, which is `null` because
-     * `NotificationRewardConsumer` passes no facts alongside the event
-     * (`COPY_CATALOGUE.REWARD_GRANTED` declares exactly one variable,
-     * `childName`). The parent is told THAT their child earned something and
-     * must open the app to learn WHAT.
+     * the parent's notification about its completion did NOT name it — not in
+     * the body, and not in `data`, which was `null` because
+     * `NotificationRewardConsumer` passed no facts alongside the event and
+     * `COPY_CATALOGUE.REWARD_GRANTED` declared exactly one variable,
+     * `childName`. The parent was told THAT their child earned something and had
+     * to open the app to learn WHAT — a broadcast with a pointer attached, and
+     * measurably not the notification the product brief advertises.
      *
-     * That is a defensible product position — the sentence points at the app and
-     * the app holds the detail — and it is NOT what the notification the product
-     * brief advertises («محمد أكمل هدفه في سورة الملك») does. `GOAL_COMPLETED_PARENT`
-     * is the key that DOES take a `goalTitle`, and nothing on the reward path
-     * fires it; `e2e-05` ACT II can only reach it by calling the engine directly.
+     * The pin said «when a producer starts carrying the goal, this test turns
+     * red and forces a deliberate update». It did, and this is that update: the
+     * SAME two places are still the assertion, with the answers inverted.
      *
-     * So the current answer is pinned here, exactly, in both places it could
-     * live. When a producer starts carrying the goal, this test turns red and
-     * forces a deliberate update — the same discipline `e2e-05` and `e2e-06`
-     * applied to the copy that used to say «طفلك».
+     * WHERE THE TWO FACTS COME FROM, because that is the half a byte-pin cannot
+     * express and the half that would be easiest to fake:
+     *
+     *   THE GOAL   `RewardProgram.targetSummaryAr`, derived ONCE by
+     *              `describeTargetSpec` at program creation (STEP 8 read it off
+     *              the response) and carried to the consumer on the completion's
+     *              own metadata. NOT re-assembled in the notification layer from
+     *              a surah number — this test compares against the same
+     *              `THE_TARGET_SUMMARY` STEP 8 asserted, so a second derivation
+     *              that drifted by one character would fail here.
+     *   THE POINTS Summed from `rewards_ledger_entries`. Asserted below against
+     *              the LEDGER ROW rather than against the literal 20, so a
+     *              notification that stated a number the database does not hold
+     *              would fail even though both numbers came from this file.
      */
-    it('STEP 14 — MEASURED: the parent notification does NOT name the achievement, in the body or the payload', async () => {
+    it('STEP 14 — the parent notification NAMES the achievement and the points, in the body AND in the payload', async () => {
       const parent = await parentNotificationRow();
 
-      expect(parent.body).not.toContain('سورة الملك');
-      expect(parent.body).not.toContain('الملك');
-      // `data` is the only other field a client could render from, and it is
-      // empty — so the goal is unreachable from this notification by any route.
+      // ===== THE BODY. The goal, by the name the parent gave it. =====
+      expect(parent.body).toContain(THE_TARGET_SUMMARY);
+      expect(parent.body).toContain('سورة الملك');
+
+      // ===== AND THE NUMBER IS THE LEDGER'S. =====
+      // Read back out of `rewards_ledger_entries` and rendered in Arabic-Indic
+      // digits, because Arabic prose with Latin numerals reads as a translation
+      // (`PF-E-002`). Twenty is not hard-coded into this assertion: it is
+      // whatever the grant actually paid.
+      const [ledger] = await world.raw<any[]>(
+        `SELECT "amount" FROM "rewards_ledger_entries"
+          WHERE "family_id" = $1::uuid AND "child_id" = $2::uuid AND "type" = 'EARN' AND "reward_type" = 'XP'`,
+        home.familyId,
+        home.childId,
+      );
+      const pointsInArabic = String(ledger.amount).replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+      expect(parent.body).toContain(`${pointsInArabic} نقطة`);
+
+      // ===== AND IT REACHES THE APP AS DATA, NOT ONLY AS PROSE. =====
+      // «افتح التطبيق» has to lead somewhere, and a client must not have to
+      // parse Arabic to deep-link. `data` was NULL; it now carries the facts —
+      // and carries NO identifiers, which CONTEXT §3 principle 8 requires of
+      // this payload just as much as of the FCM one.
       const data = typeof parent.data === 'string' ? JSON.parse(parent.data) : parent.data;
-      expect(data ?? null).toBeNull();
+      expect(data).not.toBeNull();
+      expect(data.goalTitle).toBe(THE_TARGET_SUMMARY);
+      expect(data.points).toBe(ledger.amount);
+      const serialisedData = JSON.stringify(data);
+      for (const id of [home.familyId, home.childId, deviceId, programId, achievementId]) {
+        if (id) expect(serialisedData).not.toContain(id);
+      }
+      expect(serialisedData).not.toContain(home.childName);
+    });
+
+    /**
+     * THE OTHER HALF OF «NAME THE ACHIEVEMENT», and it is the one a byte-pin on
+     * the parent's sentence alone would let rot: the child's message must NOT
+     * have been dragged along with it.
+     *
+     * The two audiences are scored, capped and composed separately on purpose,
+     * and `COPY_CATALOGUE.REWARD_GRANTED_CHILD` deliberately declares NO
+     * variables — «حصلت على ٣ مكافآت من سورة الملك» is a receipt read at a
+     * child, not encouragement. So the parent gaining detail must leave the
+     * child's sentence exactly where it was.
+     */
+    it('STEP 14 — the parent gained the detail and the CHILD did not: two audiences, still two sentences', async () => {
+      const parent = await parentNotificationRow();
+      const child = await childMessageRow();
+
+      expect(child.body).not.toBe(parent.body);
+      expect(child.body).not.toContain(THE_TARGET_SUMMARY);
+      expect(child.body).not.toContain('سورة الملك');
+      // No points, no counts: the child's own app already shows the balance.
+      expect(child.body).not.toContain('نقطة');
+      // Second person, and still not their own name back at them.
+      expect(child.body).toContain('حصلت');
+      expect(child.body).not.toContain(home.childName);
+    });
+
+    /**
+     * THE PROVENANCE OF THE PARENT'S SENTENCE, asserted the way `e2e-10` asserts
+     * every other one: the decision row names the copy key, and rendering THAT
+     * key with THESE variables must reproduce the stored body byte for byte.
+     *
+     * This is what «the string is not typed into a consumer» means as an
+     * assertion rather than as a claim — and it is also the check that would
+     * catch the failure mode this change could most plausibly introduce: a
+     * template whose variable the producer forgot renders no `{placeholder}`
+     * (the renderer refuses), it silently degrades to `GENERIC`. A `GENERIC`
+     * fallback would still be Arabic, still leak-free, and still pass every
+     * generic check in this file — so the key is asserted by name.
+     */
+    it('STEP 14 — the parent’s sentence is rendered FROM THE CATALOGUE, at the key the decision row names', async () => {
+      const parent = await parentNotificationRow();
+      const decision = await decisionRow('REWARD_GRANTED');
+      expect(decision).toBeDefined();
+
+      expect(decision.target_audience).toBe('PARENT');
+      expect(decision.locale).toBe('ar');
+      // The COPY KEY differs from the notification TYPE, deliberately: the row
+      // is still a `REWARD_GRANTED` — which is what the scorer weights, what the
+      // quiet-hours matrix classifies and what the analytics count — while the
+      // SENTENCE is the one that has somewhere to put a goal and a number.
+      expect(decision.copy_key).toBe('REWARD_GRANTED_WITH_GOAL');
+      expect(parent.type).toBe('REWARD_GRANTED');
+
+      const rendered = renderNotificationCopy({
+        key: decision.copy_key,
+        audience: 'PARENT',
+        toneBand: '11-13',
+        locale: 'ar',
+        variables: { childName: home.childName, goalTitle: THE_TARGET_SUMMARY, points: 20 },
+      });
+      expect(parent.body).toBe(rendered.body);
+      expect(parent.title).toBe(rendered.title);
+      expect(rendered.resolvedKey).toBe('REWARD_GRANTED_WITH_GOAL');
+    });
+
+    /**
+     * AND THE FALLBACK IS INTACT — which is the whole reason the goal sentence is
+     * a SECOND key rather than a rewrite of the first.
+     *
+     * Most rewards in this product are not parent-authored programs: a habit
+     * tick, a hydration target, a streak milestone. None of them knows what was
+     * achieved, and none of them ever will. A producer with no goal must get a
+     * COMPLETE sentence — not a half-filled template, and not the contentless
+     * `GENERIC` entry — and this asserts that at the catalogue, where the
+     * property lives, because no scenario in this file can produce a goal-less
+     * grant to observe it end to end.
+     */
+    it('STEP 14 — a reward with no goal still reads as a whole sentence, never as a template or a stub', async () => {
+      const withoutTheGoal = renderNotificationCopy({
+        key: 'REWARD_GRANTED',
+        audience: 'PARENT',
+        toneBand: '11-13',
+        locale: 'ar',
+        variables: { childName: home.childName },
+      });
+      expect(withoutTheGoal.resolvedKey).toBe('REWARD_GRANTED');
+      expect(withoutTheGoal.body).toBe(
+        `حصل ${home.childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.`,
+      );
+      assertItReadsLikeASentence(withoutTheGoal.body);
+
+      // AND THE FAILURE MODE THE NEW KEY COULD HAVE INTRODUCED, PINNED: a
+      // producer that has the child's name but NOT the goal must never reach the
+      // goal template, because a rendered `{goalTitle}` in a parent's hand is the
+      // exact leak this catalogue exists to make impossible.
+      const halfFilled = renderNotificationCopy({
+        key: 'REWARD_GRANTED_WITH_GOAL',
+        audience: 'PARENT',
+        toneBand: '11-13',
+        locale: 'ar',
+        variables: { childName: home.childName },
+      });
+      expect(halfFilled.body).not.toMatch(UNSUBSTITUTED_PLACEHOLDER);
+      expect(halfFilled.body).not.toContain('goalTitle');
+      expect(halfFilled.body).not.toContain('points');
+      expect(hasEnumOrPlaceholderLeak(halfFilled.body)).toBe(false);
     });
 
     it('STEP 14 — the child\'s sentence is ARABIC, from the catalogue, and fits a twelve-year-old', async () => {
@@ -1077,26 +1239,41 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
 
       /**
        * ======================================================================
-       * A SECOND GAP, MEASURED AND PINNED. THE TIMELINE SPEAKS ENGLISH.
+       * THE SECOND GAP THIS FILE MEASURED, NOW CLOSED. THE TIMELINE IS ARABIC.
        * ======================================================================
        *
-       * Every user-visible string this scenario has checked so far is Arabic
-       * from the catalogue: the parent's notification, the child's message, the
-       * goal's `targetSummaryAr`, every label on `GET /self/catalogue`. The
-       * LIFE TIMELINE — «سجل حياة الطفل», the artefact CONTEXT §1 puts forward
-       * as what a parent keeps — is written by
-       * `rewards-engine.service.ts` with `title: 'Earned a reward'`, a hardcoded
-       * ENGLISH literal, for an Arabic-first product in EG and SA.
+       * WHAT THIS TEST SAID BEFORE, VERBATIM:
        *
-       * It is not a raw enum and it is not a placeholder, so it passes every
-       * generic leak check; it is simply the wrong language. Pinned to the byte
-       * here — with the Arabic assertion stated as the thing that is NOT yet
-       * true — so that localising it turns this red and forces a deliberate
-       * update, exactly as `e2e-05` pinned «طفلك» until a producer could say the
-       * child's name.
+       *     expect(timeline[0].title).toBe('Earned a reward');
+       *     expect(timeline[0].title).not.toMatch(ARABIC_LETTERS);
+       *
+       * Every user-visible string this scenario checks is Arabic from a
+       * catalogue: the parent's notification, the child's message, the goal's
+       * `targetSummaryAr`, every label on `GET /self/catalogue`. The LIFE
+       * TIMELINE — «سجل حياة الطفل», the artefact CONTEXT §1 puts forward as
+       * what a parent keeps — was written by `rewards-engine.service.ts` with
+       * `title: 'Earned a reward'`, a hardcoded ENGLISH literal, for an
+       * Arabic-first product whose only two markets are EG and SA.
+       *
+       * It was not a raw enum and not a placeholder, so it passed every generic
+       * leak check in this file; it was simply the wrong language — the failure
+       * mode a leak check cannot see, which is why it was pinned to the byte.
+       *
+       * IT IS NOW TWO ASSERTIONS, NOT ONE, and the second is the important one.
+       * «حصل على مكافأة» would be Arabic and would still answer only WHEN: a
+       * timeline of twenty identical rows is a counter, not a life record. So the
+       * entry NAMES the work, from the same server-derived `targetSummaryAr` the
+       * notification uses — one derivation, two surfaces.
        */
-      expect(timeline[0].title).toBe('Earned a reward');
-      expect(timeline[0].title).not.toMatch(ARABIC_LETTERS);
+      expect(timeline[0].title).toMatch(ARABIC_LETTERS);
+      expect(timeline[0].title).not.toMatch(/[A-Za-z]/);
+      expect(timeline[0].title).toContain(THE_TARGET_SUMMARY);
+      expect(timeline[0].title).toBe(`أكمل ${THE_TARGET_SUMMARY} وحصل على مكافأة`);
+
+      // The same three properties every other user-visible string in this file
+      // is held to. `title` is read by a parent inside the app, so «not a raw
+      // enum, not a placeholder, not a database id» is not a lower bar here.
+      assertItReadsLikeASentence(timeline[0].title);
     });
   });
 
@@ -1323,11 +1500,30 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       const child = await childMessageRow();
 
       expect(parent.body).toBe(
-        `حصل ${home.childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.`,
+        `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
       );
       expect(child.body).not.toBe(parent.body);
       assertItReadsLikeASentence(parent.body);
       assertItReadsLikeASentence(child.body);
+
+      // AND THE POINTS DID NOT DOUBLE IN THE SENTENCE EITHER. This is the half a
+      // count-only replay assertion cannot reach: the ledger sum the producer
+      // reads is a read over committed rows, so two full redeliveries with the
+      // consumer markers deleted must still announce twenty — not forty, and not
+      // «٠ نقطة» from a recovery path that lost the number.
+      expect(parent.body).toContain('٢٠ نقطة');
+      const data = typeof parent.data === 'string' ? JSON.parse(parent.data) : parent.data;
+      expect(data.points).toBe(20);
+      expect(data.goalTitle).toBe(THE_TARGET_SUMMARY);
+
+      // AND THE TIMELINE TITLE IS STILL THE ONE ARABIC SENTENCE.
+      const [entry] = await world.raw<any[]>(
+        `SELECT "title" FROM "life_timeline_events"
+          WHERE "family_id" = $1::uuid AND "child_id" = $2::uuid AND "event_type" = 'reward_granted'`,
+        home.familyId,
+        home.childId,
+      );
+      expect(entry.title).toBe(`أكمل ${THE_TARGET_SUMMARY} وحصل على مكافأة`);
     });
   });
 });

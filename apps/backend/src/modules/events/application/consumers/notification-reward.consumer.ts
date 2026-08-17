@@ -40,21 +40,30 @@ export const NOTIFICATION_REWARD_CONSUMER = 'NotificationRewardConsumer';
  * refuses a redelivered cause. The engine is inserted BETWEEN the event and
  * that pipeline; it did not replace any part of it.
  *
- * WHAT THE PARENT READS NOW: «حصل محمد على مكافأة جديدة اليوم. افتح التطبيق
- * لرؤية التفاصيل.» — the same sentence, from `COPY_CATALOGUE.REWARD_GRANTED`,
- * with `{childName}` resolved by the assembler from two selected columns. The
- * name is a FACT ABOUT THE HOUSEHOLD, not a leak: CONTEXT §3 principle 8 bars
- * identifiers from the FCM payload and from the decision ledger, and both
- * remain free of it — `notification_decisions` has no `title` and no `body`
- * column, asserted from `information_schema` by `e2e-05`.
+ * WHAT THE PARENT READS NOW: «🌟 محمد أكمل الآيات 1–5 من سورة الملك اليوم وحصل
+ * على ٢٠ نقطة. افتح التطبيق لتشجيعه.» — rendered from
+ * `COPY_CATALOGUE.REWARD_GRANTED_WITH_GOAL`, with `{childName}` resolved by the
+ * assembler from two selected columns and the goal and the points supplied as
+ * VARIABLES by `handle` below. The name is a FACT ABOUT THE HOUSEHOLD, not a
+ * leak: CONTEXT §3 principle 8 bars identifiers from the FCM payload and from
+ * the decision ledger, and both remain free of it — `notification_decisions` has
+ * no `title` and no `body` column, asserted from `information_schema` by `e2e-05`.
  *
- * WHY NO `reward` FACTS ARE PASSED. The `REWARD_GRANTED` payload carries a
- * grant COUNT and the resulting balance, not the magnitude of what was granted;
- * `RewardFacts.amount` is a magnitude and feeds a logarithmic curve. Passing
- * `grantCount` as an amount would put a number into a STORED EXPLANATION that
- * means something else, and an explanation that does not mean what it says is
- * worse than one that is absent. The type's own `ACHIEVEMENT_BASELINE_BY_TYPE`
- * row is the honest reading, and it is the reading the scorer was designed for.
+ * A REWARD WITH NO GOAL — a habit tick, a hydration target, a streak — still
+ * reads «حصل محمد على مكافأة جديدة اليوم…» from `COPY_CATALOGUE.REWARD_GRANTED`,
+ * because nothing on those paths knows what was achieved and inventing a title
+ * for them would be worse than the general sentence.
+ *
+ * WHY NO `reward` FACTS ARE PASSED — meaning `RewardFacts`, the SCORING input,
+ * which is a different thing from the copy variables above. The `REWARD_GRANTED`
+ * payload carries a grant COUNT and the resulting balance; `RewardFacts.amount`
+ * is a magnitude and feeds a logarithmic curve. Passing `grantCount` as an
+ * amount would put a number into a STORED EXPLANATION that means something else,
+ * and an explanation that does not mean what it says is worse than one that is
+ * absent. The type's own `ACHIEVEMENT_BASELINE_BY_TYPE` row is the honest
+ * reading, and it is the reading the scorer was designed for. The points the
+ * SENTENCE states are not that number and never enter the score: they are read
+ * from `rewards_ledger_entries` by the producer of this event.
  * ---------------------------------------------------------------------------
  *
  * WHY THIS CONSUMER CANNOT FIRE ON A DUPLICATE: it subscribes to
@@ -107,6 +116,12 @@ export class NotificationRewardConsumer implements OnModuleInit {
       childId?: string;
       grantCount?: number;
       completionKind?: string;
+      /** `RewardProgram.targetSummaryAr`, put on the event by
+       * `RewardsCompletionConsumer`. `null` for every cause that is not a
+       * parent-authored program. */
+      achievementSummaryAr?: string | null;
+      /** Summed from `rewards_ledger_entries` by the same producer. */
+      pointsGranted?: number;
     };
     const childId = payload.childId ?? envelope.childId;
     if (!childId) {
@@ -122,12 +137,70 @@ export class NotificationRewardConsumer implements OnModuleInit {
       // before this phase; neither deduplicates the other away.
       const sourceEventId = forDomainEvent(envelope.id);
 
+      /**
+       * ======================================================================
+       * THE FACTS THE PARENT'S SENTENCE IS MADE OF — AND THE DEFECT THEY CLOSE.
+       * ======================================================================
+       *
+       * WHAT WAS MEASURED (`e2e-13 STEP 14`): this call passed NO `data` and NO
+       * `variables`, `COPY_CATALOGUE.REWARD_GRANTED` declared exactly one
+       * variable (`childName`), and so a household whose whole chain began at
+       * «حفظ سورة الملك، الآيات ١–٥» was told only «حصل محمد على مكافأة جديدة
+       * اليوم» with `notifications.data` NULL. The goal was unreachable from the
+       * notification by any field at all.
+       *
+       * THE PRODUCER PASSES VARIABLES; THE CATALOGUE HOLDS THE SENTENCE. There
+       * is deliberately no string in this file — that is the rule `F6-003`
+       * established when it deleted the two Arabic literals that used to live
+       * here, and naming a goal is not a reason to put one back. Which of the
+       * two reward templates these facts earn is
+       * `RuleBasedNotificationDecisionProvider`'s decision, recorded on
+       * `notification_decisions.copy_key`.
+       *
+       * AND THE ENGINE IS STILL THE ONLY DOOR. This is the same single
+       * `handleEvent` call it has always been — EVENT -> engine -> decision ->
+       * dedup -> safety -> persistence -> outbox, unchanged. Nothing here writes
+       * a row, and `notification-engine-bypass.guard.spec.ts` is right to fail
+       * anything that would.
+       *
+       * VARIABLES vs `data`, and they are not the same job:
+       *   `variables` are what the SENTENCE is rendered from, and they are
+       *      omitted entirely when a fact is absent — a partial set would only
+       *      make the renderer reject the template. `points` stays a NUMBER so
+       *      the catalogue writes it in the locale's own digits («٢٠» in ar,
+       *      «20» in en); pre-formatting it here would move a localisation
+       *      decision into a producer.
+       *   `data` is the STRUCTURED payload the parent app renders from — the
+       *      «open the app» in the sentence has to lead somewhere, and a client
+       *      must not have to parse Arabic prose to deep-link. It carries facts
+       *      only: no child id, no family id, no name that is not already in
+       *      the body (CONTEXT §3 principle 8).
+       */
+      const summaryAr =
+        typeof payload.achievementSummaryAr === 'string' && payload.achievementSummaryAr.trim().length > 0
+          ? payload.achievementSummaryAr.trim()
+          : null;
+      const points =
+        typeof payload.pointsGranted === 'number' && Number.isFinite(payload.pointsGranted) && payload.pointsGranted > 0
+          ? payload.pointsGranted
+          : null;
+
       const parent = await this.engine.handleEvent({
         familyId: envelope.familyId,
         childId,
         eventType: 'REWARD_GRANTED',
         sourceEventId,
         trigger: 'DOMAIN_EVENT',
+        variables: {
+          ...(summaryAr === null ? {} : { goalTitle: summaryAr }),
+          ...(points === null ? {} : { points }),
+        },
+        data: {
+          completionKind: payload.completionKind ?? null,
+          grantCount: payload.grantCount ?? null,
+          goalTitle: summaryAr,
+          points,
+        },
       });
 
       this.log('REWARD_GRANTED', envelope.id, parent);

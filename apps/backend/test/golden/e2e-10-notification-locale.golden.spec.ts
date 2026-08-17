@@ -199,6 +199,34 @@ describeGolden('GOLDEN E2E-10 — G10/G11/G12/G13: the language of the household
     expect(hasEnumOrPlaceholderLeak(row.body)).toBe(false);
   }
 
+  /**
+   * SPRINT F1 — THE VARIABLES A PARENT'S REWARD SENTENCE IS NOW MADE OF, TAKEN
+   * FROM THE ROW ITSELF RATHER THAN RE-TYPED HERE.
+   *
+   * `COPY_CATALOGUE.REWARD_GRANTED` used to declare exactly one variable, so
+   * `{ childName }` was the whole render input. The reward path now carries the
+   * GOAL and the POINTS — `e2e-13 STEP 14` is where that is measured end to end
+   * — and this suite's job is the LOCALE, not the fact set, so it reads the
+   * facts back out of `notifications.data`, which is where the producer wrote
+   * them.
+   *
+   * THAT MAKES THE ASSERTION STRONGER, NOT WEAKER. `assertRenderedFromCatalogue`
+   * then proves the stored BODY and the stored DATA agree — a client that
+   * deep-links from `data` and a parent who reads the prose are looking at the
+   * same two facts, which is a property no hand-written variable list could
+   * check.
+   */
+  function parentRewardVariables(
+    row: { data: unknown },
+    childName: string,
+  ): Record<string, string | number> {
+    const data = (typeof row.data === 'string' ? JSON.parse(row.data) : row.data) ?? {};
+    const variables: Record<string, string | number> = { childName };
+    if (typeof data.goalTitle === 'string' && data.goalTitle.length > 0) variables.goalTitle = data.goalTitle;
+    if (typeof data.points === 'number' && data.points > 0) variables.points = data.points;
+    return variables;
+  }
+
   beforeAll(async () => {
     await earnAReward(arabic, 'مهمة');
     await earnAReward(english, 'task');
@@ -276,7 +304,7 @@ describeGolden('GOLDEN E2E-10 — G10/G11/G12/G13: the language of the household
       // «طفلك» fails in a household with three children — this is the product
       // reason the name is a copy variable at all.
       expect(notification.body).toContain(arabic.childName);
-      assertRenderedFromCatalogue(notification, d, { childName: arabic.childName });
+      assertRenderedFromCatalogue(notification, d, parentRewardVariables(notification, arabic.childName));
     });
 
     it('the child’s and the parent’s sentences are NOT the same string — two audiences, two messages about one fact', async () => {
@@ -351,7 +379,7 @@ describeGolden('GOLDEN E2E-10 — G10/G11/G12/G13: the language of the household
       expect(notification.body).toMatch(LATIN_LETTERS);
       expect(notification.body).not.toMatch(ARABIC_LETTERS);
       expect(notification.body).toContain(english.childName);
-      assertRenderedFromCatalogue(notification, d, { childName: english.childName });
+      assertRenderedFromCatalogue(notification, d, parentRewardVariables(notification, english.childName));
     });
 
     it('and it is a different string from the Arabic parent’s, for the same event', async () => {

@@ -7,6 +7,7 @@ import {
   type CompletionEvent,
 } from '../../../../shared/events/completion-event';
 import { COMPLETION_EVENT_TYPES } from '../../../../shared/events/event-types';
+import { achievementSummaryArOf } from '../../../../shared/rewards/achievement-summary';
 import { composeRewardGrantedKey } from '../../../../shared/events/idempotency';
 import type { DomainEventEnvelope } from '../../../../shared/events/event-envelope';
 import { EVENT_SUBSCRIBER, type IEventSubscriber } from '../../domain/event-bus.port';
@@ -195,6 +196,43 @@ export class RewardsCompletionConsumer implements OnModuleInit {
 
       const account = await this.rewards.getAccount(completion.childId, envelope.familyId);
 
+      /**
+       * THE TWO FACTS THE PARENT'S SENTENCE NEEDS, AND WHY THEY ARE RESOLVED
+       * HERE RATHER THAN IN THE NOTIFICATION CONSUMER.
+       *
+       * `NotificationRewardConsumer` holds a `REWARD_GRANTED` envelope and
+       * nothing else — that is the whole reason its sentence could say «حصل
+       * محمد على مكافأة جديدة» and could not say WHICH mission or HOW MANY
+       * points. The alternative to putting the facts on the event was to give
+       * the notification consumer a rewards repository and a reward-program
+       * repository, which would make a notification producer a second reader of
+       * two domains it has no business in.
+       *
+       * NEITHER FACT COMES FROM A CLIENT.
+       *   `achievementSummaryAr` is `RewardProgram.targetSummaryAr`, derived
+       *      server-side by `describeTargetSpec` at program creation and carried
+       *      on the completion's own metadata. This consumer does not know what
+       *      a surah is and does not learn: it forwards an opaque Arabic string,
+       *      which is why gate G5 («the Rewards path sees the CompletionEvent
+       *      and nothing else») still holds.
+       *   `pointsGranted` is SUMMED FROM `rewards_ledger_entries`, not taken
+       *      from `completion.pointsHint` — documented as A HINT ONLY, and the
+       *      Reward Rules may cap or multiply it. The ledger is the only
+       *      authority on what was actually paid.
+       *
+       * BOTH ARE STABLE ACROSS REDELIVERY, which matters because the
+       * announcement can be re-emitted on the recovery path above: the summary
+       * travels on the immutable originating event, and the ledger sum is a read
+       * over committed rows. A replay therefore announces the same twenty points
+       * rather than «0 نقطة».
+       */
+      const achievementSummaryAr = achievementSummaryArOf(completion);
+      const pointsGranted = await this.rewards.pointsGrantedFor(
+        completion.childId,
+        envelope.familyId,
+        envelope.idempotencyKey,
+      );
+
       await this.outbox.write({
         type: 'REWARD_GRANTED',
         aggregateType: 'RewardGrant',
@@ -217,6 +255,12 @@ export class RewardsCompletionConsumer implements OnModuleInit {
           sourceId: envelope.aggregateId,
           sourceEventType: envelope.type,
           completionKind: completion.completionKind,
+          // `null` for every completion that is not a parent-authored program —
+          // a habit tick, a hydration goal, a streak. The notification falls
+          // back to the sentence that does not name a goal, which is honest;
+          // inventing a title for a habit would not be.
+          achievementSummaryAr,
+          pointsGranted,
           newBalance: { xp: account.xp, coins: account.coins, stars: account.stars, level: account.level },
         },
       });

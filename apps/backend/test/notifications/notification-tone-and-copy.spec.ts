@@ -302,3 +302,125 @@ describe('PHASE F — the localisation catalogue', () => {
     }
   });
 });
+
+/**
+ * ============================================================================
+ * THE PARENT'S REWARD SENTENCE — THE TWO KEYS, AND THE RULE THAT CHOOSES.
+ * ============================================================================
+ *
+ * THE DEFECT THIS BLOCK GUARDS. `COPY_CATALOGUE.REWARD_GRANTED` declared exactly
+ * one variable, `childName`, so a household whose whole chain began at «حفظ سورة
+ * الملك، الآيات ١–٥» was told only «حصل محمد على مكافأة جديدة اليوم» — the WHAT
+ * was unreachable from the notification by any field. `e2e-13` pinned that,
+ * end-to-end, against real rows; this block pins the CATALOGUE-LEVEL properties
+ * that a single end-to-end scenario cannot reach — above all what happens to the
+ * SENTENCE when a producer has only some of the facts, which is the state most
+ * of this product's rewards are actually in.
+ */
+describe('PHASE F1 — the parent reward copy names the achievement, and degrades honestly when it cannot', () => {
+  const render = (key: string, variables: Record<string, string | number>, locale: 'ar' | 'en' = 'ar') =>
+    renderNotificationCopy({ key, audience: 'PARENT', toneBand: '11-13', locale, variables });
+
+  /** `RewardProgram.targetSummaryAr` as `describeTargetSpec` really writes it —
+   * Latin digits and an en dash included, because that stored string is what a
+   * producer actually forwards and a test that tidied it would be testing a
+   * string this product never produces. */
+  const THE_SUMMARY = 'الآيات 1–5 من سورة الملك';
+
+  it('names the child, the achievement and the points — the sentence the product brief asks for', () => {
+    const rendered = render('REWARD_GRANTED_WITH_GOAL', {
+      childName: 'محمد',
+      goalTitle: THE_SUMMARY,
+      points: 20,
+    });
+
+    expect(rendered.resolvedKey).toBe('REWARD_GRANTED_WITH_GOAL');
+    expect(rendered.body).toBe('🌟 محمد أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.');
+    // WHY / WHAT / WHAT DO I DO, each present as a readable clause rather than
+    // as an intention recorded in a comment.
+    expect(rendered.body).toContain('محمد');
+    expect(rendered.body).toContain(THE_SUMMARY);
+    expect(rendered.body).toContain('٢٠ نقطة');
+    expect(rendered.body).toContain('افتح التطبيق');
+    expect(hasEnumOrPlaceholderLeak(rendered.body)).toBe(false);
+  });
+
+  it('writes the points in the locale’s own digits — Arabic-Indic in ar, Latin in en', () => {
+    expect(render('REWARD_GRANTED_WITH_GOAL', { childName: 'محمد', goalTitle: THE_SUMMARY, points: 20 }).body).toContain('٢٠');
+    const english = render('REWARD_GRANTED_WITH_GOAL', { childName: 'Omar', goalTitle: 'Al-Mulk 1–5', points: 20 }, 'en');
+    expect(english.body).toBe('🌟 Omar completed Al-Mulk 1–5 today and earned 20 points. Open the app to cheer them on.');
+    expect(english.body).not.toMatch(/[٠-٩]/);
+  });
+
+  /**
+   * THE PROPERTY THE WHOLE TWO-KEY DESIGN EXISTS FOR. A producer holding only
+   * the child's name — every habit tick, hydration target and streak milestone
+   * in this product — must get a WHOLE sentence. Not a `{goalTitle}`, and not
+   * the contentless `GENERIC` stub either.
+   */
+  it('a reward with NO goal reads as a complete sentence from REWARD_GRANTED, not as GENERIC', () => {
+    const rendered = render('REWARD_GRANTED', { childName: 'محمد' });
+    expect(rendered.resolvedKey).toBe('REWARD_GRANTED');
+    expect(rendered.body).toBe('حصل محمد على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.');
+    expect(rendered.body).not.toContain('تحديث جديد');
+  });
+
+  it('NEVER renders a raw {{placeholder}} to a parent, whichever fact the producer forgot', () => {
+    const partials: ReadonlyArray<Record<string, string | number>> = [
+      {},
+      { childName: 'محمد' },
+      { childName: 'محمد', goalTitle: THE_SUMMARY },
+      { childName: 'محمد', points: 20 },
+      { goalTitle: THE_SUMMARY, points: 20 },
+      { childName: '', goalTitle: THE_SUMMARY, points: 20 },
+      { childName: 'محمد', goalTitle: '', points: 20 },
+    ];
+    for (const variables of partials) {
+      for (const locale of ['ar', 'en'] as const) {
+        const rendered = render('REWARD_GRANTED_WITH_GOAL', variables, locale);
+        // The failing case names itself: a bare `toMatch` would report only that
+        // «a string contained a brace», with no way to tell which of the seven
+        // partial producers below produced it.
+        const supplied = Object.keys(variables).join(',') || 'nothing';
+        expect(`${supplied}/${locale}: ${/[{}]/.test(rendered.body)}`).toBe(`${supplied}/${locale}: false`);
+        expect(hasEnumOrPlaceholderLeak(rendered.body)).toBe(false);
+        expect(hasEnumOrPlaceholderLeak(rendered.title)).toBe(false);
+        expect(rendered.body.trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('the two reward sentences are DIFFERENT, and the child’s is different from both', () => {
+    const withGoal = render('REWARD_GRANTED_WITH_GOAL', { childName: 'محمد', goalTitle: THE_SUMMARY, points: 20 }).body;
+    const withoutGoal = render('REWARD_GRANTED', { childName: 'محمد' }).body;
+    const child = renderNotificationCopy({
+      key: 'REWARD_GRANTED_CHILD',
+      audience: 'CHILD',
+      toneBand: '11-13',
+      locale: 'ar',
+      variables: {},
+    }).body;
+
+    expect(new Set([withGoal, withoutGoal, child]).size).toBe(3);
+    // The child's own sentence carries none of the parent's detail: no name, no
+    // goal, no points. «حصلت على ٣ مكافآت من سورة الملك» is a receipt read at a
+    // child, which is why `REWARD_GRANTED_CHILD` declares no variables at all.
+    expect(child).not.toContain('محمد');
+    expect(child).not.toContain('سورة الملك');
+    expect(child).not.toContain('نقطة');
+  });
+
+  it('both reward entries are PARENT-audience and in the REWARD category — the type vocabulary did not fork', () => {
+    for (const key of ['REWARD_GRANTED', 'REWARD_GRANTED_WITH_GOAL']) {
+      expect(COPY_CATALOGUE[key].audience).toBe('PARENT');
+      expect(COPY_CATALOGUE[key].category).toBe('REWARD');
+    }
+    // And the goal entry DECLARES the three variables it interpolates, so the
+    // renderer's own missing-variable detection has something to check against.
+    expect([...COPY_CATALOGUE.REWARD_GRANTED_WITH_GOAL.variables].sort()).toEqual([
+      'childName',
+      'goalTitle',
+      'points',
+    ]);
+  });
+});

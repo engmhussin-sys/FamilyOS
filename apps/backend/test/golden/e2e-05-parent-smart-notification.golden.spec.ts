@@ -214,19 +214,47 @@ describeGolden('GOLDEN E2E-05 — what the parent is actually told, and whether 
      * NOTHING ABOVE THIS TEST CHANGED. The loop is the same HTTP loop — goal,
      * start, submit, approve, drain — and no test double is involved. What
      * changed is one call inside the consumer, from `notifyEvent` to
-     * `handleEvent`, and the sentence is now rendered from
-     * `COPY_CATALOGUE.REWARD_GRANTED` with `{childName}` resolved by the
-     * context assembler.
+     * `handleEvent`, and the sentence is now rendered from `COPY_CATALOGUE`
+     * with `{childName}` resolved by the context assembler.
+     *
+     * ------------------------------------------------------------------------
+     * SPRINT F1 — THE SAME PIN, TURNED RED A SECOND TIME AND UPDATED AGAIN.
+     *
+     * WHAT THIS TEST SAID BEFORE THIS UPDATE, VERBATIM:
+     *
+     *     expect(row.body).toBe('حصل محمد على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.');
+     *
+     * That sentence NAMED THE CHILD and still did not name the WORK: this
+     * household's chain begins at «حفظ سورة الملك، الآيات ١–٥» and the parent was
+     * told only that something had been earned. `e2e-13 STEP 14` measured the
+     * same gap on its own household and pinned it from the other side —
+     * `notifications.data` was NULL, so the goal was unreachable by any field at
+     * all. `NotificationRewardConsumer` now carries the goal and the points, the
+     * decision provider selects `COPY_CATALOGUE.REWARD_GRANTED_WITH_GOAL`, and
+     * this pin moves with it.
+     *
+     * THE NOTIFICATION TYPE DID NOT MOVE. The row above is still asserted to be
+     * a `REWARD_GRANTED` — only the COPY KEY differs, which is what keeps the
+     * scorer, the quiet-hours matrix and the analytics reading the same
+     * vocabulary they always have.
      */
-    it('the sentence the parent receives NAMES THE CHILD, and comes from the catalogue', async () => {
+    it('the sentence the parent receives NAMES THE CHILD AND THE ACHIEVEMENT, and comes from the catalogue', async () => {
       const [row] = await notificationRows();
 
       expect(row.title).toBe('مكافأة جديدة');
-      // «حصل محمد على …» rather than «حصل طفلك على …». Pinned to the byte
-      // again, in the new state, so the NEXT change to the product's copy is
-      // also deliberate.
-      expect(row.body).toBe(`حصل ${home.childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.`);
+      // «🌟 محمد أكمل الآيات 1–5 من سورة الملك اليوم…» rather than «حصل محمد
+      // على مكافأة جديدة». Pinned to the byte again, in the new state, so the
+      // NEXT change to the product's copy is also deliberate.
+      expect(row.body).toBe(
+        `🌟 ${home.childName} أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
+      );
       expect(row.body).toContain(home.childName);
+      // THE ACHIEVEMENT, by the name `RewardProgram.targetSummaryAr` gave it —
+      // derived once by `describeTargetSpec`, never re-assembled from
+      // `THE_QURAN_GOAL.targetSpec` in a notification layer.
+      expect(row.body).toContain('سورة الملك');
+      // AND THE POINTS, which the parent can now read without opening the app.
+      expect(row.body).toContain('٢٠ نقطة');
 
       // Still Arabic, still no raw enum, still no unresolved placeholder — the
       // three properties that were true of the literal and must stay true of

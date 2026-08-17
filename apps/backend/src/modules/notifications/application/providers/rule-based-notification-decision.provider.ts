@@ -85,12 +85,36 @@ const PAID_ONLY_CATEGORIES: ReadonlySet<string> = new Set<string>();
  */
 interface CopyRule {
   readonly key: string;
-  readonly when: (c: NotificationContext) => boolean;
+  /**
+   * WHO THIS RULE IS FOR, and it used to be implicit. Every rule in the first
+   * version of this table was child-facing and `copyFor` hard-coded
+   * `if (audience === 'CHILD')` around the loop — so the mechanism the file's
+   * own docstring calls «the one place a smarter provider would differ most
+   * visibly» was, in fact, unavailable to half the product's audiences. The
+   * audience is now a property of the rule, which is what lets a PARENT rule
+   * exist without a second loop being written beside the first.
+   */
+  readonly audience: 'PARENT' | 'CHILD';
+  /**
+   * `variables` is the MERGED set — the producer's, plus everything `copyFor`
+   * derives from the context — because a rule that could only see the context
+   * could not ask «did the producer supply a goal title?», which is precisely
+   * the question the reward rule below has to ask.
+   */
+  readonly when: (c: NotificationContext, variables: Readonly<Record<string, string | number>>) => boolean;
 }
+
+/** A variable is USABLE in a sentence when it is present and would not render
+ * as an empty hole. Mirrors `substitute`'s own «undefined / null / empty means
+ * leave the placeholder alone» rule, so a rule can never select a template the
+ * renderer will then reject as leaking. */
+const usable = (value: string | number | undefined): boolean =>
+  typeof value === 'number' ? Number.isFinite(value) : typeof value === 'string' && value.trim().length > 0;
 
 const COPY_RULES: readonly CopyRule[] = Object.freeze([
   {
     key: 'GOAL_DEADLINE_NEAR',
+    audience: 'CHILD',
     when: (c) =>
       c.goal !== null &&
       c.goal.minutesRemaining !== null &&
@@ -100,6 +124,7 @@ const COPY_RULES: readonly CopyRule[] = Object.freeze([
   },
   {
     key: 'GOAL_ALMOST_DONE',
+    audience: 'CHILD',
     when: (c) =>
       c.goal !== null &&
       c.goal.totalUnits > 0 &&
@@ -108,7 +133,36 @@ const COPY_RULES: readonly CopyRule[] = Object.freeze([
   },
   {
     key: 'STREAK_AT_RISK',
+    audience: 'CHILD',
     when: (c) => c.streak !== null && c.streak.atRisk && c.streak.days > 0,
+  },
+  /**
+   * THE PARENT'S REWARD SENTENCE, WHEN THE CAUSE IS A GOAL THEY THEMSELVES SET.
+   *
+   * `COPY_CATALOGUE.REWARD_GRANTED_WITH_GOAL` carries the full argument for why
+   * this is a sibling key rather than a re-use of `GOAL_COMPLETED_PARENT`. What
+   * belongs HERE is why it is a RULE and not a branch inside the producer: the
+   * producer states the EVENT (`REWARD_GRANTED`) and the FACTS it holds; which
+   * sentence those facts deserve is this provider's decision, recorded on
+   * `notification_decisions.copy_key` so that «why did the parent read that?»
+   * has an answer in a row.
+   *
+   * BOTH VARIABLES ARE REQUIRED, and that is the whole safety property. A
+   * producer that has the goal but not the points — or a reward whose rules paid
+   * in coins only — falls through to `REWARD_GRANTED`, a complete sentence, and
+   * NEVER to a half-filled template or to `GENERIC`. `points > 0` rather than
+   * merely present, because «وحصل على ٠ نقطة» is a worse sentence than not
+   * mentioning points at all.
+   */
+  {
+    key: 'REWARD_GRANTED_WITH_GOAL',
+    audience: 'PARENT',
+    when: (c, v) =>
+      c.event.eventType === 'REWARD_GRANTED' &&
+      usable(v.childName) &&
+      usable(v.goalTitle) &&
+      typeof v.points === 'number' &&
+      v.points > 0,
   },
 ]);
 
@@ -322,12 +376,15 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
       variables.weekCount = ordinal(variables.weekCount, context.locale);
     }
 
-    // A child-facing contextual rule beats the plain type key: «أنجزت ٤ من ٥
-    // آيات — هل تكمل الأخيرة الآن؟» is a better sentence than «أنهيت هدفك»,
-    // and it is available only because the context carries the goal.
-    if (audience === 'CHILD') {
-      for (const rule of COPY_RULES) {
-        if (rule.when(context)) return { key: rule.key, variables };
+    // A contextual rule beats the plain type key: «أنجزت ٤ من ٥ آيات — هل تكمل
+    // الأخيرة الآن؟» is a better sentence to a child than «أنهيت هدفك», and
+    // «محمد أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة» is a better
+    // sentence to a parent than «حصل محمد على مكافأة جديدة». Both are available
+    // only because the facts reached this layer; when they did not, the plain
+    // type key below is the honest sentence.
+    for (const rule of COPY_RULES) {
+      if (rule.audience === audience && rule.when(context, variables)) {
+        return { key: rule.key, variables };
       }
     }
 
