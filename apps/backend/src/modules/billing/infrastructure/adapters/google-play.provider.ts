@@ -124,7 +124,10 @@ export class GooglePlayProvider implements IPaymentProvider, IPaymentProviderAda
     // enforces: «a refund is not applied to a Play purchase except through
     // Play.» Offering a refund button here would produce a refund we cannot
     // actually perform.
-    return capability === 'VERIFY' || capability === 'WEBHOOK';
+    // PHASE G — ACKNOWLEDGE is Google-only among the seven providers, and it is
+    // not a nicety: an unacknowledged Play purchase is auto-refunded and
+    // cancelled after three days.
+    return capability === 'VERIFY' || capability === 'WEBHOOK' || capability === 'ACKNOWLEDGE';
   }
 
   private readConfig(): IPlayDeveloperApiConfig | null {
@@ -375,7 +378,59 @@ export class GooglePlayProvider implements IPaymentProvider, IPaymentProviderAda
       // `=== true` would treat every licence-tester purchase as real.
       isSandbox: purchase.testPurchase !== undefined,
       verifiedPayloadDigest: crypto.createHash('sha256').update(JSON.stringify(purchase)).digest('hex'),
+      // PHASE G — the v1 SUBSCRIPTION id, which acknowledgement needs and
+      // `productRef` (the basePlanId, above) is NOT. `purchases.subscriptionsv2`
+      // has no acknowledge method, so acknowledgement goes through the v1
+      // `purchases.subscriptions` resource, which is keyed on this id. Passing
+      // the basePlanId there returns 404 — and never acknowledging means Google
+      // silently refunds the purchase three days later. Two Google identifiers
+      // for one purchase; they are not interchangeable.
+      providerAcknowledgeRef: lineItem?.productId ?? null,
+      // Google's own view of whether this purchase still needs acknowledging.
+      // Read here so the decision is made from GOOGLE'S ANSWER rather than from
+      // any state of ours.
+      needsAcknowledgement: purchase.acknowledgementState !== 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED',
     };
+  }
+
+  /**
+   * PHASE G — ACKNOWLEDGE. Called by `PaymentVerificationService` only AFTER the
+   * transaction row and the entitlement exist.
+   *
+   * WHY THIS EXISTS AT ALL: Google automatically refunds and cancels any
+   * purchase not acknowledged within three days. `acknowledge()` above was
+   * written and unit-tested in Phase D and then **never called by any
+   * application service** — so the Play path would have granted access
+   * correctly and had every purchase reversed on day three. That is the kind of
+   * defect that looks like a business problem for a week before anyone reads
+   * the API reference.
+   *
+   * ALREADY-ACKNOWLEDGED IS A NO-OP, NOT AN ERROR, and the decision is made from
+   * Google's `acknowledgementState`, not from our own records. The client path
+   * and the RTDN path both legitimately arrive for the same purchase.
+   */
+  async acknowledgePurchase(verified: IVerifiedPurchase): Promise<void> {
+    if (verified.needsAcknowledgement === false) {
+      this.logger.log('Google Play purchase is already acknowledged — no second call.');
+      return;
+    }
+    const subscriptionId = verified.providerAcknowledgeRef;
+    const purchaseToken = verified.providerOriginalTransactionId;
+    if (!subscriptionId || !purchaseToken) {
+      // Loud, and deliberately NOT an exception: the entitlement has already
+      // been granted by the time this runs, and throwing would make the client
+      // retry a purchase that actually succeeded. What is at risk is the
+      // auto-refund window, and an operator needs to see it while it can still
+      // be fixed by hand.
+      this.logger.error(
+        'Cannot acknowledge a Google Play purchase: the verified purchase carries no v1 ' +
+          `subscription id (${subscriptionId ?? 'null'}) or no purchase token. Google auto-refunds ` +
+          'unacknowledged purchases after three days, so this one will be reversed unless it is ' +
+          'acknowledged another way.',
+      );
+      return;
+    }
+    await this.acknowledge(subscriptionId, purchaseToken);
   }
 
   /** KEPT AND STILL THROWING — see AppleStoreKitProvider.charge. */

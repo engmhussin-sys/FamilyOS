@@ -3,8 +3,12 @@ import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, No
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { PairingOrchestratorService } from '../../../pairing/application/services/pairing-orchestrator.service';
 import { SafetyEngineService } from '../../../ai-core/application/services/safety-engine.service';
+import { ChildSafetyFilterService } from '../../../ai-core/application/services/child-safety-filter.service';
+import { ageBandFor, type AgeBand } from '../../../ai-core/domain/age-band';
 import { AI_PROVIDER } from '../../../ai-core/domain/ai-provider.port';
 import type { IAIProvider } from '../../../ai-core/domain/ai-provider.port';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { businessAgeInYears } from '../../../../common/time/family-date';
 import { PrismaCommunicationRepository } from '../../infrastructure/repositories/prisma-communication.repository';
 import { IChildMessage } from '../../domain/communication.types';
 import { NOTIFICATION_CLASSES } from '../../../../shared/notifications/notification-class';
@@ -49,6 +53,19 @@ export class FamilyCommunicationService {
     private readonly pairingOrchestrator: PairingOrchestratorService,
     private readonly safetyEngine: SafetyEngineService,
     @Inject(AI_PROVIDER) private readonly aiProvider: IAIProvider,
+    /**
+     * `PG-001` — THE CHILD POLICY, AT THE DOOR OF THE TABLE IT PROTECTS.
+     *
+     * `SafetyEngineService` above is the PARENT policy: six English
+     * no-spyware regexes and a recommendation-type whitelist. It is the only
+     * filter this service had, and `child_messages` is a table whose every row
+     * is addressed to a child. See `assertChildSafeOrRefuse`.
+     */
+    private readonly childSafety: ChildSafetyFilterService,
+    /** The family calendar — a birthday is a local-date fact, and the band is a
+     * function of a birthday. Same service, same call, as
+     * `NotificationContextAssembler`, so the two never disagree about a band. */
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   /** A parent sending their own message \u2014 delivered immediately, no
@@ -145,7 +162,11 @@ export class FamilyCommunicationService {
      */
     skipAiRephrase = false,
   ): Promise<IChildMessage | null> {
-    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+    // `getChildOrThrow` rather than `assertChildBelongsToFamily`, and it is the
+    // SAME query — the latter delegates to it and discards the row. The row
+    // carries `dateOfBirth`, which the CHILD safety band below is a function
+    // of, so this costs no extra read.
+    const child = await this.childrenService.getChildOrThrow(childId, familyId);
 
     /**
      * PHASE F (`F6-006`) — THE ASSERTION THAT MAKES `PE-N-001` LOUD.
@@ -192,11 +213,96 @@ export class FamilyCommunicationService {
       ? { title, body }
       : await this.tryPhraseWithAI(title, body);
 
+    // `PG-001` — THE LAST STATEMENT BEFORE THE WRITE, AND THAT POSITION IS THE
+    // WHOLE POINT. See `assertChildSafeOrRefuse`.
+    await this.assertChildSafeOrRefuse(familyId, child.dateOfBirth, finalTitle, finalBody);
+
     return this.repository.createIfAbsent(
       { childId, authorType: 'AI', category, title: finalTitle, body: finalBody, sourceEventId },
       'PENDING',
       null,
     );
+  }
+
+  /**
+   * ==========================================================================
+   * `PG-001` — THE CHILD POLICY DECIDES, AND IT DECIDES BEFORE STORAGE.
+   * ==========================================================================
+   *
+   * THE DEFECT THIS CLOSES, MEASURED NOT INFERRED. `F6-005` stopped the ENGINE
+   * from rephrasing a second time (`skipAiRephrase`), which removed the bypass
+   * for engine-produced copy. It left the hole open for EVERY OTHER CALLER of
+   * this method, and the report said so. Those callers — `draftAiMessage` behind
+   * `POST /life-intelligence/children/:childId/messages/draft`, and any coaching
+   * path — reach `child_messages` with their text checked by
+   * `SafetyEngineService` and NOTHING ELSE.
+   *
+   * `SafetyEngineService` is SIX ENGLISH REGEXES about spyware
+   * (`/secretly/i`, `/spy on/i`, …) plus a recommendation-type whitelist. It has
+   * no notion of age, of length, of shaming, of comparison to a sibling, of a
+   * medical claim, of a religious ruling, or of a phone number. «أنت كسول ولم
+   * تنجز شيئًا اليوم» — the exact sentence a model produced and the exact
+   * sentence `F6-005` was written about — returns `isSafe: true` from it. So the
+   * PARENT filter passed it, and it was written into a child's inbox verbatim.
+   *
+   * ARCHITECTURE, STATED AS THE ORDER OF FOUR WORDS:
+   *
+   *     child message -> CHILD policy -> decision -> storage
+   *
+   * and NEVER
+   *
+   *     child message -> PARENT policy -> rejected -> raw message stored anyway
+   *
+   * WHY IT THROWS AND DOES NOT FALL BACK. `ChildSafetyFilterService.chooseSafe`
+   * is the fail-closed helper for a caller that HOLDS AN APPROVED TEMPLATE to
+   * fall back to. This method holds no template — the text IS the caller's — so
+   * the only two honest outcomes are «persist this text» and «persist nothing».
+   * A third outcome that persisted something else would be inventing content
+   * addressed to a child, which §5.8 forbids more strongly than it forbids
+   * silence. `SmartNotificationIntegrationService.deliverEvaluated` already
+   * catches this and records `SUPPRESS` / `DELIVERY_ERROR` on the decision row,
+   * so a refusal is COUNTED rather than lost.
+   *
+   * WHY IT IS THE LAST STATEMENT BEFORE `createIfAbsent`. Both content branches
+   * above — the pre-composed one and the AI-rephrased one — converge on
+   * `finalTitle`/`finalBody`, so a single gate on those two variables is a gate
+   * no branch can go around, including a branch added next sprint. A gate placed
+   * on the seed instead would have been passed by the rephrase, which is
+   * precisely how this defect existed.
+   *
+   * THE BAND IS THE CHILD'S OWN, on the FAMILY'S calendar, at the instant the
+   * row is written — the same `businessAgeInYears` + `ageBandFor` pair
+   * `NotificationContextAssembler` uses, so engine copy that passed the
+   * composer's gate passes this one too. The composer holds the title to a
+   * TIGHTER budget than the band (6 words / 60 chars); this gate holds it to the
+   * band, which is the §11.3 ceiling and the floor beneath every surface.
+   */
+  private async assertChildSafeOrRefuse(
+    familyId: string,
+    dateOfBirth: string | Date,
+    title: string,
+    body: string,
+  ): Promise<void> {
+    const band = await this.safetyBandOf(familyId, dateOfBirth);
+    const verdicts = [this.childSafety.validate(body, band), this.childSafety.validate(title, band)];
+    const reasons = [...new Set(verdicts.flatMap((v) => v.reasons))];
+    if (reasons.length === 0) return;
+
+    // THE REASONS, NEVER THE TEXT. A rejected child-facing string may itself be
+    // the thing that tripped the filter, and this message reaches a log and an
+    // HTTP response body.
+    throw new BadRequestException(
+      `PG-001: message refused by the CHILD safety policy for band ${band} — reasons=[${reasons.join(',')}]. ` +
+        `Nothing was written to child_messages.`,
+    );
+  }
+
+  /** A child outside 6..17 is not outside the product, and `ageBandFor` answers
+   * with the nearest band rather than «no ceiling» — the one answer that would
+   * put an unbounded sentence in front of a six-year-old. */
+  private async safetyBandOf(familyId: string, dateOfBirth: string | Date): Promise<AgeBand> {
+    const timeZone = await this.familyDate.timeZoneOf(familyId);
+    return ageBandFor(businessAgeInYears(dateOfBirth, new Date(), timeZone));
   }
 
   /** Best-effort AI rewording \u2014 falls back to the deterministic seed

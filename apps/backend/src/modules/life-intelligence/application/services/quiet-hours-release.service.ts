@@ -408,7 +408,12 @@ export class QuietHoursReleaseService {
     now: Date,
   ): Promise<number> {
     if (digestOf.length === 0) return 0;
-    const text = digestText(digestOf.length);
+    // `PG-002` — THE AUDIENCE IS PASSED, because the child's digest has a §11.3
+    // ceiling and the parent's does not. This read `digestText(count)`, and the
+    // single string it returned was eleven words carrying western digits —
+    // outside band `6-8` and outside `PF-E-002`. Nothing caught it because
+    // nothing enforced the child ceiling on this path until `PG-001`.
+    const text = digestText(digestOf.length, audience);
     const businessDate = getBusinessDate(now, timeZone);
     try {
       const written = await this.integration.deliverNow(digestOf[0].childId ?? '', familyId, {

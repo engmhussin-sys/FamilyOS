@@ -14,6 +14,9 @@ import {
   RELEASE_DEFAULTS,
   type DeferredNotificationRow,
 } from '../../src/modules/notifications/domain/notification-delivery.types';
+import { formatNumber } from '../../src/modules/notifications/domain/engine/notification-copy';
+import { ChildSafetyFilterService } from '../../src/modules/ai-core/application/services/child-safety-filter.service';
+import { AGE_BANDS, ageBandProfile, countWords } from '../../src/modules/ai-core/domain/age-band';
 
 const BASE = new Date('2026-01-15T21:00:00.000Z').getTime();
 
@@ -220,6 +223,56 @@ describe('PHASE D — coalescing and the morning digest', () => {
       // docs/06 §8.3 — the push is a pointer; the app fetches the content over
       // an authenticated GET. No name, no habit title, no reward amount.
       expect(text.body).not.toMatch(/child|habit|reward/i);
+    });
+
+    /**
+     * `PG-002` — THE CHILD'S DIGEST HAS A CEILING, AND IT USED TO BREAK IT.
+     *
+     * `writeDigest` hands this text to `deliverNow`, whose CHILD branch writes
+     * `child_messages`. The single string above is ELEVEN WORDS with WESTERN
+     * DIGITS; `age-band.ts` caps band `6-8` at EIGHT words and `PF-E-002` is the
+     * record of this product rejecting «5» in Arabic prose. Every other
+     * child-facing string in the system is validated against that ceiling — this
+     * one was not, because until `PG-001` nothing enforced the CHILD policy on
+     * the `FamilyCommunicationService` door.
+     *
+     * Asserted against the REAL filter at the NARROWEST band, so a future
+     * rewording that grows the sentence fails here rather than in a household.
+     */
+    it('`PG-002` — the CHILD digest fits the NARROWEST §11.3 band and carries Arabic-Indic digits', () => {
+      const filter = new ChildSafetyFilterService();
+      for (const count of [2, 5, 12, 99]) {
+        const text = digestText(count, 'CHILD');
+        for (const band of AGE_BANDS) {
+          const body = filter.validate(text.body, band);
+          const title = filter.validate(text.title, band);
+          expect(`${band}/${count} body ${body.isSafe} [${body.reasons}]`).toBe(`${band}/${count} body true []`);
+          expect(`${band}/${count} title ${title.isSafe} [${title.reasons}]`).toBe(`${band}/${count} title true []`);
+        }
+        // Arabic-Indic, and the count is still IN there — a digest that lost its
+        // count would pass the ceiling by saying nothing.
+        expect(text.body).not.toMatch(/[0-9]/);
+        expect(text.body).toMatch(/[٠-٩]/);
+        expect(text.body).toContain(formatNumber(count, 'ar'));
+      }
+    });
+
+    it('`PG-002` — and the PARENT digest is UNCHANGED, byte for byte: the fix is a child variant, not a rewrite', () => {
+      expect(digestText(8)).toEqual({
+        title: 'ملخّص إشعارات الليلة',
+        body: 'لديك 8 تحديثات أخرى من الليلة الماضية. افتح التطبيق لرؤية التفاصيل.',
+      });
+      // Defaulting to PARENT is what keeps every pre-`PG-002` caller identical.
+      expect(digestText(8, 'PARENT')).toEqual(digestText(8));
+    });
+
+    it('`PG-002` — the OLD single string is measurably outside band `6-8`, so this is a regression test and not a preference', () => {
+      const filter = new ChildSafetyFilterService();
+      const oldChildDigest = digestText(5, 'PARENT');
+      const verdict = filter.validate(oldChildDigest.body, '6-8');
+      expect(verdict.isSafe).toBe(false);
+      expect(verdict.reasons).toContain('TOO_LONG');
+      expect(countWords(oldChildDigest.body)).toBeGreaterThan(ageBandProfile('6-8').maxWords);
     });
   });
 });

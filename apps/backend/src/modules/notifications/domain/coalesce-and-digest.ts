@@ -3,6 +3,7 @@ import {
   type DeferredNotificationRow,
   type ResolutionReason,
 } from './notification-delivery.types';
+import { formatNumber } from './engine/notification-copy';
 
 /**
  * PHASE D — THE ANTI-FLOOD DECISION, AS A PURE FUNCTION.
@@ -145,7 +146,42 @@ export function planRelease(
  * — `docs/06 §8.3` makes the FCM message a pointer and the app fetches the
  * content over an authenticated GET.
  */
-export function digestText(count: number): { title: string; body: string } {
+export function digestText(
+  count: number,
+  /**
+   * `PG-002` — THE AUDIENCE, BECAUSE THE CHILD HAS A CEILING AND THE PARENT
+   * DOES NOT.
+   *
+   * MEASURED, NOT INFERRED. This function returned ONE pair of strings for both
+   * audiences, and `writeDigest` passes the result straight into `deliverNow`,
+   * whose CHILD branch writes `child_messages`. The body is ELEVEN WORDS.
+   * `age-band.ts` caps band `6-8` at EIGHT. So the digest a six-to-eight-year-old
+   * received was outside the §11.3 ceiling every other child-facing string in
+   * this product is held to — and it carried WESTERN DIGITS («لديك 5 تحديثات»),
+   * which `PF-E-002` is the record of this product rejecting.
+   *
+   * IT WAS INVISIBLE BECAUSE NOTHING ENFORCED THE CEILING ON THIS PATH: the only
+   * filter behind `FamilyCommunicationService` was the PARENT policy, which has
+   * no notion of length. `PG-001` put the CHILD policy at that door and this was
+   * the first thing it found. The honest fix is not to widen the ceiling — it is
+   * a shorter sentence for the audience that has one.
+   *
+   * Defaulted to `'PARENT'`, so the parent digest is byte-identical to what it
+   * has always been and `coalesce-and-digest.spec.ts`' existing assertion keeps
+   * asserting the string it was written about.
+   */
+  audience: 'PARENT' | 'CHILD' = 'PARENT',
+): { title: string; body: string } {
+  if (audience === 'CHILD') {
+    return {
+      // Six words, Arabic-Indic digits, inside the NARROWEST band's ceiling — so
+      // ONE sentence is correct for all four bands rather than four sentences
+      // each correct for one. `formatNumber` is the copy catalogue's own helper;
+      // the digits are not re-implemented here.
+      title: 'ملخّص الليلة',
+      body: `لديك ${formatNumber(count, 'ar')} تحديثات جديدة. افتح التطبيق.`,
+    };
+  }
   return {
     title: 'ملخّص إشعارات الليلة',
     body: `لديك ${count} تحديثات أخرى من الليلة الماضية. افتح التطبيق لرؤية التفاصيل.`,

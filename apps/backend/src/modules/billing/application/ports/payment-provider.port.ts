@@ -120,6 +120,28 @@ export interface IVerifiedPurchase {
   readonly isSandbox: boolean;
   /** SHA-256 of the exact bytes verified. Lets a dispute be re-checked. */
   readonly verifiedPayloadDigest: string;
+  /**
+   * PHASE G — the provider-specific resource id that `acknowledgePurchase`
+   * needs, opaque to every caller. Optional and NULL for providers with no
+   * acknowledgement step (all of them except Google Play).
+   *
+   * For Google this is the v1 SUBSCRIPTION id — `lineItems[].productId` — which
+   * is deliberately NOT the same string as `productRef` (`basePlanId`), because
+   * `purchases.subscriptionsv2` has no acknowledge method of its own and
+   * acknowledgement still goes through the v1 `purchases.subscriptions`
+   * resource. Two different Google identifiers for one purchase; conflating
+   * them produces a 404 from Google and, three days later, a silent refund.
+   */
+  readonly providerAcknowledgeRef?: string | null;
+  /**
+   * PHASE G — does the PROVIDER still consider this purchase unacknowledged?
+   *
+   * Read from the provider's own answer (Google's `acknowledgementState`), never
+   * from our records, so that a purchase acknowledged by the webhook path is not
+   * acknowledged a second time by the client path — both legitimately arrive.
+   * `undefined` for providers with no acknowledgement step.
+   */
+  readonly needsAcknowledgement?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +282,21 @@ export interface IRefundResult {
 // THE INTERFACE
 // ---------------------------------------------------------------------------
 
-export type ProviderCapability = 'CHECKOUT' | 'REFUND' | 'WEBHOOK' | 'VERIFY';
+export type ProviderCapability =
+  | 'CHECKOUT'
+  | 'REFUND'
+  | 'WEBHOOK'
+  | 'VERIFY'
+  /**
+   * PHASE G. The provider REQUIRES a purchase to be acknowledged after we have
+   * granted access, or it reverses the charge by itself.
+   *
+   * A real asymmetry, not a tidiness exercise: Google Play AUTOMATICALLY
+   * REFUNDS AND CANCELS any purchase not acknowledged within three days. Apple
+   * has no equivalent — a receipt is a receipt. So this is a CAPABILITY, asked
+   * for with `supports()`, rather than a method every adapter has to stub out.
+   */
+  | 'ACKNOWLEDGE';
 
 /**
  * Every provider implements this. `SubscriptionService`, `EntitlementService`
@@ -320,6 +356,25 @@ export interface IPaymentProvider extends IPaymentProviderAdapter {
   createCheckout?(input: ICheckoutInput): Promise<ICheckoutResult>;
 
   refund?(input: IRefundInput): Promise<IRefundResult>;
+
+  /**
+   * PHASE G — ONLY when `supports('ACKNOWLEDGE')`. Tell the store we have
+   * delivered what was bought.
+   *
+   * ORDER IS THE WHOLE DESIGN, and it is the opposite of the intuitive one.
+   * This is called AFTER the transaction row and the entitlement exist, never
+   * before. Acknowledging a purchase we then failed to record would tell Google
+   * "delivered" about access the family does not have — the one outcome with no
+   * automatic remedy, since the auto-refund window is precisely what
+   * acknowledgement closes. Getting it the other way round means a family who
+   * paid keeps their access and Google refunds them: bad, visible, and
+   * recoverable.
+   *
+   * It takes the whole `IVerifiedPurchase` rather than a token, because the
+   * resource identifier acknowledgement needs is provider-specific and must
+   * stay opaque to the application layer.
+   */
+  acknowledgePurchase?(verified: IVerifiedPurchase): Promise<void>;
 }
 
 /**
