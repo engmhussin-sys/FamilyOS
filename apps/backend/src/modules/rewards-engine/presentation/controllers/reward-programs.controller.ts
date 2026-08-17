@@ -280,17 +280,41 @@ export class RewardProgramsController {
 
   // --- B5 (PA-B-017): the question bank a parent can author ------------------
 
+  /**
+   * PHASE F (`F6-009`, defect `PF-E-005`) — THE CREATE RESPONSE NO LONGER
+   * ECHOES THE ANSWER KEY.
+   *
+   * The rule this route states about itself, a few lines above, is «the answer
+   * key is ACCEPTED on write and returned by nothing», and every READ path
+   * honoured it: `listBankQuestions` and `listBankQuestionsByIds` both select
+   * four columns and the key is not one of them. THIS handler did not — it
+   * returned `repo.createBankQuestion(...)` directly, i.e. the whole Prisma row
+   * with `correct_choice_index` in it, and the golden quiz scenario caught it on
+   * the first HTTP call it made.
+   *
+   * WHY IT IS FIXED EVEN THOUGH THE CALLER IS THE AUTHOR. The blast radius today
+   * is small: the route is `@ParentSurface()` and the parent typed the answer a
+   * millisecond earlier. It is fixed anyway because the whole value of «the key
+   * never leaves the server» is that it holds WITHOUT EXCEPTIONS — an exception
+   * is the thing a future feature copies. A parent-app screen that caches this
+   * response, a proxy that logs response bodies, or a later bulk-import route
+   * that reuses this shape all inherit a leak nobody re-examines, because the
+   * docstring says there is not one.
+   *
+   * The four fields returned are EXACTLY the four the read paths return, so no
+   * client can come to depend on a field the list route would never have given.
+   */
   @Post('quiz-bank')
   @ParentSurface()
   @UseGuards(JwtAuthGuard)
-  createQuizQuestion(@Body() dto: CreateQuizQuestionDto, @CurrentUser() user: IJwtPayload) {
+  async createQuizQuestion(@Body() dto: CreateQuizQuestionDto, @CurrentUser() user: IJwtPayload) {
     if (dto.correctChoiceIndex >= dto.choices.length) {
       throw new BadRequestException({
         code: 'QUIZ_ANSWER_OUT_OF_RANGE',
         messageAr: 'رقم الإجابة الصحيحة خارج نطاق الخيارات المُدخلة.',
       });
     }
-    return this.repo.createBankQuestion({
+    const created = await this.repo.createBankQuestion({
       category: dto.category,
       subject: dto.subject ?? null,
       difficulty: dto.difficulty ?? 'EASY',
@@ -302,6 +326,12 @@ export class RewardProgramsController {
       explanationAr: dto.explanationAr ?? null,
       createdByUserId: user.sub,
     });
+    return {
+      id: created.id,
+      promptAr: created.promptAr,
+      choices: created.choices,
+      difficulty: created.difficulty,
+    };
   }
 
   @Get('achievements/:achievementId/attempts')
