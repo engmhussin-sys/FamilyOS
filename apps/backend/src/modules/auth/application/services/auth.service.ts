@@ -22,6 +22,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { AttributionService } from '../../../analytics/application/attribution.service';
 import { ReferralService } from '../../../analytics/application/referral.service';
 import { PilotEnrollmentService } from '../../../analytics/application/pilot-enrollment.service';
+import { CountryCatalogueService } from '../../../settings/application/country-catalogue.service';
 
 /**
  * The domain layer intentionally does not import Prisma's generated
@@ -55,6 +56,13 @@ export class AuthService {
     private readonly referrals: ReferralService,
     /** G16. Same module, same no-import reasoning as the two above. */
     private readonly pilot: PilotEnrollmentService,
+    /**
+     * F1. From `SettingsModule`, which imports only `GrowthCaptureModule` — so
+     * this edge cannot close a cycle either (see `settings.module.ts`). ONE
+     * implementation of "is this a market we serve" serves both registration
+     * and `PATCH /settings`; two would eventually disagree.
+     */
+    private readonly countries: CountryCatalogueService,
   ) {}
 
   /**
@@ -83,7 +91,38 @@ export class AuthService {
      * block changes nothing for any existing deployment or any family outside a
      * pilot country. See PilotEnrollmentService for why it also fails OPEN.
      */
-    const pilotGate = await this.pilot.evaluate(input.email, input.attribution?.countryCode);
+    /**
+     * F1 — THE CLIENT'S CLAIMED MARKET, CHECKED BEFORE ANYTHING IS WRITTEN.
+     *
+     * FIRST, so an unsupported country is a typed 400 that leaves NO User and NO
+     * Family behind — the same reason the pilot gate below runs where it does.
+     * Doing it after `createParentWithFamily` would mean either a household
+     * created in a market we do not serve, or a foreign-key violation from
+     * migration 0022 rolling back a completed registration as a 500.
+     *
+     * A registration that names no market skips this entirely and creates a
+     * family with a NULL country, exactly as every registration did before F1.
+     */
+    const claimedCountry =
+      input.countryCode !== undefined
+        ? await this.countries.resolveSupported(input.countryCode)
+        : null;
+
+    /**
+     * G16 — THE CONTROLLED-PILOT GATE, AND IT IS HERE FOR ONE REASON: this is
+     * before anything is written.
+     *
+     * F1 changes ONE thing about the call: the country it is asked about is now
+     * the registration's own `countryCode` when there is one, falling back to
+     * the attribution label as before. The gate is about where the HOUSEHOLD is,
+     * and a field backed by a foreign key is a better answer to that than an
+     * untrusted marketing label — while a client that sends only attribution
+     * still behaves exactly as it did.
+     */
+    const pilotGate = await this.pilot.evaluate(
+      input.email,
+      claimedCountry ?? input.attribution?.countryCode,
+    );
     if (!pilotGate.allowed) {
       this.logger.warn(
         `auth.register_refused_by_pilot decision=${pilotGate.decision} — no account was created.`,
@@ -91,9 +130,64 @@ export class AuthService {
       throw new PilotInviteRequiredException();
     }
 
+    /**
+     * F1 — PRECEDENCE: AN OPERATOR-SET COUNTRY OUTRANKS A CLIENT CLAIM.
+     *
+     * `pilot_invites.country_code` (migration 0021) is written by
+     * `PilotEnrollmentService.invite`, i.e. by a human running the pilot who
+     * decided which market this household belongs to before it existed. The
+     * client's `countryCode` arrives from an app that infers it from a SIM, a
+     * locale or a store front and can simply be wrong. When the two disagree the
+     * operator's record wins — CONTEXT: the server is authoritative, and a value
+     * a human committed to is more authoritative still.
+     *
+     * The invite's value is resolved through the catalogue too, but with
+     * `resolveSupportedOrNull`: if a market has been CLOSED since the invitation
+     * was written, this must degrade to "no country recorded" and a log line,
+     * not throw. An invited household refused at registration because of a
+     * settings change made after the invitation was sent would be a defect
+     * caused entirely on our side.
+     */
+    const inviteCountry = await this.countries.resolveSupportedOrNull(
+      pilotGate.inviteCountryCode,
+    );
+    const countryCode = inviteCountry ?? claimedCountry;
+    if (inviteCountry !== null && claimedCountry !== null && inviteCountry !== claimedCountry) {
+      this.logger.warn(
+        `auth.register_country_from_invite invite=${inviteCountry} claimed=${claimedCountry} — ` +
+          `the operator's invitation record wins.`,
+      );
+    }
+
+    /**
+     * F1 — THE COUNTRY AND THE CALENDAR MAY NOT DISAGREE. The rule, and the
+     * reasoning behind it, live on `CountryCatalogueService.reconcileTimeZone`;
+     * this is the second of its two call sites.
+     *
+     * `enforce` IS TRUE ONLY WHEN THE COUNTRY CAME FROM THIS CLIENT. A client
+     * that sends `{countryCode: 'SA', timezone: 'Africa/Cairo'}` contradicted
+     * itself and gets a 400 it can act on. But when the country came from the
+     * INVITE, the mismatch is between an operator's record and a client's guess
+     * — refusing there would deny an invited household its account over a
+     * disagreement it cannot see or fix, so the operator's country wins, the
+     * calendar is derived from it, and the override is logged.
+     */
+    const timezone = await this.countries.reconcileTimeZone({
+      countryCode,
+      timezone: input.timezone,
+      enforce: inviteCountry === null,
+    });
+
     const passwordHash = await this.passwordService.hash(input.password);
     const { user, family, membership } = await this.userRepository.createParentWithFamily(
-      { ...input, email: input.email.toLowerCase() },
+      {
+        ...input,
+        email: input.email.toLowerCase(),
+        // Both server-decided. `undefined` — not null — so the repository omits
+        // the column and the row keeps its schema default.
+        countryCode: countryCode ?? undefined,
+        timezone,
+      },
       passwordHash,
     );
 

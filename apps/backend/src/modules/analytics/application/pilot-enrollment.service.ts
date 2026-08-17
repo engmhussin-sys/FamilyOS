@@ -20,6 +20,16 @@ export interface IPilotGateResult {
   readonly cohortId: string | null;
   /** The invitation row to redeem after the family exists. Null otherwise. */
   readonly inviteId: string | null;
+  /**
+   * F1. The country the OPERATOR recorded on the invitation, when this
+   * registration is an invited one. Null for every other decision.
+   *
+   * It is carried out of the gate rather than re-queried by the caller because
+   * the gate has already read that row, and a second read is a second chance
+   * for the two to disagree. `AuthService.register` prefers this value over
+   * anything the client sent — see the comment at that call site.
+   */
+  readonly inviteCountryCode: string | null;
 }
 
 /**
@@ -92,6 +102,7 @@ export class PilotEnrollmentService {
         allowed: true,
         cohortId,
         inviteId: invite.id,
+        inviteCountryCode: invite.countryCode,
       };
     } catch (err) {
       this.logger.error(
@@ -207,14 +218,17 @@ export class PilotEnrollmentService {
   private findInvite(
     email: string,
     cohortId: string,
-  ): Promise<{ id: string; redeemedAt: Date | null } | null> {
+  ): Promise<{ id: string; redeemedAt: Date | null; countryCode: string } | null> {
     return runInSystemScope(
       'ADMIN_CONSOLE',
       'pilot_invites is a GLOBAL allow-list with no family_id column; the gate runs before a family exists.',
       () =>
         this.prisma.pilotInvite.findUnique({
           where: { email_cohortId: { email, cohortId } },
-          select: { id: true, redeemedAt: true },
+          // F1: `countryCode` joins the projection. It is the operator's record
+          // of where the invited household is, written by `invite()` above, and
+          // it is what `Family.countryCode` is set from for a pilot household.
+          select: { id: true, redeemedAt: true, countryCode: true },
         }),
     );
   }
@@ -225,6 +239,7 @@ export class PilotEnrollmentService {
       allowed: isPilotGateAllowed(decision),
       cohortId: null,
       inviteId: null,
+      inviteCountryCode: null,
     };
   }
 }

@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   Equals,
   IsEmail,
@@ -11,6 +11,10 @@ import {
 } from 'class-validator';
 
 import { IsIanaTimeZone } from '../../../../common/time/is-iana-timezone.validator';
+import {
+  COUNTRY_CODE_PATTERN,
+  normaliseCountryCode,
+} from '../../../settings/domain/country';
 
 /**
  * PHASE D (GROWTH) — ACQUISITION ATTRIBUTION, CAPTURED AT THE ONE MOMENT IT
@@ -84,6 +88,41 @@ export class RegisterDto {
   @IsOptional()
   @IsIanaTimeZone()
   timezone?: string;
+
+  /**
+   * F1 — THE FAMILY'S MARKET, SET AT THE ONE MOMENT THE `Family` ROW IS
+   * CREATED.
+   *
+   * WHY IT IS HERE AND NOT LEFT TO A FOLLOW-UP `PATCH /settings`. Registration
+   * is the only place `tx.family.create` runs. A household created blank and
+   * patched afterwards depends on a second call the client may never make — and
+   * a client that crashes, loses connectivity, or simply skips the settings
+   * screen leaves that family with no market forever, which is the state every
+   * existing row is in today.
+   *
+   * OPTIONAL, AND IT STAYS OPTIONAL. A registration that omits it succeeds and
+   * leaves the column NULL. There is no default: 'EG' would be an invented fact
+   * about a real household, and `schema.prisma` refuses exactly that beside the
+   * column.
+   *
+   * NOT AUTHORITATIVE, EITHER. For a pilot registration the country recorded on
+   * the OPERATOR's invitation outranks this field — see `AuthService.register`.
+   *
+   * DELIBERATELY DISTINCT FROM `attribution.countryCode`, which stays where it
+   * is and is unchanged. That one is an untrusted MARKETING label describing
+   * where an ad was clicked; this one is the household's market, backed by a
+   * real foreign key to `countries`. Same normalisation and the same catalogue
+   * check as `UpdateSettingsDto`: the shape here, the vocabulary in
+   * `CountryCatalogueService`.
+   */
+  @IsOptional()
+  @Transform(({ value }) => normaliseCountryCode(value) ?? value)
+  @IsString()
+  @Matches(COUNTRY_CODE_PATTERN, {
+    message:
+      'countryCode must be an ISO-3166-1 alpha-2 code such as "EG" or "SA". Whether that market is served is checked separately, against the countries catalogue.',
+  })
+  countryCode?: string;
 
   @IsOptional()
   @IsString()

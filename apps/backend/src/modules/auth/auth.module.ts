@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 
 import { ChildrenModule } from '../children/children.module';
 import { GrowthCaptureModule } from '../analytics/growth-capture.module';
+import { SettingsModule } from '../settings/settings.module';
 
 import { AuthController } from './presentation/controllers/auth.controller';
 import { JwtStrategy } from './presentation/strategies/jwt.strategy';
@@ -28,6 +29,12 @@ import {
     // cannot create the Auth -> Analytics -> Events -> Pairing -> Auth cycle
     // that importing the full AnalyticsModule would.
     GrowthCaptureModule,
+    // F1. For `CountryCatalogueService`: registration must accept a country the
+    // SAME way `PATCH /settings` does, or the two surfaces will drift apart the
+    // first time a market opens. `SettingsModule` imports only
+    // `GrowthCaptureModule` (which imports nothing), so this edge is acyclic —
+    // the reasoning is written out in `settings.module.ts`.
+    SettingsModule,
     // JwtModule is registered without global secret/expiry options —
     // TokenService and the two Passport strategies each pass their own
     // secret/expiresIn per call, since access and refresh tokens use

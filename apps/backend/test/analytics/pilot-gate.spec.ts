@@ -170,6 +170,10 @@ describe('G16 — PilotEnrollmentService', () => {
       allowed: true,
       cohortId: null,
       inviteId: null,
+      // F1. Null for every decision except INVITED — a gate that is off has no
+      // operator record to hand forward, so registration falls back to whatever
+      // the client claimed (and to NULL when it claimed nothing).
+      inviteCountryCode: null,
     });
     // Not merely allowed — the invite table is not even consulted, so an
     // empty allow-list cannot accidentally gate a non-pilot deployment.
@@ -195,7 +199,7 @@ describe('G16 — PilotEnrollmentService', () => {
   });
 
   it('an invited family is allowed, and carries its cohort and invitation forward', async () => {
-    invite.findUnique.mockResolvedValue({ id: 'invite-1', redeemedAt: null });
+    invite.findUnique.mockResolvedValue({ id: 'invite-1', redeemedAt: null, countryCode: 'SA' });
 
     const result = await service.evaluate('Invited@Example.com', 'sa');
 
@@ -203,6 +207,11 @@ describe('G16 — PilotEnrollmentService', () => {
     expect(result.allowed).toBe(true);
     expect(result.cohortId).toBe('pilot-2026-q1');
     expect(result.inviteId).toBe('invite-1');
+    // F1. The OPERATOR's country travels out of the gate, because
+    // `AuthService.register` prefers it over anything the client claimed — an
+    // operator who decided which market an invited household belongs to
+    // outranks an app guessing from a SIM.
+    expect(result.inviteCountryCode).toBe('SA');
     // Looked up lower-cased, matching the table's own CHECK.
     expect(invite.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({

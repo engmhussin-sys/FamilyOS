@@ -56,6 +56,29 @@ export class PrismaUserRepository implements IUserRepository {
         data: {
           name: input.familyName ?? `${input.fullName}'s Family`,
           timezone: input.timezone ?? 'UTC',
+          /**
+           * F1 — THE FAMILY IS CREATED *WITH* ITS MARKET.
+           *
+           * This is the only `family.create` in the backend, so it is the only
+           * place a household can be born knowing where it is. The alternative
+           * shape — create blank, then let the client patch it — makes the column
+           * depend on a second request that a crash, a lost connection or a
+           * skipped onboarding screen silently cancels, which is how every
+           * existing row came to have no country at all.
+           *
+           * `undefined` when the registration named no market, so Prisma OMITS
+           * the column and the row keeps the schema's NULL. Never `''`, and never
+           * a defaulted `'EG'`: a wrong country is worse than an absent one,
+           * because on the growth dashboard a wrong one is indistinguishable
+           * from a measured fact.
+           *
+           * ALREADY RESOLVED BY `AuthService.register` — normalised, checked
+           * against the ACTIVE `countries` rows, with an operator's pilot
+           * invitation preferred over the client's claim. Nothing unverified
+           * reaches this line, and migration 0022's real foreign key is the
+           * backstop if anything ever does.
+           */
+          countryCode: input.countryCode,
         },
       });
 

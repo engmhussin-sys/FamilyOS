@@ -53,6 +53,13 @@ export interface IRegisterParentInput {
   fullName: string;
   familyName?: string;
   timezone?: string;
+  /**
+   * F1. ISO-3166 alpha-2, shape-checked by `RegisterDto` and still UNVERIFIED
+   * here: `AuthService.register` resolves it against the ACTIVE rows of the
+   * `countries` catalogue — and lets an operator's pilot invitation outrank it —
+   * before anything is written.
+   */
+  countryCode?: string;
   locale?: string;
   acceptedTerms: boolean;
   /**

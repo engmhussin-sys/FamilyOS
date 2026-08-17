@@ -7,6 +7,7 @@ import { AuditService } from '../../src/modules/audit/application/audit.service'
 import { AttributionService } from '../../src/modules/analytics/application/attribution.service';
 import { ReferralService } from '../../src/modules/analytics/application/referral.service';
 import { PilotEnrollmentService } from '../../src/modules/analytics/application/pilot-enrollment.service';
+import { countryCatalogueProvider } from '../common/country-catalogue.testing';
 import {
   EmailAlreadyRegisteredException,
   InvalidCredentialsException,
@@ -49,6 +50,9 @@ describe('AuthService', () => {
     allowed: true,
     cohortId: null,
     inviteId: null,
+    // F1. No invitation means no operator-set country; registration falls back
+    // to what the client claimed, which for most of this file is nothing.
+    inviteCountryCode: null,
   };
 
   let authService: AuthService;
@@ -70,6 +74,10 @@ describe('AuthService', () => {
         { provide: AttributionService, useValue: attributionServiceMock },
         { provide: ReferralService, useValue: referralServiceMock },
         { provide: PilotEnrollmentService, useValue: pilotServiceMock },
+        // F1. The REAL catalogue service over a fake two-row `countries` table,
+        // so the country and country/timezone rules asserted below are the ones
+        // production runs, not a double's idea of them.
+        countryCatalogueProvider(),
       ],
     }).compile();
 
