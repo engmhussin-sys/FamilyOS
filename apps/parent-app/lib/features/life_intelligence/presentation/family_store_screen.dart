@@ -1,13 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 
 /// DESIGN PASS: a real coin-icon badge for the cost instead of plain
 /// trailing text — the reward store is meant to feel like a store,
 /// not a settings list.
+///
+/// ERROR PASS: the fetch went straight to the API and ended in
+/// `_errorMessage = e.toString()` — raw transport text held in state,
+/// with a generic `common.error` painted over it. It now reads through
+/// `LifeIntelligenceRepository` (which converts and logs the original)
+/// and renders the failure with the shared `DsErrorState`.
 class FamilyStoreScreen extends ConsumerStatefulWidget {
   const FamilyStoreScreen({super.key, required this.familyId});
 
@@ -19,7 +27,7 @@ class FamilyStoreScreen extends ConsumerStatefulWidget {
 
 class _FamilyStoreScreenState extends ConsumerState<FamilyStoreScreen> {
   List<dynamic>? _items;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   @override
   void initState() {
@@ -28,34 +36,34 @@ class _FamilyStoreScreenState extends ConsumerState<FamilyStoreScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
-      final result = await ref.read(lifeIntelligenceApiProvider).getFamilyStore(widget.familyId);
+      final result = await ref
+          .read(lifeIntelligenceRepositoryProvider)
+          .getFamilyStore(widget.familyId);
       if (mounted) setState(() => _items = result);
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+    } catch (error) {
+      if (mounted) setState(() => _failure = ApiFailure.from(error));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('familyStore.title'))),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
-                ),
+              child: DsErrorState(
+                failure: _failure!,
+                title: t('common.error'),
+                retryLabel: t('common.retry'),
+                requestIdLabel: t('common.requestId'),
+                arabic: locale.isRtl,
+                onRetry: _load,
               ),
             )
           : _items == null

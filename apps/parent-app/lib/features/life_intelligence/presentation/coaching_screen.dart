@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 
@@ -10,6 +12,14 @@ import '../../../core/theme/app_theme.dart';
 /// plain neutral Chip — a parent scanning several recommendations at
 /// once can now tell at a glance which are "for you" to act on
 /// versus "for the family" to discuss together.
+///
+/// ERROR PASS: `_errorMessage = e.toString()` is gone. It kept the raw
+/// transport sentence in state and then rendered a generic
+/// `common.error` over it, so the parent got no explanation and the
+/// team got no diagnostic — the worst of both. The fetch now goes
+/// through `LifeIntelligenceRepository`, which converts and LOGS, and
+/// the screen renders the resulting [ApiFailure] through the shared
+/// `DsErrorState` so the server's own Arabic finally lands on screen.
 class CoachingScreen extends ConsumerStatefulWidget {
   const CoachingScreen({super.key, required this.childId, required this.childName});
 
@@ -33,9 +43,13 @@ const _trackMeta = <String, _TrackMeta>{
   'FAMILY': _TrackMeta('coaching.track.family', Icons.groups_rounded, AppTheme.amber500),
 };
 
+/// The row for a track name this build has never heard of. Its label is a
+/// localised word, never the backend's own token.
+const _unknownTrack = _TrackMeta('coaching.track.other', Icons.lightbulb_outline_rounded, AppTheme.guardian950);
+
 class _CoachingScreenState extends ConsumerState<CoachingScreen> {
   List<dynamic>? _recommendations;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   @override
   void initState() {
@@ -44,34 +58,37 @@ class _CoachingScreenState extends ConsumerState<CoachingScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
-      final result = await ref.read(lifeIntelligenceApiProvider).getCoachingRecommendations(widget.childId);
+      final result = await ref
+          .read(lifeIntelligenceRepositoryProvider)
+          .getCoachingRecommendations(widget.childId);
       if (mounted) setState(() => _recommendations = result);
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+    } catch (error) {
+      // The repository throws `ApiFailure` and has already logged the
+      // original with its stack. `ApiFailure.from` is idempotent on one,
+      // so this also covers anything thrown outside that boundary.
+      if (mounted) setState(() => _failure = ApiFailure.from(error));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text('${t('coaching.title')} \u2014 ${widget.childName}')),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
-                ),
+              child: DsErrorState(
+                failure: _failure!,
+                title: t('common.error'),
+                retryLabel: t('common.retry'),
+                requestIdLabel: t('common.requestId'),
+                arabic: locale.isRtl,
+                onRetry: _load,
               ),
             )
           : _recommendations == null
@@ -85,7 +102,14 @@ class _CoachingScreenState extends ConsumerState<CoachingScreen> {
                         itemCount: _recommendations!.length,
                         itemBuilder: (context, index) {
                           final rec = _recommendations![index] as Map<String, dynamic>;
-                          final meta = _trackMeta[rec['track'] as String? ?? 'PARENT']!;
+                          // WAS `_trackMeta[...]!`. A track this build does
+                          // not know — the backend's coaching engine owns
+                          // that vocabulary and can add to it — turned the
+                          // `!` into a null check failure INSIDE build, i.e.
+                          // a red screen and a stack trace on the parent's
+                          // phone. An unknown track is now just a neutral
+                          // row with a neutral label.
+                          final meta = _trackMeta[rec['track']] ?? _unknownTrack;
                           return Container(
                             margin: const EdgeInsets.only(bottom: 12),
                             decoration: BoxDecoration(
