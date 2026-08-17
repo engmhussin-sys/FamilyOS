@@ -777,13 +777,22 @@ class _TaskCard extends StatelessWidget {
 /// and it opens through `ChildDeepLinkRouter` — the same resolver a future
 /// push handler will call, never a second one.
 ///
+/// AND THE ROW NOW CARRIES ONE. `/life-intelligence/self/messages` serves
+/// `data` on every message — `{"deepLink": "abny://<surface>"}` — written by the
+/// approval-gated child branch of the delivery pipeline and narrowed on the
+/// server to that single key, so this row carries a DESTINATION and never a
+/// `familyId`, a `childId`, a `deviceId` or a token. Nothing here parses it:
+/// `deepLinkFromNotification` reads the one key and `ChildDeepLinkRouter`
+/// decides where it lands, because a client that decided would be a second
+/// opinion nobody can audit.
+///
 /// TAPPABLE EXACTLY WHEN THERE IS SOMEWHERE TO GO, and this is deliberate
-/// rather than defensive. `/life-intelligence/self/messages` rows do NOT carry
-/// `deepLink` today — the field travels on the `notifications` table, whose
-/// read endpoints are parent-guarded — so a card without one stays exactly as
-/// inert as it looks. A card that offered a tap and then did nothing, or that
-/// quietly re-opened the screen the child is already on, would be the same
-/// dead end in a nicer coat.
+/// rather than defensive. `data` is `null` on every message written before that
+/// field existed and on every message a PARENT typed — neither names a screen —
+/// and NOTHING BACKFILLS A GUESS: such a card stays exactly as inert as it
+/// looks. A card that offered a tap and then did nothing, or that quietly
+/// re-opened the screen the child is already on, would be the same dead end in
+/// a nicer coat.
 ///
 /// The message's own words are server-authored and rendered VERBATIM: they
 /// passed the safety engine at this child's own age band, and nothing here

@@ -120,6 +120,14 @@ class FamilyGrowthApi {
   /// Delivered-only inbox (Sprint 17/23) \u2014 a PENDING AI draft awaiting
   /// parent approval is structurally unreachable through this endpoint
   /// regardless of caller.
+  ///
+  /// F1 \u2014 EACH ROW NOW CARRIES ITS OWN DESTINATION. The shape is
+  /// `{ id, title, body, acknowledgedAt, data, ... }`, where `data` is either
+  /// `{"deepLink": "abny://<surface>"}` or `null`. The raw map the server sent
+  /// is passed through untouched, deliberately: `deepLinkFromNotification`
+  /// reads the one key off the row and `ChildDeepLinkRouter` decides where it
+  /// lands, so this layer never has to learn that a message HAS a destination
+  /// \u2014 and it never re-shapes a payload it does not interpret.
   Future<List<dynamic>> getMessages() {
     return _client.getList('/life-intelligence/self/messages');
   }

@@ -11,12 +11,18 @@
 // for its app-bar icon, because half of what this file asserts is about which
 // route the child is standing on when they tap.
 //
-// WHAT IS DELIBERATELY NOT ASSERTED: that a real message carries a link.
-// `/life-intelligence/self/messages` rows do not carry `deepLink` today — the
-// field travels on the `notifications` table, whose read endpoints are
-// parent-guarded — so the fixture below supplies one exactly as the server
-// will when either that field or push delivery lands. Asserting anything else
-// would be asserting a payload this app has never received.
+// THE FIXTURE IS THE SERVER'S OWN ROW. `/life-intelligence/self/messages` now
+// serves `data` on every message — `{"deepLink": "abny://<surface>"}` for a
+// message that names a screen, and `null` for one that does not (a
+// parent-authored note, or any row written before that field existed). Both
+// shapes are exercised below, and `the server's own inbox row` group asserts
+// the WHOLE row rather than the two fields this widget happens to read, so a
+// field the server adds tomorrow cannot quietly change what a tap does.
+//
+// WHAT IS DELIBERATELY NOT ASSERTED: which surface a given notification type
+// leads to. That map is the SERVER'S — `notification-destination.ts` — and this
+// app parses a resolved link instead of re-deriving one. A client that decided
+// would be a second opinion nobody can audit.
 //
 // EXECUTION STATUS: NEVER RUN. There is no Flutter SDK and no Dart SDK in the
 // authoring environment, and pub.dev is unreachable, so these tests have never
@@ -78,6 +84,12 @@ class _FakeGrowthApi implements FamilyGrowthApi {
 }
 
 const String _title = 'بابا بعتلك رسالة';
+
+/// «this key was not present at all», which is a THIRD state next to «present
+/// and null» and «present with a payload» — and the one an older server, or a
+/// response trimmed by a proxy, produces. A sentinel rather than `null` because
+/// `null` is itself one of the states under test.
+const Object _absent = Object();
 
 /// One server-authored message. `body` is Arabic and is rendered verbatim —
 /// it passed the safety engine at this child's own age band, and no `t()` key
@@ -256,6 +268,135 @@ void main() {
 
       // Arabic is RTL, so the glyph points the way the child reads.
       expect(find.byIcon(Icons.chevron_left_rounded), findsOneWidget);
+    });
+  });
+
+  // ==========================================================================
+  // THE SERVER'S OWN INBOX ROW — the whole shape, not the two fields this
+  // widget happens to read.
+  //
+  // `GET /life-intelligence/self/messages` serves a `child_messages` row:
+  // every column the child is allowed to see, with the destination on `data`
+  // beside them. The fixtures below are that row, so a change on either side of
+  // the contract — a renamed field, a `data` that arrives as an explicit JSON
+  // `null`, a payload that grows a second key — is a failing test here rather
+  // than a card that stops being tappable in a child's hand.
+  // ==========================================================================
+  group('the server\'s own inbox row', () {
+    /// One APPROVED, delivered row, field for field as the endpoint returns it.
+    /// `data` is the ONLY field this app reads a destination from.
+    Map<String, dynamic> serverRow({Object? data = _absent}) =>
+        <String, dynamic>{
+          'id': '9a1f7c2b-3d4e-4a5b-8c6d-7e8f9a0b1c2d',
+          'childId': 'c0ffee00-1111-4222-8333-444455556666',
+          'fromUserId': null,
+          'authorType': 'AI',
+          'approvalStatus': 'APPROVED',
+          'category': 'BADGE_EARNED',
+          'title': _title,
+          'body': 'شطورة يا سلمى! كمّلي كده.',
+          'deliveredAt': '2026-01-01T00:00:00.000Z',
+          'acknowledgedAt': null,
+          if (!identical(data, _absent)) 'data': data,
+        };
+
+    testWidgets('a delivered row carrying a destination opens it', (tester) async {
+      final api = _FakeGrowthApi(
+        messages: [
+          serverRow(data: <String, dynamic>{'deepLink': 'abny://rewards'}),
+        ],
+      );
+      final container = await _pumpGrowth(tester, api);
+
+      await tester.tap(find.text(_title));
+      await tester.pump();
+
+      expect(container.read(childHomeTabProvider), ChildHomeTab.rewards);
+    });
+
+    testWidgets('an explicit `data: null` is not a link — the card stays inert',
+        (tester) async {
+      // The shape EVERY row written before that field existed arrives in, and
+      // every message a parent typed. Nothing backfills a guess into it, so the
+      // honest rendering is the one the child already had.
+      final api = _FakeGrowthApi(messages: [serverRow(data: null)]);
+      final container = await _pumpGrowth(tester, api);
+
+      expect(find.byIcon(Icons.chevron_left_rounded), findsNothing);
+      expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+
+      await tester.tap(find.text(_title));
+      await tester.pump();
+
+      expect(container.read(childHomeTabProvider), ChildHomeTab.today);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a row with no `data` key at all is the same non-answer',
+        (tester) async {
+      final api = _FakeGrowthApi(messages: [serverRow()]);
+      final container = await _pumpGrowth(tester, api);
+
+      await tester.tap(find.text(_title));
+      await tester.pump();
+
+      expect(find.byIcon(Icons.chevron_left_rounded), findsNothing);
+      expect(container.read(childHomeTabProvider), ChildHomeTab.today);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the DESTINATION decides, never the category on the same row',
+        (tester) async {
+      // `category` is `BADGE_EARNED`, which the SERVER maps to the progress
+      // surface — and this row says `abny://coach`. The child lands on the
+      // coach, because this app parses the server's answer and does not
+      // re-derive one from a notification type. A client that derived would
+      // drift from its server inside a sprint, and nobody could audit which of
+      // the two was right.
+      final api = _FakeGrowthApi(
+        messages: [serverRow(data: <String, dynamic>{'deepLink': 'abny://coach'})],
+      );
+      final container = await _pumpGrowth(tester, api);
+
+      await tester.tap(find.text(_title));
+      await tester.pump();
+
+      expect(container.read(childHomeTabProvider), ChildHomeTab.coach);
+    });
+
+    testWidgets('a payload whose destination is malformed opens nothing new',
+        (tester) async {
+      // The server narrows this payload to one validated key, so this cannot
+      // arrive today. If a future server ever widened it, the fallback is the
+      // screen the child is already reading — never a crash, never a blank.
+      final api = _FakeGrowthApi(
+        messages: [
+          serverRow(data: <String, dynamic>{'deepLink': 'https://evil.example/x'}),
+        ],
+      );
+      final container = await _pumpGrowth(tester, api);
+
+      await tester.tap(find.text(_title));
+      await tester.pump();
+
+      expect(find.byType(MyGrowthScreen), findsOneWidget);
+      expect(container.read(childHomeTabProvider), ChildHomeTab.today);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the row is still acknowledged, destination or not',
+        (tester) async {
+      // A payload must not change what an inbox already did. `acknowledgedAt`
+      // is null on this fixture, so the screen still tells the server the child
+      // has seen it — the behaviour that predates deep links entirely.
+      final api = _FakeGrowthApi(
+        messages: [
+          serverRow(data: <String, dynamic>{'deepLink': 'abny://progress'}),
+        ],
+      );
+      await _pumpGrowth(tester, api);
+
+      expect(api.acknowledged, ['9a1f7c2b-3d4e-4a5b-8c6d-7e8f9a0b1c2d']);
     });
   });
 
