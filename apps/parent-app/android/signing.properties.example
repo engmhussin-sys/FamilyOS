@@ -1,0 +1,104 @@
+# ===========================================================================
+# ABNY / «ابني» — PARENT APP RELEASE SIGNING TEMPLATE
+#
+# Copy this file to `signing.properties` IN THIS DIRECTORY and fill in the four
+# values. `signing.properties` is gitignored (see android/.gitignore); this
+# template is committed. NEVER put real passwords in this file.
+#
+#     cp signing.properties.example signing.properties
+#
+# app/build.gradle reads it. If it is absent and a release task is scheduled,
+# the build FAILS with an actionable message — it does NOT fall back to the
+# debug keystore. That fallback is what made every previous "release" artifact
+# unuploadable (docs/release/STORE_READINESS.md row 5).
+#
+# ---------------------------------------------------------------------------
+# 1. GENERATE THE UPLOAD KEYSTORE (once, on a machine you control)
+# ---------------------------------------------------------------------------
+# Requires the JDK's `keytool` (JDK 17 — the version this project pins).
+# Run it from THIS directory (apps/parent-app/android/):
+#
+#   keytool -genkeypair -v \
+#     -keystore abny-parent-upload.jks \
+#     -alias abny-parent-upload \
+#     -keyalg RSA -keysize 4096 -validity 10000 \
+#     -storetype PKCS12
+#
+# Notes on every flag, because each one is a decision:
+#   -keystore   the file this properties file's `storeFile` must name. Keep it
+#               OUT of the repository if you can; `*.jks` here is gitignored,
+#               but a backup you control is the only copy that matters.
+#   -alias      referenced by `keyAlias` below. Write it down: an alias you
+#               cannot remember is a lost key.
+#   -keysize    4096. Play accepts 2048; 4096 costs nothing at signing time.
+#   -validity   10000 days (~27 years). Play REQUIRES an upload key valid past
+#               22 October 2033. A shorter validity is accepted at upload and
+#               then blocks you later.
+#   -storetype  PKCS12. The old JKS format still works but keytool warns on
+#               every use and it is being phased out.
+#
+# keytool will prompt for a store password, a key password and a distinguished
+# name. Use DIFFERENT store and key passwords. Store all three in your password
+# manager — see the LOSS section at the bottom.
+#
+# ---------------------------------------------------------------------------
+# 2. THE FOUR VALUES
+# ---------------------------------------------------------------------------
+# `storeFile` is resolved RELATIVE TO apps/parent-app/android/ (this
+# directory), so the plain filename below works. An absolute path also works
+# and is the better choice if you keep the keystore outside the working tree.
+storeFile=abny-parent-upload.jks
+
+# The -storepass you gave keytool.
+storePassword=CHANGE_ME_store_password
+
+# The -alias you gave keytool.
+keyAlias=abny-parent-upload
+
+# The -keypass you gave keytool (different from storePassword).
+keyPassword=CHANGE_ME_key_password
+
+# ---------------------------------------------------------------------------
+# 3. BUILDING
+# ---------------------------------------------------------------------------
+#   flutter build appbundle --release \
+#     --dart-define=API_BASE_URL=https://api.example.com/api/v1
+#
+# The AAB lands at build/app/outputs/bundle/release/app-release.aab — that is
+# the file Play accepts. `flutter build apk --release` still works and produces
+# a sideloadable APK for QA, but Play has not accepted APKs for new apps since
+# August 2021.
+#
+# ---------------------------------------------------------------------------
+# 4. CI
+# ---------------------------------------------------------------------------
+# .github/workflows/build-apk.yml writes this exact file from repository
+# secrets and then deletes the keystore in a post step. The secrets are
+# per-app, because the two apps are two Play listings:
+#
+#   ANDROID_KEYSTORE_BASE64_PARENT   base64 of the .jks
+#                                    (`base64 -w0 abny-parent-upload.jks`)
+#   ANDROID_KEYSTORE_PASSWORD_PARENT
+#   ANDROID_KEY_ALIAS_PARENT
+#   ANDROID_KEY_PASSWORD_PARENT
+#
+# Every one of them is required for a release run; a missing secret turns the
+# job RED. It never degrades to a debug-signed artifact.
+#
+# ---------------------------------------------------------------------------
+# 5. WHAT LOSING THIS KEY COSTS — READ BEFORE YOU FIRST UPLOAD
+# ---------------------------------------------------------------------------
+# ENROL IN PLAY APP SIGNING (the default for new apps). Google then holds the
+# APP signing key and this keystore is only the UPLOAD key, which Google can
+# reset for you if you lose it. That single choice converts "the app is dead
+# and must be republished under a new package name, losing every install,
+# review and rating" into a support ticket.
+#
+# If you opt OUT of Play App Signing, losing this file is terminal: no future
+# update to com.aifamilycoach.parent_app can ever be published.
+#
+# The applicationId this key will be bound to at first upload is
+# `com.aifamilycoach.parent_app` — and that name is still an OPEN HUMAN
+# DECISION (PROJECT_STATUS.md §0's EBNEY/ABNY question, and
+# docs/release/IOS_READINESS.md). Settle it BEFORE the first upload: the
+# package name is immutable afterwards.

@@ -1,4 +1,4 @@
-name: Flutter — analyze, test, build APK
+name: Flutter — analyze, test, build debug APK + signed release AAB
 
 # ===========================================================================
 # WHAT THIS FILE IS FOR
@@ -55,6 +55,34 @@ on:
           - child-app
           - parent-app
           - both
+      # =====================================================================
+      # PHASE G — THE RELEASE PATH IS OPT-IN, AND ONCE OPTED IN IT CANNOT SKIP
+      # GREEN.
+      #
+      # Two failure modes had to be avoided at the same time and they pull in
+      # opposite directions:
+      #
+      #   (a) a release build attempted on every push would be RED on every
+      #       push until someone creates a Play account and four secrets — and
+      #       a pipeline that is always red is a pipeline nobody reads.
+      #   (b) a release build that quietly does not happen when its secrets are
+      #       missing is the false green this whole file exists to eliminate.
+      #       That is exactly what the previous `flutter build apk --release`
+      #       step did: `if: env.RELEASE_API_BASE_URL != ''` plus
+      #       `continue-on-error: true`, so both "not configured" and "broken"
+      #       rendered as a green run with no artifact.
+      #
+      # The resolution is that the OPERATOR asks for a release, not the
+      # configuration. When `release_build` is false nothing release-related
+      # runs and the summary says so in words. When it is TRUE, every
+      # precondition is asserted and any missing one turns the job RED. There
+      # is no input under which a REQUESTED release silently does not happen.
+      # =====================================================================
+      release_build:
+        description: "Also build a signed release AAB (requires the signing secrets — a missing one FAILS the job)"
+        type: boolean
+        required: false
+        default: false
   push:
     branches:
       - abny/sprint-f1-unblock
@@ -101,6 +129,34 @@ env:
   DEV_API_BASE_URL: ${{ vars.DEV_API_BASE_URL || 'http://10.0.2.2:3000/api/v1' }}
   RELEASE_API_BASE_URL: ${{ vars.RELEASE_API_BASE_URL }}
 
+  # --- PHASE G: was a release requested? ------------------------------------
+  # `github.event.inputs.release_build` rather than `inputs.release_build`: the
+  # `github.event` form is null on every event that has no inputs (push, and the
+  # workflow_call from ci.yml) instead of depending on which contexts a given
+  # trigger populates, and a boolean dispatch input arrives there as the STRING
+  # 'true'. `vars.ABNY_RELEASE_BUILD` lets a repository opt every push in once
+  # the secrets exist, without editing this file.
+  ABNY_RELEASE_REQUESTED: ${{ (github.event.inputs.release_build == 'true' || vars.ABNY_RELEASE_BUILD == 'true') && 'true' || 'false' }}
+
+  # --- PHASE G: versionCode ------------------------------------------------
+  # Read by app/build.gradle as the Gradle project property `abnyVersionCode`
+  # (the `ORG_GRADLE_PROJECT_<name>` mechanism, which is documented by Gradle
+  # and survives being invoked through `flutter build`).
+  #
+  # WHY github.run_number AND NOT github.run_id: run_number increments by one
+  # per run of THIS workflow and starts at 1, so it is monotonic and small.
+  # run_id is a global identifier that already exceeds Play's versionCode
+  # ceiling of 2,100,000,000 — using it would work once and then be rejected
+  # forever, which is the same class of one-way mistake as the signing key.
+  #
+  # HOW TO CHANGE IT: the number only has to be MONOTONIC per Play track, not
+  # meaningful. If this repository is ever re-created, or the workflow is
+  # renamed and run_number restarts, set the repository variable
+  # ABNY_VERSION_CODE_OFFSET to a value above the highest versionCode Play has
+  # already accepted. Play's error for a reused versionCode names the number it
+  # already has, so recovery is mechanical.
+  ORG_GRADLE_PROJECT_abnyVersionCode: ${{ fromJSON(vars.ABNY_VERSION_CODE_OFFSET || '0') + github.run_number }}
+
 jobs:
   # =========================================================================
   # STATIC PREFLIGHT — runs before any SDK download. Cheap, and it is the only
@@ -134,6 +190,16 @@ jobs:
 
       - name: Gradle scripts parse as Groovy
         run: python3 scripts/verify_gradle_syntax.py
+
+      # PHASE G. Runs here, in the cheap job, because the property it protects
+      # is one nobody notices until an upload is rejected: that a RELEASE build
+      # cannot be signed with the debug key and that no key material is
+      # committed. It does not merely grep — it lifts the
+      # `gradle.taskGraph.whenReady` guard out of both build.gradle files and
+      # EXECUTES it, under the Groovy that ships inside Gradle, against ten
+      # scenarios each.
+      - name: Android release signing (static + the guard, executed)
+        run: python3 scripts/verify_release_signing.py
 
   # =========================================================================
   # The two apps are IDENTICAL jobs apart from `app` and the Firebase step,
@@ -488,28 +554,187 @@ jobs:
           # noise on the one run that is supposed to be readable.
           if-no-files-found: warn
 
-      # Release is a BONUS. It is attempted only when a real https backend URL
-      # exists, because AppConfig throws on startup in release mode otherwise
-      # and the artifact would crash on launch. For the parent app it also
-      # requires real Firebase config: shipping a release build with push
-      # silently disabled is exactly the false green CONTEXT §3.9 forbids, so
-      # the condition below refuses to attempt it.
-      - name: flutter build apk --release (bonus, debug-signed)
-        id: release
-        if: >-
-          env.RELEASE_API_BASE_URL != '' &&
-          (matrix.app == 'child-app' || steps.firebase.outputs.state == 'enabled')
-        continue-on-error: true
-        run: flutter build apk --release --dart-define=API_BASE_URL=$RELEASE_API_BASE_URL
+      # =================================================================
+      # PHASE G — THE RELEASE PATH. WHAT REPLACED THE OLD "BONUS" STEP AND WHY.
+      #
+      # The old step was `flutter build apk --release` behind
+      # `if: env.RELEASE_API_BASE_URL != ''` with `continue-on-error: true`.
+      # Three things were wrong with it and all three are load-bearing:
+      #
+      #   1. IT BUILT AN APK. Google Play has not accepted APKs for new
+      #      applications since August 2021. The artifact it produced could not
+      #      be uploaded no matter what else was correct.
+      #   2. IT WAS DEBUG-SIGNED, because that is what app/build.gradle said at
+      #      the time. Even as an AAB it would have been rejected.
+      #   3. BOTH "not configured" AND "failed" RENDERED AS GREEN — the `if:`
+      #      skipped it silently and `continue-on-error` swallowed it.
+      #
+      # What follows is opt-in (ABNY_RELEASE_REQUESTED) and, when requested,
+      # UNCONDITIONALLY BLOCKING: preconditions are asserted, the AAB is built,
+      # and the exit code is re-raised by the Verdict step at the bottom of the
+      # job. No `continue-on-error` appears anywhere below.
+      # =================================================================
+      - name: Release preconditions (assert, do not skip)
+        id: relcfg
+        env:
+          KEYSTORE_B64: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEYSTORE_BASE64_PARENT || secrets.ANDROID_KEYSTORE_BASE64_CHILD }}
+          KEYSTORE_PASSWORD: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEYSTORE_PASSWORD_PARENT || secrets.ANDROID_KEYSTORE_PASSWORD_CHILD }}
+          KEY_ALIAS: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEY_ALIAS_PARENT || secrets.ANDROID_KEY_ALIAS_CHILD }}
+          KEY_PASSWORD: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEY_PASSWORD_PARENT || secrets.ANDROID_KEY_PASSWORD_CHILD }}
+        run: |
+          if [ "${{ env.ABNY_RELEASE_REQUESTED }}" != "true" ]; then
+            echo "requested=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release build was requested. Run this workflow with release_build=true, or set the repository variable ABNY_RELEASE_BUILD=true, to produce a signed AAB. Nothing below ran and nothing is being claimed."
+            {
+              echo "### Release — NOT REQUESTED (${{ matrix.app }})"
+              echo ""
+              echo "No signed AAB was produced and none is claimed. This is a"
+              echo "deliberate opt-in, not a skipped failure: re-run with"
+              echo "\`release_build=true\` to build one."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
-      - name: Upload release APK
-        if: steps.release.outcome == 'success'
+          echo "requested=true" >> "$GITHUB_OUTPUT"
+          fail=0
+
+          # 1. THE BACKEND URL. AppConfig.assertUsableForBuildMode() THROWS at
+          #    startup in release mode unless the URL is https, so a release
+          #    artifact without one crashes on launch — an artifact nobody can
+          #    open is worse than no artifact, because it looks like progress.
+          if [ -z "$RELEASE_API_BASE_URL" ]; then
+            echo "::error::RELEASE BUILD REQUESTED BUT vars.RELEASE_API_BASE_URL IS EMPTY. A release build of ${{ matrix.app }} would throw StateError on launch (lib/core/config/app_config.dart requires https in release mode). Set the repository variable to https://<host>/api/v1."
+            fail=1
+          elif [ "${RELEASE_API_BASE_URL#https://}" = "$RELEASE_API_BASE_URL" ]; then
+            echo "::error::vars.RELEASE_API_BASE_URL is not https ('$RELEASE_API_BASE_URL'). AppConfig rejects it in release mode."
+            fail=1
+          fi
+
+          # 2. THE SIGNING SECRETS — all four, per app. Each app is its own Play
+          #    listing with its own upload key; sharing one key across two
+          #    applicationIds is legal but couples two releases forever.
+          for pair in "ANDROID_KEYSTORE_BASE64:$KEYSTORE_B64" \
+                      "ANDROID_KEYSTORE_PASSWORD:$KEYSTORE_PASSWORD" \
+                      "ANDROID_KEY_ALIAS:$KEY_ALIAS" \
+                      "ANDROID_KEY_PASSWORD:$KEY_PASSWORD"; do
+            name="${pair%%:*}"
+            value="${pair#*:}"
+            if [ -z "$value" ]; then
+              suffix=$([ "${{ matrix.app }}" = "parent-app" ] && echo PARENT || echo CHILD)
+              echo "::error::MISSING SIGNING SECRET ${name}_${suffix}. A release build cannot be signed without it, and app/build.gradle will NOT fall back to the debug key — see apps/${{ matrix.app }}/android/signing.properties.example for how to generate the keystore and derive all four values."
+              fail=1
+            fi
+          done
+
+          # 3. FIREBASE, PARENT APP ONLY. A release build with push silently
+          #    disabled is the false green CONTEXT §3.9 forbids — and unlike the
+          #    debug case it would reach real users' phones.
+          if [ "${{ matrix.app }}" = "parent-app" ] && [ "${{ steps.firebase.outputs.state }}" != "enabled" ]; then
+            echo "::error::RELEASE BUILD REQUESTED FOR THE PARENT APP WITHOUT FIREBASE. GOOGLE_SERVICES_JSON is not set, so this AAB would ship with FCM disabled and every parent notification would silently never arrive. See docs/release/FIREBASE_SETUP.md."
+            fail=1
+          fi
+
+          if [ "$fail" != "0" ]; then
+            echo "::error::Release preconditions FAILED for ${{ matrix.app }}. This job is going red rather than reporting a green run that produced no uploadable artifact."
+            exit 1
+          fi
+
+          # Write the keystore and the signing.properties that app/build.gradle
+          # reads. Both live under android/ and both are gitignored, so nothing
+          # here can be committed by accident.
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/abny-ci-upload.jks
+          if [ ! -s android/abny-ci-upload.jks ]; then
+            echo "::error::The decoded keystore is empty — ANDROID_KEYSTORE_BASE64 is not valid base64 of a .jks. Produce it with: base64 -w0 <keystore>.jks"
+            exit 1
+          fi
+          # `umask` before writing: the passwords are on disk for the length of
+          # this job and there is no reason for any other user to read them.
+          ( umask 077; {
+              echo "storeFile=abny-ci-upload.jks"
+              echo "storePassword=$KEYSTORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > android/signing.properties )
+          echo "::notice::Release signing configured for ${{ matrix.app }} (keystore $(wc -c < android/abny-ci-upload.jks) bytes, versionCode ${{ env.ORG_GRADLE_PROJECT_abnyVersionCode }})."
+
+      # THE ARTIFACT PLAY ACTUALLY ACCEPTS. `appbundle`, not `apk`.
+      - name: flutter build appbundle --release (the Play artifact)
+        id: aab
+        if: steps.relcfg.outputs.requested == 'true'
+        run: |
+          set +e
+          flutter build appbundle --release \
+            --dart-define=API_BASE_URL=$RELEASE_API_BASE_URL \
+            --dart-define=ENABLE_PUSH=true \
+            > release-aab.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -200 release-aab.txt
+          {
+            echo "### flutter build appbundle --release — ${{ matrix.app }}"
+            echo ""
+            echo "exit code: \`$code\`  ·  versionCode \`${{ env.ORG_GRADLE_PROJECT_abnyVersionCode }}\`"
+            echo ""
+            echo '```'
+            tail -120 release-aab.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The release APK is kept as well, for sideloaded QA on physical devices —
+      # Play takes the AAB, but a tester cannot install one. Same signing key,
+      # same dart-defines, so what QA installs is what Play receives.
+      - name: flutter build apk --release (sideload copy for QA)
+        id: releaseapk
+        if: steps.relcfg.outputs.requested == 'true'
+        run: |
+          set +e
+          flutter build apk --release \
+            --dart-define=API_BASE_URL=$RELEASE_API_BASE_URL \
+            --dart-define=ENABLE_PUSH=true \
+            > release-apk.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -120 release-apk.txt
+
+      - name: Upload release logs
+        if: always() && steps.relcfg.outputs.requested == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.app }}-release-${{ steps.vars.outputs.sha_short }}
+          name: releaselog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}
+          path: |
+            apps/${{ matrix.app }}/release-aab.txt
+            apps/${{ matrix.app }}/release-apk.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload release AAB
+        if: always() && steps.relcfg.outputs.requested == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-release-aab-${{ steps.vars.outputs.sha_short }}
+          path: apps/${{ matrix.app }}/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload release APK (QA sideload)
+        if: always() && steps.relcfg.outputs.requested == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-release-apk-${{ steps.vars.outputs.sha_short }}
           path: apps/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
           if-no-files-found: warn
+
+      # THE KEY MATERIAL LEAVES THE RUNNER. `if: always()` so it happens even
+      # when the build failed — a hosted runner is ephemeral, but a self-hosted
+      # one is not, and this file must be correct on both.
+      - name: Shred the signing material
+        if: always()
+        run: |
+          rm -f android/abny-ci-upload.jks android/signing.properties
+          echo "Signing material removed: $(ls android/abny-ci-upload.jks android/signing.properties 2>&1 | tail -1)"
 
       # ---------------------------------------------------------------
       # THE VERDICT. Every stage above ran to completion and reported; this
@@ -521,7 +746,11 @@ jobs:
           A="${{ steps.analyze.outputs.exit_code }}"
           T="${{ steps.test.outputs.exit_code }}"
           B="${{ steps.build.outputs.exit_code }}"
+          REQ="${{ steps.relcfg.outputs.requested }}"
+          AAB="${{ steps.aab.outputs.exit_code }}"
+          RAPK="${{ steps.releaseapk.outputs.exit_code }}"
           apk="build/app/outputs/flutter-apk/app-debug.apk"
+          aab="build/app/outputs/bundle/release/app-release.aab"
           {
             echo "## VERDICT — ${{ matrix.app }} \`${{ steps.vars.outputs.sha_short }}\`"
             echo ""
@@ -530,7 +759,12 @@ jobs:
             echo "| flutter analyze | \`${A:-not reached}\` — ${{ steps.analyze.outputs.errors }} errors, ${{ steps.analyze.outputs.warnings }} warnings, ${{ steps.analyze.outputs.infos }} infos | yes |"
             echo "| flutter test | \`${T:-not reached}\` | yes |"
             echo "| flutter build apk --debug | \`${B:-not reached}\` | yes |"
-            echo "| flutter build apk --release | \`${{ steps.release.outcome }}\` | no (bonus) |"
+            if [ "$REQ" = "true" ]; then
+              echo "| flutter build appbundle --release | \`${AAB:-not reached}\` | **yes** |"
+              echo "| flutter build apk --release (QA) | \`${RAPK:-not reached}\` | **yes** |"
+            else
+              echo "| release build | not requested | — (opt-in) |"
+            fi
             echo ""
             if [ "${{ matrix.app }}" = "parent-app" ]; then
               echo "Firebase: \`${{ steps.firebase.outputs.state }}\`"
@@ -543,9 +777,21 @@ jobs:
               echo ""
             fi
             if [ -f "$apk" ]; then
-              echo "APK: \`apps/${{ matrix.app }}/$apk\` — $(du -h "$apk" | cut -f1)"
+              echo "APK (debug): \`apps/${{ matrix.app }}/$apk\` — $(du -h "$apk" | cut -f1)"
             else
-              echo "APK: NOT BUILT"
+              echo "APK (debug): NOT BUILT"
+            fi
+            if [ "$REQ" = "true" ]; then
+              if [ -f "$aab" ]; then
+                echo ""
+                echo "AAB (Play): \`apps/${{ matrix.app }}/$aab\` — $(du -h "$aab" | cut -f1)"
+                echo ""
+                echo "> Signed with the upload key from the repository secrets, versionCode"
+                echo "> \`${{ env.ORG_GRADLE_PROJECT_abnyVersionCode }}\`. This is the file Play accepts."
+              else
+                echo ""
+                echo "AAB (Play): NOT BUILT — see the release log artifact."
+              fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           fail=0
@@ -560,6 +806,21 @@ jobs:
           if [ "${B:-1}" != "0" ]; then
             echo "::error::flutter build apk --debug failed for ${{ matrix.app }}. Full log: artifact buildlog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}."
             fail=1
+          fi
+          # PHASE G. A REQUESTED release is BLOCKING. `${AAB:-1}` is the whole
+          # point of the default: if the step did not run at all — because an
+          # earlier step died, because the job was cancelled, because someone
+          # adds an `if:` to it later — the missing output reads as 1, not as
+          # success. "Release requested and not produced" must be red.
+          if [ "$REQ" = "true" ]; then
+            if [ "${AAB:-1}" != "0" ]; then
+              echo "::error::flutter build appbundle --release FAILED (or never ran) for ${{ matrix.app }} after a release was requested. There is no uploadable artifact. Full log: artifact releaselog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}."
+              fail=1
+            fi
+            if [ "${RAPK:-1}" != "0" ]; then
+              echo "::error::flutter build apk --release (QA sideload copy) FAILED (or never ran) for ${{ matrix.app }}."
+              fail=1
+            fi
           fi
           exit $fail
 

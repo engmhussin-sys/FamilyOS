@@ -1,7 +1,15 @@
 name: child_app
 description: AI Family Digital Coach — Child Agent (Core Architecture, Step 1/12 per ADR child-agent-android-enforcement.md)
 publish_to: "none"
-version: 0.1.0
+# PHASE G — THE SINGLE SOURCE OF TRUTH FOR BOTH ANDROID VERSION FIELDS.
+# `<name>+<code>`: `0.1.0` becomes versionName, `1` becomes versionCode.
+# `flutter build` writes both halves into android/local.properties, which
+# android/app/build.gradle reads — nothing else in this repository declares a
+# version. The `+1` was previously ABSENT, so versionCode fell through to the
+# hardcoded `1` in build.gradle; that fallback is now a hard failure for any
+# release build, and CI overrides the code with a monotonic run number via
+# ORG_GRADLE_PROJECT_abnyVersionCode.
+version: 0.1.0+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

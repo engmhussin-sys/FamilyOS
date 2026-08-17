@@ -1,4 +1,18 @@
+# Copy to local.properties (which is gitignored) and point the two paths at
+# your own SDKs. android/settings.gradle asserts flutter.sdk is set.
 sdk.dir=/path/to/your/Android/sdk
 flutter.sdk=/path/to/your/flutter
+
+# PHASE G — DO NOT MAINTAIN THESE TWO BY HAND.
+#
+# `flutter build` WRITES them from the single source of truth, which is
+# apps/parent-app/pubspec.yaml's `version: <name>+<code>` line. They are listed
+# here only so a reader of this file knows what appears after a build and where
+# app/build.gradle reads the two version fields from.
+#
+# Editing them by hand creates a second place that declares the app version,
+# which is exactly the drift app/build.gradle's version block was rewritten to
+# prevent. If you need a different versionCode for one build, change pubspec —
+# or, in CI, export ORG_GRADLE_PROJECT_abnyVersionCode=<monotonic number>.
 flutter.versionName=0.1.0
 flutter.versionCode=1

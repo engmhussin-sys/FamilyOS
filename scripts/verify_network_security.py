@@ -25,7 +25,7 @@ Per app it asserts:
   5. The app's own default base URL resolves to a permitted host.
 
 And repo-wide:
-  6. Every `flutter build apk` invocation in .github/workflows passes
+  6. Every `flutter build apk|appbundle` invocation in .github/workflows passes
      --dart-define=API_BASE_URL.
 
 Exit code 0 when every check passes.
@@ -174,7 +174,11 @@ def check_workflows() -> None:
         joined = re.sub(r"\\\n\s*", " ", text)
         for raw in joined.splitlines():
             line = raw.strip()
-            if "flutter build apk" not in line:
+            # PHASE G: `appbundle` too. The release artifact Play accepts is an
+            # AAB, not an APK, and MA-004's rule ("an artifact nobody can log
+            # into is not evidence") applies to it identically — more so, since
+            # this is the one that reaches real users.
+            if "flutter build apk" not in line and "flutter build appbundle" not in line:
                 continue
             if line.startswith("#"):
                 continue                       # YAML comment / prose
@@ -184,11 +188,11 @@ def check_workflows() -> None:
                 continue                       # job-summary text, not a command
             builds += 1
             if "--dart-define=API_BASE_URL=" not in line:
-                fail(f"{name}: `flutter build apk` without --dart-define=API_BASE_URL -> {line}")
+                fail(f"{name}: `flutter build` without --dart-define=API_BASE_URL -> {line}")
             else:
                 ok(f"{name}: {line[:110]}")
     if builds == 0:
-        fail("no `flutter build apk` invocation found in any workflow")
+        fail("no `flutter build apk|appbundle` invocation found in any workflow")
 
 
 if __name__ == "__main__":

@@ -12,14 +12,104 @@ if (localPropertiesFile.exists()) {
     }
 }
 
-def flutterVersionCode = localProperties.getProperty("flutter.versionCode")
-if (flutterVersionCode == null) {
+// ---------------------------------------------------------------------------
+// PHASE G — VERSIONING HAS ONE SOURCE, AND THE FALLBACK IS NOT SILENT.
+//
+// Identical to apps/parent-app/android/app/build.gradle by design — the two
+// apps are two Play listings and each needs its own monotonic versionCode, but
+// the MECHANISM must not differ between them, or one of the two will drift.
+//
+// THE SINGLE SOURCE OF TRUTH IS `apps/child-app/pubspec.yaml`'s
+// `version: <name>+<code>` line. `flutter build` copies both halves into
+// android/local.properties as `flutter.versionName` / `flutter.versionCode`,
+// which is what the two lookups below read.
+//
+// CI OVERRIDE, FOR versionCode ONLY: `.github/workflows/build-apk.yml` exports
+// ORG_GRADLE_PROJECT_abnyVersionCode=<github.run_number>, which Gradle turns
+// into the project property `abnyVersionCode`. That mechanism is documented by
+// Gradle itself and survives being invoked through `flutter build`, unlike a
+// guess about which -P flags the Flutter tool forwards. `versionName` is not
+// overridable: the marketing version belongs to the commit.
+//
+// THE FALLBACKS ARE TRIPWIRES, NOT DEFAULTS. Debug still builds from a bare
+// checkout; the release guard below refuses to package a release on a
+// fallback version, because a release AAB stamped versionCode 1 uploads once
+// and then blocks every later upload.
+// ---------------------------------------------------------------------------
+def abnyVersionCodeProperty = project.hasProperty("abnyVersionCode")
+        ? project.property("abnyVersionCode").toString().trim()
+        : null
+def flutterVersionCode = (abnyVersionCodeProperty != null && !abnyVersionCodeProperty.isEmpty())
+        ? abnyVersionCodeProperty
+        : localProperties.getProperty("flutter.versionCode")
+def abnyVersionCodeExplicit = flutterVersionCode != null && !flutterVersionCode.trim().isEmpty()
+if (!abnyVersionCodeExplicit) {
     flutterVersionCode = "1"
 }
 
 def flutterVersionName = localProperties.getProperty("flutter.versionName")
-if (flutterVersionName == null) {
+def abnyVersionNameExplicit = flutterVersionName != null && !flutterVersionName.trim().isEmpty()
+if (!abnyVersionNameExplicit) {
     flutterVersionName = "1.0"
+}
+
+// ---------------------------------------------------------------------------
+// PHASE G — RELEASE SIGNING. NO SECRET IS IN THIS REPOSITORY, AND DEBUG
+// SIGNING IS NOT REACHABLE FROM A RELEASE BUILD.
+//
+// WHAT WAS HERE BEFORE, verbatim from this file's own RECOVERY NOTE: "signing
+// with the debug config so `flutter build apk --release` doesn't immediately
+// fail with no signing config configured". That note was honest about the
+// trade and it was the right trade when nothing had ever compiled. It is the
+// wrong trade now: STORE_READINESS.md row 5 records that both apps signed
+// release with the debug key and the workflow built `apk` not `aab`, so
+// nothing either app produced was uploadable — and the build said nothing.
+//
+// WHERE THE KEY LIVES. `apps/child-app/android/signing.properties`, which is
+// GITIGNORED (android/.gitignore), alongside the keystore it names — also
+// gitignored by extension. `signing.properties.example` next to it is the
+// committed template and carries the full `keytool` invocation.
+//
+// THE THREE INDEPENDENT LAYERS THAT MAKE DEBUG SIGNING IMPOSSIBLE:
+//
+//   L1 STRUCTURAL — the release build type is assigned `signingConfigs.release`
+//      and the identifier `signingConfigs.debug` no longer occurs anywhere in
+//      this file. When signing.properties is absent the release config is left
+//      deliberately UNPOPULATED rather than inheriting anything.
+//   L2 TASK-GRAPH GUARD — `gradle.taskGraph.whenReady` runs after Gradle knows
+//      every task it will execute and before it executes any: if a release
+//      packaging task for this project is scheduled and the signing config,
+//      the keystore file or the version is not real, the build stops with an
+//      actionable message. Debug schedules none of those tasks.
+//   L3 IDENTITY ASSERTION — the resolved release signing config is compared
+//      against the debug one by IDENTITY, and the keystore path is checked
+//      against the well-known debug keystore names. L1 is a convention; L3 is
+//      what makes reinstating the old line fail instead of pass.
+// ---------------------------------------------------------------------------
+def abnySigningPropertiesFile = rootProject.file("signing.properties")
+def abnySigningProperties = new Properties()
+def abnySigningPresent = abnySigningPropertiesFile.exists()
+if (abnySigningPresent) {
+    abnySigningPropertiesFile.withReader("UTF-8") { reader ->
+        abnySigningProperties.load(reader)
+    }
+}
+
+// Resolved relative to android/ (this app's Gradle root), so a
+// signing.properties written by CI and one written by a developer can use the
+// same relative path.
+def abnyKeystoreFile = null
+def abnyMissingSigningKeys = []
+if (abnySigningPresent) {
+    ["storeFile", "storePassword", "keyAlias", "keyPassword"].each { key ->
+        def value = abnySigningProperties.getProperty(key)
+        if (value == null || value.trim().isEmpty()) {
+            abnyMissingSigningKeys.add(key)
+        }
+    }
+    if (abnyMissingSigningKeys.isEmpty()) {
+        abnyKeystoreFile = rootProject.file(abnySigningProperties.getProperty("storeFile").trim())
+    }
 }
 
 android {
@@ -89,18 +179,142 @@ android {
         versionName flutterVersionName
     }
 
-    buildTypes {
+    signingConfigs {
+        // The `debug` config is AGP's own implicit one and is untouched: debug
+        // builds keep working from a bare checkout with no key material.
+        //
+        // `release` is declared UNCONDITIONALLY so `signingConfigs.release`
+        // always resolves and the assertions below always have something to
+        // assert on — but it is only POPULATED when signing.properties supplied
+        // every field and the keystore it names exists. An empty release config
+        // is not a fallback: AGP cannot sign with it, and the task-graph guard
+        // stops the build before AGP is ever asked to try.
         release {
-            // RECOVERY NOTE: signing with the debug config so `flutter
-            // build apk --release` doesn't immediately fail with no
-            // signing config configured — matches Flutter's own
-            // default template comment ("TODO: Add your own signing
-            // config for the release build"). A real release signing
-            // key is a deployment-time decision, not something to
-            // invent here.
-            signingConfig signingConfigs.debug
+            if (abnySigningPresent && abnyMissingSigningKeys.isEmpty() && abnyKeystoreFile?.exists()) {
+                storeFile abnyKeystoreFile
+                storePassword abnySigningProperties.getProperty("storePassword").trim()
+                keyAlias abnySigningProperties.getProperty("keyAlias").trim()
+                keyPassword abnySigningProperties.getProperty("keyPassword").trim()
+                // v1+v2 both on: minSdk 21 still needs the JAR signature, and
+                // Play's own signing re-signs from the upload key regardless.
+                v1SigningEnabled true
+                v2SigningEnabled true
+            }
         }
     }
+
+    buildTypes {
+        release {
+            // L1 — STRUCTURAL. The old `signingConfig signingConfigs.debug` line
+            // is gone, and the identifier does not occur anywhere in this file.
+            signingConfig signingConfigs.release
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// L2 + L3 — THE RELEASE GUARD.
+//
+// `whenReady` fires once, after Gradle has resolved the full task graph and
+// before it runs the first task. That timing is the point: it can see whether
+// a release artifact is actually about to be produced, so a debug build pays
+// nothing and a release build cannot get past it.
+// ---------------------------------------------------------------------------
+gradle.taskGraph.whenReady { graph ->
+    def releaseTasks = graph.allTasks.findAll { task ->
+        task.project.path == project.path &&
+                task.name ==~ /(?i)^(assemble|bundle|package|install)Release$/
+    }
+    if (releaseTasks.isEmpty()) {
+        return
+    }
+
+    def scheduled = releaseTasks.collect { it.path }.join(", ")
+
+    if (!abnySigningPresent) {
+        throw new GradleException(
+            "ABNY: REFUSING TO PRODUCE AN UNSIGNABLE RELEASE ARTIFACT.\n"
+            + "Scheduled release task(s): " + scheduled + "\n"
+            + "apps/child-app/android/signing.properties is MISSING.\n"
+            + "\n"
+            + "This build is NOT falling back to the debug keystore. It used to —\n"
+            + "and the result was that every release APK this project ever\n"
+            + "described was signed with a throwaway key and could never be\n"
+            + "uploaded to Google Play (docs/release/STORE_READINESS.md).\n"
+            + "\n"
+            + "To fix it: copy android/signing.properties.example to\n"
+            + "android/signing.properties, generate an upload keystore with the\n"
+            + "keytool command written in that example file, and fill in the four\n"
+            + "values. The whole procedure is in\n"
+            + "docs/release/ANDROID_RELEASE_SIGNING.md.\n"
+            + "\n"
+            + "To build something installable WITHOUT a key, build debug:\n"
+            + "  flutter build apk --debug --dart-define=API_BASE_URL=<url>")
+    }
+
+    if (!abnyMissingSigningKeys.isEmpty()) {
+        throw new GradleException(
+            "ABNY: android/signing.properties is present but INCOMPLETE.\n"
+            + "Missing or empty: " + abnyMissingSigningKeys.join(", ") + "\n"
+            + "All four of storeFile, storePassword, keyAlias, keyPassword are\n"
+            + "required. A partial signing config is not signed 'less' — it is\n"
+            + "not signed, and this build stops rather than emitting an artifact\n"
+            + "that looks finished. See android/signing.properties.example.")
+    }
+
+    if (abnyKeystoreFile == null || !abnyKeystoreFile.exists()) {
+        throw new GradleException(
+            "ABNY: the keystore named by signing.properties does not exist.\n"
+            + "storeFile resolved to: " + abnyKeystoreFile + "\n"
+            + "Paths in signing.properties are resolved relative to\n"
+            + "apps/child-app/android/. Generate the keystore with the keytool\n"
+            + "command in android/signing.properties.example, or correct the path.")
+    }
+
+    // L3 — IDENTITY. Survives a future edit that L1's convention would not.
+    def releaseSigning = android.buildTypes.release.signingConfig
+    if (releaseSigning == null) {
+        throw new GradleException(
+            "ABNY: buildTypes.release has NO signing config at all. An unsigned\n"
+            + "AAB is rejected by Play with 'Your Android App Bundle is not\n"
+            + "signed'. Failing here instead of producing it.")
+    }
+    if (releaseSigning.is(android.signingConfigs.debug) || releaseSigning.name == "debug") {
+        throw new GradleException(
+            "ABNY: buildTypes.release resolves to the DEBUG signing config.\n"
+            + "Something in this file reinstated `signingConfig signingConfigs.debug`.\n"
+            + "The debug key is a well-known, machine-local, publicly documented\n"
+            + "throwaway; an artifact signed with it can never be uploaded and can\n"
+            + "never be updated. This assertion exists precisely so that edit\n"
+            + "cannot land quietly. Restore `signingConfig signingConfigs.release`.")
+    }
+    def keystoreName = abnyKeystoreFile.name.toLowerCase()
+    if (keystoreName == "debug.keystore" || keystoreName == "debug.jks"
+            || abnyKeystoreFile.absolutePath.replace(File.separatorChar, (char) '/').contains("/.android/debug")) {
+        throw new GradleException(
+            "ABNY: signing.properties points the RELEASE config at what looks like\n"
+            + "a DEBUG keystore: " + abnyKeystoreFile + "\n"
+            + "That is the same failure as before, moved one file across. Use a\n"
+            + "real upload keystore — android/signing.properties.example has the\n"
+            + "keytool command.")
+    }
+
+    if (!abnyVersionCodeExplicit || !abnyVersionNameExplicit) {
+        throw new GradleException(
+            "ABNY: refusing to package a release on a FALLBACK version.\n"
+            + "versionCode explicit: " + abnyVersionCodeExplicit
+            + "  ·  versionName explicit: " + abnyVersionNameExplicit + "\n"
+            + "Play rejects a versionCode it has already accepted, so shipping the\n"
+            + "hardcoded fallback 1 works exactly once and then blocks every later\n"
+            + "upload. Supply them from the single source — pubspec.yaml's\n"
+            + "`version: <name>+<code>` line, which `flutter build` writes into\n"
+            + "android/local.properties — or, in CI, export\n"
+            + "ORG_GRADLE_PROJECT_abnyVersionCode=<monotonic number>.")
+    }
+
+    logger.lifecycle("ABNY: release signing OK — keystore " + abnyKeystoreFile.name
+            + ", alias " + abnySigningProperties.getProperty("keyAlias").trim()
+            + ", versionCode " + flutterVersionCode + ", versionName " + flutterVersionName + ".")
 }
 
 flutter {

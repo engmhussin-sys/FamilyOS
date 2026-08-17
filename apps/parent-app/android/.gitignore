@@ -9,3 +9,19 @@ local.properties
 GeneratedPluginRegistrant.java
 .cxx/
 key.properties
+
+# PHASE G — RELEASE SIGNING. NEVER COMMIT KEY MATERIAL.
+#
+# `signing.properties` holds the keystore path and three passwords and is read
+# by app/build.gradle. `signing.properties.example` IS committed (note the
+# negation below) because it is the template and carries the keytool command.
+#
+# The keystore extensions are ignored by pattern rather than by name so that a
+# developer who calls theirs `abny-upload-2027.jks` is covered too. There is no
+# safe filename for a private key in a repository.
+signing.properties
+!signing.properties.example
+*.jks
+*.keystore
+*.p12
+*.pepk
