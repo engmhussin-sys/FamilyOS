@@ -164,3 +164,67 @@ jobs:
       # Not pushed anywhere from CI — this job's only job is to catch a
       # broken Dockerfile before it reaches a deploy step, per Sprint 9's
       # "Docker Production Readiness" requirement.
+
+  # =========================================================================
+  # THE PIPELINE GATE (§27) — ONE JOB THAT CANNOT BE SKIPPED.
+  #
+  # THE PROBLEM IT REMOVES. Without this job, "the pipeline is green" is not
+  # the same statement as "every gate ran and passed". Four ways they come
+  # apart, all of them real on GitHub Actions:
+  #
+  #   * `docker` has `needs: backend`. If backend fails, docker is SKIPPED —
+  #     and a skipped job has no conclusion, so the Docker image was never
+  #     built and nothing says so.
+  #   * a job cancelled by a concurrency group ends `cancelled`, not `failure`.
+  #   * a reusable workflow whose matrix expression evaluates to an empty list
+  #     produces zero jobs and a green run that built nothing at all.
+  #   * branch protection can only require status checks by NAME, and matrix
+  #     job names change with their inputs, so a renamed matrix silently stops
+  #     being required.
+  #
+  # `if: always()` runs this in every one of those cases and it accepts only
+  # the literal string `success` from each dependency. A pipeline that did not
+  # ANSWER a question must be red, not green — that is the whole of §27.
+  #
+  # THIS is the job to mark as the required status check on `main`.
+  # =========================================================================
+  ci-gate:
+    name: CI gate (every job must have actually run)
+    if: always()
+    needs: [backend, admin-dashboard, flutter, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verdict
+        run: |
+          declare -A R=(
+            [backend]="${{ needs.backend.result }}"
+            [admin-dashboard]="${{ needs['admin-dashboard'].result }}"
+            [flutter]="${{ needs.flutter.result }}"
+            [docker]="${{ needs.docker.result }}"
+          )
+          {
+            echo "## CI gate"
+            echo ""
+            echo "Only \`success\` is accepted. \`skipped\` and \`cancelled\` are"
+            echo "failures here on purpose: they mean the pipeline did not answer"
+            echo "the question, which is not the same as answering it well."
+            echo ""
+            echo "| job | result |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fail=0
+          for job in backend admin-dashboard flutter docker; do
+            res="${R[$job]}"
+            echo "| $job | \`$res\` |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$res" != "success" ]; then
+              echo "::error::Job '$job' did not succeed (result: $res). If that reads 'skipped' or 'cancelled', this pipeline produced NO evidence about '$job' at all — and a run that measured nothing must not be green."
+              fail=1
+            fi
+          done
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$fail" = "0" ]; then
+            echo "All four gates ran and passed: backend tests + build, admin tests + build, both Flutter apps through pub get -> analyze -> test -> build apk --debug, and the production Docker image." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $fail

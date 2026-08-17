@@ -35,10 +35,12 @@ name: Flutter — analyze, test, build APK
 #
 # STATIC PRE-ANALYSIS. Everything the repository could decide without a Dart
 # SDK has already been decided and fixed by `scripts/dart_preflight.py`
-# (12 checks, each with a negative control in
-# `scripts/dart_preflight_selftest.py`). It runs first, here, so a regression
-# in the cheap checks is caught before a Flutter SDK is even downloaded.
-# It is NOT a substitute for `flutter analyze` and never claims to be.
+# (25 checks — Phase C's 12 plus Phase E's 13 — each with a negative control
+# in `scripts/dart_preflight_selftest.py`, 26 in total). It runs first, here,
+# so a regression in the cheap checks is caught before a Flutter SDK is even
+# downloaded. It is NOT a substitute for `flutter analyze` and never claims
+# to be: its own printed abstention counters are an order of magnitude larger
+# than its findings.
 # ===========================================================================
 
 on:
@@ -115,10 +117,10 @@ jobs:
 
       # The negative controls first: if the checkers themselves are broken,
       # their silence on the real tree means nothing.
-      - name: Preflight negative controls (12 seeded faults must be caught)
+      - name: Preflight negative controls (26 seeded faults must be caught)
         run: python3 scripts/dart_preflight_selftest.py -v
 
-      - name: Dart preflight (12 checks over both apps)
+      - name: Dart preflight (25 checks over both apps)
         run: python3 scripts/dart_preflight.py
 
       - name: Import / package-declaration audit
@@ -176,6 +178,69 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+
+      # ---------------------------------------------------------------
+      # TOOLCHAIN ASSERTION (§27) — FAIL LOUDLY, NEVER SKIP QUIETLY.
+      #
+      # WHY THIS STEP EXISTS. Everything below it assumes `flutter` runs and
+      # runs at the PINNED version. Three ways that assumption can break
+      # without anyone noticing:
+      #
+      #   1. `subosito/flutter-action` succeeds but leaves nothing usable on
+      #      PATH (a partial or corrupt SDK cache). `flutter analyze` then
+      #      exits 127 and the run reddens with "command not found", which
+      #      reads like a repository problem and is not one.
+      #   2. `cache: true` restores a cache keyed on something that drifted,
+      #      so a DIFFERENT Flutter version analyses the tree. The run can go
+      #      green while telling us nothing about the combination this
+      #      repository actually pins — the worst outcome available, because
+      #      it is a false green.
+      #   3. setup-java is skipped or overridden and Gradle meets JDK 21,
+      #      which Gradle 8.3 cannot run on at all.
+      #
+      # So the pins are ASSERTED, not assumed, and a mismatch stops the job
+      # here with a message naming the file the pin came from. This is the
+      # difference between "CI could not test this" and "CI tested it and it
+      # is broken" — and the whole point of §27 is that those two must never
+      # look the same.
+      # ---------------------------------------------------------------
+      - name: Assert the Flutter/Java toolchain is present and pinned
+        run: |
+          fail=0
+
+          for tool in flutter dart java; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::TOOLCHAIN UNAVAILABLE — '$tool' is not on PATH after setup-java + flutter-action. This job cannot analyse, test or build ${{ matrix.app }}, and it is failing rather than reporting a green run that measured nothing."
+              fail=1
+            fi
+          done
+          if [ "$fail" != "0" ]; then exit 1; fi
+
+          flutter --version
+          java -version 2>&1
+
+          got_flutter=$(flutter --version | head -1 | sed -E 's/^Flutter ([0-9.]+).*/\1/')
+          if [ "$got_flutter" != "${{ env.FLUTTER_VERSION }}" ]; then
+            echo "::error::FLUTTER VERSION MISMATCH — the runner has $got_flutter but this repository pins ${{ env.FLUTTER_VERSION }} (env.FLUTTER_VERSION in this file). Flutter 3.27+ defaults compileSdk to 35 and AGP 8.1.1 (apps/${{ matrix.app }}/android/settings.gradle) refuses anything above 34, so a build on the wrong SDK proves nothing about the pinned one. Failing instead of measuring the wrong thing."
+            fail=1
+          fi
+
+          got_java=$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+).*/\1/')
+          if [ "$got_java" != "${{ env.JAVA_VERSION }}" ]; then
+            echo "::error::JAVA VERSION MISMATCH — the runner has JDK $got_java but this repository needs ${{ env.JAVA_VERSION }}. gradle-wrapper.properties pins Gradle 8.3, which only learned to RUN on JDK 21 in 8.5; on the wrong JDK the Android build dies with 'Unsupported class file major version' before compiling anything."
+            fail=1
+          fi
+
+          {
+            echo "### Toolchain assertion — ${{ matrix.app }}"
+            echo ""
+            echo "| tool | pinned | on runner | ok |"
+            echo "|---|---|---|---|"
+            echo "| Flutter | ${{ env.FLUTTER_VERSION }} | $got_flutter | $([ "$got_flutter" = "${{ env.FLUTTER_VERSION }}" ] && echo yes || echo **NO**) |"
+            echo "| JDK | ${{ env.JAVA_VERSION }} | $got_java | $([ "$got_java" = "${{ env.JAVA_VERSION }}" ] && echo yes || echo **NO**) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit $fail
 
       # ---------------------------------------------------------------
       # FIREBASE — parent app only. See apps/parent-app/android/app/
@@ -495,5 +560,57 @@ jobs:
           if [ "${B:-1}" != "0" ]; then
             echo "::error::flutter build apk --debug failed for ${{ matrix.app }}. Full log: artifact buildlog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}."
             fail=1
+          fi
+          exit $fail
+
+  # =========================================================================
+  # THE GATE (§27) — "SKIPPED" IS NOT "PASSED".
+  #
+  # GitHub's default aggregation is the problem this job exists to remove. If
+  # `preflight` fails, the `flutter` matrix job does not fail — it is SKIPPED,
+  # and a skipped job reports no conclusion of its own. The same is true when
+  # a job is cancelled by the concurrency group, or when the matrix expression
+  # at the top of this file evaluates to an empty list and produces ZERO jobs,
+  # which is a green run that built nothing at all.
+  #
+  # `if: always()` makes this job run in every one of those cases, and it
+  # refuses anything that is not literally `success`. So the only way this
+  # workflow can end green is if both apps really went through
+  # pub get -> analyze -> test -> build apk --debug.
+  #
+  # Make THIS the required status check on the branch, not the matrix jobs:
+  # its name is stable, while `${{ matrix.app }}` names come and go with the
+  # workflow_dispatch input.
+  # =========================================================================
+  gate:
+    name: Flutter gate (fails on skip, cancel or empty matrix)
+    if: always()
+    needs: [preflight, flutter]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verdict
+        run: |
+          pre="${{ needs.preflight.result }}"
+          flu="${{ needs.flutter.result }}"
+          {
+            echo "## Flutter gate"
+            echo ""
+            echo "| job | result | accepted |"
+            echo "|---|---|---|"
+            echo "| preflight | \`$pre\` | only \`success\` |"
+            echo "| flutter (both apps) | \`$flu\` | only \`success\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fail=0
+          if [ "$pre" != "success" ]; then
+            echo "::error::The static preflight did not succeed (result: $pre). Nothing downstream ran, so this run measured NOTHING about the apps. Failing loudly rather than reporting a green pipeline that skipped its own subject."
+            fail=1
+          fi
+          if [ "$flu" != "success" ]; then
+            echo "::error::The Flutter matrix did not succeed (result: $flu). '$flu' is not 'success' — a skipped, cancelled or empty matrix is a pipeline that did not answer the question, which §27 requires be red, not green."
+            fail=1
+          fi
+          if [ "$fail" = "0" ]; then
+            echo "Both apps completed pub get -> analyze -> test -> build apk --debug."
           fi
           exit $fail
