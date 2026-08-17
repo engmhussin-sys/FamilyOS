@@ -25,6 +25,9 @@ import '../../plugins/screen_time/application/digital_wellbeing_service.dart';
 import '../../plugins/screen_time/application/critical_event_coordinator.dart';
 import '../../features/onboarding/application/onboarding_consent_store.dart';
 import '../../features/onboarding/application/oem_background_service.dart';
+import '../../features/coach/api/coach_api.dart';
+import '../../features/coach/application/coach_controller.dart';
+import '../../features/coach/data/coach_repository.dart';
 import '../../features/goals/api/achievements_api.dart';
 import '../../features/goals/application/goal_session_controller.dart';
 import '../../features/goals/application/progress_controller.dart';
@@ -250,4 +253,31 @@ final progressControllerProvider =
 final childRewardsControllerProvider =
     StateNotifierProvider<ChildRewardsController, UiState<ChildRewardsSnapshot>>((ref) {
   return ChildRewardsController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+// ---------------------------------------------------------------------------
+// THE CHILD'S COACH — `/self/coach/*`
+//
+// Four routes that shipped complete and had ZERO Flutter consumers: today's
+// encouragement, the nine-question closed vocabulary, the per-code answer,
+// and the check-in safety path. Child MVP capability 13 was a backend that
+// nothing called. Wired onto the EXISTING `apiClientProvider` — same
+// device-token auth, same coordinated refresh on 401, same B3 error-envelope
+// parsing. No second HTTP client was added.
+// ---------------------------------------------------------------------------
+
+final childCoachApiProvider = Provider<ChildCoachApi>((ref) {
+  return ChildCoachApi(ref.watch(apiClientProvider));
+});
+
+final childCoachRepositoryProvider = Provider<ChildCoachRepository>((ref) {
+  return ChildCoachRepository(ref.watch(childCoachApiProvider));
+});
+
+/// DELIBERATELY NOT `autoDispose`. Once a child has read today's card and
+/// opened a question, switching tabs and coming back should not re-hit a
+/// throttled endpoint, and should not silently discard the answer they were
+/// part-way through reading.
+final coachControllerProvider = StateNotifierProvider<CoachController, CoachState>((ref) {
+  return CoachController(ref.watch(childCoachRepositoryProvider));
 });

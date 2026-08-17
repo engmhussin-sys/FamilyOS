@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/design_system/design_system.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../coach/presentation/coach_screen.dart';
 import '../../device_status/presentation/device_home_screen.dart';
 import '../../family_growth/presentation/my_growth_screen.dart';
 import 'my_progress_screen.dart';
@@ -45,7 +46,12 @@ class _ChildHomeShellState extends ConsumerState<ChildHomeShell> {
     ref.watch(localeControllerProvider);
     final t = ref.watch(localeControllerProvider.notifier).t;
 
-    final titles = [t('today.title'), t('myRewards.title'), t('progress.title')];
+    final titles = [
+      t('today.title'),
+      t('myRewards.title'),
+      t('progress.title'),
+      t('coach.title'),
+    ];
 
     return Scaffold(
       appBar: AppBar(
@@ -76,6 +82,9 @@ class _ChildHomeShellState extends ConsumerState<ChildHomeShell> {
           TodayGoalsScreen(),
           MyRewardsScreen(),
           MyProgressScreen(),
+          // THE COACH. Appended rather than inserted so tabs 0–2 keep the
+          // positions every existing test and screenshot refers to.
+          CoachScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -99,6 +108,11 @@ class _ChildHomeShellState extends ConsumerState<ChildHomeShell> {
             icon: const Icon(Icons.insights_outlined),
             selectedIcon: const Icon(Icons.insights_rounded, color: KidColor.primary),
             label: t('shell.progress'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.emoji_emotions_outlined),
+            selectedIcon: const Icon(Icons.emoji_emotions_rounded, color: KidColor.primary),
+            label: t('shell.coach'),
           ),
         ],
       ),

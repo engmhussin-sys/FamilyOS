@@ -65,6 +65,26 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'celebrate.verifiedTitle': 'Braaavo!',
     'celebrate.waitingFallback': 'We sent your attempt to a grown-up to look at.',
     'celebrate.waitingTitle': 'It reached a grown-up',
+    // The coach tab. CHROME ONLY — every sentence the child reads about
+    // themselves (today's message, the questions, the answers, the safety
+    // card) is server-authored Arabic that has already passed the safety
+    // engine at their own age band, and is rendered verbatim rather than
+    // keyed. Nothing below is a substitute for any of it.
+    'coach.checkinHint': 'Write how you are feeling today.',
+    'coach.checkinPlaceholder': 'I feel...',
+    'coach.checkinSend': 'Send',
+    'coach.checkinTitle': 'How are you feeling today?',
+    'coach.copyNumber': 'Copy the number',
+    'coach.emptyBody': 'Come back a little later and there will be a new message.',
+    'coach.emptyTitle': 'Nothing here just yet',
+    'coach.errorTitle': 'We could not get today\'s message',
+    'coach.loading': 'Getting today\'s message...',
+    'coach.numberCopied': 'Number copied',
+    'coach.questionsSubtitle': 'Tap a question to read the answer.',
+    'coach.questionsTitle': 'Questions you might have',
+    'coach.safetyDismiss': 'Okay, got it',
+    'coach.title': 'My coach',
+    'coach.todayTitle': 'Today\'s message',
     'common.loading': 'One sec...',
     'common.minutesValue': '{{count}} min',
     'goalDetail.bonusMinutes': 'extra minutes',
@@ -130,6 +150,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'session.title': 'Working on it',
     'session.uploadNotReady': 'Sending files isn\'t ready yet. We\'ll send your attempt to a grown-up to look at.',
     'session.uploadTitle': 'Recording or a picture',
+    'shell.coach': 'Coach',
     'shell.deviceSettings': 'Device settings',
     'shell.myGrowth': 'My growth',
     'shell.progress': 'Progress',
@@ -409,6 +430,33 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'celebrate.verifiedTitle': 'برااافو!',
     'celebrate.waitingFallback': 'بعتنا محاولتك لحد كبير يشوفها.',
     'celebrate.waitingTitle': 'وصلت لحد كبير',
+    // The coach tab, Arabic chrome. Same rule as the `en` block: the
+    // sentences the child reads about themselves are server-authored and
+    // rendered verbatim; only these labels are keyed.
+    //
+    // `coach.checkinHint` PROMISES NOTHING, DELIBERATELY. It does not say
+    // "nobody will read this" — a check-in that trips the distress
+    // classifier does alert a parent (generically, quoting nothing). Nor
+    // does it say "we will tell your parent", because a disclosed detector
+    // is a detector a child in trouble stops writing to. Whether, and how,
+    // to disclose that escalation to the child is a PRODUCT DECISION that
+    // has not been taken; until it is, this line states only what the child
+    // is being asked to do.
+    'coach.checkinHint': 'اكتب اللي حاسس بيه النهاردة.',
+    'coach.checkinPlaceholder': 'أنا حاسس إني…',
+    'coach.checkinSend': 'ابعت',
+    'coach.checkinTitle': 'إنت حاسس بإيه النهاردة؟',
+    'coach.copyNumber': 'انسخ الرقم',
+    'coach.emptyBody': 'ارجع بعد شوية وهتلاقي رسالة جديدة.',
+    'coach.emptyTitle': 'مفيش حاجة هنا لسه',
+    'coach.errorTitle': 'مقدرناش نجيب رسالة النهاردة',
+    'coach.loading': 'بنجهّز رسالة النهاردة…',
+    'coach.numberCopied': 'الرقم اتنسخ',
+    'coach.questionsSubtitle': 'اضغط على السؤال وهتلاقي الإجابة.',
+    'coach.questionsTitle': 'أسئلة ممكن تكون في بالك',
+    'coach.safetyDismiss': 'تمام، فهمت',
+    'coach.title': 'مدرّبي',
+    'coach.todayTitle': 'رسالة النهاردة',
     'common.loading': 'ثانية واحدة…',
     'common.minutesValue': '{{count}} دقيقة',
     'goalDetail.bonusMinutes': 'دقيقة زيادة',
@@ -474,6 +522,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'session.title': 'شغّال عليه',
     'session.uploadNotReady': 'رفع الملفات لسه مش جاهز. هنبعت محاولتك لحد كبير يشوفها.',
     'session.uploadTitle': 'تسميع أو صورة',
+    'shell.coach': 'مدرّبي',
     'shell.deviceSettings': 'إعدادات الجهاز',
     'shell.myGrowth': 'نموّي',
     'shell.progress': 'تقدّمي',
