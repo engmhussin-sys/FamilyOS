@@ -37,6 +37,8 @@
  * fixture with a 429 that looks like a product defect and is not — the same
  * reason, and the same three lines, as `reward-engine.e2e.spec.ts`.
  */
+import { randomUUID } from 'node:crypto';
+
 import type { INestApplication } from '@nestjs/common';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import request = require('supertest');
@@ -142,7 +144,20 @@ export async function bootGoldenWorld(
   const relay = app.get(OutboxRelay);
   const tokens = app.get(TokenService);
 
-  const stamp = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  /**
+   * THE FIXTURE'S UNIQUENESS, AND WHY `Date.now()` CANNOT CARRY IT.
+   *
+   * This read `${Date.now()}${Math.floor(Math.random() * 1000)}`, and five of
+   * the eight golden files FREEZE the clock before booting — deliberately, and
+   * §2 of the phase report argues for it. So `Date.now()` is a CONSTANT here,
+   * and the entire entropy in a registration email was three decimal digits:
+   * a 1-in-1000 collision per suite boot, against a database this suite is
+   * explicitly designed to be re-runnable on. It fired, as a `409 CONFLICT` on
+   * `/auth/register` that reads like a product defect and is not one.
+   *
+   * `randomUUID` is not affected by fake timers and needs no clock.
+   */
+  const stamp = randomUUID().replace(/-/g, '');
 
   /**
    * `async () => await fn()` and NOT `fn`, and the difference is load-bearing.

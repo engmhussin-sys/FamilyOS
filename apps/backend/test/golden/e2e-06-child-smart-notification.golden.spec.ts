@@ -34,7 +34,36 @@
  *
  * AND FIRST, ACT I ASKS THE ONLY QUESTION THAT MATTERS COMMERCIALLY: does a
  * child who earns a reward hear anything at all today? Measured over real HTTP.
- * The answer is recorded as PF-E-006 and is not softened here.
+ * The answer was NO, and it was recorded as PF-E-006.
+ *
+ * ---------------------------------------------------------------------------
+ * `F6-006` — THE CHILD PATH HAS A PRODUCER, AND ACT I IS THE PROOF.
+ *
+ * ACT I is unchanged as a SCENARIO — the same five HTTP calls on a real device
+ * token, the same outbox drain, no engine call and no test double anywhere. Its
+ * assertions are rewritten to the new answer, each carrying the line it
+ * replaced:
+ *
+ *   BEFORE  `child_messages` = 0 rows · the child's inbox empty · the only
+ *           CHILD-facing producer in `src/` was three English literals with no
+ *           caller.
+ *   AFTER   ONE row, `PENDING`, `delivered_at = NULL`, `source_event_id` the
+ *           producer's own key plus the `:child` facet, and a body that is
+ *           BYTE-IDENTICAL to what `COPY_CATALOGUE` renders for
+ *           `REWARD_GRANTED_CHILD` at this child's tone band in `ar` — inside
+ *           the safety ceiling `age-band.ts` sets for a twelve-year-old, and
+ *           free of the punitive vocabulary CONTEXT §3 principle 7 forbids.
+ *
+ * ACT I also carries the `PE-N-001` GUARD, because that defect is why this half
+ * of the product was dead in the first place: a notification type checked
+ * against a whitelist of RECOMMENDATION types, silently refused, one message at
+ * a time, for months. The two vocabularies are asserted to still be disjoint on
+ * the real `SafetyEngineService` — so a future collision fails beside the
+ * scenario that measured the silence rather than in a household.
+ *
+ * The English generator is deliberately NOT wired and deliberately NOT deleted;
+ * see the test that still pins it, and the Wiring Report's open risks.
+ * ---------------------------------------------------------------------------
  *
  * Real PostgreSQL, real Redis, real booted app, real HTTP. Nothing stubbed.
  */
@@ -61,6 +90,8 @@ import {
   renderNotificationCopy,
 } from '../../src/modules/notifications/domain/engine/notification-copy';
 import { countWords, profileForAge } from '../../src/modules/ai-core/domain/age-band';
+import { SafetyEngineService } from '../../src/modules/ai-core/application/services/safety-engine.service';
+import { NOTIFICATION_CLASSES } from '../../src/shared/notifications/notification-class';
 
 import request = require('supertest');
 
@@ -102,11 +133,23 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
     if (world) await world.close();
   });
 
-  const childMessageRows = (h: GoldenHousehold): Promise<any[]> =>
-    world.raw<any[]>(
-      `SELECT * FROM "child_messages" WHERE "family_id" = $1::uuid ORDER BY "created_at", "id"`,
-      h.familyId,
-    );
+  /** `category` on a `child_messages` row IS the notification type the producer
+   * named. ACT I's reward message and ACT II's streak message live in the same
+   * table for the same child, so every assertion below says WHICH CAUSE it is
+   * about rather than trusting insertion order. */
+  const childMessageRows = (h: GoldenHousehold, category?: string): Promise<any[]> =>
+    category
+      ? world.raw<any[]>(
+          `SELECT * FROM "child_messages"
+             WHERE "family_id" = $1::uuid AND "category" = $2
+             ORDER BY "created_at", "id"`,
+          h.familyId,
+          category,
+        )
+      : world.raw<any[]>(
+          `SELECT * FROM "child_messages" WHERE "family_id" = $1::uuid ORDER BY "created_at", "id"`,
+          h.familyId,
+        );
 
   const decisionRows = (h: GoldenHousehold, eventType?: string): Promise<any[]> =>
     eventType
@@ -177,36 +220,143 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
     });
 
     /**
-     * PF-E-006, HALF ONE — SILENCE.
+     * PF-E-006, HALF ONE — SILENCE. **CLOSED BY `F6-006`, AND THIS IS THE
+     * PROOF, FROM THE PRODUCTION PATH.**
      *
-     * The parent gets a notification (E2E-01 proves it). The child, whose app is
-     * the product's differentiator, gets nothing: `NotificationRewardConsumer`
-     * is the only subscriber to `REWARD_GRANTED` and it targets `PARENT`. There
-     * is no `targetAudience: 'CHILD'` producer anywhere on the reward path.
+     * WHAT THIS TEST SAID BEFORE, VERBATIM:
+     *
+     *     it('MEASURED — the child is told NOTHING when they earn a reward')
+     *     expect(await childMessageRows(older)).toHaveLength(0);
+     *
+     * The parent got a notification (E2E-01 proved it). The child, whose app is
+     * the product's whole differentiator, got nothing:
+     * `NotificationRewardConsumer` was the only subscriber to `REWARD_GRANTED`
+     * and it targeted `PARENT`. There was no `targetAudience: 'CHILD'` producer
+     * anywhere on the reward path.
+     *
+     * NOTHING ABOVE THIS TEST CHANGED — the same five HTTP calls in ACT I's
+     * first test, the same outbox drain, no engine call and no test double. The
+     * consumer now fires a SECOND cause for the child, and every property this
+     * scenario's header lists is asserted below ON THE PRODUCTION ROW rather
+     * than on an engine call written by this file.
      */
-    it('MEASURED — the child is told NOTHING when they earn a reward', async () => {
-      expect(await childMessageRows(older)).toHaveLength(0);
+    it('the child IS told when they earn a reward — Arabic, age-banded, from the catalogue, behind the gate', async () => {
+      const rows = await childMessageRows(older, 'REWARD_GRANTED_CHILD');
+      expect(rows).toHaveLength(1);
+      const [message] = rows;
 
+      // ARABIC. `older` is twelve, the household registered through
+      // `/auth/register` with no `locale` sent — the way the mobile app
+      // registers one — so this is also PF-E-002 holding on a production path.
+      expect(message.body).toMatch(ARABIC_LETTERS);
+      expect(message.body).not.toMatch(WESTERN_DIGITS);
+
+      // FROM LOCALIZATION, byte-identical. The decision row names the copy key
+      // and the tone band; rendering that key at that band must reproduce the
+      // stored sentence exactly, which is what «the string is not typed into a
+      // service» means as an assertion.
+      const [decision] = await decisionRows(older, 'REWARD_GRANTED_CHILD');
+      expect(decision).toBeDefined();
+      expect(decision.target_audience).toBe('CHILD');
+      expect(decision.locale).toBe('ar');
+      expect(decision.age_band).toBe('11-13');
+      expect(decision.copy_key).toBe('REWARD_GRANTED_CHILD');
+      const rendered = renderNotificationCopy({
+        key: decision.copy_key,
+        audience: 'CHILD',
+        toneBand: '11-13',
+        locale: 'ar',
+        variables: {},
+      });
+      expect(message.body).toBe(rendered.body);
+      expect(message.title).toBe(rendered.title);
+      expect(hasEnumOrPlaceholderLeak(message.body)).toBe(false);
+      expect(hasEnumOrPlaceholderLeak(message.title)).toBe(false);
+
+      // AGE-APPROPRIATE: inside the SAFETY ceiling `age-band.ts` sets for a
+      // twelve-year-old — the ceiling the tone engine composes UNDER, read from
+      // that module rather than restated here.
+      const ceiling = profileForAge(12);
+      expect(countWords(message.body)).toBeLessThanOrEqual(ceiling.maxWords);
+      expect(message.body.length).toBeLessThanOrEqual(ceiling.maxChars);
+
+      // NON-PUNITIVE — CONTEXT §3 principle 7.
+      for (const word of PUNITIVE_VOCABULARY) {
+        expect(message.body).not.toContain(word);
+        expect(message.title).not.toContain(word);
+      }
+
+      // GATED AND KEYED. `PENDING`, undelivered, and carrying the PRODUCER's
+      // own key plus the `:child` audience facet — the parent's notification
+      // for the same reward carries the same key without it.
+      expect(message.approval_status).toBe('PENDING');
+      expect(message.delivered_at).toBeNull();
+      expect(message.source_event_id).toMatch(/^evt:.+:child$/);
+
+      // AND THE CHILD DOES NOT SEE IT YET. The wedge did not become a way
+      // around §5.8's approval gate.
       const inbox = await request(world.http).get(`${P}/life-intelligence/self/messages`).set(asChild(older));
       expect(inbox.body).toHaveLength(0);
     });
 
     /**
-     * PF-E-006, HALF TWO — AND THE ONE CHILD-FACING PRODUCER THAT EXISTS IS
-     * HARDCODED ENGLISH, AND UNREACHABLE.
+     * `PE-N-001` IS THE REASON THIS TEST EXISTS.
      *
-     * `evaluateSmartNotificationCandidates` is the only function in `src/` that
-     * builds a `targetAudience: 'CHILD'` candidate. Its three sentences are
+     * That defect dropped EVERY child notification for months while every
+     * component reported success: a notification type was validated against a
+     * whitelist of recommendation types, and the two vocabularies do not share
+     * a single member. The child path fails QUIETLY by default, and a producer
+     * that speaks the wrong vocabulary looks exactly like a household that
+     * happened to be capped.
+     *
+     * So the two vocabularies are asserted to still be disjoint, on the real
+     * `SafetyEngineService` from the booted app. If someone ever adds a
+     * notification type to `ALLOWED_RECOMMENDATION_TYPES`, or renames one into
+     * a collision, this fails HERE — beside the scenario that measured the
+     * silence — rather than in production, one dropped message at a time.
+     */
+    it('PE-N-001 GUARD — the notification vocabulary and the recommendation whitelist are still disjoint', () => {
+      const safety = world.app.get(SafetyEngineService);
+      const childFacingTypes = Object.entries(NOTIFICATION_CLASSES)
+        .filter(([, entry]) => entry.audience === 'CHILD' || entry.audience === 'BOTH')
+        .map(([type]) => type);
+      expect(childFacingTypes.length).toBeGreaterThan(5);
+
+      for (const type of childFacingTypes) {
+        // Under the RECOMMENDATION vocabulary every one of them is refused —
+        // that IS `PE-N-001`, still true, and it is why the marker exists.
+        const asRecommendation = safety.validate(type, 'عنوان', 'نص');
+        expect(`${type}:${asRecommendation.isSafe}`).toBe(`${type}:false`);
+        // Under the CHILD_MESSAGE vocabulary (`null`) the unsafe-pattern scan
+        // still runs and safe copy passes. That is the half that protects.
+        expect(safety.validate(null, 'عنوان', 'نص').isSafe).toBe(true);
+      }
+
+      // And the spyware scan is NOT weakened by the null: it is the half of
+      // `validate` that actually protects a child, and it still bites.
+      expect(safety.validate(null, 'Title', 'spy on your child').isSafe).toBe(false);
+    });
+
+    /**
+     * PF-E-006, HALF TWO — THE DEAD ENGLISH GENERATOR, STILL DEAD, AND NOW
+     * DEMONSTRABLY SUPERSEDED.
+     *
+     * `evaluateSmartNotificationCandidates` WAS the only function in `src/`
+     * that built a `targetAudience: 'CHILD'` candidate. Its three sentences are
      * English string literals written inline — not catalogue keys, not
      * localised, not age-banded, not safety-filtered. Its only caller is
      * `SmartNotificationIntegrationService.processSignals`, and `processSignals`
      * has NO caller at all: no controller, no consumer, no scheduled job.
      *
-     * This is asserted rather than described because the two facts together are
-     * the finding: the child half of the notification surface is dead code, and
-     * if it were wired tomorrow it would speak English to an Egyptian child.
+     * `F6-006` did NOT wire it, and did not delete it. It added a real producer
+     * on the reward path instead, and the test above proves that producer
+     * speaks Arabic from the catalogue. This test is kept UNCHANGED and is now
+     * a different statement: the English generator is still there, still
+     * unreachable, and is the thing a future commit should delete rather than
+     * connect. Its three types are the three the coverage guard reports as
+     * having no producer, which is how the two files agree.
      */
-    it('MEASURED — the only CHILD-facing producer in the product emits hardcoded ENGLISH literals', () => {
+    it('the legacy signal generator is STILL hardcoded English, and still has no caller', () => {
       const candidates = evaluateSmartNotificationCandidates({
         currentHourOfDay: 15,
         screenMinutesLast90: 120,
@@ -242,7 +392,7 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
       expect(result.decision.targetAudience).toBe('CHILD');
       expect(result.outcome?.decision).toBe('SEND');
 
-      const [message] = await childMessageRows(older);
+      const [message] = await childMessageRows(older, 'STREAK_ACHIEVED');
       expect(message).toBeDefined();
       bodies.older = message.body;
 
@@ -304,7 +454,7 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
       const result = await fireStreak(younger, 'first', goldenAt('12:10'));
       expect(result.decision.targetAudience).toBe('CHILD');
 
-      const [message] = await childMessageRows(younger);
+      const [message] = await childMessageRows(younger, 'STREAK_ACHIEVED');
       bodies.younger = message.body;
 
       const [decision] = await decisionRows(younger, 'STREAK_ACHIEVED');
@@ -333,7 +483,7 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
     });
 
     it('THE REPLAY — the same cause delivered again is ONE row, refused by the database', async () => {
-      const before = await childMessageRows(older);
+      const before = await childMessageRows(older, 'STREAK_ACHIEVED');
       expect(before).toHaveLength(1);
 
       // Twice more, and well past the fatigue guard's five-minute duplicate
@@ -341,7 +491,7 @@ describeGolden('GOLDEN E2E-06 — the sentence that reaches the child, and the g
       await fireStreak(older, 'first', goldenAt('12:25'));
       await fireStreak(older, 'first', goldenAt('12:55'));
 
-      const after = await childMessageRows(older);
+      const after = await childMessageRows(older, 'STREAK_ACHIEVED');
       expect(after).toHaveLength(1);
       expect(after[0].id).toBe(before[0].id);
     });

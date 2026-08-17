@@ -181,6 +181,56 @@ export const COPY_CATALOGUE: Readonly<Record<string, CopyEntry>> = Object.freeze
     },
   },
 
+  /**
+   * PHASE F (`F6-006`, closing `PF-E-006`) — THE CHILD'S OWN REWARD SENTENCE,
+   * AND THE REASON IT IS A NEW KEY RATHER THAN A SECOND VARIANT.
+   *
+   * The Golden E2E suite measured the child half of the notification surface as
+   * SILENT: a child completed a task, was paid, and `child_messages` stayed at
+   * zero rows, because the only `REWARD_GRANTED` subscriber targeted the parent
+   * and there was no `targetAudience: 'CHILD'` producer anywhere on the reward
+   * path. That is the commercial wedge failing — CONTEXT §1's «تطبيق الطفل هو
+   * منتج قائم بذاته يريد الطفل فتحه» with no feedback loop in it.
+   *
+   * `REWARD_GRANTED`'s entry is `audience: 'PARENT'`, and `audience` is a
+   * property of the ENTRY here — one key cannot be both. Splitting the key is
+   * also what lets the two sides be scored, capped and suppressed
+   * INDEPENDENTLY, which they should be: a parent at their daily cap should not
+   * silence the child's own «حصلت على مكافأة».
+   *
+   * NO VARIABLES, deliberately. The `REWARD_GRANTED` domain event carries a
+   * grant COUNT and a resulting balance, and neither belongs in a sentence to a
+   * seven-year-old: «حصلت على ٣ مكافآت» is a receipt, not encouragement, and
+   * the balance is a number the child's own app already shows. The sentence
+   * points at the app; the app holds the detail (docs/06 §8.3).
+   */
+  REWARD_GRANTED_CHILD: {
+    category: 'REWARD',
+    audience: 'CHILD',
+    variables: [],
+    variants: {
+      '5-7': t('مكافأة جديدة', 'حصلت على مكافأة جديدة 🎉', 'New reward', 'You earned a new reward 🎉'),
+      '8-10': t(
+        'مكافأة جديدة',
+        'حصلت على مكافأة جديدة اليوم 🎉',
+        'New reward',
+        'You earned a new reward today 🎉',
+      ),
+      '11-13': t(
+        'مكافأة جديدة',
+        'حصلت على مكافأة جديدة اليوم — افتح التطبيق لتراها',
+        'New reward',
+        'You earned a new reward — see it in the app',
+      ),
+      '14-17': t(
+        'مكافأة جديدة',
+        'حصلت على مكافأة جديدة اليوم، وهي محفوظة في سجلك',
+        'New reward',
+        'You earned a new reward today, and it is saved to your record',
+      ),
+    },
+  },
+
   BADGE_EARNED: {
     category: 'ACHIEVEMENT',
     audience: 'CHILD',

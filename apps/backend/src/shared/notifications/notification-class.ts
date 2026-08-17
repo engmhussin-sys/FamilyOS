@@ -146,6 +146,13 @@ export const NOTIFICATION_CLASSES: Readonly<Record<string, NotificationClassEntr
     why:
       'The defect in one line: a reward the child ACTUALLY EARNED, announced into a ten-hour hole. The fact does not decay — the child earned it and the ledger row is permanent — so the notification must not either.',
   },
+  REWARD_GRANTED_CHILD: {
+    quietHours: 'DEFER',
+    audience: 'CHILD',
+    category: 'REWARD',
+    why:
+      'PF-E-006: the child half of a reward, which had no type, no sentence and no producer — a child earned something, was paid, and was told nothing. Same argument as REWARD_GRANTED one audience over, and the reason it is a separate type rather than the same one is that the two audiences must be capped and scored independently: a parent at their daily maximum must not be able to silence the child’s own news about their own work.',
+  },
   BADGE_EARNED: {
     quietHours: 'DEFER',
     audience: 'CHILD',

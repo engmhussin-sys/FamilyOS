@@ -7,6 +7,7 @@ import { AI_PROVIDER } from '../../../ai-core/domain/ai-provider.port';
 import type { IAIProvider } from '../../../ai-core/domain/ai-provider.port';
 import { PrismaCommunicationRepository } from '../../infrastructure/repositories/prisma-communication.repository';
 import { IChildMessage } from '../../domain/communication.types';
+import { NOTIFICATION_CLASSES } from '../../../../shared/notifications/notification-class';
 
 /** Mirrors ai-core's own PHRASING_SYSTEM_PROMPT convention exactly
  * (recommendation-engine.service.ts) \u2014 same constraint style, tuned
@@ -145,6 +146,41 @@ export class FamilyCommunicationService {
     skipAiRephrase = false,
   ): Promise<IChildMessage | null> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+
+    /**
+     * PHASE F (`F6-006`) — THE ASSERTION THAT MAKES `PE-N-001` LOUD.
+     *
+     * `PE-N-001` was not a wrong answer. It was a CATEGORY ERROR wearing a
+     * wrong answer's clothes: a NOTIFICATION TYPE was handed to a whitelist of
+     * RECOMMENDATION TYPES, `validate` correctly replied «Unknown
+     * recommendation type», and the caller correctly reported a delivery
+     * failure. Every layer behaved impeccably and the entire child half of the
+     * notification surface was dead, one dropped message at a time, with no
+     * signal distinguishable from an unlucky household.
+     *
+     * The `categoryVocabulary` marker fixes the CURRENT callers, and
+     * `smart-notification-integration.service.spec.ts` pins it as a literal.
+     * This check fixes the CLASS: a future caller that passes a notification
+     * type under the recommendation vocabulary — the exact mistake, by
+     * definition — now fails with a sentence naming the confusion instead of
+     * dissolving into a per-message rejection nobody reads.
+     * `NOTIFICATION_CLASSES` is the notification vocabulary's own registry, so
+     * the two sets are COMPARED rather than guessed at, and a type added
+     * tomorrow is inside this check without anyone editing it.
+     *
+     * IT IS AN ASSERTION, NOT A CORRECTION. Silently switching to `null` would
+     * be this defect's third costume: a caller confused about which vocabulary
+     * it is speaking is confused about more than one argument, and the correct
+     * outcome is that a human reads the message.
+     */
+    if (categoryVocabulary === 'AI_RECOMMENDATION' && category in NOTIFICATION_CLASSES) {
+      throw new BadRequestException(
+        `PE-N-001: "${category}" is a NOTIFICATION TYPE, not a recommendation type. ` +
+          `A caller delivering a notification to a child must pass categoryVocabulary='CHILD_MESSAGE'; ` +
+          `under 'AI_RECOMMENDATION' it is checked against a six-member whitelist it can never be in, ` +
+          `and every message on this path is silently rejected.`,
+      );
+    }
 
     const safetyRecommendationType = categoryVocabulary === 'AI_RECOMMENDATION' ? category : null;
     const seedSafety = this.safetyEngine.validate(safetyRecommendationType, title, body);

@@ -252,7 +252,10 @@ describeGolden('GOLDEN E2E-05 — what the parent is actually told, and whether 
      * achievement over HTTP and drain the outbox.
      */
     it('the product wrote a notification AND recorded the decision behind it — the ledger is populated from production', async () => {
-      const rows = await decisionRows();
+      // The PARENT's row. The same cause also writes the CHILD's — `F6-006`,
+      // asserted by the next test — and this one is about what the PARENT was
+      // told and why.
+      const rows = (await decisionRows()).filter((r) => r.target_audience === 'PARENT');
       expect(rows).toHaveLength(1);
 
       const [row] = rows;
@@ -274,10 +277,35 @@ describeGolden('GOLDEN E2E-05 — what the parent is actually told, and whether 
         .get(`${P}/notifications/decisions`)
         .set(asParent(home));
       expect(decisions.status).toBe(200);
-      expect(decisions.body).toHaveLength(1);
-      expect(decisions.body[0].decision).toBe('SEND');
+      expect(decisions.body.length).toBeGreaterThanOrEqual(1);
+      expect(decisions.body.every((d: any) => d.decision === 'SEND')).toBe(true);
     });
 
+    /**
+     * PF-E-006 — THE CHILD'S HALF, MEASURED ON THE SAME PRODUCTION LOOP.
+     *
+     * ACT I is a PARENT scenario and this assertion is deliberately narrow: the
+     * child's own sentence, tone band and safety ceiling are `e2e-06`'s
+     * subject. What belongs here is the fact that ONE cause now produces TWO
+     * decisions and that they do not collide — the audience facet in
+     * `(family_id, source_event_id, target_audience)` doing its job on a real
+     * outbox event rather than on an engine call written by a test.
+     */
+    it('one cause, two audiences: the child is decided for too, on the same source event', async () => {
+      const rows = await decisionRows();
+      expect(rows.map((r) => r.target_audience).sort()).toEqual(['CHILD', 'PARENT']);
+      // ONE cause. The keys are identical and the AUDIENCE is what separates
+      // the two rows — not two source events invented per audience.
+      expect(new Set(rows.map((r) => r.source_event_id)).size).toBe(1);
+      // Two types, two copy keys, two independent scores: the parent's load
+      // cannot suppress the child's news about their own work.
+      expect(rows.map((r) => r.event_type).sort()).toEqual(['REWARD_GRANTED', 'REWARD_GRANTED_CHILD']);
+      for (const row of rows) {
+        expect(row.decision).toBe('SEND');
+        expect(row.outcome).toBe('SEND');
+        assertTheArithmeticReconciles(row);
+      }
+    });
   });
 
   // =========================================================================

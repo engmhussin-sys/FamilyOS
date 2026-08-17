@@ -438,19 +438,39 @@ describeGolden('GOLDEN E2E-01 — a parent sets a Quran goal and a child earns i
    *
    * `GET /life-intelligence/self/messages` is the child's inbox, and
    * `child_messages` is the table `SmartNotificationIntegrationService` routes a
-   * CHILD-audience candidate into. See PF-E-002 in the phase report for what
-   * this measured.
+   * CHILD-audience candidate into.
+   *
+   * WHAT THIS ASSERTED BEFORE: `expect(counts.childMessages).toBe(0)`, with a
+   * note saying the number must move deliberately if a CHILD-audience producer
+   * were ever wired to the reward path. `F6-006` wired one, and this is that
+   * deliberate move. The child's own sentence, tone band and safety ceiling are
+   * `e2e-06`'s subject; what belongs HERE is the count — one reward, one child
+   * message, on the same loop that produced one ledger row and one parent
+   * notification.
    */
-  it('ACT VI — the child inbox is reachable, and what the completed loop actually put in it', async () => {
+  it('ACT VI — the child inbox is reachable, and the completed loop put ONE message in it', async () => {
     const inbox = await request(world.http).get(`${P}/life-intelligence/self/messages`).set(asChild(home));
     expect(inbox.status).toBe(200);
     expect(Array.isArray(inbox.body)).toBe(true);
 
     const counts = await countTheLoop(world, home);
-    // MEASURED, NOT ASSUMED. The number this scenario records is the number the
-    // report carries; see PF-E-002. If a future commit wires a CHILD-audience
-    // producer to the reward path, this expectation is the one that must move,
-    // and it must move deliberately.
-    expect(counts.childMessages).toBe(0);
+    expect(counts.childMessages).toBe(1);
+
+    // AND IT IS STILL BEHIND THE PARENT'S GATE. The child's inbox is EMPTY
+    // until a parent approves — the row exists, `PENDING`, and the wedge does
+    // not become a way around §5.8.
+    expect(inbox.body).toHaveLength(0);
+    const [pending] = await world.raw<any[]>(
+      `SELECT "approval_status", "delivered_at", "source_event_id", "body"
+         FROM "child_messages" WHERE "family_id" = $1::uuid`,
+      home.familyId,
+    );
+    expect(pending.approval_status).toBe('PENDING');
+    expect(pending.delivered_at).toBeNull();
+    // The parent's key with the audience facet appended — one cause, two rows,
+    // neither deduplicating the other.
+    expect(pending.source_event_id).toMatch(/^evt:.+:child$/);
+    // Arabic, from the catalogue, for a child of ABNY.
+    expect(pending.body).toMatch(/[؀-ۿ]/);
   });
 });

@@ -131,8 +131,78 @@ export class NotificationRewardConsumer implements OnModuleInit {
       });
 
       this.log('REWARD_GRANTED', envelope.id, parent);
+
+      /**
+       * PHASE F (`F6-006`, closing `PF-E-006`) — THE HALF OF THIS EVENT THAT
+       * HAD NO PRODUCER AT ALL.
+       *
+       * The parent was told; the CHILD was not. `NotificationRewardConsumer`
+       * was the only subscriber to `REWARD_GRANTED` and it targeted `PARENT`,
+       * so a child completed a task, earned points, and heard nothing — with
+       * their own app, the product's commercial wedge, as the surface that
+       * stayed silent. `child_messages` held zero rows after a real grant, and
+       * `e2e-06 ACT I` measured exactly that.
+       *
+       * A SECOND CALL, NOT A FLAG, and the reason is scoring. Each audience is
+       * assembled, scored, capped and RECORDED separately: the parent's
+       * household load must not be able to suppress the child's own news about
+       * their own work, and «why did the child not hear about this?» must have
+       * its own row with its own arithmetic. One flag on one call would have
+       * produced one score and one explanation for two different people.
+       *
+       * THE SAME `sourceEventId`, on purpose — see above. The ledger separates
+       * the two on `target_audience`; `deliverNow` appends the `:child` facet
+       * before writing to `child_messages`. Neither can deduplicate the other.
+       *
+       * THE ORDER MATTERS AND IS THE PARENT'S. If the child's call throws, the
+       * message retries and the parent's notification is already protected by
+       * `notifications (family_id, source_event_id, user_id)`; the reverse
+       * order would leave a child told about a reward their parent has not been
+       * told about, on a surface the parent gates.
+       */
+      const child = await this.engine.handleEvent({
+        familyId: envelope.familyId,
+        childId,
+        eventType: 'REWARD_GRANTED_CHILD',
+        sourceEventId,
+        trigger: 'DOMAIN_EVENT',
+      });
+
+      this.assertChildAudience(child);
+      this.log('REWARD_GRANTED_CHILD', envelope.id, child);
+
       this.rethrowInfrastructureFailure('REWARD_GRANTED', parent);
+      this.rethrowInfrastructureFailure('REWARD_GRANTED_CHILD', child);
     });
+  }
+
+  /**
+   * PHASE F (`F6-006`) — THE ASSERTION `PE-N-001` EARNED.
+   *
+   * The child branch of `deliverNow` is reached ONLY when the decision's
+   * `targetAudience` is `CHILD`, and that audience is not something this
+   * producer states — it is read from `COPY_CATALOGUE[type].audience` by the
+   * decision provider, falling back to «is there a child in the context?».
+   * So a `REWARD_GRANTED_CHILD` whose catalogue entry were ever edited to
+   * `audience: 'PARENT'` would keep working, keep scoring, keep writing decision
+   * rows, and write a SECOND PARENT NOTIFICATION while the child went silent
+   * again — which is `PF-E-006` restored with a full ledger describing it.
+   *
+   * `PE-N-001` is the reason this is a hard failure and not a log line. That
+   * defect dropped every child notification for months while every component
+   * reported success, and the lesson recorded in the Phase E report is that the
+   * child path fails QUIETLY by default. So the producer states the audience it
+   * is producing FOR, and a mismatch fails the outbox message loudly.
+   */
+  private assertChildAudience(result: SmartNotificationResult): void {
+    if (result.decision.targetAudience !== 'CHILD') {
+      throw new Error(
+        `PF-E-006 GUARD: ${result.decision.notificationType} resolved to ` +
+          `targetAudience=${result.decision.targetAudience}, but this producer exists to reach the CHILD. ` +
+          `The audience comes from COPY_CATALOGUE[type].audience — a child-facing type whose catalogue ` +
+          `entry says PARENT writes a second parent notification and leaves the child silent again.`,
+      );
+    }
   }
 
   private log(eventType: string, envelopeId: string, result: SmartNotificationResult): void {
