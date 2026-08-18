@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 import type { CountryScope } from '../api/types';
 import { useDaily } from '../api/useGrowthQueries';
-import { fetchProductAiMetrics } from '../api/adapters';
+import { activeChildrenGap, fetchProductAiMetrics, safetyEventsGap } from '../api/adapters';
 import { formatCount } from '../lib/format';
 import { rangeFor, type RangePreset } from '../lib/range';
 import { businessDateLabel } from '../lib/range';
-import { AsyncBoundary, GapBlock, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, GapBlock, RefetchingOverlay } from '../components/AsyncState';
+import { NotificationsPanel } from '../components/NotificationsPanel';
 import { FilterBar, GrowthPageHeader } from '../components/FilterBar';
 import { ChartFrame, VizTable } from '../components/viz/ChartFrame';
 import { TrendChart } from '../components/viz/TrendChart';
@@ -41,17 +42,24 @@ export function ProductAiPage() {
   const daily = useDaily(country, window);
   const rows = daily.data ?? [];
   const productMetrics = fetchProductAiMetrics();
+  const safety = safetyEventsGap();
+  const activeChildren = activeChildrenGap();
 
   const series = [
     {
       id: 'activations',
-      label: t('growth.kpi.ACTIVATION_RATE'),
+      // A COUNT of activations, not the activation RATE — the KPI label
+      // would have put a percentage's name on a whole number.
+      label: t('growth.product.activations'),
       color: CATEGORICAL[0][mode],
       points: rows.map((row) => ({ x: businessDateLabel(row.businessDate), y: row.activations })),
     },
     {
       id: 'childrenAdded',
-      label: t('growth.overview.activeChildren'),
+      // `childrenAdded` is a FLOW — children added on that day. Labelling it
+      // "active children" (as this series once was) would turn a daily
+      // addition count into a stock the product does not measure.
+      label: t('growth.product.childrenAdded'),
       color: CATEGORICAL[1][mode],
       points: rows.map((row) => ({ x: businessDateLabel(row.businessDate), y: row.childrenAdded })),
     },
@@ -71,6 +79,7 @@ export function ProductAiPage() {
         error={daily.error}
         isEmpty={rows.length === 0}
         onRetry={() => void daily.refetch()}
+        skeleton={<ChartSkeleton />}
       >
         <RefetchingOverlay isFetching={daily.isFetching}>
           <ChartFrame
@@ -107,8 +116,17 @@ export function ProductAiPage() {
         </RefetchingOverlay>
       </AsyncBoundary>
 
+      {/* Notifications ARE measured, per market, and they are the one
+          product-side series with a real endpoint today. They sit above the
+          gaps so the page leads with what is true. */}
       <div className="mt-6">
+        <NotificationsPanel country={country} range={window} />
+      </div>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <GapBlock gap={productMetrics.gap} />
+        <GapBlock gap={safety.gap} />
+        <GapBlock gap={activeChildren.gap} />
       </div>
     </div>
   );

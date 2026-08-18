@@ -4,6 +4,7 @@ import type {
   CountryCode,
   CurrencyCode,
   DailyMetricRow,
+  GrowthSetting,
   KpiSnapshot,
   KpiValue,
 } from './types';
@@ -78,6 +79,31 @@ export const GAPS = {
     proposedEndpoint: 'KPI `ACTIVE_CHILDREN` in GET /admin/growth/kpis',
     reasonKey: 'growth.gap.activeChildren',
   },
+  activeParents: {
+    id: 'activeParents',
+    proposedEndpoint: 'KPI `ACTIVE_PARENTS` in GET /admin/growth/kpis',
+    reasonKey: 'growth.gap.activeParents',
+  },
+  familiesByCountry: {
+    id: 'familiesByCountry',
+    proposedEndpoint: 'GET /admin/growth/families?countryCode&asOf → { registered, active }',
+    reasonKey: 'growth.gap.familiesByCountry',
+  },
+  subscriptionPlanMix: {
+    id: 'subscriptionPlanMix',
+    proposedEndpoint: 'GET /admin/growth/subscriptions?countryCode&asOf → { free, monthly, annual }',
+    reasonKey: 'growth.gap.subscriptionPlanMix',
+  },
+  pilotEnrollment: {
+    id: 'pilotEnrollment',
+    proposedEndpoint: 'GET /admin/growth/pilot?countryCode → { invited, activated, byStatus }',
+    reasonKey: 'growth.gap.pilotEnrollment',
+  },
+  safetyEvents: {
+    id: 'safetyEvents',
+    proposedEndpoint: 'GET /admin/growth/safety?countryCode&from&to → events by kind',
+    reasonKey: 'growth.gap.safetyEvents',
+  },
 } as const satisfies Record<string, AdapterGap>;
 
 export const ALL_GAPS: readonly AdapterGap[] = Object.values(GAPS);
@@ -89,9 +115,14 @@ export interface ExecutiveCounts {
   payingFamilies: number | null;
   activePaidSubscriptions: number | null;
   /** Flow over the requested window. */
+  churnedPaidSubscriptions: number | null;
   newRegistrations: number | null;
   activations: number | null;
   childrenAdded: number | null;
+  trialsStarted: number | null;
+  trialsResolved: number | null;
+  trialsConverted: number | null;
+  newPaidFamilies: number | null;
   paymentSuccessCount: number | null;
   paymentFailureCount: number | null;
   netRevenueMinor: number | null;
@@ -119,9 +150,14 @@ export function composeExecutiveCounts(rows: DailyMetricRow[]): ComposedResult<E
       data: {
         payingFamilies: null,
         activePaidSubscriptions: null,
+        churnedPaidSubscriptions: null,
         newRegistrations: null,
         activations: null,
         childrenAdded: null,
+        trialsStarted: null,
+        trialsResolved: null,
+        trialsConverted: null,
+        newPaidFamilies: null,
         paymentSuccessCount: null,
         paymentFailureCount: null,
         netRevenueMinor: null,
@@ -141,9 +177,16 @@ export function composeExecutiveCounts(rows: DailyMetricRow[]): ComposedResult<E
     data: {
       payingFamilies: latest.payingFamilies,
       activePaidSubscriptions: latest.activePaidSubscriptions,
+      // A FLOW, despite the name: `growth_daily_metrics` records how many
+      // subscriptions churned on that day, so the window's churn is a sum.
+      churnedPaidSubscriptions: sumOrNull(ordered, (r) => r.churnedPaidSubscriptions),
       newRegistrations: sumOrNull(ordered, (r) => r.newRegistrations),
       activations: sumOrNull(ordered, (r) => r.activations),
       childrenAdded: sumOrNull(ordered, (r) => r.childrenAdded),
+      trialsStarted: sumOrNull(ordered, (r) => r.trialsStarted),
+      trialsResolved: sumOrNull(ordered, (r) => r.trialsResolved),
+      trialsConverted: sumOrNull(ordered, (r) => r.trialsConverted),
+      newPaidFamilies: sumOrNull(ordered, (r) => r.newPaidFamilies),
       paymentSuccessCount: sumOrNull(ordered, (r) => r.paymentSuccessCount),
       paymentFailureCount: sumOrNull(ordered, (r) => r.paymentFailureCount),
       netRevenueMinor: sumOrNull(ordered, (r) => r.netRevenueMinor),
@@ -314,6 +357,113 @@ export function fetchRefunds(): MissingResult {
  */
 export function activeChildrenGap(): MissingResult {
   return { kind: 'MISSING', gap: GAPS.activeChildren };
+}
+
+/**
+ * MISSING. "Active parents" would need a parent-side last-seen signal.
+ * `DashboardMetricsService` counts DEVICES seen in 7 days and the families
+ * they belong to; a device is not a person and a family is not a parent, so
+ * neither can stand in for this without inventing a definition.
+ */
+export function activeParentsGap(): MissingResult {
+  return { kind: 'MISSING', gap: GAPS.activeParents };
+}
+
+/**
+ * MISSING per market. `GET /analytics/dashboard-metrics` returns registered
+ * and 7-day-active families PLATFORM-WIDE with no country parameter, and
+ * `growth_daily_metrics` carries `newRegistrations` — a flow — but no family
+ * STOCK per country. Splitting the platform total between Egypt and Saudi
+ * Arabia by any ratio available here would be a guess wearing a number's
+ * clothes.
+ */
+export function familiesByCountryGap(): MissingResult {
+  return { kind: 'MISSING', gap: GAPS.familiesByCountry };
+}
+
+/**
+ * MISSING. The database does model the mix — `Subscription.planTier` and
+ * `SubscriptionPrice.billingPeriod` (MONTHLY | ANNUAL) — but no admin
+ * endpoint aggregates it. `growth_daily_metrics` exposes
+ * `activePaidSubscriptions` as ONE number with no plan breakdown, so free /
+ * monthly / annual cannot be separated from anything this client can read.
+ */
+export function subscriptionPlanMixGap(): MissingResult {
+  return { kind: 'MISSING', gap: GAPS.subscriptionPlanMix };
+}
+
+/**
+ * MISSING. `PilotEnrollmentService` writes invitations, cohorts and
+ * redemptions, but it is called from the registration path only — no
+ * controller exposes a read of it. What IS readable is the pilot's
+ * CONFIGURATION, via `GET /admin/growth/settings`; see `composePilotStatus`.
+ */
+export function pilotEnrollmentGap(): MissingResult {
+  return { kind: 'MISSING', gap: GAPS.pilotEnrollment };
+}
+
+/**
+ * MISSING. Safety incidents reach an operator today only as growth ALERTS of
+ * type `AI_SAFETY_INCIDENT` (`GET /admin/growth/alerts`) — one row per
+ * threshold breach, which is a warning, not a count of events. No endpoint
+ * returns a safety-event series per country.
+ */
+export function safetyEventsGap(): MissingResult {
+  return { kind: 'MISSING', gap: GAPS.safetyEvents };
+}
+
+// ── Composed: the controlled pilot's configuration ───────────────────────
+
+export interface PilotStatus {
+  /** `null` when the settings row is absent — unknown, not "off". */
+  enabled: boolean | null;
+  /** Whether THIS market is inside the pilot's country list. */
+  inPilot: boolean | null;
+  /** Whether a cohort is configured. The cohort's id is deliberately not
+   * carried: an operator screen shows no database identifiers. */
+  cohortConfigured: boolean | null;
+}
+
+/**
+ * COMPOSED from `GET /admin/growth/settings`, keys `pilot.enabled`,
+ * `pilot.countries` and `pilot.cohortId` — the same three rows
+ * `PilotEnrollmentService` reads at registration time, so this panel shows
+ * the gate's real configuration rather than a second copy of it.
+ *
+ * `pilot.countries` is parsed exactly as the backend parses it (comma
+ * separated, trimmed, upper-cased, anything not two letters discarded), so
+ * the dashboard cannot claim a market is in the pilot when the gate would
+ * disagree.
+ */
+export function composePilotStatus(
+  settings: GrowthSetting[] | undefined,
+  country: CountryCode,
+): ComposedResult<PilotStatus> {
+  const read = (key: string) => settings?.find((setting) => setting.key === key);
+  const enabledRow = read('pilot.enabled');
+  const countriesRow = read('pilot.countries');
+  const cohortRow = read('pilot.cohortId');
+
+  const countries =
+    typeof countriesRow?.value === 'string'
+      ? new Set(
+          countriesRow.value
+            .split(',')
+            .map((part) => part.trim().toUpperCase())
+            .filter((part) => /^[A-Z]{2}$/.test(part)),
+        )
+      : null;
+
+  return {
+    kind: 'COMPOSED',
+    data: {
+      enabled: typeof enabledRow?.value === 'boolean' ? enabledRow.value : null,
+      inPilot: countries === null ? null : countries.has(country),
+      cohortConfigured:
+        cohortRow === undefined ? null : typeof cohortRow.value === 'string' && cohortRow.value.trim() !== '',
+    },
+    composedFrom: ['GET /admin/growth/settings'],
+  };
 }
 
 // ── Snapshot helpers ─────────────────────────────────────────────────────

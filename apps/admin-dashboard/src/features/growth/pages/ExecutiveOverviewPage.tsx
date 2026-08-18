@@ -2,13 +2,22 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 import { COUNTRY_CODES, type CountryCode, type KpiId } from '../api/types';
 import { useDaily, useKpis } from '../api/useGrowthQueries';
-import { activeChildrenGap, composeExecutiveCounts, fetchRefunds, pickKpi } from '../api/adapters';
+import { composeExecutiveCounts, fetchRefunds, pickKpi, subscriptionPlanMixGap } from '../api/adapters';
 import { COUNTRY_CURRENCY, countryWithCurrencyLabel, formatCount, formatMoneyMinor } from '../lib/format';
 import { rangeFor, type RangePreset } from '../lib/range';
 import { KpiCard } from '../components/KpiCard';
 import { ProvenanceLegend } from '../components/ProvenanceBadge';
 import { AlertsPanel } from '../components/AlertsPanel';
-import { AsyncBoundary, ComposedFromNote, GapBlock, RefetchingOverlay } from '../components/AsyncState';
+import {
+  AsyncBoundary,
+  ComposedFromNote,
+  FigureGridSkeleton,
+  GapBlock,
+  KpiGridSkeleton,
+  RefetchingOverlay,
+} from '../components/AsyncState';
+import { PlatformTotalsPanel } from '../components/PlatformTotalsPanel';
+import { PilotPanel } from '../components/PilotPanel';
 import { GrowthPageHeader } from '../components/FilterBar';
 import { RANGE_PRESETS } from '../lib/range';
 
@@ -76,10 +85,21 @@ export function ExecutiveOverviewPage() {
         {t('growth.overview.currencyNote')}
       </p>
 
+      {/* Platform-wide first and clearly framed as such, then the two
+          markets side by side. The order is scope-descending, so nothing on
+          this page is ever read at the wrong scope. */}
+      <div className="mb-6">
+        <PlatformTotalsPanel />
+      </div>
+
       <div className="grid gap-6 xl:grid-cols-2">
         {COUNTRY_CODES.map((country) => (
           <CountryColumn key={country} country={country} from={window.from} to={window.to} />
         ))}
+      </div>
+
+      <div className="mt-6">
+        <PilotPanel />
       </div>
     </div>
   );
@@ -98,7 +118,7 @@ function CountryColumn({ country, from, to }: { country: CountryCode; from: stri
 
   const counts = composeExecutiveCounts(daily.data ?? []);
   const refunds = fetchRefunds();
-  const children = activeChildrenGap();
+  const planMix = subscriptionPlanMixGap();
   const currency = COUNTRY_CURRENCY[country];
   const contextLabel = countryWithCurrencyLabel(t(`growth.country.${country}`), currency);
 
@@ -118,7 +138,12 @@ function CountryColumn({ country, from, to }: { country: CountryCode; from: stri
         </span>
       </header>
 
-      <AsyncBoundary isLoading={kpis.isLoading} error={kpis.error} onRetry={() => void kpis.refetch()}>
+      <AsyncBoundary
+        isLoading={kpis.isLoading}
+        error={kpis.error}
+        onRetry={() => void kpis.refetch()}
+        skeleton={<KpiGridSkeleton count={6} />}
+      >
         <RefetchingOverlay isFetching={kpis.isFetching}>
           <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-soft">
             {t('growth.overview.engagement')}
@@ -146,7 +171,12 @@ function CountryColumn({ country, from, to }: { country: CountryCode; from: stri
         </RefetchingOverlay>
       </AsyncBoundary>
 
-      <AsyncBoundary isLoading={daily.isLoading} error={daily.error} onRetry={() => void daily.refetch()}>
+      <AsyncBoundary
+        isLoading={daily.isLoading}
+        error={daily.error}
+        onRetry={() => void daily.refetch()}
+        skeleton={<FigureGridSkeleton count={5} />}
+      >
         <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-soft">
           {t('growth.overview.families')}
         </h4>
@@ -167,10 +197,39 @@ function CountryColumn({ country, from, to }: { country: CountryCode; from: stri
           />
         </dl>
         <ComposedFromNote endpoints={counts.composedFrom} />
+
+        <h4 className="mb-2 mt-5 text-xs font-medium uppercase tracking-wide text-ink-soft">
+          {t('growth.subscriptions.title')}
+        </h4>
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <Figure
+            label={t('growth.subscriptions.activePaid')}
+            value={formatCount(locale, counts.data.activePaidSubscriptions)}
+          />
+          <Figure
+            label={t('growth.subscriptions.churned')}
+            value={formatCount(locale, counts.data.churnedPaidSubscriptions)}
+          />
+          <Figure
+            label={t('growth.subscriptions.trialsStarted')}
+            value={formatCount(locale, counts.data.trialsStarted)}
+          />
+          <Figure
+            label={t('growth.subscriptions.trialsConverted')}
+            value={formatCount(locale, counts.data.trialsConverted)}
+          />
+          <Figure
+            label={t('growth.subscriptions.newPaidFamilies')}
+            value={formatCount(locale, counts.data.newPaidFamilies)}
+          />
+        </dl>
+        <ComposedFromNote endpoints={counts.composedFrom} />
       </AsyncBoundary>
 
+      {/* The three numbers this market cannot answer, named rather than
+          zeroed: the free/monthly/annual split, refunds, and children. */}
       <div className="mt-4 flex flex-col gap-3">
-        {children.kind === 'MISSING' && <GapBlock gap={children.gap} />}
+        {planMix.kind === 'MISSING' && <GapBlock gap={planMix.gap} />}
         {refunds.kind === 'MISSING' && <GapBlock gap={refunds.gap} />}
       </div>
     </section>

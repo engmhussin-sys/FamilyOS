@@ -404,7 +404,12 @@
       "productAiMetrics": "AI sessions, goals created and completed, and rewards redeemed are not in growth contract v1.0.",
       "cohortRetention": "Retention is available per country as a snapshot; there is no cohort breakdown.",
       "refunds": "Refunds are recorded in payment_transactions but the growth contract exposes no aggregate for them.",
-      "activeChildren": "There is no ACTIVE_CHILDREN KPI. `childrenAdded` is a daily flow, not a stock; using it as a stock drifts upward forever."
+      "activeChildren": "There is no ACTIVE_CHILDREN KPI. `childrenAdded` is a daily flow, not a stock; using it as a stock drifts upward forever.",
+      "activeParents": "There is no parent-level activity signal. `dashboard-metrics` counts devices seen in the last 7 days and the families that own them — a device is not a person.",
+      "familiesByCountry": "Registered and active family counts exist platform-wide only, with no country split. `newRegistrations` is a daily flow, not a stock, and dividing the platform total between the two markets by any ratio available here would be a guess.",
+      "subscriptionPlanMix": "The database knows the plan tier and the billing period (monthly / annual), but no admin endpoint aggregates them. `activePaidSubscriptions` is a single number with no plan breakdown.",
+      "pilotEnrollment": "The pilot service writes invitations, cohorts and redemptions, but no controller exposes a read of them. Only the pilot's configuration is readable.",
+      "safetyEvents": "Safety incidents reach an operator today only as AI_SAFETY_INCIDENT alerts — one row per threshold breach, not a per-country count of events."
     },
     "kpi": {
       "DAU": "Daily active users",
@@ -586,7 +591,9 @@
       "goalsCompleted": "Goals completed",
       "rewardsGranted": "Rewards granted",
       "rewardsRedeemed": "Rewards redeemed",
-      "engagedChildren": "Engaged children"
+      "engagedChildren": "Engaged children",
+      "childrenAdded": "Children added",
+      "activations": "Activations (count)"
     },
     "alerts": {
       "title": "Alerts",
@@ -623,6 +630,50 @@
       "channel": "Channel",
       "allChannels": "All channels",
       "year": "Year"
+    },
+    "platform": {
+      "title": "Platform totals",
+      "subtitle": "Whole-platform numbers with no country split — the endpoint itself takes no country.",
+      "scopeWarning": "These figures cover both markets together. Do not read them as Egypt's or Saudi Arabia's.",
+      "registeredFamilies": "Registered families",
+      "activeFamilies": "Active families (7 days)",
+      "devices": "Paired devices",
+      "activeDevices": "Active devices (7 days)",
+      "supportRequests": "Support requests (7 days)",
+      "activeDefinition": "\"Active\" = a device seen in the last 7 days, not a parent sign-in."
+    },
+    "subscriptions": {
+      "title": "Subscriptions",
+      "activePaid": "Active paid subscriptions",
+      "churned": "Subscriptions churned in the period",
+      "trialsStarted": "Trials started",
+      "trialsResolved": "Trials resolved",
+      "trialsConverted": "Trials converted",
+      "newPaidFamilies": "New paying families"
+    },
+    "pilot": {
+      "title": "Controlled pilot",
+      "subtitle": "The registration gate's configuration, exactly as the server reads it.",
+      "enabled": "Gate is on",
+      "disabled": "Gate is off",
+      "unknown": "Not configured",
+      "inPilot": "This market is inside the pilot",
+      "notInPilot": "This market is outside the pilot",
+      "cohortConfigured": "Pilot cohort configured",
+      "cohortMissing": "No cohort configured"
+    },
+    "notifications": {
+      "title": "Notifications",
+      "subtitle": "Notification decisions for this market — counts and type names only, no text and no family id.",
+      "delivered": "Delivered",
+      "suppressed": "Suppressed",
+      "suppressionRate": "Suppression rate",
+      "openRate": "Open rate",
+      "aiRewriteRate": "AI rewrite rate",
+      "deliveryFailures": "Delivery failures",
+      "actionRate": "Action rate",
+      "actionRateHint": "Not measurable today: this product has no deep-link attribution and no in-app action receipt.",
+      "rateNeedsRows": "No rows in this period, so no rate can be computed."
     }
   },
   "adminKey": {

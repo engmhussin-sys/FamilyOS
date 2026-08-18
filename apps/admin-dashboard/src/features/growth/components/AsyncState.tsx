@@ -32,6 +32,85 @@ export function LoadingBlock({ label }: { label?: string }) {
 }
 
 /**
+ * ── SKELETONS ──────────────────────────────────────────────────────────
+ *
+ * A skeleton, not a spinner, wherever the SHAPE of what is coming is known:
+ * the layout does not jump when the data lands, and the operator's eye has
+ * already found the tile it is about to read.
+ *
+ * Deliberately shapes only — no zeros, no dashes, no placeholder digits. A
+ * grey bar cannot be misread as a measurement; a `0` can.
+ *
+ * One `role="status"` per skeleton GROUP, never one per bar, so a screen
+ * reader hears "loading" once instead of nine times. `prefers-reduced-motion`
+ * kills the pulse globally (see `index.css`).
+ */
+function Bar({ className = '' }: { className?: string }) {
+  return <span aria-hidden="true" className={`block rounded bg-sand-200/70 ${className}`} />;
+}
+
+export function SkeletonGroup({ label, children }: { label?: string; children: ReactNode }) {
+  const { t } = useTranslation();
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" className="animate-pulse">
+      <span className="sr-only">{label ?? t('growth.state.loading')}</span>
+      {children}
+    </div>
+  );
+}
+
+/** Matches the KpiCard grid: label line, big figure, hint line. */
+export function KpiGridSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <SkeletonGroup>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Array.from({ length: count }).map((_, index) => (
+          <div key={index} className="rounded-card border border-sand-200 bg-white p-4 shadow-quiet">
+            <Bar className="h-3 w-2/5" />
+            <Bar className="mt-3 h-7 w-3/5" />
+            <Bar className="mt-3 h-2.5 w-1/4" />
+          </div>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
+}
+
+/** Matches ChartFrame: header, plot area, legend row. */
+export function ChartSkeleton({ height = 240 }: { height?: number }) {
+  return (
+    <SkeletonGroup>
+      <div className="rounded-card border border-sand-200 bg-white p-5 shadow-quiet">
+        <Bar className="h-3.5 w-1/3" />
+        <Bar className="mt-2 h-2.5 w-1/2" />
+        <span aria-hidden="true" className="mt-5 block rounded-card bg-sand-200/70" style={{ height }} />
+        <div className="mt-4 flex gap-3">
+          <Bar className="h-2.5 w-20" />
+          <Bar className="h-2.5 w-20" />
+          <Bar className="h-2.5 w-20" />
+        </div>
+      </div>
+    </SkeletonGroup>
+  );
+}
+
+/** Matches a figure grid (a `<dl>` of small labelled numbers). */
+export function FigureGridSkeleton({ count = 4, columns = 2 }: { count?: number; columns?: number }) {
+  return (
+    <SkeletonGroup>
+      <div className={`grid gap-3 ${columns === 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+        {Array.from({ length: count }).map((_, index) => (
+          <div key={index} className="rounded-card border border-sand-200 bg-white px-3 py-2.5">
+            <Bar className="h-2.5 w-1/2" />
+            <Bar className="mt-2 h-4 w-1/3" />
+          </div>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
+}
+
+/**
  * Held during a refetch instead of a skeleton flash: the previous render
  * stays on screen at reduced opacity, so nothing jumps and the operator
  * never loses the number they were reading.
@@ -129,12 +208,24 @@ interface AsyncBoundaryProps {
   isEmpty?: boolean;
   emptyHint?: string;
   onRetry?: () => void;
+  /** The shape of what is loading. Pass one wherever the layout is known —
+   * the bare `LoadingBlock` stays the fallback for panels whose shape is
+   * genuinely unpredictable. */
+  skeleton?: ReactNode;
   children: ReactNode;
 }
 
 /** One place that decides which of the four states a panel is in. */
-export function AsyncBoundary({ isLoading, error, isEmpty, emptyHint, onRetry, children }: AsyncBoundaryProps) {
-  if (isLoading) return <LoadingBlock />;
+export function AsyncBoundary({
+  isLoading,
+  error,
+  isEmpty,
+  emptyHint,
+  onRetry,
+  skeleton,
+  children,
+}: AsyncBoundaryProps) {
+  if (isLoading) return <>{skeleton ?? <LoadingBlock />}</>;
   if (error) return <ErrorBlock error={error} onRetry={onRetry} />;
   if (isEmpty) return <EmptyBlock hint={emptyHint} />;
   return <>{children}</>;

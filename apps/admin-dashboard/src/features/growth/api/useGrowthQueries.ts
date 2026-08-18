@@ -9,7 +9,14 @@ import {
   fetchFunnel,
   fetchKpis,
   fetchQuarterly,
+  fetchSettings,
 } from './growthApi';
+import {
+  fetchNotificationAnalytics,
+  fetchPlatformDashboardMetrics,
+  type NotificationDecisionAnalytics,
+  type PlatformDashboardMetrics,
+} from './platformApi';
 import type {
   Campaign,
   Channel,
@@ -21,6 +28,7 @@ import type {
   FunnelResponse,
   GrowthAlert,
   GrowthCatalogue,
+  GrowthSetting,
   KpiSnapshot,
   QuarterlyRow,
 } from './types';
@@ -100,5 +108,44 @@ export function useAlerts(): UseQueryResult<GrowthAlert[]> {
   return useQuery({
     queryKey: ['growth', 'alerts', 'unacknowledged'],
     queryFn: () => fetchAlerts(false, 50),
+  });
+}
+
+/**
+ * Platform growth configuration — including the three `pilot.*` keys the
+ * controlled-pilot gate reads (`pilot.enabled`, `pilot.countries`,
+ * `pilot.cohortId`). Configuration, not tenant data, so it caches for a
+ * while; it is still re-read on every unlock because the gate drops the
+ * cache when the key is discarded.
+ */
+export function useGrowthSettings(): UseQueryResult<GrowthSetting[]> {
+  return useQuery({
+    queryKey: ['growth', 'settings'],
+    queryFn: fetchSettings,
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+/**
+ * PLATFORM-WIDE totals, all markets at once — the endpoint takes no country.
+ * Keyed under `['platform', …]` rather than `['growth', …]` because it is a
+ * different backend module with a different scope, and because a country
+ * filter change must NOT invalidate it (there is nothing there to filter).
+ */
+export function usePlatformMetrics(): UseQueryResult<PlatformDashboardMetrics> {
+  return useQuery({
+    queryKey: ['platform', 'dashboard-metrics'],
+    queryFn: fetchPlatformDashboardMetrics,
+  });
+}
+
+/** Notification decisions for one market and one window. */
+export function useNotificationAnalytics(
+  country: CountryScope,
+  range: DateRange,
+): UseQueryResult<NotificationDecisionAnalytics> {
+  return useQuery({
+    queryKey: ['platform', 'notification-analytics', country, range.from, range.to],
+    queryFn: () => fetchNotificationAnalytics({ countryCode: country, from: range.from, to: range.to }),
   });
 }
