@@ -137,6 +137,20 @@ const THE_MARKET_CALENDAR = 'Asia/Riyadh';
  */
 const THE_TARGET_SUMMARY = 'الآيات 1–5 من سورة الملك';
 
+/**
+ * THE SAME SUMMARY, AS IT READS INSIDE ARABIC PROSE — `F1-003`.
+ *
+ * `describeTargetSpec` writes LATIN digits, and that stored value is still what
+ * `reward_programs.target_summary_ar` and `notifications.data.goalTitle` carry
+ * (a machine field is not prose — STEP 14 asserts both). But a rendered
+ * SENTENCE may not mix scripts: «الآيات 1–5 … وحصل على ٢٠ نقطة» put two numeral
+ * systems in one line, which is the «reads as a translation» failure
+ * `PF-E-002` names. `substitute` now localises string variables for BOTH
+ * audiences, so this is the form that reaches a human — parent or child — and
+ * `THE_TARGET_SUMMARY` above stays the form that reaches a column.
+ */
+const THE_TARGET_SUMMARY_IN_PROSE = 'الآيات ١–٥ من سورة الملك';
+
 /** The parent's form, field for field, exactly as the product brief words it. */
 const THE_QURAN_GOAL = {
   category: 'QURAN',
@@ -949,12 +963,21 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       expect(child.body).not.toBe(parent.body);
       expect(child.title === parent.title && child.body === parent.body).toBe(false);
 
-      // THE PARENT'S NAMES THE CHILD AND NAMES THE WORK. «محمد أكمل الآيات 1–5
+      // THE PARENT'S NAMES THE CHILD AND NAMES THE WORK. «محمد أكمل الآيات ١–٥
       // من سورة الملك» and not «حصل طفلك على مكافأة», pinned to the byte so the
       // next change to this copy is deliberate.
+      //
+      // `F1-003` — WHAT THIS PIN ASSERTED BEFORE, VERBATIM:
+      //
+      //   `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`
+      //
+      // i.e. «🌟 محمد أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة…» —
+      // Latin digits from `describeTargetSpec` beside Arabic-Indic digits from
+      // `formatNumber`, in one sentence. `THE_TARGET_SUMMARY_IN_PROSE` is the
+      // same summary in the one script the sentence is written in.
       expect(parent.title).toBe('مكافأة جديدة');
       expect(parent.body).toBe(
-        `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
+        `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY_IN_PROSE} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
       );
       expect(parent.body).toContain(home.childName);
 
@@ -1036,7 +1059,12 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       const parent = await parentNotificationRow();
 
       // ===== THE BODY. The goal, by the name the parent gave it. =====
-      expect(parent.body).toContain(THE_TARGET_SUMMARY);
+      // `F1-003` — WAS `expect(parent.body).toContain(THE_TARGET_SUMMARY);`,
+      // i.e. the stored Latin-digit form «الآيات 1–5 من سورة الملك». The
+      // sentence now carries the same summary in the script the rest of the
+      // sentence is written in; the STORED value is asserted unchanged below,
+      // on `data.goalTitle`.
+      expect(parent.body).toContain(THE_TARGET_SUMMARY_IN_PROSE);
       expect(parent.body).toContain('سورة الملك');
 
       // ===== AND THE NUMBER IS THE LEDGER'S. =====
@@ -1110,9 +1138,12 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
        * second-person confirmation with no number and no name. Same fact, two
        * audiences, two registers.
        */
-      expect(child.body).toContain(THE_TARGET_SUMMARY.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]));
-      // AND STILL NOT THE PARENT'S LATIN NUMERALS. `describeTargetSpec` writes
-      // «الآيات 1–5»; a child's Arabic sentence gets «الآيات ١–٥» (`PF-E-002`).
+      expect(child.body).toContain(THE_TARGET_SUMMARY_IN_PROSE);
+      // AND STILL NOT `describeTargetSpec`'S LATIN NUMERALS. It writes «الآيات
+      // 1–5»; an Arabic sentence gets «الآيات ١–٥» (`PF-E-002`) — and as of
+      // `F1-003` that is true of the PARENT's sentence above as well, which is
+      // why both now quote one constant. The stored column keeps the Latin
+      // form; only prose is localised.
       expect(child.body).not.toContain(THE_TARGET_SUMMARY);
       // No points, no counts: the child's own app already shows the balance.
       expect(child.body).not.toContain('نقطة');
@@ -1584,8 +1615,15 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       const parent = await parentNotificationRow();
       const child = await childMessageRow();
 
+      // `F1-003` — WHAT THIS PIN ASSERTED BEFORE, VERBATIM:
+      //
+      //   `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`
+      //
+      // The same sentence, now in one numeral script. Still byte-pinned, and
+      // still the SAME sentence after two full redeliveries — which is what
+      // this step is actually about.
       expect(parent.body).toBe(
-        `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
+        `🌟 ${home.childName} أكمل ${THE_TARGET_SUMMARY_IN_PROSE} اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
       );
       expect(child.body).not.toBe(parent.body);
       assertItReadsLikeASentence(parent.body);

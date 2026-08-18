@@ -109,6 +109,24 @@ import request = require('supertest');
 const CAIRO = 'Africa/Cairo';
 
 /**
+ * A GOAL TITLE AS IT READS INSIDE ARABIC PROSE — `F1-003`.
+ *
+ * `describeTargetSpec` writes «الآيات 1–5 من سورة الملك» in LATIN digits, and
+ * `reward_programs.target_summary_ar` still stores exactly that (ACT I asserts
+ * the column against the producer's own function — a machine field is not
+ * prose). What changed is the RENDERED SENTENCE: `substitute` now localises
+ * string variables on the parent surface as it already did on the child's, so
+ * a parent no longer reads «بدأ محمد هدف الآيات 1–5 …» in one script beside
+ * «٢٠ نقطة» in another. `PF-E-002` is about the reader of Arabic, not the
+ * reader's age.
+ *
+ * DERIVED, NOT RETYPED, so this file keeps its own rule: the expectation still
+ * comes from the database row, and only its numeral script is stated here.
+ */
+const inArabicProse = (summary: string): string =>
+  summary.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+
+/**
  * THE UTC INSTANT AT WHICH CAIRO'S CLOCK READS `hhmm` — SEARCHED, NOT ASSUMED.
  *
  * The same helper, for the same reason, as `e2e-09`: the golden day is DERIVED
@@ -715,12 +733,21 @@ describeGolden('GOLDEN E2E-14 — the goal that was missed, and whether the prod
       // the expectation are derived from the database — the child's name from
       // registration, the goal's title from `reward_programs.target_summary_ar`
       // — so the literal here is the SHAPE of the sentence, not its data.
+      //
+      // `F1-003` — WHAT THIS PIN ASSERTED BEFORE, VERBATIM:
+      //
+      //   `بدأ ${home.childName} هدف ${heavyGoalTitle} ولم يكمله — ربما يحتاج دفعة اليوم`
+      //
+      // i.e. «بدأ محمد هدف الآيات 1–5 من سورة الملك ولم يكمله…», with the
+      // goal's Latin digits carried verbatim into an Arabic sentence. The
+      // stored column is unchanged — ACT I still asserts it against
+      // `describeTargetSpec` — and only the RENDERED sentence is localised.
       expect(row.title).toBe('هدف بدأ ولم يكتمل');
       expect(row.body).toBe(
-        `بدأ ${home.childName} هدف ${heavyGoalTitle} ولم يكمله — ربما يحتاج دفعة اليوم`,
+        `بدأ ${home.childName} هدف ${inArabicProse(heavyGoalTitle)} ولم يكمله — ربما يحتاج دفعة اليوم`,
       );
       expect(row.body).toContain(home.childName);
-      expect(row.body).toContain(heavyGoalTitle);
+      expect(row.body).toContain(inArabicProse(heavyGoalTitle));
     });
 
     it('it is Arabic, and no raw enum or unresolved placeholder reached the parent', async () => {
@@ -1189,12 +1216,18 @@ describeGolden('GOLDEN E2E-14 — the goal that was missed, and whether the prod
       const [light] = await programRow(lightProgramId);
       expect(latest.type).toBe('GOAL_STALLED_PARENT');
       expect(latest.user_id).toBe(home.ownerUserId);
+      // `F1-003` — WHAT THIS PIN ASSERTED BEFORE, VERBATIM:
+      //
+      //   `بدأ ${home.childName} هدف ${light.target_summary_ar} ولم يكمله — ربما يحتاج دفعة اليوم`
+      //
+      // i.e. «بدأ محمد هدف الآية 1 من سورة الملك ولم يكمله…». The column still
+      // holds the Latin form; the sentence no longer does.
       expect(latest.body).toBe(
-        `بدأ ${home.childName} هدف ${light.target_summary_ar} ولم يكمله — ربما يحتاج دفعة اليوم`,
+        `بدأ ${home.childName} هدف ${inArabicProse(light.target_summary_ar)} ولم يكمله — ربما يحتاج دفعة اليوم`,
       );
       // It names the LIGHTER goal, not the heavy one the parent retired.
-      expect(latest.body).toContain(light.target_summary_ar);
-      expect(latest.body).not.toContain(heavyGoalTitle);
+      expect(latest.body).toContain(inArabicProse(light.target_summary_ar));
+      expect(latest.body).not.toContain(inArabicProse(heavyGoalTitle));
       expect(hasEnumOrPlaceholderLeak(latest.body)).toBe(false);
       for (const word of [...BLAME_WORDS, ...COMPARISON_WORDS, ...THREAT_WORDS]) {
         expect(`${latest.title} ${latest.body}`).not.toContain(word);

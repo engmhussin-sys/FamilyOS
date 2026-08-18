@@ -242,11 +242,22 @@ describeGolden('GOLDEN E2E-05 — what the parent is actually told, and whether 
       const [row] = await notificationRows();
 
       expect(row.title).toBe('مكافأة جديدة');
-      // «🌟 محمد أكمل الآيات 1–5 من سورة الملك اليوم…» rather than «حصل محمد
+      // «🌟 محمد أكمل الآيات ١–٥ من سورة الملك اليوم…» rather than «حصل محمد
       // على مكافأة جديدة». Pinned to the byte again, in the new state, so the
       // NEXT change to the product's copy is also deliberate.
+      //
+      // `F1-003` — WHAT THIS PIN ASSERTED BEFORE, VERBATIM:
+      //
+      //   `🌟 ${home.childName} أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`
+      //
+      // ONE SENTENCE IN TWO NUMERAL SYSTEMS: «الآيات 1–5» came from
+      // `describeTargetSpec` in Latin digits and «٢٠ نقطة» from `formatNumber`
+      // in Arabic-Indic. `substitute` now localises STRING variables on the
+      // parent surface too, exactly as it already did on the child's, so the
+      // sentence is in one script. `PF-E-002` is about the reader of Arabic,
+      // not about the reader's age.
       expect(row.body).toBe(
-        `🌟 ${home.childName} أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
+        `🌟 ${home.childName} أكمل الآيات ١–٥ من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.`,
       );
       expect(row.body).toContain(home.childName);
       // THE ACHIEVEMENT, by the name `RewardProgram.targetSummaryAr` gave it —

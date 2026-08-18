@@ -327,6 +327,18 @@ describe('PHASE F1 — the parent reward copy names the achievement, and degrade
    * string this product never produces. */
   const THE_SUMMARY = 'الآيات 1–5 من سورة الملك';
 
+  /**
+   * THE SAME SUMMARY AS IT REACHES A HUMAN — `F1-003`.
+   *
+   * `THE_SUMMARY` above is the STORED string, Latin digits and all, and it stays
+   * that way because that is what a producer really forwards. `substitute` now
+   * localises string variables for the PARENT as it already did for the child,
+   * so the digits inside a rendered Arabic sentence come out Arabic-Indic:
+   * «الآيات 1–5 … ٢٠ نقطة» was one sentence in two numeral systems, which is
+   * the «reads as a translation» failure `PF-E-002` names.
+   */
+  const THE_SUMMARY_IN_PROSE = 'الآيات ١–٥ من سورة الملك';
+
   it('names the child, the achievement and the points — the sentence the product brief asks for', () => {
     const rendered = render('REWARD_GRANTED_WITH_GOAL', {
       childName: 'محمد',
@@ -335,11 +347,17 @@ describe('PHASE F1 — the parent reward copy names the achievement, and degrade
     });
 
     expect(rendered.resolvedKey).toBe('REWARD_GRANTED_WITH_GOAL');
-    expect(rendered.body).toBe('🌟 محمد أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.');
+    // `F1-003` — WHAT THIS ASSERTED BEFORE, VERBATIM:
+    //
+    //   '🌟 محمد أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.'
+    //
+    // The producer still forwards `THE_SUMMARY` with its Latin digits; the
+    // RENDERER is what localises them now, on both surfaces rather than one.
+    expect(rendered.body).toBe('🌟 محمد أكمل الآيات ١–٥ من سورة الملك اليوم وحصل على ٢٠ نقطة. افتح التطبيق لتشجيعه.');
     // WHY / WHAT / WHAT DO I DO, each present as a readable clause rather than
     // as an intention recorded in a comment.
     expect(rendered.body).toContain('محمد');
-    expect(rendered.body).toContain(THE_SUMMARY);
+    expect(rendered.body).toContain(THE_SUMMARY_IN_PROSE);
     expect(rendered.body).toContain('٢٠ نقطة');
     expect(rendered.body).toContain('افتح التطبيق');
     expect(hasEnumOrPlaceholderLeak(rendered.body)).toBe(false);

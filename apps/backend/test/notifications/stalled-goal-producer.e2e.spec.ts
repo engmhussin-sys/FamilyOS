@@ -386,7 +386,19 @@ describeIfDb('SPRINT F1 — GOAL_STALLED_PARENT has a producer (real PostgreSQL)
       const [row] = await notificationRows(home.familyId);
 
       expect(row.title).toBe('هدف بدأ ولم يكتمل');
-      expect(row.body).toBe(`بدأ ${home.childName} هدف ${goalTitle} ولم يكمله — ربما يحتاج دفعة اليوم`);
+      // `F1-003` — WHAT THIS PIN ASSERTED BEFORE, VERBATIM:
+      //
+      //   `بدأ ${home.childName} هدف ${goalTitle} ولم يكمله — ربما يحتاج دفعة اليوم`
+      //
+      // `goalTitle` is `reward_programs.target_summary_ar`, which
+      // `describeTargetSpec` writes with LATIN digits and which is UNCHANGED in
+      // the column. `substitute` now localises string variables on the parent
+      // surface as it already did on the child's, so the rendered sentence is
+      // in one numeral script — `PF-E-002` is about the reader of Arabic, not
+      // about the reader's age.
+      expect(row.body).toBe(
+        `بدأ ${home.childName} هدف ${goalTitle.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)])} ولم يكمله — ربما يحتاج دفعة اليوم`,
+      );
       // WHAT HAPPENED and WHAT THE PARENT MIGHT DO — pinned separately, because
       // losing the second clause is the likeliest regression.
       expect(row.body).toContain('ولم يكمله');
