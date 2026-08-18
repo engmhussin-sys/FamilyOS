@@ -762,81 +762,29 @@ const PRODUCERLESS_DEFECT_LEDGER: readonly LedgerEntry[] = Object.freeze([
     copyKey: 'GOAL_DEADLINE_NEAR',
     evidence: 'src/modules/notifications/application/providers/rule-based-notification-decision.provider.ts:115',
     detail:
-      'The copy rule reads `c.goal`, and `NotificationContextAssembler` fills `goal` only from `input.goal`. No CHILD-audience producer passes `goal:` — StalledGoalService does, but GOAL_STALLED_PARENT is a PARENT key.',
+      'WITHHELD ON PURPOSE, and the reason is about this ledger rather than about the trigger. The condition IS deterministic (an open attempt plus `reward_programs.expires_at` inside the rule band) and was built. But GOAL_DEADLINE_NEAR and GOAL_ALMOST_DONE read the SAME fact slot, so any CHILD site passing `goal:` marks BOTH producible — and GOAL_ALMOST_DONE genuinely cannot be produced. Shipping this one alone would erase a real defect entry, which is exactly the scoreboard behaviour this file exists to prevent. Ships when the entry below does.',
   },
   {
     copyKey: 'GOAL_ALMOST_DONE',
     evidence: 'src/modules/notifications/application/providers/rule-based-notification-decision.provider.ts:123',
-    detail: 'Same fact slot, same absence: no CHILD-audience door site supplies `goal:`.',
-  },
-  {
-    copyKey: 'STREAK_AT_RISK',
-    evidence: 'src/modules/notifications/application/providers/rule-based-notification-decision.provider.ts:132',
-    detail: 'The rule reads `c.streak`, and NO door site anywhere in `src/` passes `streak:` — the slot is write-only.',
-  },
-  {
-    copyKey: 'STREAK_ACHIEVED',
-    evidence: 'src/modules/life-intelligence/application/services/habit-engine.service.ts:235',
-    detail:
-      'STREAK_ACHIEVED is a REWARD TRIGGER type, not a notification event type: it reaches RewardsEngineService, which notifies as REWARD_GRANTED. The child’s «حافظت على سلسلتك» is unreachable.',
+    detail: 'MISSING DATA, named exactly: there is no partial-progress column for any goal — `achievement_requests` records stages, never `completed_units` — so «one step left» cannot be computed from anything that exists. Three of its four bands also need a `unitNoun` with no server-side source; without one the sentence degrades to GENERIC. Needs `reward_programs.unit_noun_ar` (or per-activity nouns) plus a progress column.',
   },
   {
     copyKey: 'DAILY_GOAL_COMPLETED',
     evidence: 'src/modules/life-intelligence/application/services/health-engine.service.ts:128',
-    detail: 'Same shape: a reward-trigger type that only ever becomes REWARD_GRANTED at the notification door.',
+    detail: 'MISSING DATA: no server-owned Arabic name for a daily goal exists. `TYPE_SPECS.aggregateType = \'DailyGoal\'` names a model with no table behind it, and the only candidate text is device-supplied `metadata` — client prose, which must never be rendered as if the server wrote it. Needs a server-owned daily-goal title before the sentence can name anything.',
   },
   {
     copyKey: 'LEARNING_GOAL_ACHIEVED',
     evidence: 'src/modules/life-intelligence/application/services/learning-engine.service.ts:160',
-    detail: 'Same shape. The sentence exists in four tone bands and nothing selects it.',
-  },
-  {
-    copyKey: 'ACHIEVEMENT_VERIFIED',
-    evidence: 'src/modules/rewards-engine/application/services/achievement.service.ts:527',
-    detail:
-      'The domain event fires and AchievementOutcomeConsumer turns it into two ANNOUNCEMENT events; no consumer converts it into a notification event.',
-  },
-  {
-    copyKey: 'ACHIEVEMENT_REJECTED',
-    evidence: 'src/modules/rewards-engine/application/services/achievement.service.ts:416',
-    detail:
-      'Production states «ACHIEVEMENT_REJECTED has NO consumer, deliberately (principle 7)» — and the catalogue still carries a child-facing sentence for it. One of the two is wrong and the contradiction is the finding.',
+    detail: 'ONE LINE AWAY, and the line is a product decision rather than a mechanical unlock. `LearningGoal.title` exists; the blocker is that the only emitter (`rewards-engine.service.ts` `announceGrant`) passes no cause AND makes no CHILD call at all, so adding one would create a child notification on a path that has never sent one. That is new behaviour on the direct-reward path, not a repair — it needs deciding, not slipping in.',
   },
   {
     copyKey: 'GOAL_COMPLETED_PARENT',
     evidence: 'test/notifications/notification-scoring-coverage.spec.ts (PF-E-003)',
     detail:
-      'The parent sentence the Phase F report advertises as the example of a meaningful notification. PF-E-003 fixed its SCORING; it still has no producer.',
-  },
-  {
-    copyKey: 'HYDRATION_REMINDER',
-    evidence: 'src/modules/life-intelligence/application/services/smart-notification-integration.service.ts:142',
-    detail:
-      'Produced only by evaluateSmartNotificationCandidates, reachable only through processSignals, which has ZERO callers in `src/` — PF-E-001 exactly, still open for this rule.',
-  },
-  {
-    copyKey: 'STUDY_REMINDER',
-    evidence: 'src/modules/life-intelligence/application/services/smart-notification-decision-engine.ts:58',
-    detail: 'Second of the three processSignals candidates. Same dead entry point.',
-  },
-  {
-    copyKey: 'EXERCISE_ENCOURAGEMENT',
-    evidence: 'src/modules/life-intelligence/application/services/smart-notification-decision-engine.ts:68',
-    detail: 'Third of the three processSignals candidates. Same dead entry point.',
-  },
-  {
-    copyKey: 'SUBSCRIPTION_EXPIRING',
-    evidence: 'src/shared/notifications/notification-class.ts:263',
-    detail:
-      'Production says so itself: «(no producer yet — billing is another work stream.)». The copy, the class row and the destination shipped without it.',
-  },
-  {
-    copyKey: 'PAYMENT_FAILED',
-    evidence: 'src/shared/notifications/notification-class.ts:277',
-    detail:
-      'Production says «(no producer yet.)». The billing module writes no notification of any kind — `payment-webhook.service.ts` moves entitlement and stops.',
-  },
-]);
+      'BLOCKED BY A CONFLICT, not by missing data. `weekCount` IS computable honestly (a rolling 7-day count of VERIFIED `achievement_requests` by `local_date`). But on the paid path this would be a SECOND parent notification for a cause already served by REWARD_GRANTED_WITH_GOAL, which e2e-01 and e2e-13 forbid. Its only honest niche is the UNPAID completion (a rule at its maxPerDay/maxPerWeek cap), and filling it changes «no grant ⇒ no notification» (CONTEXT §5) — a product decision.',
+  },]);
 
 // ===========================================================================
 // 6. THE CLIENT HALF — read from the Flutter apps, never edited

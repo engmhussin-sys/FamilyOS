@@ -4,6 +4,7 @@ import { addBusinessDays } from '../../../../common/time/family-date';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { HabitEngineService } from '../../../life-intelligence/application/services/habit-engine.service';
 import { StalledGoalService } from '../../../life-intelligence/application/services/stalled-goal.service';
+import { BillingNotificationProducer } from '../../../billing/application/services/billing-notification.producer';
 import { computeCurrentStreak } from '../../../life-intelligence/application/services/streak-calculator';
 import type { FamilyJobContext, FamilyJobDefinition, JobOutcome } from '../../domain/job.types';
 
@@ -81,6 +82,25 @@ export class FamilyDailyRolloverJob {
      * three judgements two different definitions of «yesterday».
      */
     private readonly stalledGoals: StalledGoalService,
+    /**
+     * THE FOURTH JUDGEMENT, and it belongs here for the same reason as the
+     * third.
+     *
+     * «this subscription lapses in three days» is a LEAD-TIME fact: nothing
+     * emits it, it becomes true by the calendar advancing rather than by
+     * anything happening, and «three days away» is only meaningful on the
+     * family's own clock — a household in Riyadh and one in Cairo cross that
+     * line at different instants. That is the same shape as a missed habit and
+     * a stalled goal, so it gets the same home rather than a second
+     * `scheduled_jobs` row, a second migration and a second definition of
+     * «today». `job_runs (job_name, family_id, business_date)` already makes
+     * this once per household per day.
+     *
+     * `sweepExpiringSubscription` deliberately does not open its own tenant
+     * scope — the runner has already entered this family's — and never throws,
+     * so a billing outage cannot stop a household's habits from rolling over.
+     */
+    private readonly billingNotices: BillingNotificationProducer,
   ) {}
 
   definition(): FamilyJobDefinition {
@@ -88,7 +108,7 @@ export class FamilyDailyRolloverJob {
       name: FAMILY_DAILY_ROLLOVER_JOB,
       scope: 'FAMILY',
       description:
-        'تدوير اليوم لكل أسرة على تقويمها المحلّي: تعليم العادات غير المنجَزة أمس كـ MISSED، ورصد انكسار السلاسل، وتنبيه ولي الأمر للأهداف التي بدأت ولم تكتمل.',
+        'تدوير اليوم لكل أسرة على تقويمها المحلّي: تعليم العادات غير المنجَزة أمس كـ MISSED، ورصد انكسار السلاسل، وتنبيه ولي الأمر للأهداف التي بدأت ولم تكتمل وللاشتراك الذي يوشك على الانتهاء.',
       handler: (ctx) => this.run(ctx),
     };
   }
@@ -145,18 +165,24 @@ export class FamilyDailyRolloverJob {
       now: ctx.now,
     });
 
-    if (missed > 0 || streaksBroken > 0 || stalled.produced > 0) {
+    // AFTER the stalled-goal sweep, on the same closed day and the same clock.
+    const expiring = await this.billingNotices.sweepExpiringSubscription({
+      familyId: ctx.familyId,
+      now: ctx.now,
+    });
+
+    if (missed > 0 || streaksBroken > 0 || stalled.produced > 0 || expiring.produced > 0) {
       // Counts and one family id prefix. No child id, no habit title, nothing
       // a log aggregator would turn into a profile.
       this.logger.log(
-        `rollover.completed family=${ctx.familyId.slice(0, 8)} tz=${ctx.timeZone} businessDate=${ctx.businessDate} children=${children.length} missed=${missed} streaksBroken=${streaksBroken} goalsStalled=${stalled.produced}`,
+        `rollover.completed family=${ctx.familyId.slice(0, 8)} tz=${ctx.timeZone} businessDate=${ctx.businessDate} children=${children.length} missed=${missed} streaksBroken=${streaksBroken} goalsStalled=${stalled.produced} subscriptionsExpiring=${expiring.produced}`,
       );
     }
 
     return {
       // `affectedRows` is the headline number an operator scans, and a
       // household whose only event was a stalled goal must not report zero.
-      affectedRows: missed + stalled.produced,
+      affectedRows: missed + stalled.produced + expiring.produced,
       details: {
         children: children.length,
         habits_marked_missed: missed,
@@ -166,6 +192,9 @@ export class FamilyDailyRolloverJob {
         goals_stalled_notified: stalled.produced,
         goals_stalled_already_decided: stalled.alreadyDecided,
         goals_stalled_refused: stalled.refused,
+        subscription_expiring_notified: expiring.produced,
+        subscription_expiring_already_decided: expiring.alreadyDecided,
+        subscription_expiring_refused: expiring.refused,
       },
     };
   }

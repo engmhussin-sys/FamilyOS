@@ -5,6 +5,7 @@ import { DataRetentionModule } from '../data-retention/data-retention.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { EventsModule } from '../events/events.module';
 import { LifeIntelligenceModule } from '../life-intelligence/life-intelligence.module';
+import { BillingNotificationsModule } from '../billing/billing-notifications.module';
 import { JobObservability } from './application/job-observability.service';
 import { JobRegistry } from './application/job-registry.service';
 import { JobRunner } from './application/job-runner.service';
@@ -49,7 +50,7 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
  * and this deployment already has a PostgreSQL holding both.
  */
 @Module({
-  imports: [TimeModule, DataRetentionModule, LifeIntelligenceModule, EventsModule, AnalyticsModule],
+  imports: [TimeModule, DataRetentionModule, LifeIntelligenceModule, EventsModule, AnalyticsModule, BillingNotificationsModule],
   controllers: [SchedulerOperationsController],
   providers: [
     RetentionSweepJob,
