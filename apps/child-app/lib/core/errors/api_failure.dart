@@ -35,6 +35,7 @@ class ApiFailure {
     this.statusCode,
     this.requestId,
     this.fieldErrors = const [],
+    this.diagnostic,
   });
 
   final String message;
@@ -43,6 +44,23 @@ class ApiFailure {
   final int? statusCode;
   final String? requestId;
   final List<ApiFieldError> fieldErrors;
+
+  /// THE REAL ERROR, KEPT BUT NEVER SHOWN — the child-side twin of the
+  /// Parent App's field of the same name.
+  ///
+  /// When a failure never reached the B3 filter — a proxy's 502 HTML page, a
+  /// dropped socket, a `FormatException` from a truncated body — the only
+  /// text available is the transport's own, e.g. «The request returned an
+  /// invalid status code of 502». On a parent's screen that sentence is
+  /// merely useless; on a CHILD's screen it is an English operational string
+  /// carrying an HTTP status code, put in front of a six-year-old who reads
+  /// Arabic — and it is the exact opposite of the non-punitive voice every
+  /// other "no" in this app is written in.
+  ///
+  /// So it lives HERE: [message]/[messageAr] carry what the child reads,
+  /// [diagnostic] carries what actually happened. [KidErrorState] does not
+  /// know this field exists.
+  final String? diagnostic;
 
   /// ARABIC FIRST. `messageAr` wins whenever the server sent one.
   String get display => _firstNonEmpty([messageAr, message]) ?? message;
@@ -74,19 +92,78 @@ class ApiFailure {
     'NOT_FOR_THIS_CHILD',
   };
 
+  /// THE SENTENCE FOR A FAILURE NOBODY WORDED.
+  ///
+  /// `ApiClient._toApiException` already supplies reviewed Egyptian Arabic
+  /// for the two transport cases it can name (`CLIENT_OFFLINE`,
+  /// `CLIENT_TIMEOUT`). This is the third case, and the one that used to be
+  /// missing: a proxy 502, an HTML error page, a truncated body or any route
+  /// that never reached the B3 filter arrived with `messageAr == null`, so
+  /// [display] fell through to the English transport string and
+  /// [KidErrorState] rendered it to a child.
+  ///
+  /// Same register as the other two — colloquial, non-punitive, and it names
+  /// the one thing the child can do. Nothing here says "failed" or "error".
+  static const ApiFailure unexpected = ApiFailure(
+    message: 'That did not go through. Try again in a moment.',
+    messageAr: 'مش قادرين نكمّل دلوقتي. جرّب تاني بعد شوية.',
+    code: _unexpectedCode,
+  );
+
+  static const _unexpectedCode = 'CLIENT_UNEXPECTED';
+
+  /// True when NOBODY worded this failure — neither the B3 filter nor one of
+  /// the two transport classifications — so the sentence on screen is
+  /// [unexpected]'s and the real text is in [diagnostic]. Branch on this,
+  /// never on the sentence itself.
+  bool get isUnexpected => code == _unexpectedCode;
+
+  /// THE ONE CONVERSION, AND THE POINT AT WHICH RAW TEXT STOPS.
+  ///
+  /// Three outcomes, in order:
+  ///   1. the B3 envelope is present (`code`, and normally `messageAr`) — the
+  ///      server's own words are carried through untouched, because the
+  ///      server is the only party that knows what actually went wrong, and
+  ///      because those words ARE the product (CONTEXT §3 principle 7). This
+  ///      covers `CLIENT_OFFLINE` and `CLIENT_TIMEOUT` too: `ApiClient` gives
+  ///      both a `code` and a reviewed `messageAr` of their own. A B3
+  ///      envelope that somehow lacks `messageAr` gets [unexpected]'s Arabic
+  ///      rather than falling through to the English, so a child is never
+  ///      handed an English sentence;
+  ///   2. anything else that is still an `ApiException` — a proxy page, a
+  ///      dropped socket — is rendered as [unexpected];
+  ///   3. not even an `ApiException` — a bad cast, a `FormatException` — is
+  ///      also [unexpected]. `toString()` on those is a developer artefact
+  ///      and occasionally a stack trace.
+  ///
+  /// In every branch the untouched original survives in [diagnostic], and
+  /// `statusCode` / `requestId` / `fieldErrors` survive as well: they are how
+  /// support finds the matching backend log line.
   factory ApiFailure.from(Object error) {
     if (error is ApiFailure) return error;
     if (error is ApiException) {
+      final hasArabic = _firstNonEmpty([error.messageAr]) != null;
+      final fromEnvelope = _firstNonEmpty([error.code]) != null || hasArabic;
+
       return ApiFailure(
-        message: error.message,
-        messageAr: error.messageAr,
-        code: error.code,
+        message: fromEnvelope ? error.message : unexpected.message,
+        messageAr: hasArabic ? error.messageAr : unexpected.messageAr,
+        code: fromEnvelope ? error.code : _unexpectedCode,
         statusCode: error.statusCode,
         requestId: error.requestId,
         fieldErrors: _fieldErrorsFrom(error.details),
+        // ALWAYS the untouched original, even when it is also the displayed
+        // sentence — a log reader should not have to work out which branch
+        // was taken to know what arrived on the wire.
+        diagnostic: error.message,
       );
     }
-    return ApiFailure(message: error.toString());
+    return ApiFailure(
+      message: unexpected.message,
+      messageAr: unexpected.messageAr,
+      code: _unexpectedCode,
+      diagnostic: error.toString(),
+    );
   }
 
   static List<ApiFieldError> _fieldErrorsFrom(Map<String, dynamic>? details) {
