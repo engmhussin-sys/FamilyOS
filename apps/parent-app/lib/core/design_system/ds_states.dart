@@ -17,13 +17,27 @@ import 'ds_tokens.dart';
 /// went wrong" is a hardcoded string with extra steps, and this project's
 /// own l10n parity script would never catch it.
 
+/// LOADING, IN TWO FORMS, AND THE DEFAULT IS THE SKELETON.
+///
+/// [skeletonRows] non-null (the default) draws the page's own shape in
+/// grey. Pass `skeletonRows: null` only where the layout genuinely is not
+/// predictable — a one-shot action inside a dialog, not a list screen.
 class DsLoadingState extends StatelessWidget {
-  const DsLoadingState({super.key, this.label});
+  const DsLoadingState({super.key, this.label, this.skeletonRows = 4, this.hero = false});
 
   final String? label;
+  final int? skeletonRows;
+  final bool hero;
 
   @override
   Widget build(BuildContext context) {
+    if (skeletonRows != null) {
+      return Semantics(
+        label: label,
+        liveRegion: true,
+        child: DsSkeletonList(rows: skeletonRows!, hero: hero),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: DsSpace.xxl),
       child: Column(
@@ -36,6 +50,28 @@ class DsLoadingState extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// The disc-behind-the-glyph both the empty and the error state draw.
+/// One place decides how big it is and how strong the tint is.
+class _DsStateGlyph extends StatelessWidget {
+  const _DsStateGlyph({required this.icon, required this.tint, this.compact = false});
+
+  final IconData icon;
+  final Color tint;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final double diameter = compact ? 56 : 72;
+    return Container(
+      width: diameter,
+      height: diameter,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: tint.withOpacity(0.10), shape: BoxShape.circle),
+      child: Icon(icon, size: compact ? DsIconSize.lg : DsIconSize.hero, color: tint),
     );
   }
 }
@@ -63,7 +99,10 @@ class DsEmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 44, color: DsColor.stateMuted),
+          // A tinted disc, not a bare grey glyph floating in white. An
+          // empty state should look composed on purpose, not like a
+          // screen that failed to draw.
+          _DsStateGlyph(icon: icon, tint: DsColor.accent),
           DsSpace.gapLg,
           Text(title, style: DsText.sectionTitle(context), textAlign: TextAlign.center),
           if (body != null) ...[
@@ -122,10 +161,14 @@ class DsErrorState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            failure.isOffline ? Icons.wifi_off_rounded : Icons.error_outline_rounded,
-            size: compact ? 32 : 44,
-            color: DsColor.stateError,
+          // CALM, NOT ALARMING. The glyph sits on a tint of the state
+          // colour rather than being a saturated red mark on white; the
+          // colour still carries the meaning, the icon and the server's
+          // own sentence carry it too, so nothing here is colour-only.
+          _DsStateGlyph(
+            icon: failure.isOffline ? Icons.wifi_off_rounded : Icons.error_outline_rounded,
+            tint: DsColor.stateError,
+            compact: compact,
           ),
           DsSpace.gapMd,
           Text(title, style: DsText.sectionTitle(context), textAlign: TextAlign.center),
@@ -222,6 +265,8 @@ class DsStateView<T> extends StatelessWidget {
     this.requestIdLabel,
     this.emptyActionLabel,
     this.onEmptyAction,
+    this.skeletonRows = 4,
+    this.skeletonHero = false,
   });
 
   final UiState<T> state;
@@ -238,10 +283,19 @@ class DsStateView<T> extends StatelessWidget {
   final String? emptyActionLabel;
   final VoidCallback? onEmptyAction;
 
+  /// How many card rows the loading skeleton draws. `null` falls back to
+  /// the spinner, for the rare screen whose layout is not predictable.
+  final int? skeletonRows;
+  final bool skeletonHero;
+
   @override
   Widget build(BuildContext context) {
     return state.when(
-      loading: () => DsLoadingState(label: loadingLabel),
+      loading: () => DsLoadingState(
+        label: loadingLabel,
+        skeletonRows: skeletonRows,
+        hero: skeletonHero,
+      ),
       empty: () => DsEmptyState(
         title: emptyTitle,
         body: emptyBody,

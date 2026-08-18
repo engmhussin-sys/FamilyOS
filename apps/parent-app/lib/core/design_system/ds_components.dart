@@ -224,7 +224,7 @@ class DsChoiceTile extends StatelessWidget {
                 children: [
                   Icon(
                     selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                    size: 20,
+                    size: DsIconSize.md,
                     color: selected ? DsColor.accent : DsColor.stateMuted,
                   ),
                   DsSpace.hGapMd,
@@ -272,11 +272,8 @@ class DsBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (icon != null) ...[Icon(icon, size: 13, color: c), const SizedBox(width: DsSpace.xs)],
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c),
-          ),
+          if (icon != null) ...[Icon(icon, size: DsIconSize.xs, color: c), const SizedBox(width: DsSpace.xs)],
+          Text(label, style: DsText.badge(context).copyWith(color: c)),
         ],
       ),
     );
@@ -354,6 +351,234 @@ class DsStepHeader extends StatelessWidget {
           Text(hint!, style: DsText.caption(context)),
         ],
       ],
+    );
+  }
+}
+
+/// THE HEADLINE PANEL — one saturated block, one label, one number.
+///
+/// Five screens (`learning_progress`, `health_trend`, `digital_twin`,
+/// `dashboard_home`, `add_child`) each hand-built this: the same
+/// `Container` + `LinearGradient(topLeft → bottomRight)` + `labelLarge`
+/// in `Colors.white70` + `displaySmall` in white, with four different
+/// corner radii between them. It is one component now, its gradient is
+/// direction-aware (see [DsGradient]), and its caption never disappears
+/// into a colour-only distinction.
+class DsHeroPanel extends StatelessWidget {
+  const DsHeroPanel({
+    super.key,
+    required this.label,
+    required this.value,
+    this.base = DsColor.ink,
+    this.icon,
+    this.footnote,
+  });
+
+  final String label;
+  final String value;
+  final Color base;
+  final IconData? icon;
+  final String? footnote;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: DsSpace.xl, horizontal: DsSpace.lg),
+      decoration: BoxDecoration(
+        gradient: DsGradient.hero(base),
+        borderRadius: DsRadius.lgBorder,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: DsIconSize.lg, color: DsColor.onDarkMuted),
+            DsSpace.gapSm,
+          ],
+          Text(label, style: DsText.onDarkLabel(context), textAlign: TextAlign.center),
+          DsSpace.gapSm,
+          Text(value, style: DsText.onDarkDisplay(context), textAlign: TextAlign.center),
+          if (footnote != null) ...[
+            DsSpace.gapXs,
+            Text(footnote!, style: DsText.onDarkBody(context), textAlign: TextAlign.center),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// An icon + label + value row inside a card. `digital_twin_screen`,
+/// `health_trend_screen`, `learning_progress_screen` and
+/// `wellbeing_screen` each carried a private `_MetricRow`/`_MetricCard`
+/// with this exact shape.
+class DsMetricRow extends StatelessWidget {
+  const DsMetricRow({
+    super.key,
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return DsCard(
+      child: Row(
+        children: [
+          Container(
+            width: DsSize.touchTarget,
+            height: DsSize.touchTarget,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: DsRadius.controlBorder,
+            ),
+            child: Icon(icon, color: color, size: DsIconSize.md),
+          ),
+          DsSpace.hGapMd,
+          Expanded(child: Text(label, style: DsText.body(context))),
+          DsSpace.hGapSm,
+          Text(value, style: DsText.cardTitle(context)),
+        ],
+      ),
+    );
+  }
+}
+
+/// ONE GREY BLOCK THAT BREATHES.
+///
+/// The building brick of every skeleton. It pulses opacity rather than
+/// sliding a shimmer gradient across itself: a shimmer repaints the full
+/// width of the block every frame, and the cheap Android hardware this
+/// product targets in Egypt renders that at a visibly worse frame rate
+/// than a single opacity tween.
+class DsSkeletonBlock extends StatefulWidget {
+  const DsSkeletonBlock({
+    super.key,
+    this.width,
+    this.height = 14,
+    this.radius,
+  });
+
+  final double? width;
+  final double height;
+  final double? radius;
+
+  @override
+  State<DsSkeletonBlock> createState() => _DsSkeletonBlockState();
+}
+
+class _DsSkeletonBlockState extends State<DsSkeletonBlock>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: DsMotion.pulse,
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.45, end: 1.0).animate(
+        CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      ),
+      child: Container(
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          color: DsColor.hairline,
+          borderRadius: BorderRadius.circular(widget.radius ?? DsRadius.sm),
+        ),
+      ),
+    );
+  }
+}
+
+/// THE SHAPE OF THE PAGE, BEFORE THE PAGE ARRIVES.
+///
+/// Replaces `Center(child: CircularProgressIndicator())` on every screen
+/// whose layout is known in advance — which is all of them, because every
+/// one of these screens renders a header and then a list of cards. A
+/// spinner tells a parent "something is happening somewhere"; this tells
+/// them what is about to be there and stops the content jumping when it
+/// lands.
+class DsSkeletonList extends StatelessWidget {
+  const DsSkeletonList({
+    super.key,
+    this.rows = 4,
+    this.hero = false,
+    this.padding = DsSpace.screen,
+  });
+
+  final int rows;
+  final bool hero;
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) {
+    // A skeleton is decoration; the screen's own loading label is what a
+    // screen reader should announce, not eleven grey rectangles.
+    return ExcludeSemantics(
+      child: SingleChildScrollView(
+        padding: padding,
+        physics: const NeverScrollableScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (hero) ...[
+              const DsSkeletonBlock(height: 108, radius: DsRadius.lg),
+              DsSpace.gapLg,
+            ],
+            for (int i = 0; i < rows; i++) ...[
+              const _DsSkeletonCard(),
+              DsSpace.gapMd,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DsSkeletonCard extends StatelessWidget {
+  const _DsSkeletonCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: DsSpace.card,
+      decoration: BoxDecoration(
+        color: DsColor.surface,
+        borderRadius: DsRadius.cardBorder,
+        border: Border.all(color: DsColor.hairline),
+      ),
+      child: Row(
+        children: [
+          const DsSkeletonBlock(width: DsSize.touchTarget, height: DsSize.touchTarget, radius: DsRadius.control),
+          DsSpace.hGapMd,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                DsSkeletonBlock(height: 14),
+                SizedBox(height: DsSpace.sm),
+                DsSkeletonBlock(width: 140, height: 12),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

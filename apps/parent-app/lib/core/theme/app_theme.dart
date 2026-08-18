@@ -26,15 +26,36 @@ class AppTheme {
   static const double _cardRadius = 14;
   static const double _buttonRadius = 12;
 
+  /// ONE TYPE SCALE, WITH ARABIC LINE HEIGHTS.
+  ///
+  /// Every role below now declares an explicit `height`. Before this pass
+  /// only the two body roles did, which meant the four heading roles fell
+  /// back to the font's own default line box — computed for Latin. Arabic
+  /// needs more: it stacks marks ABOVE the baseline (fatha, shadda, the
+  /// dots of ث/ش) and drops descenders well BELOW it (ج ح خ ع غ م ه ي),
+  /// so a line box tuned for "x-height plus a little" clips a heading the
+  /// moment a real Arabic word lands in it. The values rise as the size
+  /// falls, because the proportional cost of a mark is worse at 13pt than
+  /// at 30pt.
+  ///
+  /// `letterSpacing` IS GONE, DELIBERATELY. It was -0.5 / -0.3 on the two
+  /// display roles and +0.1 on labels — all three tuned for Inter's Latin
+  /// forms. Arabic is a JOINED script: tracking is inserted between
+  /// glyphs after shaping, so it pulls apart or crushes together letters
+  /// that are supposed to be connected, and this product's default
+  /// language is Arabic. A theme cannot vary tracking per script, so the
+  /// one setting that is correct in both is none. Latin headings read
+  /// very slightly looser than before; Arabic headings stop being
+  /// deformed.
   static TextTheme _textTheme(TextTheme base, Color displayColor, Color bodyColor) {
     return GoogleFonts.interTextTheme(base).copyWith(
-      displaySmall: GoogleFonts.inter(fontSize: 30, fontWeight: FontWeight.w700, color: displayColor, letterSpacing: -0.5),
-      headlineMedium: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.w700, color: displayColor, letterSpacing: -0.3),
-      titleLarge: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w600, color: displayColor),
-      titleMedium: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: displayColor),
-      bodyLarge: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400, color: bodyColor, height: 1.5),
-      bodyMedium: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: bodyColor, height: 1.4),
-      labelLarge: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0.1),
+      displaySmall: GoogleFonts.inter(fontSize: 30, fontWeight: FontWeight.w700, color: displayColor, height: 1.25),
+      headlineMedium: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.w700, color: displayColor, height: 1.32),
+      titleLarge: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w600, color: displayColor, height: 1.38),
+      titleMedium: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w600, color: displayColor, height: 1.42),
+      bodyLarge: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400, color: bodyColor, height: 1.6),
+      bodyMedium: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400, color: bodyColor, height: 1.55),
+      labelLarge: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, height: 1.3),
     );
   }
 
