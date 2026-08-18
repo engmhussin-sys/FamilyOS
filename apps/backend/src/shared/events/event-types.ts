@@ -267,7 +267,13 @@ export const DOMAIN_EVENT_CATALOGUE: Readonly<Record<DomainEventType, DomainEven
   ACHIEVEMENT_REJECTED: {
     type: 'ACHIEVEMENT_REJECTED',
     producer: 'AchievementVerificationConsumer / parent rejection',
-    consumers: ['(none — deliberately: CONTEXT §3 principle 7, a rejection does not notify a child)'],
+    // `F1-002` — WAS: «(none — deliberately: CONTEXT §3 principle 7, a
+    // rejection does not notify a child)», while `COPY_CATALOGUE` carried a
+    // child-facing sentence for the same key in four tone bands, with a
+    // quiet-hours class and a deep link. The contradiction is resolved in
+    // favour of ANSWERING the child — the reason never travels — and the full
+    // argument is at the rejection branch in `achievement.service.ts`.
+    consumers: ['NotificationAchievementConsumer'],
     idempotencyKeyTemplate: 'child:{childId}:achvrej:{achievementId}:{attemptNo}',
     carriesCompletionEvent: false,
     deviceIngestible: false,

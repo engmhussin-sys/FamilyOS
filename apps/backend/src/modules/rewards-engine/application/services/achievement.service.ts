@@ -410,11 +410,80 @@ export class AchievementService {
         clientEventId: null,
         occurredAt: now,
         traceId: null,
-        payload: { achievementId, programId: achievement.programId, childId: achievement.childId },
+        payload: {
+          achievementId,
+          programId: achievement.programId,
+          childId: achievement.childId,
+          /**
+           * `F1-002` — WHAT THE ATTEMPT WAS ABOUT, IN ARABIC, DERIVED ONCE.
+           *
+           * `RewardProgram.targetSummaryAr` («الآيات 1–5 من سورة الملك»),
+           * carried on the event exactly as `ACHIEVEMENT_VERIFIED` carries it,
+           * so the consumer that names the goal needs no reward-program
+           * repository and learns nothing about what a surah is.
+           *
+           * THE PARENT'S `note` IS DELIBERATELY NOT HERE. It is free text a
+           * human wrote about a child's work, and the one sentence this event
+           * produces is read BY that child. Putting a reason on the wire is how
+           * a reason ends up in a sentence, and CONTEXT §3 principle 7 forbids
+           * the product blaming a child for an outcome. The note stays on the
+           * attempt row, where the parent can see it and the child cannot.
+           */
+          targetSummaryAr: program.targetSummaryAr ?? null,
+        },
       });
 
-      // `ACHIEVEMENT_REJECTED` has NO consumer, deliberately (principle 7): a
-      // rejection does not push a notification at a child.
+      /**
+       * ======================================================================
+       * `F1-002` — THE CONTRADICTION THAT WAS HERE, AND HOW IT IS RESOLVED.
+       * ======================================================================
+       *
+       * WHAT THIS COMMENT SAID, VERBATIM:
+       *
+       *     // `ACHIEVEMENT_REJECTED` has NO consumer, deliberately
+       *     // (principle 7): a rejection does not push a notification at a
+       *     // child.
+       *
+       * And `COPY_CATALOGUE.ACHIEVEMENT_REJECTED` has carried a child-facing
+       * sentence — in four tone bands, in Arabic and English — the whole time,
+       * with a quiet-hours class, two scoring rows and a deep-link destination.
+       * Production and the catalogue said opposite things about the same key,
+       * and the contradiction is the finding.
+       *
+       * IT IS RESOLVED IN FAVOUR OF TELLING THE CHILD, for three reasons.
+       *
+       *   1. NON-PUNITIVE IS NOT THE SAME AS SILENT, and principle 7 asks for
+       *      the first. Read the sentence the catalogue actually holds: «يحتاج
+       *      {goalTitle} مراجعة بسيطة مع أهلك» — it names no fault, states no
+       *      reason, uses none of the punitive vocabulary the child-safety
+       *      filter screens for, and its next step is a CONVERSATION. What
+       *      principle 7 forbids is a product that punishes; a product that
+       *      answers is not punishment.
+       *   2. SILENCE AFTER A SUBMISSION IS ITSELF A FAILURE. The child pressed
+       *      submit, uploaded evidence and waited. Under the old behaviour the
+       *      VERIFIED branch replied and the REJECTED branch never did, so the
+       *      honest reading of the product was «the app answers you when you are
+       *      right». The attempt also stays open under
+       *      `MAX_VERIFICATION_ATTEMPTS` — the child is expected to try again,
+       *      and cannot if nothing told them to.
+       *   3. THE PRODUCT ALREADY ARGUED THIS, one table over.
+       *      `notification-class.ts`'s own `ACHIEVEMENT_REJECTED` row says it is
+       *      DEFERRED rather than suppressed «BECAUSE it is the unwelcome one:
+       *      dropping only the negative outcome would make the notification
+       *      stream a systematically optimistic view of the child's week», and
+       *      `GOAL_STALLED_PARENT` cites that argument by name. A quiet-hours
+       *      class written for a producer that was forbidden to exist was the
+       *      shape of the contradiction.
+       *
+       * THE REASON NEVER TRAVELS — see the payload above. The child is told
+       * WHICH goal needs another look and WHO to look at it with, and nothing
+       * about why it was not accepted.
+       *
+       * THE PRODUCER IS `NotificationAchievementConsumer` (events), through the
+       * same single door — `handleEvent` -> decision -> dedup -> safety ->
+       * persistence — as every other notification in this product. Nothing here
+       * writes a row.
+       */
       return this.repo.findAchievement(achievementId);
     }
 

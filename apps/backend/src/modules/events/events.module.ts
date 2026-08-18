@@ -10,6 +10,7 @@ import { EventIngestionService } from './application/event-ingestion.service';
 import { ConsumerIdempotency } from './application/consumers/consumer-idempotency.service';
 import { RewardsCompletionConsumer } from './application/consumers/rewards-completion.consumer';
 import { NotificationRewardConsumer } from './application/consumers/notification-reward.consumer';
+import { NotificationAchievementConsumer } from './application/consumers/notification-achievement.consumer';
 import { StreakDetectionConsumer } from './application/consumers/streak-detection.consumer';
 import { EventsController } from './presentation/controllers/events.controller';
 import { OutboxOperationsController } from './presentation/controllers/outbox-operations.controller';
@@ -61,6 +62,10 @@ import { DeviceEventsThrottlerGuard } from './presentation/guards/device-events-
     ConsumerIdempotency,
     RewardsCompletionConsumer,
     NotificationRewardConsumer,
+    // `F1-002` — the child's answer to a rejected attempt. Same module as
+    // `NotificationRewardConsumer` and for the same reason: it is a producer
+    // that turns a domain event into ONE `handleEvent` call and owns no domain.
+    NotificationAchievementConsumer,
     StreakDetectionConsumer,
     DeviceEventsThrottlerGuard,
   ],
