@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/kid_theme.dart';
 import '../../../core/widgets/celebration_overlay.dart';
@@ -21,7 +23,12 @@ class RewardsScreen extends ConsumerStatefulWidget {
 class _RewardsScreenState extends ConsumerState<RewardsScreen> {
   Map<String, dynamic>? _account;
   List<dynamic>? _store;
-  String? _errorMessage;
+
+  /// THE B3 ENVELOPE, not `e.toString()`. This used to hold raw exception
+  /// text — which the error widget then did not render, so the child was
+  /// told a fixed «ياااه! حاجة ما حمّلتش.» while the server had already
+  /// written the actual reason in Arabic and it was thrown away.
+  ApiFailure? _failure;
   String? _redeemingItemId;
 
   @override
@@ -31,7 +38,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
       final api = ref.read(familyGrowthApiProvider);
       final results = await Future.wait([api.getRewardsAccount(), api.getRewardsStore()]);
@@ -42,7 +49,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
     }
   }
 
@@ -61,10 +68,22 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
           ),
         );
       }
-    } catch (_) {
+    } catch (e) {
+      // THE SERVER'S OWN SENTENCE, not a fixed client line. A redemption is
+      // refused for reasons the child can act on — not enough coins yet, this
+      // one is already on its way — and F4 words each of them in Arabic. The
+      // old `catch (_)` discarded all of that and always said «معرفناش نطلبها
+      // دلوقتي», which teaches the child nothing about what to do next.
+      //
+      // `ApiFailure.display` is never empty and never raw: an envelope gives
+      // the server's Arabic, and anything the server did not word falls back
+      // to `unexpected`'s reviewed sentence.
       if (mounted) {
+        final locale = ref.read(localeControllerProvider.notifier);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ref.read(localeControllerProvider.notifier).t('rewards.redeemFailed'))),
+          SnackBar(
+            content: Text(ApiFailure.from(e).displayFor(arabic: locale.isRtl)),
+          ),
         );
       }
     } finally {
@@ -84,10 +103,10 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
       child: CelebrationOverlay(
         child: Scaffold(
           appBar: AppBar(title: Text(t('rewards.title'))),
-          body: _errorMessage != null
-              ? _buildFriendlyError(t)
+          body: _failure != null
+              ? _buildFriendlyError(t, localeController.isRtl)
               : (_account == null || _store == null)
-                  ? const Center(child: CircularProgressIndicator(color: KidTheme.skyBlue))
+                  ? Center(child: KidLoadingState(label: t('common.loading')))
                   : RefreshIndicator(
                       color: KidTheme.skyBlue,
                       onRefresh: _load,
@@ -128,19 +147,25 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
     );
   }
 
-  Widget _buildFriendlyError(String Function(String, {int? count, Map<String, Object>? options}) t) {
+  /// The chrome line stays this screen's; the EXPLANATION is the server's.
+  ///
+  /// `KidErrorState` renders `failure.displayFor(arabic:)` under the title, so
+  /// the Arabic sentence F4 wrote for this exact failure finally lands on a
+  /// screen instead of being replaced by a fixed "something didn't load" —
+  /// and it picks the sunshine treatment over the coral one for an
+  /// `isNotNow` refusal, which a bare `FilledButton` could never do.
+  Widget _buildFriendlyError(
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    bool arabic,
+  ) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('\u{1F605}', style: TextStyle(fontSize: 56)),
-            const SizedBox(height: 16),
-            Text(t('rewards.loadError'), style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
-            const SizedBox(height: 20),
-            FilledButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded), label: Text(t('rewards.tryAgain'))),
-          ],
+      child: SingleChildScrollView(
+        child: KidErrorState(
+          failure: _failure!,
+          title: t('rewards.loadError'),
+          retryLabel: t('rewards.tryAgain'),
+          arabic: arabic,
+          onRetry: _load,
         ),
       ),
     );

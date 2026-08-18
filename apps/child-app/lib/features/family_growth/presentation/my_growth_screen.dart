@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/child_deep_link_router.dart';
 import '../../../core/routing/deep_link.dart';
@@ -47,7 +49,12 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   List<dynamic>? _coachingTips;
   List<dynamic>? _smartTasks;
   String _childName = 'there'; // honest default only until the real profile loads
-  String? _errorMessage;
+
+  /// THE B3 ENVELOPE, not `e.toString()`. This used to hold raw exception
+  /// text — which the error widget then did not render, so the child was
+  /// told a fixed «ياااه! حاجة ما حمّلتش.» while the server had already
+  /// written the actual reason in Arabic and it was thrown away.
+  ApiFailure? _failure;
 
   int get _totalTasks => (_habits?.length ?? 0) + (_practices?.length ?? 0);
 
@@ -67,7 +74,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   }
 
   Future<void> _loadAll() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
       final api = ref.read(familyGrowthApiProvider);
       final results = await Future.wait([api.getHabits(), api.getFaithPractices(), api.getMessages(), api.getProfile()]);
@@ -91,7 +98,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
         }
       }
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
       return;
     }
 
@@ -244,10 +251,10 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
             icon: const Text('\u{1F4A7}', style: TextStyle(fontSize: 20)),
             label: Text(t('myGrowth.logWater')),
           ),
-          body: _errorMessage != null
-              ? _buildFriendlyError(t)
+          body: _failure != null
+              ? _buildFriendlyError(t, localeController.isRtl)
               : (_habits == null || _practices == null || _messages == null)
-                  ? const Center(child: CircularProgressIndicator(color: KidTheme.skyBlue))
+                  ? Center(child: KidLoadingState(label: t('common.loading')))
                   : RefreshIndicator(
                       color: KidTheme.skyBlue,
                       onRefresh: _loadAll,
@@ -364,33 +371,24 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     );
   }
 
-  Widget _buildFriendlyError(String Function(String, {int? count, Map<String, Object>? options}) t) {
+  /// The chrome line stays this screen's; the EXPLANATION is the server's.
+  ///
+  /// `KidErrorState` keeps Sparky and the warm framing this widget already
+  /// had, and adds the one thing it was missing: `failure.displayFor(arabic:)`
+  /// — the Arabic sentence the server wrote for this exact failure, which
+  /// used to be discarded in favour of a fixed «ياااه! حاجة ما حمّلتش.».
+  Widget _buildFriendlyError(
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    bool arabic,
+  ) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SparkyMascot(mood: SparkyMood.neutral, size: 72),
-            const SizedBox(height: 16),
-            Text(
-              t('myGrowth.loadError'),
-              style: Theme.of(context).textTheme.titleLarge,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              t('myGrowth.tryAgainPrompt'),
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: _loadAll,
-              icon: const Icon(Icons.refresh_rounded),
-              label: Text(t('myGrowth.tryAgain')),
-            ),
-          ],
+      child: SingleChildScrollView(
+        child: KidErrorState(
+          failure: _failure!,
+          title: t('myGrowth.loadError'),
+          retryLabel: t('myGrowth.tryAgain'),
+          arabic: arabic,
+          onRetry: _loadAll,
         ),
       ),
     );
