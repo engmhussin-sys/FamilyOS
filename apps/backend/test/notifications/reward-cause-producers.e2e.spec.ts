@@ -58,7 +58,9 @@ import {
   hasEnumOrPlaceholderLeak,
   renderNotificationCopy,
 } from '../../src/modules/notifications/domain/engine/notification-copy';
+import { getBusinessTimeHHMM } from '../../src/common/time/family-date';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
+import { freezeGoldenClock } from '../golden/golden-world';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
 
@@ -66,6 +68,50 @@ const CAIRO = 'Africa/Cairo';
 
 /** Midday, so nothing in this file is a deferral test by accident. */
 const NOON = new Date('2026-01-15T10:00:00.000Z'); // 12:00 Cairo
+
+/**
+ * ===========================================================================
+ * SPRINT F1 — WHY THIS FILE NOW FREEZES THE CLOCK, AND WHAT IT COST NOT TO.
+ * ===========================================================================
+ *
+ * WHAT WAS MEASURED. This suite passed on 2026-08-17 and failed 8/10 on
+ * 2026-08-18 at the SAME COMMIT, on a pristine database and on a used one. The
+ * failure shape was `ledger: 1` (the reward really was granted) and
+ * `parentNotifications: 0`.
+ *
+ * THE MECHANISM, read out of `notification_decisions` mid-run rather than
+ * guessed: `NOON` was passed as an ARGUMENT everywhere — `achievements.start(…,
+ * NOON)`, `occurredAt: NOON`, `localDate: '2026-01-15'` — and the WALL CLOCK
+ * was left alone. But the notification door does not take `now` from the
+ * business event. `NotificationContextAssembler.assemble` reads
+ * `input.now ?? new Date()` and `NotificationRewardConsumer` passes no `now`,
+ * so quiet hours are evaluated against the REAL instant the relay ran — which
+ * is correct production behaviour, and deliberately so: whether it is safe to
+ * wake a household is a question about NOW, not about when the child finished
+ * their homework.
+ *
+ * At 20:57 UTC the family's own clock read 23:57 (Africa/Cairo is UTC+03:00 in
+ * August — Egypt reintroduced DST in 2023), the decision row said
+ * `reason=QUIET_HOURS_ACTIVE, outcome=DEFER`, and the notification went to
+ * `notification_deliveries` scheduled for 07:00 local instead of to
+ * `notifications`. Every assertion in this file that counts a delivered row was
+ * therefore an assertion about what time of day CI happened to run.
+ *
+ * SO THE CLOCK IS FROZEN, with the helper this repo already has, and NOT with a
+ * second mechanism: `freezeGoldenClock` fakes `Date` ONLY — every timer stays
+ * real, because `pg`, Redis and the relay all need working ones. The frozen
+ * instant is `NOON` itself, so the wall clock and the twelve arguments this
+ * file already passes finally agree with each other. It is in the PAST relative
+ * to any real run, which is the safe direction: `outbox_messages.next_attempt_at`
+ * defaults client-side to the fake instant while the relay's claim SQL compares
+ * against PostgreSQL's real `now()`, so a fake day in the FUTURE would leave
+ * every message unclaimable (the same reason, and the same direction, as
+ * `GOLDEN_DAY`).
+ *
+ * NO ASSERTION BELOW WAS CHANGED. The suite was always describing midday; it
+ * simply never made the machine agree.
+ */
+const QUIET_HOURS_START = '21:00';
 
 /** An unresolved `{placeholder}`, which must never reach a human. */
 const PLACEHOLDER = /\{[a-zA-Z0-9_]+\}/;
@@ -301,6 +347,12 @@ describeIfDb('F1-002 — the reward CAUSE reaches the copy layer (real PostgreSQ
   }
 
   beforeAll(async () => {
+    // BEFORE THE APP IS BUILT, so that every `@default(now())` this suite
+    // writes — families, children, outbox messages, consumption markers — is
+    // stamped with the same instant the notification door will read. See the
+    // header block above `QUIET_HOURS_START`.
+    freezeGoldenClock(NOON);
+
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
       .useValue(offlinePrismaService())
@@ -326,7 +378,37 @@ describeIfDb('F1-002 — the reward CAUSE reaches the copy layer (real PostgreSQ
       }
     }
     await app?.close();
+    jest.useRealTimers();
   }, 180_000);
+
+  // ==========================================================================
+  // 0. THE GUARD ON THE CLOCK ITSELF
+  // ==========================================================================
+  /**
+   * A SUITE THAT PASSES IN THE MORNING AND FAILS AT NIGHT IS WORSE THAN ONE
+   * THAT ALWAYS FAILS, because the first one gets re-run and the second one
+   * gets fixed. This is the test that makes the regression LOUD AND CONSTANT.
+   *
+   * It asserts the PREMISE the other ten tests are written on rather than
+   * anything about the product: that the wall clock the notification engine
+   * will read is `NOON`, and that `NOON` really is outside the family's quiet
+   * hours on the family's own calendar. Delete `freezeGoldenClock` and this
+   * fails at 09:00 exactly as it fails at 23:00 — which is the whole point.
+   *
+   * It is derived, not asserted twice: `QUIET_HOURS_START` is compared against
+   * the family-local wall clock through the SAME `getBusinessTimeHHMM`
+   * production uses, so if the default quiet window is ever moved to cover
+   * midday, this line says so instead of eight downstream assertions saying
+   * something else.
+   */
+  it('THE CLOCK IS FROZEN AT MIDDAY — this suite must not depend on what time CI runs', () => {
+    expect(new Date().toISOString()).toBe(NOON.toISOString());
+    expect(Date.now()).toBe(NOON.getTime());
+
+    const localNow = getBusinessTimeHHMM(new Date(), CAIRO);
+    expect(localNow).toBe('12:00');
+    expect(localNow < QUIET_HOURS_START).toBe(true);
+  });
 
   // ==========================================================================
   // 1. STREAK_ACHIEVED — «حافظت على سلسلتك ٧ أيام»
