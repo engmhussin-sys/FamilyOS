@@ -231,6 +231,41 @@ const COPY_RULES: readonly CopyRule[] = Object.freeze([
       c.event.cause === 'ACHIEVEMENT_VERIFIED' &&
       usable(v.goalTitle),
   },
+  {
+    key: 'LEARNING_GOAL_ACHIEVED',
+    audience: 'CHILD',
+    /**
+     * ======================================================================
+     * SPRINT F1 (DECISION 1) — THE THIRD CAUSE, AND THE PATH IT COMES FROM.
+     * ======================================================================
+     *
+     * «أنهيت هدف {goalTitle} بالكامل 🎉» rather than «حصلت على مكافأة جديدة».
+     *
+     * WHAT WAS MEASURED. `LEARNING_GOAL_ACHIEVED` is a DIRECT-path trigger
+     * type: `reward-rule-catalogue.ts` lists it among the «keyed
+     * engine-internal names emitted by the `IRewardTriggerWriter` seam», it is
+     * NOT in `COMPLETION_EVENT_TYPES`, and so it never reaches
+     * `RewardsCompletionConsumer` at all. Its only announcer is
+     * `RewardsEngineService.announceGrant`, which until this sprint passed no
+     * cause and made no CHILD call — so a child who finished a whole learning
+     * goal was told nothing, while a child whose streak was paid through
+     * `/events/batch` was told something specific.
+     *
+     * `goalTitle` IS `LearningGoal.title`, put on the trigger payload by
+     * `LearningEngineService.completeGoal` and forwarded by the announcer. It
+     * is REQUIRED here, so a trigger that carries the cause but not the title
+     * falls through to `REWARD_GRANTED_CHILD` — a complete sentence — and never
+     * to a half-substituted template or to `GENERIC`.
+     *
+     * PINNED TO `REWARD_GRANTED_CHILD` like its two siblings above: the TYPE
+     * does not move, only the sentence the provider may select, and the choice
+     * is recorded on `notification_decisions.copy_key`.
+     */
+    when: (c, v) =>
+      c.event.eventType === 'REWARD_GRANTED_CHILD' &&
+      c.event.cause === 'LEARNING_GOAL_ACHIEVED' &&
+      usable(v.goalTitle),
+  },
 ]);
 
 @Injectable()

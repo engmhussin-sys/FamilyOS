@@ -775,11 +775,6 @@ const PRODUCERLESS_DEFECT_LEDGER: readonly LedgerEntry[] = Object.freeze([
     detail: 'MISSING DATA: no server-owned Arabic name for a daily goal exists. `TYPE_SPECS.aggregateType = \'DailyGoal\'` names a model with no table behind it, and the only candidate text is device-supplied `metadata` — client prose, which must never be rendered as if the server wrote it. Needs a server-owned daily-goal title before the sentence can name anything.',
   },
   {
-    copyKey: 'LEARNING_GOAL_ACHIEVED',
-    evidence: 'src/modules/life-intelligence/application/services/learning-engine.service.ts:160',
-    detail: 'ONE LINE AWAY, and the line is a product decision rather than a mechanical unlock. `LearningGoal.title` exists; the blocker is that the only emitter (`rewards-engine.service.ts` `announceGrant`) passes no cause AND makes no CHILD call at all, so adding one would create a child notification on a path that has never sent one. That is new behaviour on the direct-reward path, not a repair — it needs deciding, not slipping in.',
-  },
-  {
     copyKey: 'GOAL_COMPLETED_PARENT',
     evidence: 'test/notifications/notification-scoring-coverage.spec.ts (PF-E-003)',
     detail:
@@ -866,8 +861,15 @@ describe('ARCHITECTURE GUARD — no producerless production notification', () =>
         'src/modules/events/application/consumers/notification-reward.consumer.ts',
         'src/modules/life-intelligence/application/services/rewards-engine.service.ts',
       ]);
+      // SPRINT F1 (DECISION 1) — TWO OWNERS NOW, and they are the same two
+      // `REWARD_GRANTED` has had since B4: the outbox announcer and the direct
+      // one. The child half used to exist on only the first of them, which is
+      // exactly the asymmetry `announceGrant` closed — a child heard about a
+      // reward earned through `/events/batch` and heard nothing about one
+      // earned through the `/self/*` routes their own app calls.
       expect(owners('REWARD_GRANTED_CHILD')).toEqual([
         'src/modules/events/application/consumers/notification-reward.consumer.ts',
+        'src/modules/life-intelligence/application/services/rewards-engine.service.ts',
       ]);
       expect(owners('GOAL_STALLED_PARENT')).toEqual([
         'src/modules/life-intelligence/application/services/stalled-goal.service.ts',

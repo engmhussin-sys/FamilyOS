@@ -419,7 +419,76 @@ export class RewardsEngineService implements IRewardTriggerWriter {
       ? forEntity('reward', childId, event.idempotencyKey)
       : forRecurringSignal('reward', childId, `${event.engine}:${event.type}`, new Date());
 
-    await this.notifyGrant(childId, familyId, 'REWARD_GRANTED', sourceEventId);
+    /**
+     * ======================================================================
+     * SPRINT F1 (DECISION 1) — THE CAUSE, AND THE CHILD WHO WAS NEVER TOLD.
+     * ======================================================================
+     *
+     * WHAT WAS MEASURED. This method made ONE call, to `REWARD_GRANTED`, with
+     * no `cause` and no CHILD branch. `NotificationRewardConsumer` — the OTHER
+     * announcer, the one on the outbox path — has made TWO calls since
+     * `F6-006` and has carried the cause since `F1-002`. So the product's
+     * answer to «a child earned a reward» depended on which door the completion
+     * came through: through `/events/batch` the child heard about it, through
+     * the `/self/*` routes the Child App actually calls (PA-M-034) they heard
+     * nothing at all. That asymmetry is the defect. A child who earns a reward
+     * is told, on every path.
+     *
+     * IT CANNOT DOUBLE-NOTIFY, AND THE REASON IS THE LINE ABOVE THIS BLOCK:
+     * `if (event.announcedViaOutbox) return`. `RewardsCompletionConsumer` is
+     * the ONLY caller that sets that flag and it sets it on EVERY call, so the
+     * outbox path never reaches this code and this code is never reached by
+     * anything the outbox path announces. One completion still produces one
+     * parent notification and one child message; which of the two announcers
+     * produced them is the only thing that varies.
+     *
+     * AND IT IS THE SAME `sourceEventId` FOR BOTH AUDIENCES, exactly as the
+     * consumer does: the cause is one, and `forAudience` /
+     * `forChildAudience` keep the two rows apart at every table that stores
+     * them — `notifications (family_id, source_event_id, user_id)` under the
+     * bare key, `child_messages (family_id, source_event_id)` and
+     * `notification_deliveries (family_id, source_event_id)` under the
+     * `:child` facet, `notification_decisions (family_id, source_event_id,
+     * target_audience)` on its own audience column. Neither deduplicates the
+     * other, and neither can be written twice.
+     *
+     * `cause` IS `event.type` — the ENGINE-INTERNAL trigger name
+     * (`LEARNING_GOAL_ACHIEVED`, `EDUCATION_TASK_COMPLETED`,
+     * `FAITH_PRACTICE_COMPLETED`, `HABIT_COMPLETED`…). It is read by exactly
+     * one thing, `COPY_RULES` in `RuleBasedNotificationDecisionProvider`, and
+     * recorded on `notification_decisions.copy_key`. `notifications.type` does
+     * not move: the scorer, the quiet-hours matrix and the analytics read
+     * `type`, and renaming it to fix a sentence would move a reporting axis.
+     */
+    const cause = event.type.trim().length > 0 ? event.type.trim() : null;
+
+    await this.notifyGrant(childId, familyId, 'REWARD_GRANTED', sourceEventId, {}, cause);
+
+    /**
+     * THE CHILD'S OWN FACT, AND THE ONE GATE ON IT.
+     *
+     * `LearningGoal.title` is what `LEARNING_GOAL_ACHIEVED` needs and it is the
+     * only reason that key had no producer: the sentence «أنهيت هدف {goalTitle}
+     * بالكامل 🎉» is true of a learning goal that was just marked COMPLETED and
+     * of nothing else on this path. `LearningEngineService.completeGoal` puts
+     * the title on the trigger payload; every other trigger leaves it absent,
+     * the rule does not fire, and the child reads the whole, honest
+     * `REWARD_GRANTED_CHILD` sentence instead of a half-filled template.
+     *
+     * PINNED TO THE CAUSE as well as to the field, for the same reason the
+     * consumer pins `goalTitle` to `ACHIEVEMENT_VERIFIED`: a title attached to
+     * a habit tick would make the sentence say something the event does not.
+     */
+    const childGoalTitle = cause === 'LEARNING_GOAL_ACHIEVED' ? readableTitleOf(event.payload.goalTitle) : null;
+
+    await this.notifyGrant(
+      childId,
+      familyId,
+      'REWARD_GRANTED_CHILD',
+      sourceEventId,
+      childGoalTitle === null ? {} : { goalTitle: childGoalTitle },
+      cause,
+    );
   }
 
   /**
@@ -559,16 +628,54 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     /** The numbers that go INSIDE the sentence — «وسام القارئ», «المستوى ٧».
      * A closed record of primitives, never a free-form payload. */
     variables: Readonly<Record<string, string | number>> = {},
+    /**
+     * SPRINT F1 (DECISION 1) — THE SPECIFIC DOMAIN CAUSE, when the type is a
+     * generic one. Read by `COPY_RULES` and by nothing else; see the block in
+     * `announceGrant`. Optional because three of this file's call sites
+     * (`BADGE_EARNED`, `BADGE_EARNED_PARENT`, `LEVEL_UP`) name a type that is
+     * already as specific as the fact is.
+     */
+    cause: string | null = null,
   ): Promise<void> {
     try {
-      await this.notifications.handleEvent({
+      const result = await this.notifications.handleEvent({
         familyId,
         childId,
         eventType,
+        cause,
         sourceEventId,
         trigger: 'DOMAIN_EVENT',
         variables,
       });
+
+      /**
+       * `PF-E-006`, ASSERTED HERE FOR THE SAME REASON `NotificationRewardConsumer`
+       * ASSERTS IT: the audience is NOT something this producer states — it is
+       * read from `COPY_CATALOGUE[type].audience` by the decision provider. A
+       * child-facing type whose catalogue entry were ever edited to `PARENT`
+       * would keep scoring, keep writing decision rows, and write a SECOND
+       * PARENT candidate while the child went silent again.
+       *
+       * IT IS LOGGED RATHER THAN THROWN, and that is the one difference from
+       * the consumer. The consumer's whole job is the notification and it has a
+       * durable retry (the relay); this method is a best-effort side effect
+       * inside an HTTP request that has already committed a reward, and
+       * throwing would fail the child's completion to complain about a
+       * catalogue row. The mismatch is contained either way — a `PARENT`
+       * candidate carrying the bare `sourceEventId` collides with the parent's
+       * own row on `notifications (family_id, source_event_id, user_id)` — so
+       * the loud line is what is owed, not an exception.
+       */
+      const expected = CHILD_FACING_GRANT_TYPES.has(eventType) ? 'CHILD' : null;
+      const resolved = result?.decision?.targetAudience;
+      if (expected !== null && resolved !== undefined && resolved !== expected) {
+        this.logger.error(
+          `PF-E-006 GUARD: ${eventType} resolved to targetAudience=${resolved}, ` +
+            'but this producer exists to reach the CHILD. The audience comes from ' +
+            'COPY_CATALOGUE[type].audience — a child-facing type whose catalogue entry says PARENT ' +
+            'leaves the child silent again.',
+        );
+      }
     } catch (err) {
       this.logger.warn(`Failed to notify reward grant (${eventType})`, err instanceof Error ? err.message : err);
     }
@@ -635,4 +742,32 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     await this.childrenService.assertChildBelongsToFamily(redemption.childId, familyId);
     await this.repository.denyRedemption(redemptionId, decidingUserId);
   }
+}
+
+/**
+ * SPRINT F1 (DECISION 1) — the types this file produces FOR THE CHILD. Named as
+ * a set rather than checked inline so that adding a fourth child-facing grant
+ * type is a one-line edit that keeps the `PF-E-006` assertion covering it.
+ */
+const CHILD_FACING_GRANT_TYPES: ReadonlySet<string> = new Set(['REWARD_GRANTED_CHILD', 'BADGE_EARNED', 'LEVEL_UP']);
+
+/** A goal title long enough to be a paragraph is not a title. Mirrors
+ * `achievement-summary.ts`'s own bound, for the same reason: this string is
+ * rendered into a push notification body. */
+const MAX_GOAL_TITLE_CHARS = 120;
+
+/**
+ * A parent-written goal title fit to be read back to a child, or `null`.
+ *
+ * Takes `unknown` because `IRewardTriggerEvent.payload` is
+ * `Record<string, unknown>` — on the outbox path it has crossed the wire as
+ * JSON, so its shape is a claim rather than a type. An absent or unusable title
+ * makes `COPY_RULES` fall through to `REWARD_GRANTED_CHILD`, a whole sentence,
+ * rather than to a half-substituted template.
+ */
+function readableTitleOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const title = value.trim();
+  if (title.length === 0 || title.length > MAX_GOAL_TITLE_CHARS) return null;
+  return title;
 }

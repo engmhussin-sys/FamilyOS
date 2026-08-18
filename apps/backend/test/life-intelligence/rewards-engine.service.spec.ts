@@ -274,15 +274,51 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
      * decide what is too much. Volume control belongs to the guard, not to a
      * branch that skipped a whole delivery path.
      */
-    it('a routine XP grant on the DIRECT path notifies the parent exactly once', async () => {
+    /**
+     * SPRINT F1 (DECISION 1) EXTENDED IT AGAIN, AND FOR THE SAME REASON B4
+     * WROTE IT.
+     *
+     * B4's rule closed «notify on one path and not the other» for the PARENT.
+     * The CHILD half stayed open for another two sprints: `F6-006` gave the
+     * outbox announcer a second `handleEvent` call targeting `CHILD`, and this
+     * announcer — the one reached by the `/self/*` routes the Child App
+     * actually calls — kept making one. So a child earning a reward on the
+     * path the product actually uses was still told NOTHING, which is
+     * `PF-E-006` surviving on exactly the surface CONTEXT §1 calls the
+     * commercial wedge.
+     *
+     * ONE REAL GRANT -> ONE PARENT NOTIFICATION AND ONE CHILD MESSAGE, on both
+     * paths. The two calls are separate on purpose (see the block in
+     * `announceGrant`): each audience is assembled, scored, capped and recorded
+     * on its own, and they share ONE `sourceEventId` because they share one
+     * cause.
+     */
+    it('a routine XP grant on the DIRECT path notifies the parent AND the child, once each', async () => {
       repositoryMock.applyEarn.mockResolvedValue(true); // small xpRule amount (50), no level threshold crossed
 
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {} });
 
-      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(1);
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(2);
       expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
         expect.objectContaining({ childId, familyId, eventType: 'REWARD_GRANTED', trigger: 'DOMAIN_EVENT' }),
       );
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ childId, familyId, eventType: 'REWARD_GRANTED_CHILD', trigger: 'DOMAIN_EVENT' }),
+      );
+
+      // ONE CAUSE, ONE KEY. The parent's row and the child's row are separated
+      // by `forAudience`/`forChildAudience` at the tables that store them, never
+      // by the producer inventing a second key — the property
+      // `notification-source-key.ts` exists to state.
+      const [parentCall, childCall] = notificationEngineMock.handleEvent.mock.calls.map((c: any[]) => c[0]);
+      expect(childCall.sourceEventId).toBe(parentCall.sourceEventId);
+      // THE CAUSE SURVIVES THE DOOR: the trigger's own type, on both calls,
+      // read by `COPY_RULES` and by nothing else.
+      expect(parentCall.cause).toBe('x');
+      expect(childCall.cause).toBe('x');
+      // AND NO GOAL TITLE IS INVENTED for a habit-builder trigger that carries
+      // none — the child then reads the whole `REWARD_GRANTED_CHILD` sentence.
+      expect(childCall.variables).toEqual({});
       // PHASE F (`F6-003`) — THE STRONGER ASSERTION THAT REPLACED
       // `expect(sent.title).toBe('مكافأة جديدة')`.
       //
@@ -343,15 +379,17 @@ describe('RewardsEngineService — Double Reward Protection (Sprint 16.1 Phase 4
 
       repositoryMock.applyEarn.mockResolvedValueOnce(true);
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'retry-key' });
-      // TWO, because this 10,000 XP grant crosses a level threshold: the
-      // milestone LEVEL_UP notification to the child, and B4's single
-      // REWARD_GRANTED notification to the parent. The NUMBER is not the
-      // property under test — the property is that the RETRY below adds none.
-      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(2);
+      // THREE, because this 10,000 XP grant crosses a level threshold: the
+      // milestone LEVEL_UP notification to the child, B4's REWARD_GRANTED
+      // notification to the parent, and — since SPRINT F1 (DECISION 1) — the
+      // REWARD_GRANTED_CHILD half that the outbox path has had since `F6-006`.
+      // The NUMBER is not the property under test — the property is that the
+      // RETRY below adds none.
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(3);
 
       repositoryMock.applyEarn.mockResolvedValueOnce(false); // the retry — correctly rejected as a duplicate
       await service.processTriggerEvent(childId, familyId, { engine: 'habit-builder', type: 'x', payload: {}, idempotencyKey: 'retry-key' });
-      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(2); // still 2, not 4
+      expect(notificationEngineMock.handleEvent).toHaveBeenCalledTimes(3); // still 3, not 6
     });
 
     it('CRITICAL: a FAILED reward (real error, not a duplicate) does NOT notify — the error propagates before notification code is ever reached', async () => {

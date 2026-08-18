@@ -158,7 +158,33 @@ export class LearningEngineService {
       await this.rewardTrigger.trigger(childId, familyId, {
         engine: 'learning',
         type: 'LEARNING_GOAL_ACHIEVED',
-        payload: { goalId, subject: goal.subject, sessionCount, totalMinutes, verifiedBy: 'PARENT' },
+        /**
+         * SPRINT F1 (DECISION 1) — `goalTitle` IS THE ONE FACT THAT WAS
+         * MISSING, and it is the whole of why `LEARNING_GOAL_ACHIEVED` sat on
+         * the defect ledger with copy in four tone bands and no producer.
+         *
+         * `LearningGoal.title` is what the parent typed when they set the goal
+         * and what the child has been looking at ever since; the child's
+         * sentence is «أنهيت هدف {goalTitle} بالكامل 🎉» and there is nothing
+         * else on this path to put in it. `subject` is an enum-shaped code and
+         * putting THAT in front of a child would be «no raw enum in a
+         * user-visible string» in one field.
+         *
+         * It rides on the TRIGGER payload rather than being re-read by the
+         * announcer, for the reason `RewardsCompletionConsumer` states about
+         * `achievementSummaryAr`: a notification producer that grew a learning
+         * repository would be a second reader of a domain it has no business
+         * in, and a value carried on the immutable cause is stable across every
+         * replay of it.
+         */
+        payload: {
+          goalId,
+          goalTitle: goal.title,
+          subject: goal.subject,
+          sessionCount,
+          totalMinutes,
+          verifiedBy: 'PARENT',
+        },
         idempotencyKey: `learning-goal:${goalId}`,
       });
     } catch {
