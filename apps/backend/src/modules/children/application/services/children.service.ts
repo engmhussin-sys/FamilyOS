@@ -1,7 +1,11 @@
 import { Inject, Injectable, ForbiddenException } from '@nestjs/common';
-import type { Child } from '@prisma/client';
 
-import type { ICreateChildInput, IUpdateChildInput } from '../../domain/child.types';
+import type {
+  ICreateChildInput,
+  IUpdateChildInput,
+  IChildView,
+  IChildWithPinCredential,
+} from '../../domain/child.types';
 import { ChildNotFoundException } from '../../domain/child.errors';
 import {
   CHILD_REPOSITORY,
@@ -19,6 +23,17 @@ import { EntitlementsService } from '../../../billing/application/services/entit
  * Prisma directly, so that family-scoping is enforced identically
  * everywhere instead of being re-implemented (and potentially
  * re-forgotten) per module.
+ *
+ * WHAT IT HANDS BACK IS `IChildView`, NEVER THE PRISMA `Child`. The row
+ * carries `pinCodeHash` — the child app's login PIN, hashed, and a
+ * four-digit PIN's hash is a credential anyone can invert offline. It used
+ * to be returned verbatim by `GET /children` and `GET /children/:childId`.
+ * The whitelist that stops that lives in `child.types.ts` and is applied
+ * in the repository's `select`, so the hash is not read out of PostgreSQL
+ * at all on these paths and a new column is unexposed by default. The one
+ * caller that legitimately needs the credential —  child-app PIN
+ * verification — uses `getChildWithPinCredentialOrThrow` below and says so
+ * in its own name.
  */
 @Injectable()
 export class ChildrenService {
@@ -35,7 +50,7 @@ export class ChildrenService {
    * anywhere. The first child is always free on every tier — only the
    * SECOND-and-beyond child requires the entitlement. Fails closed,
    * matching every other authorization check in this codebase. */
-  async createChild(familyId: string, input: ICreateChildInput): Promise<Child> {
+  async createChild(familyId: string, input: ICreateChildInput): Promise<IChildView> {
     const existingChildren = await this.childRepository.findManyByFamily(familyId);
     if (existingChildren.length >= 1) {
       const entitled = await this.entitlements.hasFeature(familyId, 'multiple_children');
@@ -64,12 +79,36 @@ export class ChildrenService {
     return child;
   }
 
-  listChildren(familyId: string): Promise<Child[]> {
+  listChildren(familyId: string): Promise<IChildView[]> {
     return this.childRepository.findManyByFamily(familyId);
   }
 
-  async getChildOrThrow(childId: string, familyId: string): Promise<Child> {
+  async getChildOrThrow(childId: string, familyId: string): Promise<IChildView> {
     const child = await this.childRepository.findOneScopedToFamily(childId, familyId);
+    if (!child) {
+      throw new ChildNotFoundException(childId);
+    }
+    return child;
+  }
+
+  /**
+   * THE ONLY WAY TO OBTAIN A CHILD'S PIN HASH, and it is deliberately a
+   * mouthful. Same family scoping and same `ChildNotFoundException` as
+   * `getChildOrThrow`; the difference is that the returned object carries
+   * `pinCodeHash`, so it must be consumed server-side (comparing a
+   * submitted PIN against the hash) and MUST NOT be returned from a
+   * controller. No controller calls it — the children controller returns
+   * `getChildOrThrow`'s view, and a code review that sees this name at a
+   * presentation-layer call site is looking at a bug.
+   */
+  async getChildWithPinCredentialOrThrow(
+    childId: string,
+    familyId: string,
+  ): Promise<IChildWithPinCredential> {
+    const child = await this.childRepository.findOneWithPinCredentialScopedToFamily(
+      childId,
+      familyId,
+    );
     if (!child) {
       throw new ChildNotFoundException(childId);
     }
@@ -83,7 +122,7 @@ export class ChildrenService {
     await this.getChildOrThrow(childId, familyId);
   }
 
-  async updateChild(childId: string, familyId: string, input: IUpdateChildInput): Promise<Child> {
+  async updateChild(childId: string, familyId: string, input: IUpdateChildInput): Promise<IChildView> {
     await this.getChildOrThrow(childId, familyId); // enforces ownership before mutating
     return this.childRepository.update(childId, input);
   }
