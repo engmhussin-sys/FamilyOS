@@ -63,11 +63,29 @@ const KNOWN_PRIORITIES = new Set(['CRITICAL', 'HIGH', 'NORMAL', 'LOW']);
 export class PrismaNotificationDeliveryRepository implements INotificationDeliveryRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * SPRINT F1 (BILLING) — THE `child_id` PARAMETER IS NULLABLE AND NOW SAYS SO.
+   *
+   * The column has always been `String?`; the PARAMETER was the thing that
+   * could not express it. `$2::uuid` rejects `''` with `22P02`, and the caller
+   * that hands one over is `SmartNotificationIntegrationService.handleQuietHours`,
+   * whose `childId: string` is `input.childId ?? ''` for every producer that has
+   * no child — the same convention `quiet-hours-release.service.ts` uses for a
+   * digest. So a HOUSEHOLD-level notification deferred by quiet hours (a payment
+   * failure at 23:00, a renewal notice at 02:00) was lost at the enqueue rather
+   * than held. `|| null` below is where the empty string becomes the NULL the
+   * column already allowed.
+   *
+   * (This note sits above the statement rather than inside the argument list on
+   * purpose: `assert-tenant-scoping.ts` RULE 2 reads a 25-line window from the
+   * `$queryRawUnsafe` call and looks for `family_id` in it, and a comment naming
+   * a tenant table inside that window reads as unscoped raw SQL.)
+   */
   async enqueue(input: EnqueueDeferredInput): Promise<string | null> {
     const rows = await this.raw().$queryRawUnsafe<Array<{ id: string }>>(
       SQL_ENQUEUE_DEFERRED,
       input.familyId,
-      input.childId,
+      input.childId || null,
       input.type,
       input.category,
       input.priority,

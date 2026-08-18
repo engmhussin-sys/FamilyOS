@@ -41,6 +41,27 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
    */
   async createForFamilyOwner(input: ICreateRuntimeAlertInput): Promise<boolean> {
     const notificationType = input.type ?? 'RUNTIME_ALERT';
+    /**
+     * SPRINT F1 (BILLING) — `notifications.child_id` IS NULLABLE, and this is
+     * the line that lets a household-level notification use it.
+     *
+     * `ICreateRuntimeAlertInput.childId` is `string`, and the producers that
+     * have no child pass the empty string, because
+     * `SmartNotificationIntegrationService.deliverNow` receives
+     * `input.childId ?? ''` (the same convention `quiet-hours-release.service.ts`
+     * uses for a digest). `''` is not a uuid: the dedupe `findFirst` below and
+     * the `create` after it both reached PostgreSQL as
+     * `22P02 invalid input syntax for type uuid: ""`, so a payment failure or a
+     * renewal notice — facts about a HOUSEHOLD, which has no child attached to
+     * them and must not have one invented — could never become a row.
+     *
+     * Normalised once, here, at the boundary that owns the column. `undefined`
+     * is NOT used: `childId: undefined` in a Prisma `where` DROPS the clause
+     * and would have made the dedupe window match every childless alert of the
+     * same title; `null` means IS NULL in the query and NULL in the row, which
+     * is the fact.
+     */
+    const childId = input.childId || null;
 
     const recipient = await this.resolveRecipient(input.familyId);
     if (!recipient) return false; // no one to notify — nothing more this method can do
@@ -64,7 +85,7 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
     const recentDuplicate = await this.prisma.notification.findFirst({
       where: {
         userId: recipient.userId,
-        childId: input.childId,
+        childId,
         type: notificationType,
         title: input.title,
         createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
@@ -77,7 +98,7 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
         data: {
           familyId: tenantIdForWrite(),
           userId: recipient.userId,
-          childId: input.childId,
+          childId,
           type: notificationType,
           title: input.title,
           body: input.body,
