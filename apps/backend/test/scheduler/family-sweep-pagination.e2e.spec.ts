@@ -110,6 +110,20 @@ describeIfDb('THE 201st FAMILY — a FAMILY sweep reaches every household (real 
   /** The subset that carries a seeded notification and reward row. */
   let seeded: string[] = [];
   let seedUserId: string | null = null;
+  /**
+   * FAMILIES THIS SUITE CREATES BUT DOES NOT OWN — the "other households" the
+   * isolation assertion needs.
+   *
+   * They used to be borrowed: the assertion simply counted every non-cohort
+   * family in the database and required the number to be greater than zero.
+   * That passed only because other suites had already run and left rows behind,
+   * so on a database migrated from empty — which is exactly how CI and every
+   * honest verification run starts — `--runInBand` reached this suite first,
+   * found zero foreign families, and failed. A test whose validity depends on
+   * another suite's leftovers is not measuring isolation; it is measuring
+   * execution order. These rows make the same property true deterministically.
+   */
+  let outsiders: string[] = [];
 
   const sys = (what: string, fn: () => Promise<any>): Promise<any> =>
     runAsSystemAsync('TEST_FIXTURE', `Family-sweep pagination suite: ${what}`, async () => await fn());
@@ -200,6 +214,19 @@ describeIfDb('THE 201st FAMILY — a FAMILY sweep reaches every household (real 
     );
     cohort = families.map((f) => f.id);
 
+    // The foreign households, in a DIFFERENT timezone so they are not merely
+    // other rows but genuinely other tenants on a different calendar. Created
+    // here rather than assumed, so this suite proves isolation on an empty
+    // database as well as a busy one.
+    const foreign = await raw<Array<{ id: string }>>(
+      `INSERT INTO "families" ("id","name","timezone","updated_at")
+       SELECT gen_random_uuid(), $1 || ' #' || i::text, 'Asia/Riyadh', now()
+         FROM generate_series(1, 5) AS i
+       RETURNING "id"`,
+      `${cohortName}-OUTSIDER`,
+    );
+    outsiders = foreign.map((f) => f.id);
+
     await exec(
       `INSERT INTO "children" ("id","family_id","first_name","date_of_birth","updated_at")
        SELECT gen_random_uuid(), f."id", 'Pagination Kid', DATE '2015-04-01', now()
@@ -276,6 +303,13 @@ describeIfDb('THE 201st FAMILY — a FAMILY sweep reaches every household (real 
       // The cohort itself cascades: children, habits, completions, notifications,
       // reward entries, memberships, job_runs.
       await exec(`DELETE FROM "families" WHERE "id" = ANY($1::uuid[])`, cohort).catch(() => undefined);
+      // The outsiders leave with the cohort. They exist to make one assertion
+      // deterministic, not to become the next suite's inherited state — which
+      // is the very habit that made this test order-dependent.
+      if (outsiders.length > 0) {
+        await exec(`DELETE FROM "job_runs" WHERE "family_id" = ANY($1::uuid[])`, outsiders).catch(() => undefined);
+        await exec(`DELETE FROM "families" WHERE "id" = ANY($1::uuid[])`, outsiders).catch(() => undefined);
+      }
       if (seedUserId) {
         await exec(`DELETE FROM "users" WHERE "id" = $1::uuid`, seedUserId).catch(() => undefined);
       }
@@ -299,12 +333,30 @@ describeIfDb('THE 201st FAMILY — a FAMILY sweep reaches every household (real 
       expect(cohort).toHaveLength(COHORT_SIZE);
       expect(new Set(cohort).size).toBe(COHORT_SIZE);
 
+      // The database holds households this suite does not own. Counted against
+      // the outsiders THIS suite created, not against whatever another suite
+      // happened to leave behind — see `outsiders` for why that distinction is
+      // the difference between passing on a clean database and passing only
+      // when something ran first.
       const others = await count(
         `SELECT count(*)::int AS c FROM "families"
           WHERE "deleted_at" IS NULL AND NOT ("id" = ANY($1::uuid[]))`,
         cohort,
       );
-      expect(others).toBeGreaterThan(0);
+      expect(outsiders).toHaveLength(5);
+      expect(others).toBeGreaterThanOrEqual(outsiders.length);
+    });
+
+    it('the foreign households are swept too — isolation is scoping, not exclusion', async () => {
+      // The cohort assertions below are all keyed on cohort ids, which would
+      // stay true even if the sweep silently skipped everyone else. It does
+      // not: a family this suite does not own still gets its day closed.
+      const foreignRuns = await count(
+        `SELECT count(*)::int AS c FROM "job_runs"
+          WHERE "family_id" = ANY($1::uuid[]) AND "status" = 'SUCCEEDED'`,
+        outsiders,
+      );
+      expect(foreignRuns).toBe(outsiders.length);
     });
 
     it('EVERY created family has exactly one SUCCEEDED run for the day it closed', async () => {
