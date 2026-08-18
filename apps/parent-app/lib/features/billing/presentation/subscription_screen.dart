@@ -266,6 +266,20 @@ class _StatusBanner extends StatelessWidget {
     // Explicit handling for every real status this app's own backend
     // can return — no fallback binary "subscribed/not" that would
     // silently misrepresent PAST_DUE as if it were healthy ACTIVE.
+    //
+    // THIS LIST WENT STALE AND THAT WAS THE BUG. It was written against the
+    // five statuses that existed in Sprint 8; PHASE D added PENDING,
+    // GRACE_PERIOD and REFUNDED, and all three fell into the final `else`
+    // and rendered «ابدأ الآن — اختر خطة للبدء.». For GRACE_PERIOD that was
+    // not merely vague but false: `entitlement.service.ts` counts it as
+    // entitlement-bearing alongside TRIALING and ACTIVE, so a household with
+    // full paid access was being told it had no subscription and invited to
+    // buy one it already had.
+    //
+    // TRIALING as a STATUS is handled too. `isInTrial` above is computed
+    // separately by `TrialManager`, so a row still marked TRIALING after the
+    // trial window closed reached the `else` as well; it reads as inactive,
+    // which is what it is.
     late final Color color;
     late final IconData icon;
     late final String title;
@@ -290,7 +304,28 @@ class _StatusBanner extends StatelessWidget {
       icon = Icons.warning_rounded;
       title = t('subscription.pastDueTitle');
       body = t('subscription.pastDueBody');
-    } else if (status == 'CANCELED' || status == 'EXPIRED') {
+    } else if (status == 'GRACE_PERIOD') {
+      // Amber, not brick: the household still has everything it paid for.
+      // The action is real but the tone is not an alarm.
+      color = AppTheme.amber500;
+      icon = Icons.shield_outlined;
+      title = t('subscription.graceTitle');
+      body = t('subscription.graceBody');
+    } else if (status == 'PENDING') {
+      // Fawry's unavoidable state: a payment reference exists and the money
+      // has not arrived. Not entitlement-bearing, and not a failure either.
+      color = AppTheme.amber500;
+      icon = Icons.schedule_rounded;
+      title = t('subscription.pendingTitle');
+      body = t('subscription.pendingBody');
+    } else if (status == 'REFUNDED') {
+      // Terminal and distinct from CANCELED: the money went back, so access
+      // ended immediately rather than at the end of the period.
+      color = AppTheme.guardian950;
+      icon = Icons.receipt_long_rounded;
+      title = t('subscription.refundedTitle');
+      body = t('subscription.refundedBody');
+    } else if (status == 'CANCELED' || status == 'EXPIRED' || status == 'TRIALING') {
       color = AppTheme.guardian950;
       icon = Icons.info_outline_rounded;
       title = t('subscription.inactiveTitle');

@@ -491,6 +491,21 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'subscription.inactiveBody': 'Choose a plan below to continue using premium features.',
     'subscription.noneTitle': 'Get Started',
     'subscription.noneBody': 'Choose a plan to begin.',
+    // PHASE D's three statuses. Each is a different fact and none of them is
+    // "you have no subscription", which is what all three used to render as.
+    'subscription.pendingTitle': 'Payment Pending',
+    'subscription.pendingBody':
+        'We have your order and the payment has not reached us yet. Your subscription starts as soon as it is confirmed.',
+    // Entitlement-bearing: `entitlement.service.ts` grants full access in this
+    // state. The notice says so, and asks for the one action that fixes it.
+    // The length of the window is server-configured and deliberately not
+    // stated here as a number.
+    'subscription.graceTitle': 'Your Access Continues',
+    'subscription.graceBody':
+        'Your last payment did not go through. You keep full access for a short grace period — update your payment method to continue without interruption.',
+    'subscription.refundedTitle': 'Payment Refunded',
+    'subscription.refundedBody':
+        'Your subscription payment was returned and access to the premium features has ended. You can subscribe again whenever you want.',
     'subscription.free': 'Free',
     'subscription.currentPlan': 'Current Plan',
     'subscription.choosePlan': 'Choose Plan',
@@ -1174,6 +1189,15 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'subscription.inactiveBody': 'اختر خطة أدناه للاستمرار في استخدام الميزات المميزة.',
     'subscription.noneTitle': 'ابدأ الآن',
     'subscription.noneBody': 'اختر خطة للبدء.',
+    'subscription.pendingTitle': 'بانتظار إتمام الدفع',
+    'subscription.pendingBody':
+        'سجّلنا طلبك ولم يصلنا الدفع بعد. يبدأ اشتراكك فور تأكيد العملية.',
+    'subscription.graceTitle': 'وصولك مستمر',
+    'subscription.graceBody':
+        'لم تكتمل آخر عملية دفع، ووصولك إلى الميزات كامل خلال مهلة سماح قصيرة. حدّث وسيلة الدفع للاستمرار دون انقطاع.',
+    'subscription.refundedTitle': 'تم رد المبلغ',
+    'subscription.refundedBody':
+        'أعدنا مبلغ اشتراكك، وانتهى الوصول إلى الميزات المميزة. يمكنك الاشتراك من جديد في أي وقت.',
     'subscription.free': 'مجانًا',
     'subscription.currentPlan': 'خطتك الحالية',
     'subscription.choosePlan': 'اختر الخطة',
