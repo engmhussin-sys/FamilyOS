@@ -120,6 +120,58 @@ describe('PHASE F — the notification destination map', () => {
         expect(parentOnly.has(surface)).toBe(false);
       }
     });
+
+    /**
+     * `F1` — THE DISTRESS ALERT LANDS ON THE SAFETY SURFACE, NOT THE COACH.
+     *
+     * It used to resolve to `abny://coach`, which reads well and does nothing:
+     * `deep_link_router.dart` answers `coach` with `DeepLinkRouteKind
+     * .unavailable`, because `CoachingScreen` needs a `childId` and a
+     * `childName` that this payload is pinned never to carry. The most
+     * important notification in the product therefore fell back to the inbox
+     * even once a link was attached.
+     *
+     * It now takes `safetyDestination`, like the four device alerts it is
+     * classified alongside (`notification-class.ts` puts it in `SAFETY`), which
+     * is the surface `SafetyScreen` was built to be.
+     */
+    it('the distress alert lands on a surface the parent app can actually open', () => {
+      const link = resolveNotificationDestination({
+        copyKey: 'CHILD_WELLBEING_CHECKIN',
+        audience: 'PARENT',
+      });
+      expect(link).toBe('abny://screen-time');
+      expect(isValidDeepLink(link)).toBe(true);
+      expect(link).not.toBe(NOTIFICATION_INBOX_LINK);
+      // The id-bearing form is reachable the day a producer carries an alert
+      // row, and it is still the safety surface rather than a second one.
+      expect(
+        resolveNotificationDestination({
+          copyKey: 'CHILD_WELLBEING_CHECKIN',
+          audience: 'PARENT',
+          alertId: A_UUID,
+        }),
+      ).toBe(`abny://safety/${A_UUID}`);
+    });
+
+    /**
+     * AND IT SAYS WHERE TO GO WITHOUT SAYING WHY. §11.4's alert quotes nothing;
+     * the link must not become the back door for the detail the sentence
+     * withholds. `NotificationDestinationFacts` has no field that could carry
+     * one — this asserts the consequence on the produced string.
+     */
+    it('the distress destination carries no distress detail and no tenant', () => {
+      for (const alertId of [undefined, A_UUID]) {
+        const link = resolveNotificationDestination({
+          copyKey: 'CHILD_WELLBEING_CHECKIN',
+          audience: 'PARENT',
+          alertId,
+        });
+        for (const forbidden of ['SELF_HARM', 'distress', 'DISTRESS', 'child', 'family', 'user']) {
+          expect(link).not.toContain(forbidden);
+        }
+      }
+    });
   });
 
   // ==========================================================================

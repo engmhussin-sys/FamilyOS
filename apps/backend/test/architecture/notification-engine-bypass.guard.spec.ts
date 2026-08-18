@@ -180,7 +180,7 @@ const ENGINE_BYPASS_ALLOWLIST: readonly AllowlistEntry[] = Object.freeze([
     file: 'src/modules/pairing/infrastructure/repositories/prisma-runtime-alert.repository.ts',
     classification: 'TRANSACTIONAL',
     reason:
-      'The single writer of `notifications` (B9); reached only from `deliverNow`, and the unique index on (family_id, source_event_id, user_id) lives here.',
+      'The single writer of `notifications` (B9); owns the unique index on (family_id, source_event_id, user_id), and fills the deep link in for the two SYSTEM producers that reach it without the engine — it decides nothing, it only asks `notification-destination.ts`.',
   },
   {
     file: 'src/modules/life-intelligence/infrastructure/repositories/prisma-communication.repository.ts',

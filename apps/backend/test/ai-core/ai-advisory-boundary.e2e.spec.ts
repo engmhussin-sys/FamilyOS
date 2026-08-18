@@ -44,6 +44,11 @@ import { runAsSystemAsync } from '../../src/common/tenancy/system-context';
 import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { OutboxRelay } from '../../src/modules/events/application/outbox.relay';
+import {
+  NOTIFICATION_INBOX_LINK,
+  isValidDeepLink,
+  resolveNotificationDestination,
+} from '../../src/modules/notifications/domain/engine/notification-destination';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
@@ -546,6 +551,58 @@ describeIfDb('B8 — the AI advisory boundary, attacked (real PostgreSQL, real R
 
       // And it granted nothing, as everything else here grants nothing.
       expect(await ledgerCount(A)).toBe(0);
+    });
+
+    /**
+     * THE TAP ON THE MOST IMPORTANT NOTIFICATION THIS PRODUCT SENDS.
+     *
+     * `DistressEscalationService` writes through `createForFamilyOwner`, which
+     * bypasses the Smart Notification Engine on purpose — a fatigue cap must
+     * never silence a safety alert — and therefore also bypassed the only place
+     * a destination was ever resolved. The parent received «ظهرت إشارات تستحق
+     * اطمئنانك على {name}» with no `data` at all, so the tap fell through
+     * `parseDeepLink(null)` to the inbox while `SafetyScreen` — built listing
+     * exactly the SAFETY-classified notifications this one is — sat unreachable
+     * from the alert that needs it most.
+     *
+     * Read back OUT OF POSTGRESQL, from the row the previous test really
+     * emitted: this is the payload a phone receives, not a mock's argument.
+     */
+    it('the distress alert carries a destination, and the payload carries NOTHING ELSE', async () => {
+      const alerts = await sys('alerts', () =>
+        prisma.notification.findMany({ where: { familyId: A.familyId, type: 'CHILD_WELLBEING_CHECKIN' } }),
+      );
+      expect(alerts).toHaveLength(1);
+      const data = (alerts[0].data ?? {}) as Record<string, unknown>;
+
+      // 1. THERE IS A DESTINATION, and it is one the parent app can open.
+      expect(isValidDeepLink(data.deepLink)).toBe(true);
+      // Not the inbox — the inbox is where this tap used to die.
+      expect(data.deepLink).not.toBe(NOTIFICATION_INBOX_LINK);
+      // And the SERVER's map decided it, not this test and not the client.
+      expect(data.deepLink).toBe(
+        resolveNotificationDestination({ copyKey: 'CHILD_WELLBEING_CHECKIN', audience: 'PARENT' }),
+      );
+
+      // 2. THE PAYLOAD IS THE DESTINATION AND NOTHING ELSE.
+      //
+      // §11.4's alert is deliberately contentless — it names the child, says a
+      // conversation would help, and quotes nothing — and `data` is precisely
+      // where "a little context" gets smuggled back in six months from now.
+      // Asserting the KEY SET, rather than the absence of one named field, is
+      // what makes this survive the next person who adds one.
+      expect(Object.keys(data)).toEqual(['deepLink']);
+
+      // 3. NO TENANT IDENTIFIER AND NO DISTRESS DETAIL — spelled out, because
+      //    the key-set assertion above would still pass if the LINK ITSELF
+      //    carried either of them as a path segment.
+      const serialised = JSON.stringify(data);
+      for (const identifier of [A.familyId, A.childId, A.userId, A.deviceId]) {
+        expect(serialised).not.toContain(identifier);
+      }
+      for (const detail of ['SELF_HARM', 'DISTRESS', 'distress', 'أموت', 'حزين']) {
+        expect(serialised).not.toContain(detail);
+      }
     });
 
     it('an ORDINARY check-in escalates nothing and returns the same encouragement card', async () => {

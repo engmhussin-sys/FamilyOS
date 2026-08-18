@@ -62,6 +62,10 @@ import request = require('supertest');
 
 import { PairingOrchestratorService } from '../../src/modules/pairing/application/services/pairing-orchestrator.service';
 import { runWithTenant } from '../../src/common/tenancy/tenant-context';
+import {
+  isValidDeepLink,
+  resolveNotificationDestination,
+} from '../../src/modules/notifications/domain/engine/notification-destination';
 
 jest.setTimeout(180_000);
 
@@ -585,6 +589,30 @@ describeGolden('GOLDEN E2E-12 — the pairing lifecycle, end to end', () => {
       // `forEntity`, so the pair (child, device) IS the identity of the fact
       // and the unique index makes a duplicate structurally impossible.
       expect(rows[0].source_event_id).toBe(`runtime:${home.childId}:${deviceId}:DEVICE_REVOKED`);
+
+      /**
+       * THE OTHER `createForFamilyOwner` PRODUCER, AND IT CARRIES A DESTINATION
+       * TOO. `RuntimeAlertService` bypasses the Smart Notification Engine (it is
+       * SYSTEM-classified on `ENGINE_BYPASS_ALLOWLIST`), so it used to reach the
+       * phone with no `deepLink` at all — the same defect as the distress alert,
+       * on a less critical message. The single writer now asks
+       * `notification-destination.ts` for every row it writes.
+       *
+       * The INBOX is the correct answer here rather than a fallback: this row's
+       * type is the generic `RUNTIME_ALERT`, which the map answers with the
+       * inbox on purpose — «where the alert itself is» — because a device that
+       * no longer exists has no surface of its own. What matters is that the
+       * server SAID so, rather than the client guessing from a missing field.
+       */
+      expect(isValidDeepLink(rows[0].data.deepLink)).toBe(true);
+      expect(rows[0].data.deepLink).toBe(
+        resolveNotificationDestination({ copyKey: 'RUNTIME_ALERT', audience: 'PARENT' }),
+      );
+      // The link adds no identifier of its own — the pre-existing `deviceId`
+      // above is this producer's payload, not the destination's.
+      expect(rows[0].data.deepLink).not.toContain(home.familyId);
+      expect(rows[0].data.deepLink).not.toContain(home.childId);
+      expect(rows[0].data.deepLink).not.toContain(deviceId);
     });
 
     it('THE REVOKED DEVICE REACHES NOTHING — the same access token, now worth nothing', async () => {

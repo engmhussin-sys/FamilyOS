@@ -307,10 +307,27 @@ const DESTINATION_RULES: Readonly<Record<string, DestinationRule>> = Object.free
   ACCESSIBILITY_DISABLED: safetyDestination,
   PROTECTION_BYPASS_ATTEMPT: safetyDestination,
 
-  /** «ظهرت إشارات تستحق اطمئنانك على {childName} الآن» — the one notification in
-   * this product whose next step is a CONVERSATION rather than a setting, and
-   * the coach is the surface that helps a parent have it. */
-  CHILD_WELLBEING_CHECKIN: () => surfaceLink('coach'),
+  /**
+   * «ظهرت إشارات تستحق اطمئنانك على {childName} الآن» — the distress-escalation
+   * alert, and the most important sentence this product sends anyone.
+   *
+   * IT USED TO RESOLVE TO `abny://coach`, on the argument that the next step is
+   * a CONVERSATION rather than a setting. The argument was right about the
+   * product and wrong about the tap: `coach` is `unavailable` in the parent app
+   * (`deep_link_router.dart`), because `CoachingScreen` needs a `childId` AND a
+   * `childName` and this payload is pinned identifier-free — so a link there is
+   * a link the recipient cannot open, which rule 4's own words call worse than
+   * a link to a list. `screen-time`/`safety` IS openable, and `SafetyScreen`
+   * was built listing exactly the notifications the server classifies SAFETY —
+   * `notification-class.ts` classifies this key SAFETY, alongside the four
+   * device alerts that already resolve here.
+   *
+   * So it takes `safetyDestination` like its four siblings: the alert row when
+   * a producer ever carries one, and the protection surface — where the parent
+   * sees this alert next to everything else about this child's safety, and one
+   * tap from the child's page — until then.
+   */
+  CHILD_WELLBEING_CHECKIN: safetyDestination,
 
   /** «أرسل {childName} طلبًا ينتظر ردّك» — a request waiting for an answer IS
    * the approval queue. */
@@ -319,9 +336,12 @@ const DESTINATION_RULES: Readonly<Record<string, DestinationRule>> = Object.free
   SUBSCRIPTION_EXPIRING: () => surfaceLink('subscription'),
   PAYMENT_FAILED: () => surfaceLink('subscription'),
 
-  /** A device alert with no surface of its own — its two producers do not even
-   * reach this engine yet (see `COPY_CATALOGUE.RUNTIME_ALERT`), so the inbox,
-   * where the alert itself is, is the honest answer rather than a guess. */
+  /** A device alert with no surface of its own — its two producers still do not
+   * reach the DECISION engine (see `COPY_CATALOGUE.RUNTIME_ALERT`), though they
+   * now reach THIS map, from the single writer. The inbox, where the alert
+   * itself is, remains the honest answer rather than a guess: `RUNTIME_ALERT`
+   * is the generic type, and the two facts it carries today (a device unlinked,
+   * a protection service disabled) are read in the alert itself. */
   RUNTIME_ALERT: () => NOTIFICATION_INBOX_LINK,
   /** A digest of N things cannot point at one of them. The inbox is not a
    * fallback here — it is the correct answer. */

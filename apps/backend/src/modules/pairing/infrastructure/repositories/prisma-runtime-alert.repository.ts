@@ -10,6 +10,11 @@ import type {
   PushFanoutOutcome,
 } from '../../application/ports/runtime-alert.repository.port';
 import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
+import {
+  NOTIFICATION_DEEP_LINK_DATA_KEY,
+  isValidDeepLink,
+  resolveNotificationDestination,
+} from '../../../notifications/domain/engine/notification-destination';
 
 @Injectable()
 export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
@@ -63,6 +68,8 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
      */
     const childId = input.childId || null;
 
+    const data = this.withDestination(input.data, notificationType);
+
     const recipient = await this.resolveRecipient(input.familyId);
     if (!recipient) return false; // no one to notify — nothing more this method can do
 
@@ -105,7 +112,7 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
           // CLOSES A REAL GAP (Master Completeness Audit): every
           // caller previously had no priority distinction at all.
           priority: input.priority ?? 'NORMAL',
-          data: input.data as Prisma.InputJsonValue | undefined,
+          data: data as Prisma.InputJsonValue,
           // B9 — the causal key. Composed by the producer, never here: this
           // layer does not know what caused the alert and must not guess.
           sourceEventId: input.sourceEventId,
@@ -143,6 +150,60 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
     }
 
     return true;
+  }
+
+  /**
+   * WHERE THE TAP LANDS, FOR THE PRODUCERS THAT DO NOT COME THROUGH THE ENGINE.
+   *
+   * `SmartNotificationEngineService` resolves a destination for every
+   * notification it decides, and spreads it onto `data` before the row is
+   * written. The two SYSTEM producers on `ENGINE_BYPASS_ALLOWLIST` —
+   * `DistressEscalationService` and `RuntimeAlertService` — deliberately do NOT
+   * go through the engine (a fatigue cap must never silence a safety alert),
+   * and so they arrived here with no destination at all. The consequence was
+   * that `CHILD_WELLBEING_CHECKIN`, the distress alert and the most important
+   * message this product sends a parent, reached the phone with a dead tap that
+   * fell back to the inbox — while the parent app's `SafetyScreen`, built for
+   * exactly this notification, could not be reached from it.
+   *
+   * IT IS FIXED HERE, at the single writer, rather than at the two call sites,
+   * for the same reason `sourceEventId` is required here: a third direct
+   * producer added tomorrow gets a destination without anyone remembering to
+   * give it one. This is not a second resolver — `notification-destination.ts`
+   * remains the only map, and this method only asks it a question.
+   *
+   * IT FILLS, IT NEVER OVERWRITES. A row arriving from the engine already
+   * carries the server's own answer, resolved from `composed.resolvedCopyKey`
+   * so the link degrades in step with the sentence when the safety gate rejects
+   * a template. Recomputing it from `type` here would silently undo that. An
+   * INVALID value is replaced rather than kept, so a producer payload cannot
+   * choose a screen by spelling `deepLink` itself.
+   *
+   * AUDIENCE IS `PARENT` AND CANNOT BE ANYTHING ELSE: this method writes
+   * `notifications`, whose recipient is resolved by `resolveRecipient` as the
+   * family's owner. The child's half of the product is `child_messages`, a
+   * different writer.
+   *
+   * IT ADDS A DESTINATION AND NOTHING ELSE. The distress alert is deliberately
+   * contentless — it names the child, says a conversation would help, and
+   * quotes nothing — and a `data` payload is exactly where a "little context"
+   * would be smuggled back in six months from now. `resolveNotificationDestination`
+   * is given a copy key and an audience, never the classification, never the
+   * child's words, and never a tenant identifier; the links it can return for
+   * this key are `abny://screen-time` and `abny://safety/<uuid>`.
+   */
+  private withDestination(
+    data: Record<string, unknown> | undefined,
+    notificationType: string,
+  ): Record<string, unknown> {
+    const merged: Record<string, unknown> = { ...(data ?? {}) };
+    if (!isValidDeepLink(merged[NOTIFICATION_DEEP_LINK_DATA_KEY])) {
+      merged[NOTIFICATION_DEEP_LINK_DATA_KEY] = resolveNotificationDestination({
+        copyKey: notificationType,
+        audience: 'PARENT',
+      });
+    }
+    return merged;
   }
 
   /**
