@@ -6,8 +6,10 @@ import {
   splitVat,
 } from '../../src/modules/billing/domain/money';
 import {
+  CANCELLABLE_STATUSES,
   CANONICAL_SUBSCRIPTION_STATUSES,
   ENTITLEMENT_BEARING_STATUSES,
+  isCancellable,
   isEntitlementBearing,
   toCanonicalStatus,
   toPersistedStatus,
@@ -176,6 +178,43 @@ describe('subscription-status — the ONE mapping site', () => {
     expect(isEntitlementBearing('PAST_DUE')).toBe(false);
     expect(isEntitlementBearing('EXPIRED')).toBe(false);
     expect(isEntitlementBearing('REFUNDED')).toBe(false);
+  });
+
+  /**
+   * SPRINT F1 (DECISION 3) — THE CANCELLABLE SET, AND THE TOTALITY PROMISE
+   * `subscription-status.ts` MAKES ABOUT IT.
+   *
+   * Asserted whole rather than member by member, so that adding a NINTH state
+   * without deciding this question for it fails here by name — exactly as the
+   * two mapping tables above already do.
+   */
+  it('the cancellable set is exactly the four "currently subscribed" states, and it is TOTAL', () => {
+    expect([...CANCELLABLE_STATUSES].sort()).toEqual(['ACTIVE', 'GRACE_PERIOD', 'PAST_DUE', 'TRIAL'].sort());
+
+    const may = CANONICAL_SUBSCRIPTION_STATUSES.filter(isCancellable);
+    const mayNot = CANONICAL_SUBSCRIPTION_STATUSES.filter((s) => !isCancellable(s));
+    expect(may.length + mayNot.length).toBe(CANONICAL_SUBSCRIPTION_STATUSES.length);
+    expect([...mayNot].sort()).toEqual(['CANCELLED', 'EXPIRED', 'PENDING', 'REFUNDED'].sort());
+  });
+
+  /**
+   * THE DEFECT, STATED AS A PROPERTY. Every state that BEARS ENTITLEMENT must
+   * be cancellable: a household the product is treating as a paying customer
+   * and which cannot stop paying is the trap Decision 3 removes, and
+   * `GRACE_PERIOD` was exactly that. The converse is deliberately NOT true —
+   * `PAST_DUE` may cancel and bears no entitlement — so this is an implication
+   * rather than an equality, and the asymmetry is written down so it is not
+   * "tidied up" later.
+   */
+  it('every entitlement-bearing state can cancel — the GRACE_PERIOD trap, as an invariant', () => {
+    for (const status of CANONICAL_SUBSCRIPTION_STATUSES) {
+      if (isEntitlementBearing(status)) {
+        expect(`${status}:${isCancellable(status)}`).toBe(`${status}:true`);
+      }
+    }
+    expect(isCancellable('GRACE_PERIOD')).toBe(true);
+    expect(isEntitlementBearing('PAST_DUE')).toBe(false);
+    expect(isCancellable('PAST_DUE')).toBe(true);
   });
 
   it('CANCELLED is not entitlement-bearing — and that is NOT the same as "revoke now"', () => {

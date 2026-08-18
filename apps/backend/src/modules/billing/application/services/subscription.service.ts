@@ -1,5 +1,10 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 
+import {
+  isCancellable,
+  toCanonicalStatus,
+  type CanonicalSubscriptionStatus,
+} from '../../domain/subscription-status';
 import { BILLING_REPOSITORY, type IBillingRepository } from '../ports/billing.repository.port';
 import { TrialManager } from './trial-manager.service';
 import { PaymentService } from './payment.service';
@@ -158,11 +163,92 @@ export class SubscriptionService {
     return { subscription, invoice, chargeResult };
   }
 
+  /**
+   * ==========================================================================
+   * SPRINT F1 (DECISION 3) — THE SERVER'S OWN ANSWER TO «MAY I CANCEL?».
+   * ==========================================================================
+   *
+   * The client used to decide this, with `status === 'ACTIVE'`, and that is how
+   * a `GRACE_PERIOD` household — entitled, treated as paying, and in that state
+   * precisely BECAUSE its card just failed — ended up with no way out. Q17's
+   * rule is «الصلاحية تُحسم على الخادم فقط»; whether a household may leave is
+   * the same kind of question as whether it may use a feature, and it gets the
+   * same treatment. The app asks; it does not decide.
+   *
+   * `accessUntil` IS PART OF THE ANSWER rather than a nicety. The one thing a
+   * customer needs to know before pressing cancel is what they keep, and this
+   * method's whole point is that they keep the rest of the period they paid for.
+   * A client that had to infer that from a status would infer it wrong.
+   */
+  async describeCancellability(familyId: string): Promise<{
+    canCancel: boolean;
+    status: CanonicalSubscriptionStatus | null;
+    accessUntil: Date | null;
+  }> {
+    const subscription = await this.repository.findSubscriptionByFamily(familyId);
+    if (!subscription) return { canCancel: false, status: null, accessUntil: null };
+
+    const status = toCanonicalStatus(subscription.status);
+    return {
+      canCancel: isCancellable(status),
+      status,
+      accessUntil: subscription.currentPeriodEnd ?? subscription.trialEndsAt ?? null,
+    };
+  }
+
+  /**
+   * ==========================================================================
+   * SPRINT F1 (DECISION 3) — A `GRACE_PERIOD` HOUSEHOLD CAN CANCEL.
+   * ==========================================================================
+   *
+   * `CANCELLABLE_STATUSES` in `subscription-status.ts` carries the per-status
+   * argument for all eight states. What belongs HERE is what cancelling does,
+   * because that is what makes the set the right set.
+   *
+   * CANCELLING ENDS RENEWAL AND REVOKES NOTHING. That is the lifecycle
+   * semantic this method has always had and deliberately still has:
+   *
+   *   - it writes `subscriptions.status = CANCELED` and `canceled_at`, and
+   *     NOTHING ELSE. `current_period_end` is not moved.
+   *   - it does NOT call `EntitlementService.revokeAll`. A REFUND revokes
+   *     immediately because money went back; a CANCELLATION must not withdraw
+   *     the period the customer already paid for.
+   *     `payment-webhook.service.ts` states the same rule for the
+   *     provider-initiated side, where «AUTO_RENEW_DISABLED marks the
+   *     subscription cancelled and leaves entitlement intact» has been pinned
+   *     since Phase D.
+   *   - `Entitlement` rows therefore stay `ACTIVE` until their own
+   *     `valid_until`, which is what `isLive` reads and what
+   *     `GET /billing/entitlements` reports.
+   *
+   * THE REFUSALS CARRY AN ARABIC SENTENCE AND A MACHINE CODE, and never the
+   * status word itself — «no raw enum or status code in a user-visible string».
+   * The canonical status travels beside the message in its own field, for the
+   * client's own logic.
+   */
   async cancel(familyId: string, actorUserId?: string) {
     const subscription = await this.repository.findSubscriptionByFamily(familyId);
     if (!subscription) {
       throw new NotFoundException('No subscription found for this family.');
     }
+
+    const status = toCanonicalStatus(subscription.status);
+    if (!isCancellable(status)) {
+      throw new ConflictException(
+        status === 'CANCELLED'
+          ? {
+              code: 'SUBSCRIPTION_ALREADY_CANCELLED',
+              messageAr: 'تم إيقاف التجديد بالفعل، ويستمر اشتراككم حتى نهاية المدة المدفوعة.',
+              status,
+            }
+          : {
+              code: 'SUBSCRIPTION_NOT_CANCELLABLE',
+              messageAr: 'لا يوجد تجديد قائم يمكن إيقافه على هذا الاشتراك.',
+              status,
+            },
+      );
+    }
+
     await this.repository.updateSubscriptionStatus(subscription.id, 'CANCELED', { canceledAt: new Date() });
 
     await this.auditService.record({
@@ -180,6 +266,15 @@ export class SubscriptionService {
       sessionId: `billing:${familyId}`,
       payload: { planTier: subscription.planTier, provider: subscription.provider },
     });
+
+    // THE SHAPE THE CLIENT NEEDS AFTER PRESSING CANCEL: what changed, and what
+    // they keep. `accessUntil` is `current_period_end` UNTOUCHED — the whole
+    // point of the paragraph above, returned rather than left to be inferred.
+    return {
+      status: 'CANCELLED' as CanonicalSubscriptionStatus,
+      canceledAt: new Date(),
+      accessUntil: subscription.currentPeriodEnd ?? subscription.trialEndsAt ?? null,
+    };
   }
 
   async getBillingHistory(familyId: string) {

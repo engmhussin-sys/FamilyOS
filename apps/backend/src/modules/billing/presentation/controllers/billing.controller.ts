@@ -25,15 +25,38 @@ export class BillingController {
     return this.planService.listActivePlans();
   }
 
+  /**
+   * SPRINT F1 (DECISION 3) — `cancellation` IS NEW, AND IT IS THE SERVER'S OWN
+   * ANSWER TO A QUESTION THE CLIENT USED TO ANSWER FOR ITSELF.
+   *
+   * The client gated its cancel affordance on `status === 'ACTIVE'`, which left
+   * a `GRACE_PERIOD` household — entitled, treated as paying, and in that state
+   * precisely because its card just failed — unable to leave. The set of states
+   * that may cancel now lives in `subscription-status.ts` with a written reason
+   * per state, is ENFORCED by `POST /billing/cancel`, and is REPORTED here so
+   * the two can never disagree:
+   *
+   *   cancellation: { canCancel: boolean,
+   *                   status: 'TRIAL'|'ACTIVE'|'PAST_DUE'|'GRACE_PERIOD'
+   *                          |'PENDING'|'CANCELLED'|'EXPIRED'|'REFUNDED'|null,
+   *                   accessUntil: ISO-8601 | null }
+   *
+   * `status` is the CANONICAL vocabulary (`TRIAL`, `CANCELLED`), not the
+   * database's (`TRIALING`, `CANCELED`) — the two meet in exactly one file, and
+   * this is the one that leaves the building. `accessUntil` is what the
+   * household KEEPS after cancelling, because cancelling ends renewal and
+   * revokes nothing.
+   */
   @Get('subscription')
   @ParentSurface()
   async getSubscription(@CurrentUser() user: IJwtPayload) {
-    const [subscription, isInTrial, trialDaysRemaining] = await Promise.all([
+    const [subscription, isInTrial, trialDaysRemaining, cancellation] = await Promise.all([
       this.subscriptionService.getForFamily(user.familyId!),
       this.trialManager.isInTrial(user.familyId!),
       this.trialManager.trialDaysRemaining(user.familyId!),
+      this.subscriptionService.describeCancellability(user.familyId!),
     ]);
-    return { subscription, isInTrial, trialDaysRemaining };
+    return { subscription, isInTrial, trialDaysRemaining, cancellation };
   }
 
   @Post('trial/start')
@@ -61,12 +84,31 @@ export class BillingController {
     return this.subscriptionService.subscribe(user.familyId!, dto.planTier, dto.provider, user.sub);
   }
 
+  /**
+   * SPRINT F1 (DECISION 3). TWO THINGS CHANGED, AND THE SECOND CORRECTS A
+   * COMMENT THAT WAS WRONG ABOUT THE PRODUCT.
+   *
+   *   1. THE RESPONSE HAS A BODY. `{ status, canceledAt, accessUntil }` — what
+   *      changed and what the household keeps. A client that had to infer
+   *      «you still have until the 19th» from a status would infer it wrong.
+   *   2. THE COMMENT BELOW USED TO SAY «cancelling removes every paid
+   *      entitlement from the whole family». IT DOES NOT AND MUST NOT. It ends
+   *      RENEWAL: `subscriptions.status` and `canceled_at` move, nothing is
+   *      revoked, `current_period_end` is not shortened, and every
+   *      `Entitlement` row stays live until its own `valid_until`. A REFUND is
+   *      the thing that revokes immediately, and it is a different path.
+   *
+   * A refusal is a 409 carrying `{ code, messageAr, status }` —
+   * `SUBSCRIPTION_ALREADY_CANCELLED` when renewal has already been stopped,
+   * `SUBSCRIPTION_NOT_CANCELLABLE` when there is no renewal to stop.
+   */
   @Post('cancel')
-  // PHASE C. Cancelling removes every paid entitlement from the whole family.
-  // Symmetric with subscribe: the billing owner decides.
+  // PHASE C. Money and the household's commitment belong to the billing owner.
+  // Symmetric with subscribe: the person who can start the charge is the person
+  // who can stop it.
   @OwnerOnly()
-  async cancel(@CurrentUser() user: IJwtPayload): Promise<void> {
-    await this.subscriptionService.cancel(user.familyId!, user.sub);
+  async cancel(@CurrentUser() user: IJwtPayload) {
+    return this.subscriptionService.cancel(user.familyId!, user.sub);
   }
 
   @Get('history')
