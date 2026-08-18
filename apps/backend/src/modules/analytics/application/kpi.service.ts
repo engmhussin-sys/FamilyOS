@@ -151,6 +151,18 @@ export class KpiService {
         values.push(kpiValue('MAU', 'ACTUAL', mau));
         values.push(kpiValue('STICKINESS', 'ACTUAL', stickiness({ dau, wau, mau })));
 
+        // ---- the two PEOPLE counts ----------------------------------------
+        // Same window as MAU and the same heartbeat, over a different unit.
+        // They are computed here, beside MAU, precisely so nobody can later
+        // give "active" a second meaning in a second file.
+        const monthWindowStart = new Date(dayRange.endExclusive.getTime() - 30 * DAY_MS);
+        const [parents, children] = await Promise.all([
+          this.activeParents(monthWindowStart, dayRange.endExclusive, countryFilter),
+          this.activeChildren(monthWindowStart, dayRange.endExclusive, countryFilter),
+        ]);
+        values.push(kpiValue('ACTIVE_PARENTS', 'ACTUAL', parents));
+        values.push(kpiValue('ACTIVE_CHILDREN', 'ACTUAL', children));
+
         // ---- activation ---------------------------------------------------
         // The cohort is families registered in the 30 days ENDING 30 days ago,
         // so every member has had a full month to activate. Using "the last 30
@@ -335,22 +347,79 @@ export class KpiService {
    * `DashboardMetricsService` has used since Sprint 8, not a new one invented
    * here — two definitions of "active" is precisely what this module exists to
    * prevent.
+   *
+   * F1 — COUNTED IN SQL, NOT IN NODE. This used to be
+   * `device.findMany({ distinct: ['familyId'] }).length`, which streams one row
+   * per matching DEVICE into the process and de-duplicates them in JavaScript.
+   * At the scale this dashboard is being built for that is a count which gets
+   * slower every month and eventually stops fitting in memory — and it is the
+   * same shape as the sweep that quietly processed only its first page. The
+   * predicate is IDENTICAL — «a family with at least one non-deleted device
+   * seen in the window» — but PostgreSQL now evaluates it as a COUNT over an
+   * EXISTS and returns one integer.
+   *
+   * `deletedAt: null` ON THE FAMILY is the one behavioural change, and it is a
+   * correction: a soft-deleted household is not an active user, and without it
+   * the active count could exceed the registered count `MarketReportingService`
+   * prints next to it.
    */
-  private async activeFamilies(
+  private activeFamilies(
     from: Date,
     toExclusive: Date,
     countryFilter: Record<string, unknown>,
   ): Promise<number> {
-    const rows = await this.prisma.device.findMany({
+    return this.prisma.family.count({
       where: {
         deletedAt: null,
-        lastSeenAt: { gte: from, lt: toExclusive },
-        ...(Object.keys(countryFilter).length > 0 ? { family: countryFilter } : {}),
+        devices: { some: { deletedAt: null, lastSeenAt: { gte: from, lt: toExclusive } } },
+        ...countryFilter,
       },
-      distinct: ['familyId'],
-      select: { familyId: true },
     });
-    return rows.length;
+  }
+
+  /**
+   * ACTIVE PARENTS — the same heartbeat, counted per PERSON.
+   *
+   * `devices.user_id` on a PARENT-owned device names one human being, so this
+   * is a genuine parent-side signal and not a household count wearing a
+   * person's label. `KPI_DEFINITIONS.ACTIVE_PARENTS` states why the gap between
+   * this and MAU is a fact worth having rather than an inconsistency.
+   */
+  private activeParents(
+    from: Date,
+    toExclusive: Date,
+    countryFilter: Record<string, unknown>,
+  ): Promise<number> {
+    return this.prisma.user.count({
+      where: {
+        deletedAt: null,
+        ownedDevices: {
+          some: {
+            deletedAt: null,
+            ownerType: 'PARENT',
+            lastSeenAt: { gte: from, lt: toExclusive },
+            family: { deletedAt: null, ...countryFilter },
+          },
+        },
+      },
+    });
+  }
+
+  /** ACTIVE CHILDREN — the same heartbeat again, counted per child row. */
+  private activeChildren(
+    from: Date,
+    toExclusive: Date,
+    countryFilter: Record<string, unknown>,
+  ): Promise<number> {
+    return this.prisma.child.count({
+      where: {
+        deletedAt: null,
+        family: { deletedAt: null, ...countryFilter },
+        devices: {
+          some: { deletedAt: null, ownerType: 'CHILD', lastSeenAt: { gte: from, lt: toExclusive } },
+        },
+      },
+    });
   }
 
   /**

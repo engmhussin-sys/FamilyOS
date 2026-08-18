@@ -46,6 +46,8 @@ export const KPI_IDS = [
   'DAU',
   'WAU',
   'MAU',
+  'ACTIVE_PARENTS',
+  'ACTIVE_CHILDREN',
   'STICKINESS',
   'ACTIVATION_RATE',
   'TIME_TO_VALUE_HOURS',
@@ -131,6 +133,35 @@ export const KPI_DEFINITIONS: Readonly<Record<KpiId, KpiDefinition>> = {
     windowDays: 30,
     source: 'devices.last_seen_at + analytics_events.occurred_at',
     note: 'ROLLING 30 DAYS, not "this calendar month". A calendar month makes 1 February structurally lower than 31 January.',
+  },
+  /**
+   * F1 — THE PEOPLE COUNTS THE ADMIN DASHBOARD ASKED FOR, ON THE SIGNAL THAT
+   * ALREADY EXISTS. Read the note: the ONLY reason these are separate KPIs from
+   * DAU/WAU/MAU is that their UNIT is a person rather than a household.
+   */
+  ACTIVE_PARENTS: {
+    id: 'ACTIVE_PARENTS',
+    nameEn: 'Active Parents',
+    nameAr: 'أولياء الأمور النشطون',
+    kind: 'COUNT',
+    formula: 'COUNT(DISTINCT users.id) owning a PARENT device whose heartbeat falls in the MAU window',
+    numerator: 'distinct users with ≥1 PARENT-owned device seen in the rolling 30 days',
+    denominator: null,
+    windowDays: 30,
+    source: 'devices.last_seen_at WHERE owner_type = PARENT (devices.user_id names the person)',
+    note: 'SAME SIGNAL AS MAU, DIFFERENT UNIT — the device heartbeat, not a second definition of "active" invented for this metric. The unit is the PERSON: `devices.user_id` on a PARENT-owned device names one human, so a two-parent household contributes 2 here and 1 to MAU. That gap IS the co-parent adoption rate, and it is the reason both numbers exist; reporting MAU under this label would understate parents by exactly that rate.',
+  },
+  ACTIVE_CHILDREN: {
+    id: 'ACTIVE_CHILDREN',
+    nameEn: 'Active Children',
+    nameAr: 'الأطفال النشطون',
+    kind: 'COUNT',
+    formula: 'COUNT(DISTINCT children.id) owning a CHILD device whose heartbeat falls in the MAU window',
+    numerator: 'distinct children with ≥1 CHILD-owned device seen in the rolling 30 days',
+    denominator: null,
+    windowDays: 30,
+    source: 'devices.last_seen_at WHERE owner_type = CHILD (devices.child_id names the child)',
+    note: 'A STOCK, AND THAT IS THE WHOLE POINT. `growth_daily_metrics.children_added` is a FLOW — children added on a day — and a dashboard that accumulated it would drift upward forever and never come back down when a child stops using the product. This counts children who actually appeared in the window, on the same heartbeat MAU uses.',
   },
   STICKINESS: {
     id: 'STICKINESS',
