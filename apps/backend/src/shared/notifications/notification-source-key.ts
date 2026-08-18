@@ -86,7 +86,15 @@ export type NotificationProducer =
   /** PHASE D — the quiet-hours digest. Producer 8, and naming it here rather
    * than letting it default is exactly the compile-time event this union exists
    * to force; `forQuietHoursDigest` below states the composition it chose. */
-  | 'digest';
+  | 'digest'
+  /**
+   * SPRINT F1 — BILLING. Producer 9, and the first whose cause belongs to a
+   * HOUSEHOLD rather than to a child: a card is declined for a SUBSCRIPTION,
+   * a renewal approaches for a SUBSCRIPTION, and neither fact names a child.
+   * `forBillingEvent` below states the composition it chose and why the three
+   * existing forms were all wrong for it.
+   */
+  | 'billing';
 
 function clamp(key: string): string {
   return key.length <= NOTIFICATION_SOURCE_KEY_MAX_LENGTH
@@ -173,6 +181,62 @@ export function forRecurringSignal(
  */
 export function forQuietHoursDigest(businessDate: string, audience: 'PARENT' | 'CHILD'): string {
   return clamp(`digest:${segment(businessDate)}:${segment(audience)}`);
+}
+
+/**
+ * SPRINT F1 — THE FIFTH FORM: A BILLING FACT ABOUT A SUBSCRIPTION.
+ *
+ * `PAYMENT_FAILED` and `SUBSCRIPTION_EXPIRING` had copy in two languages, a
+ * quiet-hours class, two scoring rows and a deep-link destination, and nothing
+ * in `src/` produced either. Writing the producers made the key the first
+ * question, and none of the four existing forms answers it:
+ *
+ *   `forDomainEvent`      there is no `domain_events` row. Billing writes to
+ *                         `payment_webhook_events` and `subscriptions`; it
+ *                         emits no domain event, and inventing one to borrow
+ *                         this form would be a new architecture for a string.
+ *   `forEntity`           its second parameter is a CHILD id. A declined card
+ *                         belongs to a household, and passing a family id in a
+ *                         parameter named `childId` is a lie that the next
+ *                         reader has to disprove.
+ *   `forRecurringSignal`  a five-minute bucket. A renewal notice must not be
+ *                         re-sendable four times an hour, and its own docstring
+ *                         states that limit honestly.
+ *   `forQuietHoursDigest` a day and an audience, with no subject at all.
+ *
+ * SO: THE SUBJECT IS THE SUBSCRIPTION, AND THE OCCURRENCE IS SPELLED OUT BY
+ * THE CALLER. `subscriptions.family_id` is UNIQUE, so a subscription id is a
+ * household's billing identity, and `occurrence` is the caller's written
+ * answer to «what makes this the same notification»:
+ *
+ *   `payment_failed:APPLE_IAP:<notificationUUID>` — THE PROVIDER'S OWN EVENT
+ *   IDENTITY. `payment_webhook_events (provider, provider_event_id)` is UNIQUE,
+ *   so a redelivered webhook recomputes this exact string and the notification
+ *   ledger refuses it. A LATER, GENUINELY NEW failure carries a new provider
+ *   event id and is allowed to notify, which is the behaviour a parent whose
+ *   second retry also failed actually needs.
+ *
+ *   `expiring:<YYYY-MM-DD>` — THE RENEWAL DAY ON THE FAMILY'S OWN CALENDAR.
+ *   The lead-time sweep asks the same question every day for three days and
+ *   must notify ONCE; every one of those runs composes the same string. The
+ *   NEXT period renews on a different local day and is a different notice.
+ *
+ * The family id is deliberately NOT in the string: `family_id` is already the
+ * first column of `notifications (family_id, source_event_id, user_id)` and of
+ * `notification_decisions_cause_uniq`, so repeating it here would make the key
+ * longer and no more unique — the same reasoning `forQuietHoursDigest` states.
+ *
+ * `occurrence` IS NOT PUT THROUGH `segment`, and that is the one deviation
+ * here. `segment` exists so that ('a:b','c') and ('a','b:c') cannot compose the
+ * same key; that ambiguity needs a separator inside BOTH sides of a pair, and
+ * `subscriptionId` is a uuid — it has no colons and is segmented anyway. The
+ * occurrence is the LAST field, so its own colons cannot be mistaken for the
+ * boundary, and keeping them makes the stored key readable by the support
+ * engineer who has to answer «why did this parent get this».
+ */
+export function forBillingEvent(subscriptionId: string, occurrence: string): string {
+  const producer: NotificationProducer = 'billing';
+  return clamp(`${producer}:${segment(subscriptionId)}:${occurrence}`);
 }
 
 /**

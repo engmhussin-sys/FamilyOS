@@ -12,6 +12,7 @@ import { FawryProvider } from '../../src/modules/billing/infrastructure/adapters
 import { MoyasarProvider } from '../../src/modules/billing/infrastructure/adapters/moyasar.provider';
 import { ManualPaymentAdapter } from '../../src/modules/billing/infrastructure/adapters/manual-payment.adapter';
 import { StripeAdapter } from '../../src/modules/billing/infrastructure/adapters/stripe.adapter';
+import { BillingNotificationProducer } from '../../src/modules/billing/application/services/billing-notification.producer';
 import { InMemoryPaymentRepository, InMemoryBillingRepository, MARKETS } from './payment-test-doubles';
 import { appleTestChain, signAppleJws } from './apple-chain.fixture';
 import type { IAppleJwsTransactionPayload } from '../../src/modules/billing/infrastructure/apple/apple-storekit.types';
@@ -116,6 +117,25 @@ interface IHarness {
   payments: InMemoryPaymentRepository;
   billing: InMemoryBillingRepository;
   apple: AppleStoreKitProvider;
+  /**
+   * SPRINT F1 — WHAT THE WEBHOOK ASKED THE ENGINE FOR, recorded.
+   *
+   * A RECORDER, NOT A STUB OF THE ENGINE. What this suite is about is which
+   * webhook kinds reach `paymentFailed` and with which subject and occurrence
+   * — a routing question this file can answer with real adapters, real
+   * signatures and real constraint-enforcing repositories. Whether that call
+   * becomes an Arabic sentence in a `notifications` row is a DIFFERENT
+   * question, answered against a real PostgreSQL and the real engine in
+   * `test/billing/billing-notifications.e2e.spec.ts`. Neither suite stands
+   * alone, which is the same split the header states for the repositories.
+   */
+  notified: Array<{
+    familyId: string;
+    subscriptionId: string;
+    provider: string;
+    providerEventId: string;
+    occurredAt: Date;
+  }>;
 }
 
 function harness(options: { appleFetch?: jest.Mock } = {}): IHarness {
@@ -145,9 +165,16 @@ function harness(options: { appleFetch?: jest.Mock } = {}): IHarness {
   const pricing = new PricingService(payments);
   const entitlements = new EntitlementService(payments, billing);
   const verification = new PaymentVerificationService(registry, payments, billing, entitlements, pricing);
-  const webhooks = new PaymentWebhookService(registry, payments, billing, entitlements, pricing);
+  const notified: IHarness['notified'] = [];
+  const notifications = {
+    paymentFailed: async (input: IHarness['notified'][number]) => {
+      notified.push(input);
+      return 'PRODUCED' as const;
+    },
+  } as unknown as BillingNotificationProducer;
+  const webhooks = new PaymentWebhookService(registry, payments, billing, entitlements, pricing, notifications);
 
-  return { webhooks, verification, entitlements, payments, billing, apple };
+  return { webhooks, verification, entitlements, payments, billing, apple, notified };
 }
 
 // ===========================================================================
@@ -488,6 +515,139 @@ describe('PHASE D — GRACE PERIOD keeps FULL access, and its expiry revokes', (
     expect(records.length).toBeGreaterThan(0);
     expect(records.every((r) => r.status === 'REVOKED')).toBe(true);
     expect(records[0].revokedReason).toContain('GRACE_PERIOD_EXPIRED');
+  });
+});
+
+/**
+ * SPRINT F1 — WHICH WEBHOOK KINDS OWE THE PARENT `PAYMENT_FAILED`.
+ *
+ * `notification-class.ts:277` said «(no producer yet.) The billing module
+ * writes no notification of any kind — `payment-webhook.service.ts` moves
+ * entitlement and stops.» These four tests are the routing half of stopping
+ * that: which kinds ask, which kinds must stay silent, and what the ASK
+ * carries. The Arabic sentence, the ledger row and the `notifications` row are
+ * the e2e's half, against a real PostgreSQL and the real engine.
+ */
+describe('SPRINT F1 — a declined renewal reaches the notification engine, exactly once', () => {
+  it('GRACE_PERIOD, BILLING_RETRY and a gateway decline each ask once, keyed on the subscription and the provider event', async () => {
+    const h = harness();
+    h.payments.linkFamily('APPLE_IAP', 'apple-account-family-a', 'family-a');
+    const subscriptionId = h.billing.createSubscriptionFor('family-a');
+
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_RENEW', { uuid: 'u-buy', signedDate: Date.UTC(2026, 7, 1) }),
+      headers: {},
+    });
+    // Nothing about a SUCCESSFUL renewal is a payment failure.
+    expect(h.notified).toHaveLength(0);
+
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_FAIL_TO_RENEW', {
+        uuid: 'u-grace',
+        subtype: 'GRACE_PERIOD',
+        signedDate: Date.UTC(2026, 7, 20),
+      }),
+      headers: {},
+    });
+    // The grace period IS the declined charge, and it is the case where telling
+    // the parent matters most: every feature still works and seven days are
+    // running out.
+    expect(h.notified).toHaveLength(1);
+    expect(h.notified[0]).toEqual({
+      familyId: 'family-a',
+      subscriptionId,
+      provider: 'APPLE_IAP',
+      // THE PROVIDER'S OWN EVENT IDENTITY is the occurrence half of the key.
+      providerEventId: 'u-grace',
+      // The PROVIDER's signed timestamp, not the ingestion clock.
+      occurredAt: new Date(Date.UTC(2026, 7, 20)),
+    });
+
+    // A LATER, GENUINELY DIFFERENT failure is a second thing to say.
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_FAIL_TO_RENEW', {
+        uuid: 'u-retry',
+        subtype: 'BILLING_RETRY',
+        signedDate: Date.UTC(2026, 7, 28),
+      }),
+      headers: {},
+    });
+    expect(h.notified).toHaveLength(2);
+    expect(h.notified[1].providerEventId).toBe('u-retry');
+    // Same subject, different occurrence — which is exactly what makes the two
+    // keys different and the two notifications legitimate.
+    expect(h.notified[1].subscriptionId).toBe(subscriptionId);
+  });
+
+  it('a REDELIVERED failure asks nothing a second time — the webhook dedupe row is reached first', async () => {
+    const h = harness();
+    h.payments.linkFamily('APPLE_IAP', 'apple-account-family-a', 'family-a');
+    h.billing.createSubscriptionFor('family-a');
+
+    const body = appleNotification('DID_FAIL_TO_RENEW', {
+      uuid: 'u-dup-fail',
+      subtype: 'GRACE_PERIOD',
+      signedDate: Date.UTC(2026, 7, 20),
+    });
+    const first = await h.webhooks.ingest('APPLE_IAP', { rawBody: body, headers: {} });
+    const second = await h.webhooks.ingest('APPLE_IAP', { rawBody: body, headers: {} });
+    const third = await h.webhooks.ingest('APPLE_IAP', { rawBody: body, headers: {} });
+
+    expect([first.outcome, second.outcome, third.outcome]).toEqual(['PROCESSED', 'DUPLICATE', 'DUPLICATE']);
+    // LAYER 1 of the three: `payment_webhook_events (provider,
+    // provider_event_id)`, reimplemented by the repository double exactly as
+    // the real unique index behaves. Layers 2 and 3 — the decision ledger and
+    // `notifications` — are proven against real indexes in the e2e, and the
+    // point of having all three is that this one is not the only one.
+    expect(h.notified).toHaveLength(1);
+  });
+
+  it('a STALE failure that changes no row tells the parent nothing', async () => {
+    const h = harness();
+    h.payments.linkFamily('APPLE_IAP', 'apple-account-family-a', 'family-a');
+    h.billing.createSubscriptionFor('family-a');
+
+    // The newer state first: the subscription is already EXPIRED.
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('EXPIRED', { uuid: 'u-expired', signedDate: Date.UTC(2026, 8, 10) }),
+      headers: {},
+    });
+    // Then a failure notification that was signed BEFORE it. Q17: arrival order
+    // is not causal order.
+    const stale = await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_FAIL_TO_RENEW', {
+        uuid: 'u-stale-fail',
+        subtype: 'GRACE_PERIOD',
+        signedDate: Date.UTC(2026, 7, 20),
+      }),
+      headers: {},
+    });
+
+    expect(stale.outcome).toBe('IGNORED');
+    expect(stale.detail).toContain('stale');
+    // The state did not move, so there is no new fact and nothing to say. A
+    // notification here would tell a parent their card was declined about a
+    // subscription that ended three weeks ago.
+    expect(h.notified).toHaveLength(0);
+  });
+
+  it('a CANCELLATION and a PENDING kiosk reference are not payment failures', async () => {
+    const h = harness();
+    h.payments.linkFamily('APPLE_IAP', 'apple-account-family-a', 'family-a');
+    h.billing.createSubscriptionFor('family-a');
+
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_CHANGE_RENEWAL_STATUS', {
+        uuid: 'u-cancel',
+        subtype: 'AUTO_RENEW_DISABLED',
+        signedDate: Date.UTC(2026, 7, 15),
+      }),
+      headers: {},
+    });
+
+    // The customer CHOSE to stop and keeps what they paid for. Telling them
+    // «تعذّر إتمام الدفع» would be false and, on a subscription screen, alarming.
+    expect(h.notified).toHaveLength(0);
   });
 });
 

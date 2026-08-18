@@ -25,6 +25,7 @@ import type { PaymentProviderValue } from '../../domain/billing.types';
 import { isEntitlementBearing } from '../../domain/subscription-status';
 import { splitVat } from '../../domain/money';
 import { runAsSystemAsync } from '../../../../common/tenancy/system-context';
+import { BillingNotificationProducer } from './billing-notification.producer';
 
 /** What the controller turns into an HTTP status. */
 export interface IWebhookIngestResult {
@@ -87,6 +88,21 @@ export class PaymentWebhookService {
     @Inject(BILLING_REPOSITORY) private readonly billing: IBillingRepository,
     private readonly entitlements: EntitlementService,
     private readonly pricing: PricingService,
+    /**
+     * SPRINT F1 — THE PARENT FINALLY HEARS ABOUT IT.
+     *
+     * `notification-class.ts:277` said «(no producer yet.) The billing module
+     * writes no notification of any kind — `payment-webhook.service.ts` moves
+     * entitlement and stops.» That was exactly true, and this is the line that
+     * stops it being true. `BillingNotificationProducer` is the ONE door: this
+     * file still writes no notification, composes no sentence and decides
+     * nothing about quiet hours — see `applyStatus`.
+     *
+     * It comes from `BillingNotificationsModule`, which is `@Global` because
+     * `BillingModule -> NotificationEngineModule` is a measured import cycle;
+     * that module's header carries Nest's own error message for it.
+     */
+    private readonly billingNotifications: BillingNotificationProducer,
   ) {}
 
   /**
@@ -230,15 +246,32 @@ export class PaymentWebhookService {
         // GRACE_PERIOD KEEPS FULL ACCESS. Q17 specifies 7 days with a clear,
         // non-frightening notice, and CONTEXT.md §3.7 forbids punitive UX;
         // downgrading a household the instant a card fails violates both.
-        return this.applyStatus(event, familyId, 'GRACE_PERIOD', 'entered the grace period', { revoke: false });
+        //
+        // SPRINT F1: «a clear notice» is `notifyPaymentFailure` below. The
+        // grace period IS the failed charge — Apple sends
+        // DID_FAIL_TO_RENEW/GRACE_PERIOD and Google SUBSCRIPTION_IN_GRACE_PERIOD
+        // for a renewal that did not go through — so this is one of the three
+        // kinds that owe the parent `PAYMENT_FAILED`, and it is the one where
+        // telling them MATTERS MOST: they still have every feature and seven
+        // days to fix a card, and only a notification makes that window usable.
+        return this.applyStatus(event, familyId, 'GRACE_PERIOD', 'entered the grace period', {
+          revoke: false,
+          notifyPaymentFailure: true,
+        });
 
       case 'BILLING_RETRY':
         // Access HAS stopped: Apple's billing retry without a grace period and
         // Google's account hold both mean the customer is not currently paid up.
-        return this.applyStatus(event, familyId, 'PAST_DUE', 'entered billing retry', { revoke: true });
+        return this.applyStatus(event, familyId, 'PAST_DUE', 'entered billing retry', {
+          revoke: true,
+          notifyPaymentFailure: true,
+        });
 
       case 'PAYMENT_FAILED':
-        return this.applyStatus(event, familyId, 'PAST_DUE', 'payment failed', { revoke: true });
+        return this.applyStatus(event, familyId, 'PAST_DUE', 'payment failed', {
+          revoke: true,
+          notifyPaymentFailure: true,
+        });
 
       case 'PAYMENT_PENDING':
         // Fawry's kiosk window. Nothing was ever granted, so there is nothing
@@ -476,13 +509,22 @@ export class PaymentWebhookService {
    * predicate produced exactly the "revoke on cancel" bug the test
    * `AUTO_RENEW_DISABLED marks the subscription cancelled and leaves
    * entitlement intact` now pins down. Every caller states its answer.
+   *
+   * SPRINT F1 — `notifyPaymentFailure` IS THE SAME KIND OF PARAMETER, AND FOR
+   * THE SAME KIND OF REASON. It is not derived from
+   * `!isEntitlementBearing(status)` and it is not derived from `revoke`:
+   * `GRACE_PERIOD` keeps every feature and STILL means a card was declined,
+   * `PENDING` revokes nothing and means a kiosk reference nobody has paid yet,
+   * `CANCELLED` revokes nothing and means the customer chose to stop. Three
+   * different sentences to a parent, and one predicate cannot pick between
+   * them. Every caller states its answer.
    */
   private async applyStatus(
     event: IProviderWebhookEvent,
     familyId: string,
     status: Parameters<IPaymentRepository['applySubscriptionStateIfNewer']>[0]['status'],
     detail: string,
-    options: { revoke: boolean },
+    options: { revoke: boolean; notifyPaymentFailure?: boolean },
   ): Promise<{ outcome: WebhookOutcomeValue; familyId: string; detail: string }> {
     const subscription = await this.billing.findSubscriptionByFamily(familyId);
     if (!subscription) return { outcome: 'IGNORED', familyId, detail: 'no subscription for this family' };
@@ -504,6 +546,39 @@ export class PaymentWebhookService {
 
     if (options.revoke) {
       await this.entitlements.revokeAll(familyId, detail, event.signedAt ?? new Date());
+    }
+
+    /**
+     * SPRINT F1 — AFTER THE STATE MOVED, NEVER BEFORE, AND NEVER IF IT DID NOT.
+     *
+     * Placed below the `if (!applied) return` above, which is the whole
+     * correctness argument for this line: `applySubscriptionStateIfNewer`
+     * compares the PROVIDER'S OWN SIGNED TIMESTAMP inside the UPDATE's WHERE
+     * clause, so `applied === true` means this callback is the newest word on
+     * this subscription and the household really is in a failed-payment state
+     * now. A stale, out-of-order callback — which Q17 says to expect —
+     * changes no row and therefore tells the parent nothing.
+     *
+     * `subscription.id` is the notification's dedupe subject and
+     * `event.providerEventId` its occurrence; `forBillingEvent` composes both
+     * into the key that `notification_decisions_cause_uniq` and
+     * `notifications (family_id, source_event_id, user_id)` refuse a second
+     * time. The webhook's own `payment_webhook_events (provider,
+     * provider_event_id)` already stops a redelivery reaching this method, so
+     * that is the SECOND layer, not the only one.
+     *
+     * It cannot fail the webhook: the producer never throws, by construction,
+     * and a 5xx here would make the provider retry a callback we applied
+     * correctly.
+     */
+    if (options.notifyPaymentFailure) {
+      await this.billingNotifications.paymentFailed({
+        familyId,
+        subscriptionId: subscription.id,
+        provider: event.provider,
+        providerEventId: event.providerEventId,
+        occurredAt: event.signedAt ?? new Date(),
+      });
     }
 
     return { outcome: 'PROCESSED', familyId, detail };

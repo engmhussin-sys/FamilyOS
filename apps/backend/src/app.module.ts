@@ -24,6 +24,7 @@ import { PairingModule } from './modules/pairing/pairing.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { NotificationEngineModule } from './modules/notification-engine/notification-engine.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { BillingNotificationsModule } from './modules/billing/billing-notifications.module';
 import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module';
 import { ProfileModule } from './modules/profile/profile.module';
 import { SettingsModule } from './modules/settings/settings.module';
@@ -96,6 +97,13 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
     // `forwardRef`.
     NotificationEngineModule,
     BillingModule,
+    // SPRINT F1: billing's one door to the engine above. It is `@Global` and
+    // imported by nothing, because `BillingModule -> NotificationEngineModule`
+    // is a measured cycle (`billing-notifications.module.ts` has the Nest error
+    // verbatim). Registered here so that removing it breaks
+    // `PaymentWebhookService` at BOOT rather than silently un-producing
+    // `PAYMENT_FAILED` — which is `PF-E-001`, the defect this producer closes.
+    BillingNotificationsModule,
     FeatureFlagsModule,
     ProfileModule,
     SettingsModule,
