@@ -136,6 +136,15 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'goalsHub.reviewQueueWithCount': 'Waiting for your review ({{count}})',
     'goalsHub.subtitle': 'Start here: set a goal, review what your child achieved, hand over the reward.',
     'goalsHub.title': 'Goals & Rewards',
+    // The five values of the backend's `SubscriptionPlanTier`. Read through
+    // `LocaleController.has` — a tier this build does not know falls back to
+    // `subscription.planUnknown` rather than dropping `ENTERPRISE` into the
+    // middle of an Arabic sentence.
+    'planTier.BASIC': 'Basic',
+    'planTier.ENTERPRISE': 'Enterprise',
+    'planTier.FAMILY': 'Family',
+    'planTier.FREE': 'Free',
+    'planTier.PREMIUM': 'Premium',
     'programDetail.actionFailedTitle': 'The action did not complete',
     'programDetail.amount': 'Amount',
     'programDetail.archive': 'Archive',
@@ -472,6 +481,10 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'subscription.trialBody': '{days} day(s) remaining in your trial',
     'subscription.activeTitle': 'Subscription Active',
     'subscription.activeBody': 'You are on the {plan} plan',
+    // The same fact without naming the tier — used when the server sends a
+    // `planTier` this build has no label for. Saying less is correct; naming
+    // the raw enum is not.
+    'subscription.activeBodyNoPlan': 'Your subscription is active.',
     'subscription.pastDueTitle': 'Payment Issue',
     'subscription.pastDueBody': 'Your last payment failed. Please update your payment method to keep your subscription active.',
     'subscription.inactiveTitle': 'No Active Subscription',
@@ -819,6 +832,11 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'goalsHub.reviewQueueWithCount': 'بانتظار مراجعتك ({{count}})',
     'goalsHub.subtitle': 'ابدأ من هنا: اصنع هدفًا، راجع ما أنجزه طفلك، ثم سلّم المكافأة.',
     'goalsHub.title': 'الأهداف والمكافآت',
+    'planTier.BASIC': 'الأساسية',
+    'planTier.ENTERPRISE': 'المؤسسات',
+    'planTier.FAMILY': 'العائلية',
+    'planTier.FREE': 'المجانية',
+    'planTier.PREMIUM': 'المميّزة',
     'programDetail.actionFailedTitle': 'لم يكتمل الإجراء',
     'programDetail.amount': 'القيمة',
     'programDetail.archive': 'أرشفة',
@@ -1149,6 +1167,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'subscription.trialBody': 'باقي {days} يوم في فترتك التجريبية',
     'subscription.activeTitle': 'الاشتراك نشط',
     'subscription.activeBody': 'أنت مشترك في خطة {plan}',
+    'subscription.activeBodyNoPlan': 'اشتراكك نشط.',
     'subscription.pastDueTitle': 'مشكلة في الدفع',
     'subscription.pastDueBody': 'فشلت آخر عملية دفع. برجاء تحديث وسيلة الدفع للحفاظ على اشتراكك نشطًا.',
     'subscription.inactiveTitle': 'لا يوجد اشتراك نشط',

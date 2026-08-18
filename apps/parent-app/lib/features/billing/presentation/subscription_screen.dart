@@ -123,6 +123,27 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     }
   }
 
+  /// THE TIER, AS A PARENT SHOULD READ IT — or not at all.
+  ///
+  /// `subscription.planTier` is a raw backend enum (`FREE` / `BASIC` /
+  /// `PREMIUM` / `FAMILY` / `ENTERPRISE`). It used to be interpolated
+  /// straight into `subscription.activeBody`, so an Arabic-locale parent on
+  /// the paid plan read «أنت مشترك في خطة PREMIUM» — a Latin-letter database
+  /// value in the middle of an Arabic sentence, on the screen that handles
+  /// money.
+  ///
+  /// Guarded with `has` rather than translated unconditionally, because
+  /// `translate` answers a missing key with the key itself: an unrecognised
+  /// tier would otherwise read «خطة planTier.WHATEVER», which is the same bug
+  /// wearing a prefix. Returns null when there is nothing safe to show, and
+  /// the caller then picks a sentence that does not name a tier at all.
+  String? _planLabel(LocaleController locale) {
+    final subscription = _subscriptionInfo?['subscription'] as Map<String, dynamic>?;
+    final tier = subscription?['planTier'] as String?;
+    if (tier == null || tier.isEmpty) return null;
+    return locale.has('planTier.$tier') ? locale.t('planTier.$tier') : null;
+  }
+
   Future<void> _cancel() async {
     setState(() => _isSubmitting = true);
     try {
@@ -163,7 +184,11 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
-                      _StatusBanner(info: _subscriptionInfo!, t: t),
+                      _StatusBanner(
+                        info: _subscriptionInfo!,
+                        t: t,
+                        planLabel: _planLabel(locale),
+                      ),
                       const SizedBox(height: 20),
                       // Shown INSTEAD of nothing happening. The previous code
                       // could not reach this state because it always succeeded.
@@ -221,10 +246,15 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
 }
 
 class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({required this.info, required this.t});
+  const _StatusBanner({required this.info, required this.t, this.planLabel});
 
   final Map<String, dynamic> info;
   final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  /// The tier already resolved to a readable label, or null when this build
+  /// has no label for what the server sent. Resolved by the caller because
+  /// only it holds the `LocaleController` needed to ask `has`.
+  final String? planLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -250,7 +280,11 @@ class _StatusBanner extends StatelessWidget {
       color = AppTheme.sage500;
       icon = Icons.check_circle_rounded;
       title = t('subscription.activeTitle');
-      body = t('subscription.activeBody', options: {'plan': subscription?['planTier'] ?? ''});
+      // Names the tier only when there is a real label for it. Saying less is
+      // correct; printing the enum is not.
+      body = planLabel == null
+          ? t('subscription.activeBodyNoPlan')
+          : t('subscription.activeBody', options: {'plan': planLabel!});
     } else if (status == 'PAST_DUE') {
       color = AppTheme.brick500;
       icon = Icons.warning_rounded;
