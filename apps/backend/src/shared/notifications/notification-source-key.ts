@@ -245,3 +245,58 @@ export function forBillingEvent(subscriptionId: string, occurrence: string): str
  * hardcoding the string in two places.
  */
 export const LEGACY_SOURCE_KEY_PREFIX = 'legacy:';
+
+/**
+ * ===========================================================================
+ * SPRINT F1 — THE AUDIENCE FACET, NAMED ONCE INSTEAD OF SPELLED INLINE.
+ * ===========================================================================
+ *
+ * WHAT WAS MEASURED, and it is a PRODUCTION defect rather than a tidiness
+ * complaint. A cause that legitimately notifies BOTH audiences — a reward
+ * (`NotificationRewardConsumer` calls `handleEvent` twice with ONE
+ * `sourceEventId`), a badge (`RewardsEngineService` notifies `BADGE_EARNED`
+ * and `BADGE_EARNED_PARENT` with ONE `badgeKey`) — is kept apart at the
+ * DELIVERY tables by this facet: `notifications (family_id, source_event_id,
+ * user_id)` holds the parent's row under the bare key and
+ * `child_messages (family_id, source_event_id)` holds the child's under the
+ * faceted one. That separation lived as a template literal inside
+ * `deliverNow`, so it existed on the IMMEDIATE path and nowhere else.
+ *
+ * The quiet-hours queue is written WITHOUT going through `deliverNow` — it
+ * only goes through it on RELEASE — and `notification_deliveries (family_id,
+ * source_event_id)` is unique with NO audience column. So between 21:00 and
+ * 07:00 on the family's own clock the parent's deferral was enqueued first and
+ * the child's collided with it, `ON CONFLICT DO NOTHING` returned no id, the
+ * outcome was recorded as the entirely reasonable-looking `ALREADY_DEFERRED`,
+ * and THE CHILD WAS NEVER TOLD ABOUT THEIR OWN REWARD — for ten hours out of
+ * every twenty-four, in both launch markets. That is `PF-E-006` restored on a
+ * schedule, and `quiet-hours-deferral.e2e.spec.ts` §10 now measures it.
+ *
+ * SO THE FACET BECOMES A FUNCTION, AND IT IS IDEMPOTENT ON PURPOSE. The
+ * deferred row must carry the key the CHILD's table will finally be written
+ * with, so that the queue can hold both audiences at once; and `deliverNow` is
+ * the ONE door that both the immediate path and the release path go through, so
+ * it must not append a second facet to a key that already carries one.
+ * Applying it twice is therefore DEFINED to be applying it once, which makes
+ * the ordering of the two callers a non-question instead of an invariant
+ * somebody has to keep remembering.
+ *
+ * IT MOVES NO EXISTING KEY. `${key}:child` is byte-for-byte what `deliverNow`
+ * has always written, and it is what `e2e-06`, `e2e-09`, `e2e-10`, `e2e-11` and
+ * `e2e-13` already assert against `child_messages.source_event_id`.
+ */
+export const CHILD_AUDIENCE_FACET = 'child';
+
+export function forChildAudience(sourceEventId: string): string {
+  const suffix = `:${CHILD_AUDIENCE_FACET}`;
+  return sourceEventId.endsWith(suffix) ? sourceEventId : clamp(`${sourceEventId}${suffix}`);
+}
+
+/**
+ * The key ONE audience's row is stored under, for a cause that may notify both.
+ * `PARENT` is the bare key — unchanged, so no existing row and no existing
+ * assertion moves.
+ */
+export function forAudience(sourceEventId: string, audience: 'PARENT' | 'CHILD'): string {
+  return audience === 'CHILD' ? forChildAudience(sourceEventId) : sourceEventId;
+}

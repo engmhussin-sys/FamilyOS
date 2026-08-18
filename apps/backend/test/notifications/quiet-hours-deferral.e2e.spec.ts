@@ -1061,4 +1061,148 @@ describeIfDb('PHASE D — quiet-hours deferral (real PostgreSQL)', () => {
       expect(await childMessageRows(f.familyId)).toHaveLength(2);
     }, 180_000);
   });
+
+  // ==========================================================================
+  /**
+   * SPRINT F1 — THE DEFECT: ONE CAUSE, TWO AUDIENCES, AND THE QUEUE KEPT ONE.
+   *
+   * WHAT WAS MEASURED, at 23:57 Africa/Cairo, on a real database, by
+   * `reward-cause-producers.e2e.spec.ts` before its clock was frozen. A single
+   * `REWARD_GRANTED` domain event produces TWO `handleEvent` calls that share
+   * ONE `sourceEventId` — that sharing is deliberate and documented at
+   * `notification-reward.consumer.ts`, because the CAUSE is one — and the two
+   * delivery tables are kept apart by the `:child` facet that `deliverNow`
+   * appends. Inside quiet hours nothing reaches `deliverNow`: both calls reach
+   * `handleQuietHours`, which enqueued the PRODUCER'S BARE KEY for both. The
+   * parent's row went in; the child's hit
+   * `ON CONFLICT ("family_id","source_event_id") DO NOTHING`, returned no id,
+   * and was reported as `ALREADY_DEFERRED` — a phrase that reads like a correct
+   * answer. Two decision rows, ONE deferred row, and in the morning the parent
+   * was told and the child was not. Ten hours out of every twenty-four, for
+   * every reward and every badge, which is `PF-E-006` on a timer.
+   *
+   * WHY THIS BELONGS IN THIS FILE AND NOT IN THE REWARD SUITE: the bug is in
+   * the QUEUE's key, not in the reward. Asserting it here, through
+   * `notifyEvent` at an explicit instant, measures the property with no reward
+   * engine, no outbox and no relay between the assertion and the thing it is
+   * about — and it is measured at the same DEEP_NIGHT instant everything else
+   * in this file uses.
+   *
+   * THE FIX IS `forAudience` IN `notification-source-key.ts`, and the last
+   * assertion here is the one that keeps it honest: the key the CHILD's row
+   * finally carries must be byte-identical to the one an IMMEDIATE delivery
+   * would have written, or «idempotency survives defer -> deliver» would have
+   * been traded for «the child gets told», and both are required.
+   */
+  describe('10. SPRINT F1: a cause that notifies BOTH audiences survives the queue as TWO rows', () => {
+    const childMessagesOf = (familyId: string): Promise<any[]> =>
+      raw<any[]>(
+        `SELECT * FROM "child_messages" WHERE "family_id" = $1::uuid ORDER BY "created_at"`,
+        familyId,
+      );
+
+    it('THE DEFECT: parent and child share one cause at 00:30 and BOTH are queued, not one', async () => {
+      const f = await createFamily('f1-dual', 'Africa/Cairo');
+      const cause = `evt:f1-dual-${stamp}`;
+
+      // The exact shape of `NotificationRewardConsumer`: the parent first, the
+      // child second, one key. Before the fix the second call returned
+      // DEFER/ALREADY_DEFERRED and wrote nothing.
+      const parent = await notify(f.familyId, f.childId, {
+        type: 'REWARD_GRANTED',
+        targetAudience: 'PARENT',
+        sourceEventId: cause,
+      });
+      const child = await notify(f.familyId, f.childId, {
+        type: 'REWARD_GRANTED_CHILD',
+        targetAudience: 'CHILD',
+        sourceEventId: cause,
+      });
+
+      expect({ decision: parent.decision, reason: parent.reason }).toEqual({
+        decision: 'DEFER',
+        reason: 'QUIET_HOURS',
+      });
+      // WAS `{ decision: 'DEFER', reason: 'ALREADY_DEFERRED' }` — the child's
+      // own message collapsed into the parent's row. `QUIET_HOURS` here means
+      // the child's message exists and is waiting for morning.
+      expect({ decision: child.decision, reason: child.reason }).toEqual({
+        decision: 'DEFER',
+        reason: 'QUIET_HOURS',
+      });
+
+      const rows = await deferredRows(f.familyId);
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.target_audience).sort()).toEqual(['CHILD', 'PARENT']);
+      // The rows are separated by the AUDIENCE FACET, which is what makes them
+      // two rows under a unique index that has no audience column.
+      expect(rows.find((r) => r.target_audience === 'PARENT').source_event_id).toBe(cause);
+      expect(rows.find((r) => r.target_audience === 'CHILD').source_event_id).toBe(`${cause}:child`);
+    }, 180_000);
+
+    it('AND THE MORNING DELIVERS BOTH — one parent notification, one child message, keyed exactly as an immediate delivery would be', async () => {
+      const f = await createFamily('f1-dual-release', 'Africa/Cairo');
+      const cause = `evt:f1-dual-rel-${stamp}`;
+
+      await notify(f.familyId, f.childId, {
+        type: 'REWARD_GRANTED',
+        targetAudience: 'PARENT',
+        sourceEventId: cause,
+      });
+      await notify(f.familyId, f.childId, {
+        type: 'REWARD_GRANTED_CHILD',
+        targetAudience: 'CHILD',
+        sourceEventId: cause,
+      });
+
+      await release.sweep(NEXT_MORNING);
+
+      const parentRows = await notificationRows(f.familyId);
+      const childRows = await childMessagesOf(f.familyId);
+      expect(parentRows).toHaveLength(1);
+      expect(childRows).toHaveLength(1);
+
+      // THE KEYS. The parent's is the producer's, unchanged across
+      // defer -> deliver (§1 already pins this). The child's is the producer's
+      // plus the ONE facet — not two, which is what a non-idempotent
+      // `${key}:child` applied at both enqueue and release would have written,
+      // and which would have silently broken the `child_messages` collision
+      // that refuses a redelivered cause.
+      expect(parentRows[0].source_event_id).toBe(cause);
+      expect(childRows[0].source_event_id).toBe(`${cause}:child`);
+
+      // AND THE GUARANTEE THE FACET EXISTS TO PROTECT IS STILL THERE: the same
+      // cause, to the same audience, delivered again after release writes no
+      // second row.
+      const replay = await notify(
+        f.familyId,
+        f.childId,
+        { type: 'REWARD_GRANTED_CHILD', targetAudience: 'CHILD', sourceEventId: cause },
+        new Date(NEXT_MORNING.getTime() + 600_000),
+      );
+      expect(replay.decision).toBe('SUPPRESS');
+      expect(replay.reason).toBe('ALREADY_NOTIFIED');
+      expect(await childMessagesOf(f.familyId)).toHaveLength(1);
+    }, 180_000);
+
+    it('THE QUEUE IS STILL ONE-PER-CAUSE-PER-AUDIENCE — a redelivered child message inside the window queues once', async () => {
+      const f = await createFamily('f1-dual-idem', 'Africa/Cairo');
+      const cause = `evt:f1-dual-idem-${stamp}`;
+
+      await notify(f.familyId, f.childId, {
+        type: 'REWARD_GRANTED_CHILD',
+        targetAudience: 'CHILD',
+        sourceEventId: cause,
+      });
+      const second = await notify(
+        f.familyId,
+        f.childId,
+        { type: 'REWARD_GRANTED_CHILD', targetAudience: 'CHILD', sourceEventId: cause },
+        new Date(DEEP_NIGHT.getTime() + 6 * 60_000),
+      );
+
+      expect(second.reason).toBe('ALREADY_DEFERRED');
+      expect(await deferredRows(f.familyId)).toHaveLength(1);
+    }, 180_000);
+  });
 });

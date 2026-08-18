@@ -22,7 +22,11 @@ import {
   getStartOfBusinessDay,
   nextLocalTimeAfter,
 } from '../../../../common/time/family-date';
-import { forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
+import {
+  forAudience,
+  forChildAudience,
+  forRecurringSignal,
+} from '../../../../shared/notifications/notification-source-key';
 import {
   notificationCategoryOf,
   quietHoursClassOf,
@@ -397,11 +401,41 @@ export class SmartNotificationIntegrationService {
         targetAudience: candidate.targetAudience,
         title: candidate.title,
         body: candidate.body,
-        // THE CAUSAL KEY, CARRIED UNCHANGED. This is the whole of «idempotency
-        // survives defer -> deliver»: the key composed by the producer at 22:00
-        // is the key inserted into `notifications` at 07:00, so a redelivery of
-        // the same cause still collides with B9's unique index.
-        sourceEventId: candidate.sourceEventId,
+        /**
+         * THE CAUSAL KEY, PLUS THE AUDIENCE FACET — SPRINT F1, AND IT IS A
+         * PRODUCTION FIX.
+         *
+         * WHAT THIS LINE USED TO BE: `sourceEventId: candidate.sourceEventId`,
+         * with a comment saying the key is «CARRIED UNCHANGED» so that
+         * idempotency survives defer -> deliver. The idempotency half of that
+         * sentence was right and is preserved below; the «unchanged» half was
+         * the defect.
+         *
+         * `notification_deliveries (family_id, source_event_id)` is UNIQUE and
+         * has NO audience column. A cause that legitimately notifies both
+         * audiences — every reward (`NotificationRewardConsumer` makes two
+         * `handleEvent` calls with ONE `sourceEventId`), every badge
+         * (`BADGE_EARNED` + `BADGE_EARNED_PARENT` with ONE `badgeKey`) —
+         * therefore enqueued the PARENT's row first and had the CHILD's refused
+         * by `ON CONFLICT DO NOTHING`. The refusal was reported as
+         * `ALREADY_DEFERRED`, which reads like a correct answer, and the child
+         * heard nothing at all about their own reward. Between 21:00 and 07:00
+         * on the family's own clock — ten hours of every day — the child half of
+         * this product was silent, which is exactly `PF-E-006`'s shape on a
+         * timer. MEASURED, at 23:57 Africa/Cairo, by
+         * `reward-cause-producers.e2e.spec.ts` before its clock was frozen: one
+         * ledger row, two decision rows, ONE deferred row.
+         *
+         * `forAudience` IS THE SAME FACET `deliverNow` HAS ALWAYS APPENDED, and
+         * it is idempotent, so the released row goes through `deliverNow`'s
+         * CHILD branch and lands in `child_messages` under the byte-identical
+         * key an immediate delivery would have written. Idempotency across
+         * defer -> deliver is therefore unchanged: the key composed by the
+         * producer at 22:00 is still the key inserted at 07:00, and a
+         * redelivery of the same cause to the same audience still collides —
+         * now per audience, which is what it always meant to say.
+         */
+        sourceEventId: forAudience(candidate.sourceEventId, candidate.targetAudience),
         // PHASE E (`PD-N-004`) — the payload travels with the message. See
         // `IDeliverableNotification.data`.
         data: candidate.data ?? null,
@@ -511,13 +545,21 @@ export class SmartNotificationIntegrationService {
     // have left them exactly as exposed as before while reporting success.
     // The `:child` facet keeps the child's row and the parent's row from
     // colliding when ONE event legitimately notifies both audiences.
+    //
+    // SPRINT F1 — `forChildAudience` RATHER THAN THE TEMPLATE LITERAL THIS WAS,
+    // and it composes the identical string. The facet is now named in
+    // `notification-source-key.ts` because the QUIET-HOURS QUEUE needs the same
+    // one (see `handleQuietHours`) and a separation that only exists on the
+    // immediate path is a separation that disappears every night. It is
+    // idempotent, so a row released from that queue — which already carries the
+    // facet — arrives here and is NOT faceted twice.
     const drafted = await this.familyCommunication.draftAiMessageIfAbsent(
       childId,
       familyId,
       candidate.type,
       candidate.title,
       candidate.body,
-      `${candidate.sourceEventId}:child`,
+      forChildAudience(candidate.sourceEventId),
       // PHASE E (`PE-N-001`) — SAY WHICH VOCABULARY THIS CATEGORY IS FROM.
       //
       // `candidate.type` is a NOTIFICATION TYPE (`BADGE_EARNED`,
