@@ -495,7 +495,9 @@
       "paymentsFailed": "Payments failed",
       "currencyNote": "Every money figure is shown in its own market's currency. There is no combined total, because that needs an exchange rate — a financial decision nobody has taken.",
       "noCombinedMoney": "No combined total",
-      "noCombinedMoneyHint": "Adding EGP to SAR without a declared rate is a lie. Pick a market to see its figures."
+      "noCombinedMoneyHint": "Adding EGP to SAR without a declared rate is a lie. Pick a market to see its figures.",
+      "newRegistrations": "New registrations in the period",
+      "payingFamiliesStock": "Paying families (latest closed day)"
     },
     "forecast": {
       "title": "Quarterly forecast & targets",

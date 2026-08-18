@@ -181,8 +181,18 @@ function CountryColumn({ country, from, to }: { country: CountryCode; from: stri
           {t('growth.overview.families')}
         </h4>
         <dl className="grid grid-cols-2 gap-3 text-sm">
-          <Figure label={t('growth.overview.registered')} value={formatCount(locale, counts.data.newRegistrations)} />
-          <Figure label={t('growth.overview.paidFamilies')} value={formatCount(locale, counts.data.payingFamilies)} />
+          {/* Both labels name their own shape. «مُسجَّلة» over a windowed
+              FLOW would have read as the market's total families, and
+              «دافعة» over a STOCK read off the latest closed day needs to say
+              which day it is a stock of. */}
+          <Figure
+            label={t('growth.overview.newRegistrations')}
+            value={formatCount(locale, counts.data.newRegistrations)}
+          />
+          <Figure
+            label={t('growth.overview.payingFamiliesStock')}
+            value={formatCount(locale, counts.data.payingFamilies)}
+          />
           <Figure
             label={t('growth.overview.paymentsSucceeded')}
             value={formatCount(locale, counts.data.paymentSuccessCount)}

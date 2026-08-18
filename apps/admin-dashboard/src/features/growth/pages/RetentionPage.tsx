@@ -6,7 +6,7 @@ import { formatRate } from '../lib/format';
 import { useVizMode } from '../lib/useVizMode';
 import { RetentionGrid, type RetentionRow } from '../components/viz/RetentionGrid';
 import { ChartFrame, VizTable } from '../components/viz/ChartFrame';
-import { AsyncBoundary, GapBlock } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, GapBlock } from '../components/AsyncState';
 import { GrowthPageHeader } from '../components/FilterBar';
 
 /**
@@ -60,6 +60,7 @@ export function RetentionPage() {
           void eg.refetch();
           void sa.refetch();
         }}
+        skeleton={<ChartSkeleton height={200} />}
       >
         <ChartFrame
           mode={mode}

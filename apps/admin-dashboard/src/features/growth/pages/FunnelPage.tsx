@@ -9,7 +9,7 @@ import { FUNNEL_SOURCE, CATEGORICAL, STATUS } from '../lib/vizTokens';
 import { useVizMode } from '../lib/useVizMode';
 import { FunnelChart } from '../components/viz/FunnelChart';
 import { ChartFrame, VizTable, type LegendEntry } from '../components/viz/ChartFrame';
-import { AsyncBoundary, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, RefetchingOverlay } from '../components/AsyncState';
 import { FilterBar, GrowthPageHeader } from '../components/FilterBar';
 import { KpiCard } from '../components/KpiCard';
 
@@ -84,6 +84,7 @@ export function FunnelPage() {
         error={funnel.error}
         isEmpty={steps.length === 0}
         onRetry={() => void funnel.refetch()}
+        skeleton={<ChartSkeleton height={280} />}
       >
         <RefetchingOverlay isFetching={funnel.isFetching}>
           <ChartFrame

@@ -11,7 +11,7 @@ import { CATEGORICAL, DE_EMPHASIS, MARK, CHROME, ALL_PAIRS_SERIES_CAP } from '..
 import { useVizMode } from '../lib/useVizMode';
 import { ChartFrame, VizTable } from '../components/viz/ChartFrame';
 import { roundedBar } from '../components/viz/FunnelChart';
-import { AsyncBoundary, ComposedFromNote, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, ComposedFromNote, RefetchingOverlay } from '../components/AsyncState';
 import { FilterBar, GrowthPageHeader } from '../components/FilterBar';
 import { CampaignForm } from '../components/CampaignForm';
 
@@ -76,6 +76,7 @@ export function AcquisitionPage() {
           void channels.refetch();
           void campaigns.refetch();
         }}
+        skeleton={<ChartSkeleton height={260} />}
       >
         <RefetchingOverlay isFetching={channels.isFetching || campaigns.isFetching}>
           <ChartFrame
@@ -145,6 +146,7 @@ export function AcquisitionPage() {
           error={campaigns.error}
           isEmpty={(campaigns.data ?? []).length === 0}
           onRetry={() => void campaigns.refetch()}
+          skeleton={<ChartSkeleton height={200} />}
         >
           <div className="overflow-x-auto rounded-card border border-sand-200 bg-white p-4 shadow-quiet">
             <VizTable

@@ -20,7 +20,7 @@ import { ChartFrame, VizTable, type LegendEntry } from '../components/viz/ChartF
 import { ScenarioSwitcher } from '../components/ScenarioSwitcher';
 import { AssumptionsEditor } from '../components/AssumptionsEditor';
 import { ProvenanceBadge } from '../components/ProvenanceBadge';
-import { AsyncBoundary, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, FigureGridSkeleton, RefetchingOverlay } from '../components/AsyncState';
 import { GrowthPageHeader } from '../components/FilterBar';
 
 /**
@@ -144,7 +144,12 @@ export function ForecastPage() {
         <ScenarioSwitcher scenario={scenario} onChange={setScenario} available={available} />
       </div>
 
-      <AsyncBoundary isLoading={forecast.isLoading} error={forecast.error} onRetry={() => void forecast.refetch()}>
+      <AsyncBoundary
+        isLoading={forecast.isLoading}
+        error={forecast.error}
+        onRetry={() => void forecast.refetch()}
+        skeleton={<FigureGridSkeleton count={3} columns={3} />}
+      >
         {selected ? (
           <RefetchingOverlay isFetching={forecast.isFetching}>
             <AssumptionsEditor
@@ -188,6 +193,7 @@ export function ForecastPage() {
         error={quarterly.error}
         isEmpty={rows.length === 0}
         onRetry={() => void quarterly.refetch()}
+        skeleton={<ChartSkeleton height={260} />}
       >
         <ChartFrame
           mode={mode}

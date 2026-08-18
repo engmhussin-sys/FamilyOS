@@ -5,7 +5,7 @@ import { pickKpi } from '../api/adapters';
 import { COUNTRY_CURRENCY, countryWithCurrencyLabel, formatRatio } from '../lib/format';
 import { KpiCard } from '../components/KpiCard';
 import { ProvenanceLegend } from '../components/ProvenanceBadge';
-import { AsyncBoundary, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, KpiGridSkeleton, RefetchingOverlay } from '../components/AsyncState';
 import { GrowthPageHeader } from '../components/FilterBar';
 import { STATUS } from '../lib/vizTokens';
 import { useVizMode } from '../lib/useVizMode';
@@ -76,7 +76,12 @@ function MarketEconomics({ country }: { country: CountryCode }) {
         </span>
       </header>
 
-      <AsyncBoundary isLoading={kpis.isLoading} error={kpis.error} onRetry={() => void kpis.refetch()}>
+      <AsyncBoundary
+        isLoading={kpis.isLoading}
+        error={kpis.error}
+        onRetry={() => void kpis.refetch()}
+        skeleton={<KpiGridSkeleton count={6} />}
+      >
         <RefetchingOverlay isFetching={kpis.isFetching}>
           <div className="mb-4 grid gap-3 sm:grid-cols-2">
             {MEASURED.map((id) => (

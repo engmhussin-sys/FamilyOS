@@ -5,7 +5,7 @@ import { useDaily } from '../api/useGrowthQueries';
 import { composeReferralSummary, GAPS } from '../api/adapters';
 import { formatCount, NO_DATA } from '../lib/format';
 import { rangeFor, type RangePreset } from '../lib/range';
-import { AsyncBoundary, ComposedFromNote, GapBlock, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, GapBlock, RefetchingOverlay } from '../components/AsyncState';
 import { FilterBar, GrowthPageHeader } from '../components/FilterBar';
 import { TrendChart } from '../components/viz/TrendChart';
 import { ChartFrame, VizTable } from '../components/viz/ChartFrame';
@@ -63,6 +63,7 @@ export function ReferralPage() {
         error={daily.error}
         isEmpty={rows.length === 0}
         onRetry={() => void daily.refetch()}
+        skeleton={<FigureGridSkeleton count={3} columns={3} />}
       >
         <RefetchingOverlay isFetching={daily.isFetching}>
           <div className="mb-6 grid gap-3 sm:grid-cols-3">
