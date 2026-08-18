@@ -156,13 +156,45 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'session.somethingHappenedTitle': 'Small hiccup',
     'session.targetReached': 'You finished the time!',
     'session.title': 'Working on it',
-    // ACCURATE AS OF F1, and the previous wording was not: the server's
-    // upload route EXISTS (`POST /self/achievements/:id/evidence`); what is
-    // missing is on this side — no recorder and no file picker, neither of
-    // which can be added without a package this environment cannot resolve.
-    // So this says what a child can actually do instead, and promises
-    // nothing about what the send button will do.
-    'session.uploadNotReady': 'Recording inside the app isn\'t ready yet. Read it out to a grown-up — they\'re the one who says you\'re done.',
+    // SPRINT F1 — `session.uploadNotReady` IS GONE, and its removal is what
+    // this sprint is for. It said recording "isn't ready yet"; the recorder
+    // and the pickers now exist and the route always did, so the sentence had
+    // become false and the copy it justified pointed a child away from
+    // something they can now actually do.
+    //
+    // EVERY KEY BELOW IS APP CHROME, WHICH IS WHY IT IS HERE AT ALL. These
+    // refusals happen BEFORE any request is sent, so there is no server
+    // sentence yet to render. From the moment the server does answer, its own
+    // `messageAr` is shown verbatim through `KidErrorState` and nothing here
+    // is consulted.
+    //
+    // NOT ONE OF THEM STATES AN OUTCOME. `stored` says the file arrived and
+    // says nothing else — both methods that reach this route have
+    // `canAutoApprove: false`, so a grown-up decides afterwards.
+    'session.evidence.artifactHow': 'Take a picture of what you did, or pick one you already have.',
+    'session.evidence.camera': 'Take a picture',
+    'session.evidence.cancelRecording': 'Start over',
+    'session.evidence.captureFailed': 'Your phone couldn\'t make the file this time. Have another go.',
+    'session.evidence.document': 'Pick a file',
+    'session.evidence.gallery': 'From my pictures',
+    'session.evidence.micDenied': 'The microphone is off, so we can\'t record here. You can recite to a grown-up instead — they\'re the one who decides anyway.',
+    'session.evidence.micWhy': 'We\'ll ask to use the microphone so we can record you reciting. Nothing is recorded until you press the button.',
+    'session.evidence.none': 'Nothing sent yet.',
+    'session.evidence.notAttachedYet': 'You can still send it — a grown-up will see there\'s no recording with it.',
+    'session.evidence.recitationHow': 'Record yourself reciting. We send the recording, a grown-up listens, and they decide.',
+    'session.evidence.record': 'Start recording',
+    'session.evidence.recording': 'Recording... {{time}}',
+    'session.evidence.replace': 'Send something else',
+    'session.evidence.stop': 'I\'m finished reciting',
+    'session.evidence.stored': 'Sent: {{name}}',
+    'session.evidence.storedHint': 'A grown-up will look at it once you press the button below.',
+    'session.evidence.tooLarge': 'That file is bigger than {{mb}} MB, so it won\'t go. Record a shorter bit, or send one picture.',
+    'session.evidence.tooSmall': 'That file is nearly empty. Check the recording started, then try again.',
+    'session.evidence.typeUnknown': 'We can\'t tell what kind of file that is. Try a recording or a picture.',
+    'session.evidence.typeWrongArtifact': 'This one needs a picture or a file that shows your work, not a recording.',
+    'session.evidence.typeWrongRecitation': 'This one needs a recording of you reciting, not a picture.',
+    'session.evidence.uploadFailedTitle': 'It didn\'t go through',
+    'session.evidence.uploading': 'Sending...',
     'session.uploadTitle': 'Recording or a picture',
     'shell.coach': 'Coach',
     'shell.deviceSettings': 'Device settings',
@@ -540,7 +572,33 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'session.somethingHappenedTitle': 'حصلت حاجة صغيرة',
     'session.targetReached': 'كمّلت الوقت!',
     'session.title': 'شغّال عليه',
-    'session.uploadNotReady': 'التسجيل من جوّه التطبيق لسه مش جاهز. سمّع لحد كبير عندك — هو اللي هيأكد إنك خلّصت.',
+    // SPRINT F1 — المصرية العامية، وكل جملة بتقول للطفل الخطوة الجاية مش
+    // الغلط اللي حصل. ولا واحدة منها بتقول إن الدليل «اتقبل»: «اتبعت» بس،
+    // لأن اللي بيقرّر حد كبير.
+    'session.evidence.artifactHow': 'صوّر اللي عملته، أو اختار صورة عندك خلاص.',
+    'session.evidence.camera': 'صوّرها',
+    'session.evidence.cancelRecording': 'ابدأ من الأول',
+    'session.evidence.captureFailed': 'الموبايل مقدرش يعمل الملف المرة دي. جرّب تاني.',
+    'session.evidence.document': 'اختار ملف',
+    'session.evidence.gallery': 'من صوري',
+    'session.evidence.micDenied': 'الميكروفون مقفول، فمش هنقدر نسجّل هنا. تقدر تسمّع لحد كبير — هو اللي بيقرّر أصلاً.',
+    'session.evidence.micWhy': 'هنطلب نستخدم الميكروفون عشان نسجّل تسميعك. مفيش حاجة بتتسجّل غير لما تدوس الزرار.',
+    'session.evidence.none': 'لسه مبعتش حاجة.',
+    'session.evidence.notAttachedYet': 'تقدر تبعتها برضه — حد كبير هيشوف إن مفيش تسجيل معاها.',
+    'session.evidence.recitationHow': 'سجّل تسميعك. إحنا بنبعت التسجيل، وحد كبير يسمعه ويقرّر.',
+    'session.evidence.record': 'ابدأ التسجيل',
+    'session.evidence.recording': 'بنسجّل… {{time}}',
+    'session.evidence.replace': 'ابعت حاجة تانية',
+    'session.evidence.stop': 'خلّصت تسميع',
+    'session.evidence.stored': 'اتبعت: {{name}}',
+    'session.evidence.storedHint': 'حد كبير هيشوفها بعد ما تدوس الزرار اللي تحت.',
+    'session.evidence.tooLarge': 'الملف ده أكبر من {{mb}} ميجا، فمش هيعدّي. سجّل جزء أقصر، أو ابعت صورة واحدة.',
+    'session.evidence.tooSmall': 'الملف ده فاضي تقريبًا. اتأكد إن التسجيل بدأ وجرّب تاني.',
+    'session.evidence.typeUnknown': 'مش عارفين الملف ده نوعه إيه. جرّب تسجيل صوت أو صورة.',
+    'session.evidence.typeWrongArtifact': 'ده محتاج صورة أو ملف يبيّن شغلك، مش تسجيل صوت.',
+    'session.evidence.typeWrongRecitation': 'ده محتاج تسجيل صوت لتسميعك، مش صورة.',
+    'session.evidence.uploadFailedTitle': 'معدّاش',
+    'session.evidence.uploading': 'بنبعت…',
     'session.uploadTitle': 'تسميع أو صورة',
     'shell.coach': 'مدرّبي',
     'shell.deviceSettings': 'إعدادات الجهاز',

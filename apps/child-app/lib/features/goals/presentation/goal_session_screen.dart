@@ -7,6 +7,7 @@ import '../../../core/localization/locale_controller.dart';
 import '../../../core/widgets/celebration_overlay.dart';
 import '../application/goal_session_controller.dart';
 import '../domain/child_goal.dart';
+import '../domain/evidence.dart';
 import 'celebration_view.dart';
 
 /// THE WORKING SESSION — timer, progress, submit, and the answer.
@@ -128,48 +129,7 @@ class _GoalSessionScreenState extends ConsumerState<GoalSessionScreen> {
             ),
           ),
         if (goal.needsQuiz) _buildQuiz(context, t, isRtl, state, controller),
-        if (goal.needsUpload)
-          KidCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.mic_none_rounded, color: KidColor.magic),
-                    KidSpace.hGapSm,
-                    Expanded(
-                      child: Text(t('session.uploadTitle'), style: KidText.cardTitle(context)),
-                    ),
-                  ],
-                ),
-                KidSpace.gapSm,
-                // THE HONEST MESSAGE, AND WHY IT IS STILL A MESSAGE AND NOT A
-                // CONTROL — corrected in F1, because the sentence that used to
-                // stand here («there is no upload endpoint yet») is no longer
-                // true and the copy it justified was making a promise this
-                // screen does not keep.
-                //
-                // The server route EXISTS: `POST /self/achievements/:id/
-                // evidence` takes one multipart `file`, sniffs its real type
-                // from the bytes, hashes it and returns a ref that
-                // `submit`'s `submissionRef` must then resolve to. What is
-                // missing is entirely on THIS side: acquiring the bytes needs
-                // a recorder or a file picker — `record`, `image_picker`,
-                // `file_picker` — and no package can be added in an
-                // environment where pub.dev returns 403, so a control here
-                // would be a button that cannot open anything.
-                //
-                // WHAT THIS MEANS FOR THE CHILD, stated rather than hidden:
-                // `RECITATION_SUBMISSION` and `COMPLETION_ARTIFACT` fail
-                // server-side without a ref («لم يُرفَق تسجيل التسميع.») and
-                // escalate to a parent after `MAX_VERIFICATION_ATTEMPTS`. So
-                // the copy points at the person who actually decides —
-                // `canAutoApprove: false` for both methods — and does not
-                // claim the send button delivers anything by itself.
-                Text(t('session.uploadNotReady'), style: KidText.body(context)),
-              ],
-            ),
-          ),
+        if (goal.needsUpload) _buildEvidence(context, t, isRtl, state, controller),
         KidSpace.gapMd,
         TextField(
           controller: _note,
@@ -207,8 +167,257 @@ class _GoalSessionScreenState extends ConsumerState<GoalSessionScreen> {
           style: KidText.caption(context),
           textAlign: TextAlign.center,
         ),
+        // F1 — SAID, NOT ENFORCED. The button above stays enabled with no
+        // uploaded file, because deciding that a submission is invalid is the
+        // server's job and not this screen's; `RECITATION_MISSING` /
+        // `ARTIFACT_MISSING` come back in the server's own words, and both
+        // methods end with a parent regardless. This line only makes sure the
+        // child is not surprised by that answer.
+        if (goal.needsUpload && !state.evidence.hasStoredFile) ...[
+          KidSpace.gapXs,
+          Text(
+            t('session.evidence.notAttachedYet'),
+            style: KidText.caption(context),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ],
     );
+  }
+
+  /// THE EVIDENCE CARD — F1, and what replaced a paragraph explaining that
+  /// this could not be built.
+  ///
+  /// WHAT THIS WIDGET IS NOT ALLOWED TO SAY, and the reason it is written the
+  /// way it is: there is no state below in which a child is told their
+  /// recitation was good, accepted, verified or rewarded. The strongest
+  /// sentence on it is «اتبعت» — the bytes arrived — followed immediately by
+  /// «حد كبير هيشوفها». Both methods that reach this card have
+  /// `canAutoApprove: false` in the server's own verification matrix, so an
+  /// acceptance verdict here would not merely be off-brand, it would be
+  /// false.
+  ///
+  /// AND NOTHING HERE IS A DECORATIVE CONTROL. Every button opens a real
+  /// recorder or a real picker. The mode set comes from
+  /// [EvidenceContract.modesFor], derived from the ALLOWED MIME TYPES for
+  /// this goal's kind — so an artifact goal gets a "pick a file" button
+  /// because the server accepts `application/pdf`, and a recitation goal does
+  /// not get a gallery button, because an audio file out of the gallery is
+  /// not this child reciting.
+  Widget _buildEvidence(
+    BuildContext context,
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    bool isRtl,
+    GoalSessionState state,
+    GoalSessionController controller,
+  ) {
+    final kind = EvidenceContract.kindForVerificationLevel(widget.goal.verificationLevel);
+    if (kind == null) return const SizedBox.shrink();
+
+    final evidence = state.evidence;
+    final isRecitation = kind == EvidenceKind.recitation;
+    final modes = EvidenceContract.modesFor(kind);
+    final busy = evidence.isUploading || state.isBusy;
+    final noticeKey = evidence.noticeKey;
+    final uploadFailure = evidence.failure;
+
+    return KidCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isRecitation ? Icons.mic_none_rounded : Icons.photo_camera_outlined,
+                color: KidColor.magic,
+              ),
+              KidSpace.hGapSm,
+              Expanded(
+                child: Text(t('session.uploadTitle'), style: KidText.cardTitle(context)),
+              ),
+            ],
+          ),
+          KidSpace.gapSm,
+          Text(
+            isRecitation
+                ? t('session.evidence.recitationHow')
+                : t('session.evidence.artifactHow'),
+            style: KidText.body(context),
+          ),
+
+          // THE MICROPHONE RATIONALE, ABOVE THE BUTTON THAT TRIGGERS THE
+          // DIALOG. Android shows that dialog a very small number of times in
+          // an app's entire life; spending one on a child who has no idea
+          // what is being asked wastes a chance that does not come back. It
+          // is also simply what a nine-year-old is owed before a prompt.
+          if (isRecitation && !evidence.hasStoredFile && !evidence.isRecording) ...[
+            KidSpace.gapSm,
+            Text(t('session.evidence.micWhy'), style: KidText.caption(context)),
+          ],
+
+          KidSpace.gapMd,
+
+          if (evidence.isUploading)
+            Row(
+              children: [
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                KidSpace.hGapMd,
+                Expanded(
+                  child: Text(t('session.evidence.uploading'), style: KidText.body(context)),
+                ),
+              ],
+            )
+          else if (evidence.isRecording) ...[
+            Row(
+              children: [
+                const Icon(Icons.fiber_manual_record_rounded, color: KidColor.warm, size: 18),
+                KidSpace.hGapSm,
+                Expanded(
+                  child: Text(
+                    t('session.evidence.recording',
+                        options: {'time': _clock(evidence.recordingSeconds)}),
+                    style: KidText.body(context),
+                  ),
+                ),
+              ],
+            ),
+            KidSpace.gapMd,
+            KidBigButton(
+              label: t('session.evidence.stop'),
+              icon: Icons.stop_rounded,
+              color: KidColor.magic,
+              onPressed: controller.stopRecitation,
+            ),
+            KidSpace.gapSm,
+            KidQuietButton(
+              label: t('session.evidence.cancelRecording'),
+              icon: Icons.restart_alt_rounded,
+              onPressed: controller.cancelRecitation,
+            ),
+          ] else if (evidence.hasStoredFile) ...[
+            // THE STRONGEST SENTENCE ON THIS CARD, and it is a transport fact:
+            // the file went. Followed by who decides, which is not this app.
+            Row(
+              children: [
+                const Icon(Icons.cloud_done_outlined, color: KidColor.waiting),
+                KidSpace.hGapSm,
+                Expanded(
+                  child: Text(
+                    t('session.evidence.stored',
+                        options: {'name': evidence.filename ?? ''}),
+                    style: KidText.body(context),
+                  ),
+                ),
+              ],
+            ),
+            KidSpace.gapXs,
+            Text(t('session.evidence.storedHint'), style: KidText.caption(context)),
+            KidSpace.gapMd,
+            KidQuietButton(
+              label: t('session.evidence.replace'),
+              icon: Icons.autorenew_rounded,
+              onPressed: busy ? null : controller.clearEvidence,
+            ),
+          ] else ...[
+            for (final mode in modes) ...[
+              KidQuietButton(
+                label: _modeLabel(t, mode),
+                icon: _modeIcon(mode),
+                onPressed: busy ? null : () => _runMode(controller, mode),
+              ),
+              KidSpace.gapSm,
+            ],
+            Text(t('session.evidence.none'), style: KidText.caption(context)),
+          ],
+
+          // A CLIENT-SIDE NOTICE — too big, wrong kind, the microphone is
+          // off, the recorder failed. Warm, never red, and it names the next
+          // step. These are the only sentences on this path written by the
+          // app rather than by the server, and they exist only because they
+          // are said BEFORE any request is made.
+          if (noticeKey != null) ...[
+            KidSpace.gapMd,
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(KidSpace.md),
+              decoration: BoxDecoration(
+                color: KidColor.notNow.withOpacity(0.16),
+                borderRadius: KidRadius.cardBorder,
+              ),
+              child: Text(
+                t(noticeKey, options: {'mb': EvidenceContract.maxMegabytes}),
+                style: KidText.body(context),
+              ),
+            ),
+          ],
+
+          // AND A SERVER "NO", rendered from the server's own `messageAr`:
+          // EVIDENCE_TOO_LARGE, EVIDENCE_TYPE_WRONG_FOR_METHOD,
+          // ACHIEVEMENT_NOT_SUBMITTABLE, CLIENT_OFFLINE. Nothing here rewrites
+          // it or improves on it.
+          if (uploadFailure != null) ...[
+            KidSpace.gapSm,
+            KidErrorState(
+              failure: uploadFailure,
+              title: t('session.evidence.uploadFailedTitle'),
+              retryLabel: t('common.retry'),
+              arabic: isRtl,
+              compact: true,
+              onRetry: controller.clearEvidence,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The child-facing name of one capture mode. A `switch` rather than a map
+  /// so that a mode added to [EvidenceCaptureMode] stops compiling here
+  /// instead of quietly rendering a blank button.
+  String _modeLabel(
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    EvidenceCaptureMode mode,
+  ) {
+    switch (mode) {
+      case EvidenceCaptureMode.recordAudio:
+        return t('session.evidence.record');
+      case EvidenceCaptureMode.cameraPhoto:
+        return t('session.evidence.camera');
+      case EvidenceCaptureMode.galleryImage:
+        return t('session.evidence.gallery');
+      case EvidenceCaptureMode.document:
+        return t('session.evidence.document');
+    }
+  }
+
+  IconData _modeIcon(EvidenceCaptureMode mode) {
+    switch (mode) {
+      case EvidenceCaptureMode.recordAudio:
+        return Icons.mic_rounded;
+      case EvidenceCaptureMode.cameraPhoto:
+        return Icons.photo_camera_rounded;
+      case EvidenceCaptureMode.galleryImage:
+        return Icons.image_outlined;
+      case EvidenceCaptureMode.document:
+        return Icons.description_outlined;
+    }
+  }
+
+  void _runMode(GoalSessionController controller, EvidenceCaptureMode mode) {
+    switch (mode) {
+      case EvidenceCaptureMode.recordAudio:
+        controller.startRecitation();
+      case EvidenceCaptureMode.cameraPhoto:
+        controller.attachPhoto();
+      case EvidenceCaptureMode.galleryImage:
+        controller.attachFromGallery();
+      case EvidenceCaptureMode.document:
+        controller.attachDocument();
+    }
   }
 
   /// THE QUIZ — questions the SERVER drew, answers the SERVER grades.
