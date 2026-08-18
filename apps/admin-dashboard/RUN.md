@@ -163,6 +163,98 @@ serves yet; that box is the truth, and it stays until the route exists.
 
 ---
 
+## 7. Optional — fill the dashboard with demo data
+
+An empty dashboard is honest but it cannot tell you whether anything *works*,
+and you cannot show it to anyone. One command fills your local database with a
+made-up but realistic set of families so every panel has real numbers in it.
+
+**Only do this on your own machine.** In a third terminal, from `apps/backend`:
+
+```bash
+npm run seed:demo
+```
+
+It takes about a minute and a half and prints, line by line, everything it
+creates and then everything that is actually in the database afterwards.
+You do **not** need to stop the backend or the dashboard while it runs — just
+reload the browser tab when it finishes.
+
+### It refuses to run anywhere that is not your machine
+
+Before it opens a single connection it reads `DATABASE_URL`, and if the host is
+not `localhost` (or the `postgres` service inside Docker Compose) it stops and
+prints why. That is deliberate: this command writes fabricated payments and
+subscriptions, and there is no undo. If you ever genuinely need it elsewhere
+you have to type `npm run seed:demo -- --force-non-local`, and it warns you
+loudly first.
+
+### Running it twice is safe
+
+It is designed to be re-run. Every row it writes carries a `demo` marker and it
+looks each one up before creating it, so a second run changes nothing and does
+not create a second copy. It never deletes anything.
+
+### What you will see afterwards
+
+- **30 households** — 15 in Egypt, 12 in Saudi Arabia, and 3 with **no country
+  recorded at all**. Those last three are there on purpose: they are counted in
+  the platform total and in neither market, so «المنصة» minus «مصر» plus
+  «السعودية» is the unattributable population. That is the dashboard behaving
+  correctly, not a gap.
+- **45 children** spread across all four age bands (6-8 / 9-11 / 12-14 / 15-17),
+  75 paired devices, and enough recent activity that DAU / WAU / MAU, «الأسر
+  النشطة» and the retention grid all show numbers.
+- **20 subscriptions** across the whole lifecycle — trial, active, past due,
+  grace period, cancelled, expired — priced in **EGP for Egypt and SAR for
+  Saudi Arabia**. The two currencies are never added together anywhere; that is
+  why the platform-wide column shows «—» for money instead of a total.
+- **~14 weeks of history**, recomputed one reporting day at a time by the real
+  aggregation job, so the trend charts and the quarterly view are curves rather
+  than a single dot.
+- Reward programmes across Quran, sport, science, programming, reading, maths
+  and more; ~330 goal attempts in a spread of states (verified, waiting for a
+  parent, in progress); the reward ledger, timeline, notifications and child
+  messages that follow from them.
+- Four ad campaigns with daily spend, quarterly targets, three forecast
+  scenarios per market, nine pilot invitations (four taken up, five still open)
+  and a handful of support requests.
+
+### Two panels that will still look empty, and why
+
+- **«التنبيهات» (alerts) stays at zero.** The alert rules are population-scale:
+  one needs at least ten registrations in a country in a week, another at least
+  ten payment attempts through one provider in 24 hours. A 30-household demo
+  crosses none of those thresholds, so the scan runs and finds nothing wrong —
+  which is the panel working. An empty alerts list means "no problems", and
+  inventing a fake incident to fill it would be the one thing this dashboard is
+  built not to do.
+- **Anything with an amber «لا يوجد endpoint لهذا الرقم بعد» box.** No amount of
+  data fixes those; they are naming a number no backend route serves yet.
+
+If you seed late at night **UTC** (after about 9pm UTC), the newest notification
+rows are dated tomorrow on Cairo/Riyadh time while the dashboard's default range
+still ends today — so the notification panel may look thin for a few hours.
+Widening the date range, or re-running the seed during the day, resolves it.
+
+### Recognising demo data later
+
+Everything is findable and nothing looks like a real customer:
+
+- emails end in `@demo-seed.invalid` — a reserved domain that can never receive
+  mail;
+- family names begin `DEMO-EG-01 ·`, children carry the surname `DEMO`,
+  campaigns are named `DEMO — …`.
+
+The Arabic names are real Arabic names because a demo full of `Test User 1`
+demonstrates nothing — but no row is findable without also finding the word
+`demo`. To wipe it, drop the database and re-run step 3.
+
+> The prices the seed writes are **placeholders**, not a pricing decision. The
+> script says so every time it runs.
+
+---
+
 ## If something goes wrong
 
 | What you see | What it means |
@@ -173,6 +265,8 @@ serves yet; that box is the truth, and it stays until the route exists.
 | The unlock screen keeps coming back | The key does not match `INTERNAL_ADMIN_API_KEY`. Restart the backend after editing `.env`. |
 | `docker compose` says port 5432 is in use | Another Postgres is already running locally. Stop it, or change the host port in `docker-compose.yml`. |
 | Login fails right after registering | The database has no tables — step 3 was skipped or failed. |
+| `npm run seed:demo` prints `REFUSING: DATABASE_URL points at …` | Step 7 — it only runs against a local database, on purpose. Check `DATABASE_URL` in `apps/backend/.env`. |
+| `npm run seed:demo` prints `DATABASE_URL is not set` | It is run from the wrong folder, or `apps/backend/.env` is missing. Run it from `apps/backend`. |
 
 To stop everything: `Ctrl+C` in both terminals, then `docker compose down` from
 the repository root. Add `-v` to that command to also delete the database.
