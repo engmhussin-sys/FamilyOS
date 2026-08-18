@@ -46,7 +46,7 @@ function DeviceInsightsPanel({ childId, deviceId }: { childId: string; deviceId:
       </div>
 
       {showReasoning && (
-        <ul className="mt-2 list-disc pr-4 text-xs text-ink-soft">
+        <ul className="mt-2 list-disc ps-4 text-xs text-ink-soft">
           {insights.recommendation.decision.reasoningPath.map((line, i) => (
             <li key={i}>{line}</li>
           ))}
@@ -54,7 +54,7 @@ function DeviceInsightsPanel({ childId, deviceId }: { childId: string; deviceId:
       )}
 
       {showHistory && history && (
-        <ol className="mt-2 flex flex-col gap-1 border-r border-sand-200 pr-3 text-xs">
+        <ol className="mt-2 flex flex-col gap-1 border-s border-sand-200 ps-3 text-xs">
           {history.map((entry) => (
             <li key={entry.id}>
               <span className="font-medium text-ink">{entry.value.title}</span>

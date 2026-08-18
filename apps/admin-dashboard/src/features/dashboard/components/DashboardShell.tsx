@@ -31,9 +31,14 @@ export function DashboardShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-sand-50">
-      <aside className="flex w-60 shrink-0 flex-col bg-guardian-950 px-5 py-6 text-sand-50">
+      {/* The rail is sticky and scrolls on its own: on a 13" laptop the
+          growth section is eight items long, and a nav that scrolls the page
+          away is a nav an operator stops using. Physical `left`/`right` never
+          appears here — the flex row flips with `dir`, so the rail is on the
+          right in Arabic and the left in English with no extra rule. */}
+      <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col overflow-y-auto bg-guardian-950 px-4 py-6 text-sand-50 xl:w-60 xl:px-5">
         <span className="font-display text-lg">{t('shell.appName')}</span>
-        <nav className="mt-10 flex flex-col gap-1 text-sm">
+        <nav aria-label={t('growth.nav.section')} className="mt-8 flex flex-col gap-1 text-sm xl:mt-10">
           <Link to="/" className="rounded-card bg-guardian-700/60 px-3 py-2 font-medium">
             {t('shell.navOverview')}
           </Link>
@@ -66,8 +71,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between gap-4 border-b border-sand-200 bg-white px-8 py-4">
-          <div>
+        {/* Sticky so the market/window context and the lock control stay
+            reachable while a long page scrolls. `flex-wrap` is what keeps it
+            honest at 1280px, where the search field would otherwise squeeze
+            the operator's name to nothing. */}
+        <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-sand-200 bg-white/95 px-4 py-3 backdrop-blur lg:px-6 xl:px-8 xl:py-4">
+          <div className="min-w-0">
             <p className="text-sm text-ink-soft">{t('shell.welcomeBack')}</p>
             <p className="font-medium text-ink">{user?.fullName}</p>
           </div>
@@ -83,7 +92,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </Button>
           </div>
         </header>
-        <main className="flex-1 p-8">{children}</main>
+        {/* Capped and centred: a 2560px monitor should not stretch a KPI row
+            into a horizon. */}
+        <main className="mx-auto w-full max-w-[1600px] flex-1 p-4 lg:p-6 xl:p-8">{children}</main>
       </div>
     </div>
   );

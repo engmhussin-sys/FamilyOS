@@ -100,6 +100,20 @@ export function fetchNotificationAnalytics(args: {
 }): Promise<NotificationDecisionAnalytics> {
   const country = args.countryCode === PLATFORM_SCOPE ? undefined : (args.countryCode as CountryCode);
   return adminGet<NotificationDecisionAnalytics>(
-    `/system/notifications/analytics${query({ from: args.from, to: args.to, country })}`,
+    `/system/notifications/analytics${query({
+      // TWO ROUTES, TWO DATE CONTRACTS, and they are not interchangeable:
+      // `/admin/growth/*` parses a full ISO instant, while this route runs
+      // `isBusinessDate` and answers 400 to anything that is not
+      // `YYYY-MM-DD`. The shared `DateRange` carries instants, so it is
+      // narrowed here rather than at the call site — one place, so no future
+      // caller has to remember.
+      from: businessDate(args.from),
+      to: businessDate(args.to),
+      country,
+    })}`,
   );
+}
+
+function businessDate(instant: string): string {
+  return instant.slice(0, 10);
 }

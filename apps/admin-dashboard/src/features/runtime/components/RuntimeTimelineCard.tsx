@@ -17,7 +17,7 @@ function TimelineList({ deviceId }: { deviceId: string }) {
   if (!events || events.length === 0) return <p className="text-sm text-ink-soft">{t('timeline.empty')}</p>;
 
   return (
-    <ol className="mt-2 flex flex-col gap-2 border-r border-sand-200 pr-3">
+    <ol className="mt-2 flex flex-col gap-2 border-s border-sand-200 ps-3">
       {events.slice(0, 20).map((event) => (
         <li key={event.id} className="text-xs">
           <span className="font-medium text-ink">{event.eventType}</span>

@@ -178,8 +178,8 @@ export const PROVENANCE: Record<Provenance, ProvenanceTreatment> = {
     color: CATEGORICAL[1],
     strokeDasharray: '4 3',
     labelKey: 'growth.provenance.forecast',
-    valueTextClass: 'italic text-amber-600',
-    badgeClass: 'bg-amber-100 text-amber-600',
+    valueTextClass: 'italic text-amber-700',
+    badgeClass: 'bg-amber-100 text-amber-700',
     glyph: '◔',
   },
 };

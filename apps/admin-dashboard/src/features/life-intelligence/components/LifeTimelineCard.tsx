@@ -55,7 +55,7 @@ function ChildTimelinePanel({ childId, childName }: { childId: string; childName
       {events && events.length === 0 && <p className="mt-3 text-sm text-ink-soft">{t('lifeTimeline.empty')}</p>}
 
       {events && events.length > 0 && (
-        <ol className="mt-3 flex flex-col gap-3 border-r-2 border-sand-200 pr-4">
+        <ol className="mt-3 flex flex-col gap-3 border-s-2 border-sand-200 ps-4">
           {events.map((event) => (
             <li key={event.id} className="relative">
               <span

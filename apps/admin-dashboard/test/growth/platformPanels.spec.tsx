@@ -96,10 +96,23 @@ describe('platform panels', () => {
     it('scopes the request to one market and names the endpoint it read', async () => {
       const fetchMock = vi.spyOn(global, 'fetch').mockResolvedValue(jsonResponse(report({ total: 5 })));
 
-      renderWithLocale(<NotificationsPanel country="SA" range={RANGE} />, 'ar');
+      // `rangeFor` produces full ISO instants — exactly what this route rejects.
+      renderWithLocale(
+        <NotificationsPanel
+          country="SA"
+          range={{ from: '2026-07-20T09:31:04.000Z', to: '2026-08-18T09:31:04.000Z' }}
+        />,
+        'ar',
+      );
       await screen.findByText('GET /system/notifications/analytics');
 
-      expect(String(fetchMock.mock.calls[0][0])).toContain('country=SA');
+      const url = String(fetchMock.mock.calls[0][0]);
+      expect(url).toContain('country=SA');
+      // This route runs `isBusinessDate` and rejects a full ISO instant with
+      // a 400 — the client narrows the shared range to YYYY-MM-DD.
+      expect(url).toContain('from=2026-07-20');
+      expect(url).toContain('to=2026-08-18');
+      expect(url).not.toContain('T00');
     });
   });
 

@@ -81,7 +81,7 @@ export function KpiCard({ kpi, countryScope, contextLabel, hero = false, compact
       {!hasValue && <p className="mt-1 text-xs text-ink-soft">{t('growth.state.emptyHint')}</p>}
 
       {isStructurallyForecast && (
-        <p className="mt-2 text-[11px] text-amber-600">{t('growth.provenance.alwaysForecast')}</p>
+        <p className="mt-2 text-[11px] text-amber-700">{t('growth.provenance.alwaysForecast')}</p>
       )}
     </article>
   );

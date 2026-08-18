@@ -3,9 +3,12 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   AsyncBoundary,
+  ChartSkeleton,
   EmptyBlock,
   ErrorBlock,
+  FigureGridSkeleton,
   GapBlock,
+  KpiGridSkeleton,
   LoadingBlock,
 } from '@/features/growth/components/AsyncState';
 import { GAPS } from '@/features/growth/api/adapters';
@@ -89,6 +92,33 @@ describe('loading / empty / error / gap states', () => {
     it('renders the proposed contract left-to-right even inside an RTL page', () => {
       renderWithLocale(<GapBlock gap={GAPS.refunds} />, 'ar');
       expect(screen.getByText(GAPS.refunds.proposedEndpoint)).toHaveAttribute('dir', 'ltr');
+    });
+  });
+
+  describe('skeletons', () => {
+    it('announce loading ONCE for the whole group, not once per bar', () => {
+      renderWithLocale(<KpiGridSkeleton count={6} />, 'ar');
+      const statuses = screen.getAllByRole('status');
+      expect(statuses).toHaveLength(1);
+      expect(statuses[0]).toHaveAttribute('aria-busy', 'true');
+      expect(statuses[0]).toHaveTextContent('جارٍ تحميل البيانات…');
+    });
+
+    it('contain no digits — a placeholder that reads as a measurement is the bug', () => {
+      const { container } = renderWithLocale(<FigureGridSkeleton count={4} />, 'ar');
+      expect(container.textContent).toBe('جارٍ تحميل البيانات…');
+      expect(container.textContent).not.toMatch(/[0-9٠-٩]/);
+    });
+
+    it('are used by AsyncBoundary in place of the bare spinner when one is given', () => {
+      renderWithLocale(
+        <AsyncBoundary isLoading error={null} skeleton={<ChartSkeleton />}>
+          <p>content</p>
+        </AsyncBoundary>,
+        'ar',
+      );
+      expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
+      expect(screen.queryByText('content')).not.toBeInTheDocument();
     });
   });
 

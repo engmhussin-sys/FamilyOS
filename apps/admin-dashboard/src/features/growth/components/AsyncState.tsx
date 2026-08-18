@@ -176,7 +176,7 @@ export function GapBlock({ gap }: { gap: AdapterGap }) {
   const { t } = useTranslation();
   return (
     <div className="rounded-card border border-dashed border-amber-500/60 bg-amber-100/40 p-5">
-      <p className="text-sm font-medium text-amber-600">{t('growth.state.endpointMissing')}</p>
+      <p className="text-sm font-medium text-amber-700">{t('growth.state.endpointMissing')}</p>
       <p className="mt-1 text-sm text-ink-soft">{t(gap.reasonKey)}</p>
       <p className="mt-2 text-xs text-ink-soft">
         {t('growth.state.proposedEndpoint')}:{' '}

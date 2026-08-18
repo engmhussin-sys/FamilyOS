@@ -131,7 +131,7 @@ export function FunnelPage() {
 
       {funnel.data && funnel.data.monotonicityViolations.length > 0 && (
         <section className="mt-6 rounded-card border border-amber-500/60 bg-amber-100/40 p-5">
-          <h3 className="text-sm font-medium text-amber-600">{t('growth.funnel.monotonicityViolations')}</h3>
+          <h3 className="text-sm font-medium text-amber-700">{t('growth.funnel.monotonicityViolations')}</h3>
           <p className="mt-1 text-xs text-ink-soft">{t('growth.funnel.monotonicityHint')}</p>
           <ul className="mt-3 flex flex-col gap-1 text-xs text-ink-soft">
             {funnel.data.monotonicityViolations.map((violation) => (

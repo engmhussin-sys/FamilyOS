@@ -45,7 +45,7 @@ function SubScoreRow({ label, subScore }: { label: string; subScore: Explainable
       </button>
 
       {expanded && subScore && (
-        <ul className="mt-2 list-disc pr-4 text-xs text-ink-soft">
+        <ul className="mt-2 list-disc ps-4 text-xs text-ink-soft">
           {Object.entries(subScore.inputs).map(([key, value]) => (
             <li key={key}>
               {key}: {typeof value === 'object' ? JSON.stringify(value) : String(value)}
