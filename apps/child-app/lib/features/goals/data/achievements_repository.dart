@@ -5,6 +5,7 @@ import '../domain/child_achievement.dart';
 import '../domain/child_goal.dart';
 import '../domain/child_quiz.dart';
 import '../domain/child_rewards.dart';
+import '../domain/evidence.dart';
 
 /// THE DATA LAYER BOUNDARY, child side.
 ///
@@ -27,10 +28,24 @@ class ChildAchievementsRepository {
   Future<StartedAchievement> start(String programId) =>
       _guard(() async => StartedAchievement.fromJson(await _api.start(programId)));
 
+  /// F1 — [submissionRef] IS NEW, AND ITS ABSENCE WAS HALF THE DEFECT.
+  ///
+  /// `ChildAchievementsApi.submit` has accepted a `submissionRef` since B6.
+  /// This layer never passed one, because nothing in the app could produce
+  /// one — so the parameter existed, compiled, and was structurally
+  /// unreachable. That is the client half of what made every
+  /// `RECITATION_SUBMISSION` and `COMPLETION_ARTIFACT` program impossible to
+  /// complete.
+  ///
+  /// The value comes from [uploadEvidence] below and from nowhere else.
+  /// `AchievementService.submit` re-resolves it against THIS achievement via
+  /// `assertBelongsToAchievement`, so an invented or borrowed ref is refused
+  /// with `EVIDENCE_REF_INVALID` — «الملف المرفق غير مرتبط بهذه المحاولة.»
   Future<SubmitOutcome> submit(
     String achievementId, {
     bool? selfConfirmed,
     List<int>? quizAnswers,
+    String? submissionRef,
     int? foregroundMinutes,
     String? note,
   }) =>
@@ -38,8 +53,27 @@ class ChildAchievementsRepository {
             achievementId,
             selfConfirmed: selfConfirmed,
             quizAnswers: quizAnswers,
+            submissionRef: submissionRef,
             foregroundMinutes: foregroundMinutes,
             note: note,
+          )));
+
+  /// F1 — sends the file and returns the receipt.
+  ///
+  /// A RECEIPT, NOT A VERDICT: [EvidenceRef] says the bytes were stored and
+  /// says nothing else at all. Read that class's docstring before rendering
+  /// any part of it.
+  Future<EvidenceRef> uploadEvidence(
+    String achievementId, {
+    required String filePath,
+    required String filename,
+    required String mimeType,
+  }) =>
+      _guard(() async => EvidenceRef.fromJson(await _api.uploadEvidence(
+            achievementId,
+            filePath: filePath,
+            filename: filename,
+            mimeType: mimeType,
           )));
 
   Future<ServedQuiz> quiz(String achievementId) =>

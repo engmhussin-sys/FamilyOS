@@ -35,6 +35,8 @@ import '../../features/goals/application/goal_session_controller.dart';
 import '../../features/goals/application/progress_controller.dart';
 import '../../features/goals/application/today_goals_controller.dart';
 import '../../features/goals/data/achievements_repository.dart';
+import '../../features/goals/data/evidence_capture_source.dart';
+import '../../features/goals/data/platform_evidence_capture_source.dart';
 import '../../features/goals/data/catalogue_repository.dart';
 import '../../features/goals/domain/catalogue_domain.dart';
 import '../../features/goals/domain/child_achievement.dart';
@@ -278,15 +280,33 @@ final myAttemptsControllerProvider =
   return MyAttemptsController(ref.watch(childAchievementsRepositoryProvider));
 });
 
+/// F1 — THE RECORDER AND THE TWO PICKERS.
+///
+/// `autoDispose` plus `ref.onDispose` is what releases the native recorder:
+/// `AudioRecorder` owns a platform-side object, and one leaked per goal
+/// session is a microphone this app never hands back. The provider lives
+/// exactly as long as some goal session is watching it, which is the only
+/// window in which anything here can record.
+final evidenceCaptureSourceProvider = Provider.autoDispose<EvidenceCaptureSource>((ref) {
+  final source = PlatformEvidenceCaptureSource();
+  ref.onDispose(source.dispose);
+  return source;
+});
+
 /// ONE SESSION PER GOAL, keyed by the goal itself.
 ///
 /// `autoDispose` is deliberate and load-bearing here: it is what stops a
 /// `ForegroundStopwatch` (and its 1-second `Timer`) from outliving the
 /// screen that owns it. `GoalSessionController.dispose` cancels the ticker
-/// and detaches the `WidgetsBindingObserver`.
+/// and detaches the `WidgetsBindingObserver` — and, since F1, cancels the
+/// recording ticker and discards a half-finished recitation too.
 final goalSessionControllerProvider = StateNotifierProvider.autoDispose
     .family<GoalSessionController, GoalSessionState, TodayGoal>((ref, goal) {
-  return GoalSessionController(ref.watch(childAchievementsRepositoryProvider), goal);
+  return GoalSessionController(
+    ref.watch(childAchievementsRepositoryProvider),
+    goal,
+    ref.watch(evidenceCaptureSourceProvider),
+  );
 });
 
 final progressControllerProvider =

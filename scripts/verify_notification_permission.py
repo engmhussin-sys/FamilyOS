@@ -48,6 +48,26 @@ Cross-language (child app only, which owns a native channel):
   E. The outcome vocabulary (granted / denied / permanently_denied /
      already_granted / not_required) is identical on both sides.
 
+ADDED AT SPRINT F1 — the same principle, applied to a second permission:
+  F. IF the manifest declares RECORD_AUDIO, THEN a runtime request site exists
+     and is reachable. Sprint F1 declares RECORD_AUDIO for the first time (the
+     recitation is recorded IN PROCESS by `record`, so the microphone is this
+     app's to hold), and a dangerous permission that is declared and never
+     requested fails exactly the way POST_NOTIFICATIONS failed from Sprint 4
+     to G18: silently, on a real device, with every unit test still green.
+     Accepted evidence:
+       - Kotlin: requestPermissions(...) with Manifest.permission.RECORD_AUDIO
+       - Dart  : a call to a `*[Mm]icrophonePermission*` method — which is
+                 what PlatformEvidenceCaptureSource wraps `record`'s
+                 hasPermission() in. (`record`'s method name is misleading:
+                 hasPermission() CHECKS AND REQUESTS, and it is the runtime
+                 request.)
+     Reachability is asserted the same way as B, and for the same reason.
+
+     CAMERA / READ_MEDIA_IMAGES are NOT checked here, because F1 deliberately
+     declares neither — see the AndroidManifest comment. If a later sprint
+     declares one, it belongs in this check rather than in a review comment.
+
 Exit code 0 when every check passes, 1 otherwise.
 
 Run:  python3 scripts/verify_notification_permission.py [--self-test]
@@ -77,6 +97,15 @@ DART_FCM_IMPORT = re.compile(r"package:firebase_messaging/firebase_messaging\.da
 # Declarations whose reachability check B applies to. Captures the method name.
 DART_METHOD_DECL = re.compile(
     r"^\s*(?:Future<[^>]*>|void)\s+(\w*[Nn]otification\w*[Pp]ermission\w*)\s*\(",
+    re.M,
+)
+
+# --- F1: the same conjunction, for the microphone. -------------------------
+RECORD_AUDIO = "android.permission.RECORD_AUDIO"
+KOTLIN_RECORD_AUDIO_CONST = re.compile(r"Manifest\.permission\.RECORD_AUDIO")
+DART_MIC_REQUEST = re.compile(r"\brequestMicrophonePermission\s*\(")
+DART_MIC_METHOD_DECL = re.compile(
+    r"^\s*(?:Future<[^>]*>|void)\s+(\w*[Mm]icrophone[Pp]ermission\w*)\s*\(",
     re.M,
 )
 
@@ -203,6 +232,86 @@ def check_app(app_root: str, app_name: str, rep: Report) -> None:
                 )
 
 
+def check_record_audio(app_root: str, app_name: str, rep: Report) -> None:
+    """Check F — declared RECORD_AUDIO implies a reachable runtime request.
+
+    Structurally identical to `check_app`, on purpose: the defect is identical.
+    A dangerous permission sitting in a manifest with nothing asking for it is
+    not "mostly working" — on Android 13+ it is a feature that silently never
+    runs, and the app has already shipped that exact bug once.
+    """
+    manifest = os.path.join(
+        app_root, "android", "app", "src", "main", "AndroidManifest.xml"
+    )
+    manifest_text = read(manifest)
+    if not manifest_text:
+        rep.fail(f"{app_name}: AndroidManifest.xml not found or unreadable at {manifest}")
+        return
+
+    if RECORD_AUDIO not in manifest_text:
+        rep.ok(
+            f"{app_name}: does not declare RECORD_AUDIO — nothing to request "
+            "(this check applies only to apps that declare it)"
+        )
+        return
+
+    kotlin_files = walk(os.path.join(app_root, "android"), (".kt",))
+    dart_files = walk(os.path.join(app_root, "lib"), (".dart",))
+
+    request_sites: list[str] = []
+    for path in kotlin_files:
+        text = read(path)
+        if KOTLIN_REQUEST_CALL.search(text) and KOTLIN_RECORD_AUDIO_CONST.search(text):
+            request_sites.append(os.path.relpath(path, ROOT))
+    for path in dart_files:
+        if DART_MIC_REQUEST.search(read(path)):
+            request_sites.append(os.path.relpath(path, ROOT))
+
+    if not request_sites:
+        rep.fail(
+            f"{app_name}: declares {RECORD_AUDIO} in AndroidManifest.xml but NOTHING "
+            "in this app ever requests it at runtime. RECORD_AUDIO is dangerous on "
+            "every API level: the recorder will fail and no dialog will ever appear. "
+            "Add an ActivityCompat.requestPermissions call (native) or a "
+            "requestMicrophonePermission() call (Dart) — invoked AFTER the child has "
+            "been told, in their own words, what the microphone is for."
+        )
+        return
+
+    rep.ok(
+        f"{app_name}: declares RECORD_AUDIO and requests it at runtime "
+        f"({len(request_sites)} site(s): {', '.join(sorted(request_sites))})"
+    )
+
+    # Reachability, exactly as in check B: a request method nothing calls is
+    # the same defect wearing a disguise.
+    all_dart = {path: read(path) for path in dart_files}
+    for path, text in all_dart.items():
+        for match in DART_MIC_METHOD_DECL.finditer(text):
+            name = match.group(1)
+            call_re = re.compile(rf"\b{re.escape(name)}\s*\(")
+            own_file_calls = len(call_re.findall(text)) - 1
+            other_file_calls = sum(
+                len(call_re.findall(other_text))
+                for other, other_text in all_dart.items()
+                if other != path
+            )
+            rel = os.path.relpath(path, ROOT)
+            if own_file_calls + other_file_calls > 0:
+                where = []
+                if own_file_calls:
+                    where.append(f"{own_file_calls} in {os.path.basename(rel)}")
+                if other_file_calls:
+                    where.append(f"{other_file_calls} in other file(s)")
+                rep.ok(f"{app_name}: {name}() has call sites ({', '.join(where)})")
+            else:
+                rep.fail(
+                    f"{app_name}: {name}() is declared in {rel} but NOTHING calls it — "
+                    "it is unreachable, so the microphone permission is never actually "
+                    "requested. Wire it to the UI that explains it."
+                )
+
+
 def check_child_channel(rep: Report) -> None:
     """Checks C, D and E — the child app's cross-language channel contract."""
     child = os.path.join(ROOT, "apps", "child-app")
@@ -282,6 +391,7 @@ def run(app_roots: dict[str, str], check_channel: bool = True) -> int:
     for app_name, app_root in app_roots.items():
         print(f"\n=== apps/{app_name} ===")
         check_app(app_root, app_name, rep)
+        check_record_audio(app_root, app_name, rep)
 
     if check_channel:
         print("\n=== child-app cross-language channel contract ===")

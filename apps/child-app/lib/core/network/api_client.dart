@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:http_parser/http_parser.dart';
 
 import '../config/app_config.dart';
 import '../storage/secure_token_storage.dart';
@@ -49,6 +50,24 @@ class ApiClient {
               final retryOptions = error.requestOptions
                 ..extra['retried'] = true
                 ..headers['Authorization'] = 'Bearer $newAccessToken';
+              // F1 — A MULTIPART BODY CANNOT BE REPLAYED, AND THIS IS WHERE
+              // THAT WOULD HAVE BITTEN.
+              //
+              // `FormData` is single-use: Dio finalises it into a stream on
+              // the first send and a second `fetch` of the same
+              // `RequestOptions` throws a StateError, which is NOT a
+              // DioException — so `_toApiException` never sees it and the
+              // caller gets a raw client-side crash. That is precisely the
+              // shape of the 401-then-retry path this interceptor exists for,
+              // and the 15 MiB evidence upload is the app's only multipart
+              // request, so the case is not hypothetical: a child whose
+              // access token expired mid-recitation-upload would have hit it
+              // every time. `clone()` rebuilds the parts (a `fromFile` part
+              // re-opens its path), which is Dio's own documented answer.
+              final body = retryOptions.data;
+              if (body is FormData) {
+                retryOptions.data = body.clone();
+              }
               try {
                 final response = await _dio.fetch(retryOptions);
                 return handler.resolve(response);
@@ -194,6 +213,58 @@ class ApiClient {
         options: Options(extra: {'skipAuth': skipAuth}),
       );
       return response.data as List<dynamic>;
+    } on DioException catch (e) {
+      throw _toApiException(e);
+    }
+  }
+
+  /// F1 — THE MULTIPART POST. The app's fourth request shape, and the only
+  /// one that sends a file.
+  ///
+  /// SHAPED LIKE ITS NEIGHBOURS ON PURPOSE: same `_dio`, therefore the same
+  /// Bearer header, the same coordinated single refresh on 401 (see the
+  /// `FormData.clone()` note in the interceptor, which exists for this method
+  /// specifically), the same `_toApiException` translation of the B3 error
+  /// envelope. There is no second HTTP client in this app and this did not
+  /// add one.
+  ///
+  /// [contentType] IS NOT COSMETIC AND IS NOT A GUESS. The route is
+  /// `FileInterceptor('file', { fileFilter: ... })`, and multer DROPS any
+  /// part whose declared Content-Type is outside
+  /// `ALLOWED_EVIDENCE_MIME_TYPES` — silently, with a 2xx-shaped request that
+  /// then reaches a handler with no file and answers `EVIDENCE_MISSING`
+  /// («لم يصل أي ملف»). A caller must therefore pass a type derived from the
+  /// bytes (`EvidenceContract.inspect`), never a picker's own claim about the
+  /// file, or the child reads "nothing arrived" about a file that did.
+  ///
+  /// The server re-derives the real type from the bytes regardless and stores
+  /// THAT one; this header only gets the part past the door.
+  ///
+  /// STREAMED FROM [filePath], never read into memory: the ceiling is 15 MiB
+  /// and the device is a child's phone.
+  Future<Map<String, dynamic>> postMultipart(
+    String path, {
+    required String fieldName,
+    required String filePath,
+    required String filename,
+    required String contentType,
+  }) async {
+    try {
+      final form = FormData.fromMap(<String, dynamic>{
+        fieldName: await MultipartFile.fromFile(
+          filePath,
+          filename: filename,
+          // `MediaType` from http_parser, which is declared in pubspec.yaml
+          // rather than reached transitively. Dio's own `DioMediaType` alias
+          // would read better and is deliberately not used: it landed in dio
+          // 5.5.0, this app pins `dio: ^5.4.3`, and a constraint that MAY
+          // resolve below the version an identifier needs is a build that
+          // breaks on someone else's machine.
+          contentType: MediaType.parse(contentType),
+        ),
+      });
+      final response = await _dio.post(path, data: form);
+      return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
       throw _toApiException(e);
     }

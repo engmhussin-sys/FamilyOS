@@ -64,6 +64,46 @@ class ChildAchievementsApi {
         if (note != null && note.isNotEmpty) 'note': note,
       });
 
+  /// F1 — THE UPLOAD. `POST /self/achievements/:achievementId/evidence`.
+  ///
+  /// THE ROUTE THIS CLIENT COULD NOT CALL. It has existed since B5 and no
+  /// version of this app ever sent it a byte, so `RECITATION_SUBMISSION` and
+  /// `COMPLETION_ARTIFACT` could only ever reach `submit` without a
+  /// `submissionRef` — which fails, and after `MAX_VERIFICATION_ATTEMPTS`
+  /// escalates to a parent. Every Quran memorisation program in the product
+  /// was unreachable through that one gap.
+  ///
+  /// ONE PART, NAMED `file`, matching `FileInterceptor('file', ...)`. Any
+  /// other field name arrives as no file at all.
+  ///
+  /// NO `kind` IS SENT, AND NONE CAN BE. The server derives RECITATION vs
+  /// ARTIFACT from the program's own `verificationLevel`
+  /// (`evidenceKindForMethod`). If a client could state it, the server's type
+  /// check would be comparing one claim against another.
+  ///
+  /// Answers `{submissionRef, kind, mimeType, byteSize}`. A 201 here means
+  /// THE BYTES WERE STORED — nothing more, and no screen may say otherwise:
+  /// both methods that reach this route have `canAutoApprove: false`.
+  ///
+  /// The 4xx bodies are the B3 envelope and every one carries a written
+  /// Arabic sentence — `EVIDENCE_TOO_LARGE`, `EVIDENCE_TOO_SMALL`,
+  /// `EVIDENCE_TYPE_UNRECOGNISED`, `EVIDENCE_TYPE_WRONG_FOR_METHOD`,
+  /// `EVIDENCE_MISSING`, `ACHIEVEMENT_NOT_SUBMITTABLE`,
+  /// `PROGRAM_TAKES_NO_EVIDENCE` — and they are rendered verbatim.
+  Future<Map<String, dynamic>> uploadEvidence(
+    String achievementId, {
+    required String filePath,
+    required String filename,
+    required String mimeType,
+  }) =>
+      _client.postMultipart(
+        '$_base/$achievementId/evidence',
+        fieldName: 'file',
+        filePath: filePath,
+        filename: filename,
+        contentType: mimeType,
+      );
+
   /// THE QUESTIONS, WITHOUT THE ANSWERS — B5's new route.
   ///
   /// Returns `{achievementId, attemptNo, totalCount, questions:[{id,

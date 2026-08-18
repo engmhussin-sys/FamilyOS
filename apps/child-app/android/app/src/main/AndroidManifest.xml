@@ -40,6 +40,45 @@
          permission. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <!-- SPRINT F1 (evidence capture): RECORD_AUDIO — and it is the ONLY
+         permission this whole feature adds. That is a decision, not an
+         oversight, and each of the three it does NOT add is worth stating.
+
+         CAMERA is deliberately ABSENT. image_picker reaches the camera
+         through ACTION_IMAGE_CAPTURE, which is another app's activity and
+         needs nothing from us. Declaring CAMERA would actively make things
+         WORSE: Android's documented rule is that once an app declares the
+         CAMERA permission, the platform starts enforcing it on
+         ACTION_IMAGE_CAPTURE and the intent throws until the app also
+         requests it at runtime. The declaration would create the requirement
+         it looks like it satisfies, and buy a Play review flag for a
+         permission no code here uses.
+
+         READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE are ABSENT for the same
+         class of reason. On Android 13+ image_picker uses the system Photo
+         Picker (ACTION_PICK_IMAGES) and file_picker uses the Storage Access
+         Framework; both return ONE user-chosen file through a permission-free
+         grant. Declaring a broad media permission in order to read the single
+         file a child just pointed at is exactly the over-request this
+         manifest's own header refuses.
+
+         RECORD_AUDIO is different and genuinely unavoidable: the recitation
+         is captured IN THIS PROCESS by `record`, so the microphone is ours to
+         hold. It is a dangerous permission on every API level and it is
+         invisible on Android 13+ unless it is requested at runtime — which
+         PlatformEvidenceCaptureSource.requestMicrophonePermission() does,
+         AFTER session.evidence.micWhy has explained it to the child in their
+         own words. verify_notification_permission.py now asserts that
+         declared-therefore-requested conjunction for this permission too, so
+         the declaration cannot quietly go back to being decorative. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Neither is REQUIRED. A device with no microphone or no camera must
+         still install and run every non-upload goal, and required="false" is
+         what stops Play filtering the listing off those devices. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <!-- F1 (audit MA-021): WAKE_LOCK was REMOVED — grep-confirmed zero
          usage (no newWakeLock / PowerManager.WakeLock anywhere in the
          Kotlin or Dart source). Every unused sensitive permission is
