@@ -247,6 +247,7 @@ class FakeSupportRepository implements SupportRepository {
 class FakeChildProfileRepository implements ChildProfileRepository {
   FakeChildProfileRepository({
     this.onCreateChild,
+    this.onGetChild,
     this.onGrantDefaultConsents,
     this.onListChildren,
     this.onListConsents,
@@ -254,10 +255,19 @@ class FakeChildProfileRepository implements ChildProfileRepository {
   });
 
   final Future<String> Function()? onCreateChild;
+
+  /// ADDITIVE — the child-detail screen's only call. Every existing test leaves
+  /// it unstubbed, which is exactly what `_need` is for: a screen reaching an
+  /// endpoint its test did not expect fails loudly rather than silently.
+  final Future<ChildProfile> Function()? onGetChild;
   final Future<void> Function()? onGrantDefaultConsents;
   final Future<List<ChildSummary>> Function()? onListChildren;
   final Future<List<ChildConsent>> Function()? onListConsents;
   final Future<void> Function()? onSetConsent;
+
+  /// Every childId that reached the repository, so a test can prove the id off
+  /// a deep link arrives unchanged at the API rather than being re-derived.
+  final List<String> requestedChildIds = <String>[];
 
   int grantCalls = 0;
 
@@ -268,6 +278,12 @@ class FakeChildProfileRepository implements ChildProfileRepository {
     String? lastName,
   }) =>
       _need(onCreateChild, 'createChild');
+
+  @override
+  Future<ChildProfile> getChild(String childId) {
+    requestedChildIds.add(childId);
+    return _need(onGetChild, 'getChild');
+  }
 
   @override
   Future<void> grantDefaultConsents(String childId) {

@@ -21,6 +21,7 @@ import '../../features/billing/domain/store_billing_client.dart';
 import '../../features/support/api/support_api.dart';
 import '../../features/support/data/support_repository.dart';
 import '../../features/family/api/consent_api.dart';
+import '../../features/family/application/child_detail_controller.dart';
 import '../../features/family/data/child_profile_repository.dart';
 import '../../features/settings/api/account_api.dart';
 import '../../features/settings/data/account_repository.dart';
@@ -131,6 +132,20 @@ final childProfileRepositoryProvider = Provider<ChildProfileRepository>(
     ref.watch(pairingApiProvider),
     ref.watch(consentApiProvider),
   ),
+);
+
+// ---------------------------------------------------------------------------
+// ONE CHILD — the surface `abny://child/<childId>` has been falling off.
+//
+// Composed from an API that ALREADY EXISTS: `DashboardApi`, which owns
+// `/children` and now `/children/:childId` as well. No second HTTP client and
+// no endpoint this backend does not serve.
+// ---------------------------------------------------------------------------
+
+final childDetailControllerProvider = StateNotifierProvider.autoDispose
+    .family<ChildDetailController, UiState<ChildProfile>, String>(
+  (ref, childId) =>
+      ChildDetailController(ref.watch(childProfileRepositoryProvider), childId),
 );
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(

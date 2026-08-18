@@ -751,6 +751,31 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'deepLink.unavailable':
         'This part of the app is not ready yet — we have kept you in your notifications.',
 
+    // -----------------------------------------------------------------------
+    // ONE CHILD — the screen `abny://child/<id>` opens, and the host for the
+    // three child-scoped screens no link can ever name a child for.
+    // -----------------------------------------------------------------------
+    'childDetail.title': 'Child page',
+    'childDetail.unnamed': 'Your child',
+    'childDetail.age': '{{count}} years old',
+    'childDetail.age_one': '1 year old',
+    'childDetail.age_other': '{{count}} years old',
+    'childDetail.inactive': 'Profile not active',
+    'childDetail.sectionTitle': 'What would you like to see?',
+    'childDetail.sectionSubtitle': 'Three screens about this child alone.',
+    'childDetail.progressHint': 'What they are learning and what they have finished.',
+    'childDetail.coachHint': 'Practical suggestions for you and for them.',
+    'childDetail.screenTimeHint': 'Screen time and digital habits.',
+    'childDetail.footnote':
+        'Everything here comes from the device and the server. Nothing on this page is decided inside the app.',
+    'childDetail.errorTitle': 'The child page could not be opened',
+    'childDetail.missingTitle': 'We could not find this child',
+    'childDetail.missingBody':
+        'The profile may have been removed, or the link points to a child outside your family. Open the dashboard to choose a child.',
+
+    'dashboard.openSafety': 'Safety & protection',
+    'childActions.childPage': 'Child page',
+
     'settings.title': 'Settings',
     'settings.language': 'Language',
     'settings.profile': 'Profile',
@@ -1444,6 +1469,31 @@ const Map<AppLocale, Map<String, String>> _resources = {
 
     'deepLink.unavailable':
         'هذا الجزء من التطبيق ليس جاهزًا بعد — أبقيناك في صندوق الإشعارات.',
+
+    // -----------------------------------------------------------------------
+    // صفحة طفل واحد — ما يفتحه `abny://child/<id>`، وهي المضيف للشاشات الثلاث
+    // التي لا يستطيع أي رابط أن يسمّي لها طفلًا.
+    // -----------------------------------------------------------------------
+    'childDetail.title': 'صفحة الطفل',
+    'childDetail.unnamed': 'طفلك',
+    'childDetail.age': '{{count}} سنة',
+    'childDetail.age_one': 'سنة واحدة',
+    'childDetail.age_other': '{{count}} سنة',
+    'childDetail.inactive': 'ملف غير مفعّل',
+    'childDetail.sectionTitle': 'ماذا تريد أن ترى؟',
+    'childDetail.sectionSubtitle': 'ثلاث شاشات تخصّ هذا الطفل وحده.',
+    'childDetail.progressHint': 'ما يتعلّمه وما أنجزه.',
+    'childDetail.coachHint': 'اقتراحات عملية لك ولطفلك.',
+    'childDetail.screenTimeHint': 'وقت الشاشة والعادات الرقمية.',
+    'childDetail.footnote':
+        'كل ما تراه هنا يأتي من الجهاز ومن الخادم، ولا يُقرَّر داخل التطبيق.',
+    'childDetail.errorTitle': 'تعذّر فتح صفحة الطفل',
+    'childDetail.missingTitle': 'لم نعثر على هذا الطفل',
+    'childDetail.missingBody':
+        'قد يكون الملف قد حُذف، أو أنّ الرابط يشير إلى طفل خارج عائلتك. افتح لوحة التحكم لاختيار طفل.',
+
+    'dashboard.openSafety': 'الأمان والحماية',
+    'childActions.childPage': 'صفحة الطفل',
 
     'settings.title': 'الإعدادات',
     'settings.language': 'اللغة',

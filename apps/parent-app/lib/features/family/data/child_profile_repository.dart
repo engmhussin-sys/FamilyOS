@@ -100,6 +100,30 @@ class ChildProfileRepository {
             .toList(growable: false);
       });
 
+  /// ONE CHILD, FOR THE CHILD-DETAIL SCREEN.
+  ///
+  /// `GET /children/:childId`. Every failure that matters ends as an
+  /// `ApiFailure` carrying the SERVER's own Arabic and never `e.toString()`:
+  /// an id belonging to another family (404 `ChildNotFoundException`), an id
+  /// that is well-shaped but names nothing, and a response whose shape this
+  /// build cannot read.
+  ///
+  /// The last one throws rather than returning `null`, and that is the point:
+  /// a detail screen that cannot name the child it is about would render a page
+  /// of blanks with real buttons under them, and a parent tapping «وقت الشاشة»
+  /// there would open a child-scoped screen for a child nobody identified.
+  Future<ChildProfile> getChild(String childId) =>
+      _boundary.guard('getChild', () async {
+        final body = await _dashboardApi.getChild(childId);
+        final profile = ChildProfile.fromJson(body);
+        if (profile == null) {
+          throw const FormatException(
+            'GET /children/:childId returned no readable child.',
+          );
+        }
+        return profile;
+      });
+
   Future<List<ChildConsent>> listConsents(String childId) =>
       _boundary.guard('listConsents', () async {
         final rows = await _consentApi.listConsents(childId);
@@ -135,6 +159,77 @@ class ChildSummary {
     return ChildSummary(
       id: id,
       firstName: firstName is String ? firstName : '',
+    );
+  }
+}
+
+/// ONE CHILD, AS THE DETAIL SCREEN NEEDS THEM — AND AS A WHITELIST.
+///
+/// `GET /children/:childId` returns the Prisma `Child` row as it stands, which
+/// includes `familyId` (a tenant identifier), `pinCodeHash` (a hashed
+/// credential for the child app's own login) and the soft-delete bookkeeping.
+/// None of that belongs on a parent's screen, and the way to guarantee it never
+/// arrives there is to name the fields that ARE wanted rather than to carry the
+/// map and remember not to read the rest. Five keys, and adding a sixth is a
+/// deliberate edit here rather than an accident on a widget.
+///
+/// [dateOfBirth] is kept because the screen shows an AGE IN YEARS, not a date:
+/// a birthday on a monitoring screen is a piece of personal data with no job to
+/// do, while an age tells a parent at a glance which of two children a screen
+/// is about.
+class ChildProfile {
+  const ChildProfile({
+    required this.id,
+    required this.firstName,
+    this.lastName,
+    this.dateOfBirth,
+    this.isActive = true,
+  });
+
+  final String id;
+
+  /// May be empty. The screen falls back to a localised placeholder rather than
+  /// rendering an empty app-bar title.
+  final String firstName;
+
+  final String? lastName;
+
+  /// `null` when absent or unparseable — the screen then omits the age line
+  /// rather than printing a wrong one.
+  final DateTime? dateOfBirth;
+
+  /// `Child.isActive`. A deactivated profile still opens; the screen says so.
+  final bool isActive;
+
+  /// Whole years, floored, computed against [now] so a test does not depend on
+  /// the wall clock. `null` when [dateOfBirth] is unknown or in the future —
+  /// a negative age is a data problem, not a number to show a parent.
+  int? ageInYearsAt(DateTime now) {
+    final born = dateOfBirth;
+    if (born == null) return null;
+    var years = now.year - born.year;
+    final hadBirthday = now.month > born.month ||
+        (now.month == born.month && now.day >= born.day);
+    if (!hadBirthday) years -= 1;
+    return years < 0 || years > 130 ? null : years;
+  }
+
+  static ChildProfile? fromJson(Object? row) {
+    if (row is! Map) return null;
+    final id = row['id'];
+    if (id is! String || id.isEmpty) return null;
+
+    final firstName = row['firstName'];
+    final lastName = row['lastName'];
+    final dateOfBirth = row['dateOfBirth'];
+    final isActive = row['isActive'];
+
+    return ChildProfile(
+      id: id,
+      firstName: firstName is String ? firstName : '',
+      lastName: lastName is String && lastName.isNotEmpty ? lastName : null,
+      dateOfBirth: dateOfBirth is String ? DateTime.tryParse(dateOfBirth) : null,
+      isActive: isActive is bool ? isActive : true,
     );
   }
 }
