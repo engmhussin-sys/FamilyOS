@@ -165,4 +165,86 @@ void main() {
       expect(failure.fieldErrors.first.display, 'رقم الآية خارج النطاق.');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // THE DISTINCTION THE DESTRUCTIVE AND ONE-SHOT SCREENS ARE BUILT ON.
+  //
+  // `DeleteAccountScreen` and `RedeemCodeScreen` state a FACT about what did
+  // or did not happen, and they are only allowed to state it when the server
+  // actually answered. Everything below pins which failures license that.
+  // -------------------------------------------------------------------------
+  group('ApiFailure.isServerRefusal', () {
+    test('true for a 4xx that came back through the B3 filter — the server '
+        'saw the request and said no', () {
+      final failure = ApiFailure.from(ApiException(
+        'This code is invalid, expired, or no longer active.',
+        messageAr: 'لم نجد ما تبحث عنه.',
+        code: 'NOT_FOUND',
+        statusCode: 404,
+        requestId: 'req_redeem_1',
+      ));
+
+      expect(failure.isServerRefusal, isTrue);
+    });
+
+    test('false when there is no connection — nothing reached the server, so '
+        'nothing can be asserted about what it did', () {
+      expect(ApiFailure.offline.isServerRefusal, isFalse);
+      expect(ApiFailure.timeout.isServerRefusal, isFalse);
+    });
+
+    test('FALSE FOR A 5xx. The request arrived and the server broke while '
+        'handling it — whether the work was applied is unknown, and a '
+        'delete-account screen must not claim otherwise', () {
+      final failure = ApiFailure.from(ApiException(
+        'An internal error occurred.',
+        messageAr: 'حدث خطأ غير متوقّع عندنا.',
+        code: 'INTERNAL_ERROR',
+        statusCode: 500,
+        requestId: 'req_500',
+      ));
+
+      expect(failure.isServerRefusal, isFalse);
+    });
+
+    test('false for a 4xx from something that is not our backend — a proxy '
+        '403 carries no envelope, so it is not a decision about the request', () {
+      final failure = ApiFailure.from(ApiException(
+        'The request returned an invalid status code of 403.',
+        statusCode: 403,
+      ));
+
+      expect(failure.isUnexpected, isTrue);
+      expect(failure.isServerRefusal, isFalse);
+    });
+  });
+
+  group('ApiFailure.isRateLimited', () {
+    test('a 429 is NOT a refusal of what was submitted — it is a refusal of '
+        'the timing, and the redeem screen must not call a valid code '
+        'invalid because the parent typed it twice', () {
+      final failure = ApiFailure.from(ApiException(
+        'Too many requests. Please wait a moment and try again.',
+        messageAr: 'عدد المحاولات كبير الآن. انتظر قليلًا ثم أعد المحاولة.',
+        code: 'RATE_LIMITED',
+        statusCode: 429,
+      ));
+
+      expect(failure.isRateLimited, isTrue);
+      // It IS still a 4xx the server answered — the screens combine the two
+      // getters rather than relying on either alone.
+      expect(failure.isServerRefusal, isTrue);
+    });
+
+    test('a genuine business refusal is not rate limited', () {
+      final failure = ApiFailure.from(ApiException(
+        'This code is invalid.',
+        messageAr: 'لم نجد ما تبحث عنه.',
+        code: 'NOT_FOUND',
+        statusCode: 404,
+      ));
+
+      expect(failure.isRateLimited, isFalse);
+    });
+  });
 }

@@ -546,6 +546,11 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'support.send': 'Send Message',
     'support.sentTitle': 'Message Sent!',
     'support.sentBody': 'We\u2019ve received your message and will reply by email soon.',
+    // The chrome line above the server's own sentence. It states the OUTCOME
+    // \u2014 the message is not on its way \u2014 because the previous version of this
+    // screen showed only raw exception text, from which a parent could not
+    // tell whether their request had been filed or not.
+    'support.sendFailedTitle': 'Your message was not sent',
     'dashboard.pairDevice': 'Pair a Device',
     'createChild.title': 'Add a Child',
     'createChild.firstName': 'First Name',
@@ -555,7 +560,14 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'createChild.consentTitle': 'Before you continue',
     'createChild.consentBody': 'By adding this child, you agree to basic data collection, location tracking, app usage monitoring, and AI behavior analysis for their protection. You can review and change any of these anytime in Settings > Manage Consents.',
     'createChild.submit': 'Add Child',
+    // This form's own precondition, not the server's — no request is sent
+    // without a date, so there is no `messageAr` to render. It replaced a
+    // hardcoded English literal on an Arabic-first screen.
+    'createChild.dateOfBirthRequired': 'Please select a date of birth.',
+    'createChild.saveFailedTitle': 'The child profile was not created',
+    'createChild.unnamedChild': 'Child',
     'consents.title': 'Manage Consents',
+    'consents.loadFailedTitle': 'We could not load the consent settings',
     'consents.selectChild': 'Select Child',
     'consents.noChildren': 'Add a child first to manage their consent settings.',
     'consents.explanation': 'Control exactly what data is collected for each child. You can turn any of these off at any time \u2014 some features may stop working if you do.',
@@ -577,6 +589,15 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'deleteAccount.confirmCheckbox': 'I understand this action is permanent',
     'deleteAccount.currentPassword': 'Enter your current password to confirm',
     'deleteAccount.submit': 'Permanently Delete My Account',
+    // TWO TITLES, BECAUSE THE TWO OUTCOMES ARE NOT THE SAME FACT.
+    // The server refused (a 4xx that came back through the B3 filter) —
+    // nothing was deleted, and saying so plainly is correct. Anything else
+    // (offline, a timeout, a 5xx) means the app never got an answer, and
+    // claiming the account is intact would be a guess stated as a fact on
+    // the one screen where that is least acceptable. The server's own
+    // sentence renders under either title and explains why.
+    'deleteAccount.errorRefusedTitle': 'Your account was not deleted',
+    'deleteAccount.errorUnconfirmedTitle': 'We did not get a confirmation',
     'auth.acceptTerms': 'I agree to the Terms of Service and Privacy Policy',
     // This form's own precondition, not the server's — no request is sent
     // until the box is ticked, so there is no `messageAr` to render and this
@@ -596,6 +617,19 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'redeemCode.explanation': 'Enter a code from a partner (like your employer, bank, or telecom provider) to unlock a benefit for your account.',
     'redeemCode.codeLabel': 'Enter Code',
     'redeemCode.submit': 'Redeem Code',
+    // A code can be redeemed ONCE, so the two failures mean opposite things
+    // to whoever is holding it. `rejectedTitle` is the server's verdict on
+    // the code itself — go find a different one. `notAppliedTitle` covers
+    // every case where the server never decided (offline, timeout, 5xx) and
+    // the throttle case, where the code is very likely fine and the parent
+    // was simply too quick; it says explicitly that nothing was used up, so
+    // trying the SAME code again is the right next move.
+    'redeemCode.rejectedTitle': 'This code was not accepted',
+    'redeemCode.notAppliedTitle': 'The code has not been used — try again shortly',
+    // Only when the server applied a benefit and described nothing. Its own
+    // sentence carries the real numbers ("extended by 14 day(s)") and wins
+    // whenever it is present; this replaced a hardcoded English 'Success!'.
+    'redeemCode.successFallback': 'Your code has been applied.',
     'dashboard.notificationsTooltip': 'Notifications',
     'dashboard.settingsTooltip': 'Settings',
     'common.done': 'Done',
@@ -1238,6 +1272,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'support.send': 'إرسال الرسالة',
     'support.sentTitle': 'تم إرسال الرسالة!',
     'support.sentBody': 'استلمنا رسالتك وهنرد عليك بالإيميل قريبًا.',
+    'support.sendFailedTitle': 'رسالتك ما اتبعتتش',
     'dashboard.pairDevice': 'قرن جهاز',
     'createChild.title': 'إضافة طفل',
     'createChild.firstName': 'الاسم الأول',
@@ -1247,7 +1282,11 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'createChild.consentTitle': 'قبل ما تكمل',
     'createChild.consentBody': 'بإضافة الطفل ده، إنت بتوافق على جمع بيانات أساسية، تتبّع الموقع، مراقبة استخدام التطبيقات، وتحليل السلوك بالذكاء الاصطناعي لحمايته. تقدر تراجع وتغيّر أي من دول في أي وقت من الإعدادات > إدارة الموافقات.',
     'createChild.submit': 'إضافة الطفل',
+    'createChild.dateOfBirthRequired': 'من فضلك اختر تاريخ الميلاد.',
+    'createChild.saveFailedTitle': 'ملف الطفل ما اتعملش',
+    'createChild.unnamedChild': 'طفل',
     'consents.title': 'إدارة الموافقات',
+    'consents.loadFailedTitle': 'تعذّر تحميل إعدادات الموافقات',
     'consents.selectChild': 'اختر الطفل',
     'consents.noChildren': 'ضيف طفل الأول عشان تقدر تدير إعدادات الموافقة بتاعته.',
     'consents.explanation': 'تحكّم بالظبط في البيانات اللي بتتجمع لكل طفل. تقدر تقفل أي منها في أي وقت \u2014 بعض الميزات ممكن تتوقف لو عملت كده.',
@@ -1269,6 +1308,8 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'deleteAccount.confirmCheckbox': 'أنا فاهم إن الإجراء ده نهائي',
     'deleteAccount.currentPassword': 'اكتب كلمة السر الحالية للتأكيد',
     'deleteAccount.submit': 'احذف حسابي نهائيًا',
+    'deleteAccount.errorRefusedTitle': 'لم يتم حذف حسابك',
+    'deleteAccount.errorUnconfirmedTitle': 'لم يصلنا تأكيد بحذف الحساب',
     'auth.acceptTerms': 'أوافق على شروط الاستخدام وسياسة الخصوصية',
     'auth.acceptTermsRequired':
         'من فضلك وافق على شروط الاستخدام وسياسة الخصوصية للمتابعة.',
@@ -1285,6 +1326,9 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'redeemCode.explanation': 'اكتب كود من شريك (زي جهة عملك، بنكك، أو شركة الاتصالات بتاعتك) عشان تفتح ميزة لحسابك.',
     'redeemCode.codeLabel': 'اكتب الكود',
     'redeemCode.submit': 'استبدال الكود',
+    'redeemCode.rejectedTitle': 'الكود ده مش مقبول',
+    'redeemCode.notAppliedTitle': 'الكود لسه ما اتستخدمش — جرّب تاني بعد شوية',
+    'redeemCode.successFallback': 'تم تفعيل الكود.',
     'dashboard.notificationsTooltip': 'الإشعارات',
     'dashboard.settingsTooltip': 'الإعدادات',
     'common.done': 'تم',

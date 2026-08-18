@@ -1,10 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/theme/app_theme.dart';
 
+/// ERROR PASS: `_errorMessage = e.toString()` is gone.
+///
+/// This is the worst screen in the app to show raw exception text on. A
+/// parent only opens it because something is ALREADY wrong; answering their
+/// attempt to report that with «The request returned an invalid status code
+/// of 502» hands them a second problem they can do even less about.
+///
+/// The call now goes through [SupportRepository], which converts and LOGS —
+/// so a support request that failed to send leaves a `requestId` in the
+/// crash reporter, which is the value support would otherwise have to ask
+/// this parent for. The failure renders through the shared `DsErrorState`,
+/// titled with the OUTCOME («رسالتك ما اتبعتتش») so there is no ambiguity
+/// about whether the message is on its way.
 class ContactSupportScreen extends ConsumerStatefulWidget {
   const ContactSupportScreen({super.key});
 
@@ -18,7 +33,10 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
   final _messageController = TextEditingController();
   bool _isSubmitting = false;
   bool _submitted = false;
-  String? _errorMessage;
+
+  /// The B3 envelope, not `e.toString()`. Its `diagnostic` still holds the
+  /// original transport text; no widget on this screen reads that field.
+  ApiFailure? _failure;
 
   @override
   void initState() {
@@ -33,17 +51,19 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
   Future<void> _submit() async {
     setState(() {
       _isSubmitting = true;
-      _errorMessage = null;
+      _failure = null;
     });
     try {
-      await ref.read(supportApiProvider).submitRequest(
+      await ref.read(supportRepositoryProvider).submitRequest(
             email: _emailController.text.trim(),
             subject: _subjectController.text.trim(),
             message: _messageController.text.trim(),
           );
       if (mounted) setState(() => _submitted = true);
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+    } catch (error) {
+      // The repository throws `ApiFailure` and has already logged the
+      // original with its stack.
+      if (mounted) setState(() => _failure = ApiFailure.from(error));
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -52,7 +72,9 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
+    final isRtl = locale.isRtl;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('support.contactTitle'))),
@@ -81,12 +103,19 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
                         maxLines: 6,
                         decoration: InputDecoration(labelText: t('support.message'), alignLabelWithHint: true),
                       ),
-                      if (_errorMessage != null) ...[
+                      if (_failure != null) ...[
                         const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
-                          child: Text(_errorMessage!, style: const TextStyle(color: AppTheme.brick500)),
+                        DsErrorState(
+                          failure: _failure!,
+                          title: t('support.sendFailedTitle'),
+                          // The Send button below is still there and still
+                          // holds the typed message, so this action clears
+                          // the banner rather than re-firing the request.
+                          retryLabel: t('common.dismiss'),
+                          requestIdLabel: t('common.requestId'),
+                          arabic: isRtl,
+                          compact: true,
+                          onRetry: () => setState(() => _failure = null),
                         ),
                       ],
                       const SizedBox(height: 24),

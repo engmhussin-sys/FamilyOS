@@ -19,9 +19,13 @@ import '../../features/billing/api/billing_api.dart';
 import '../../features/billing/application/subscription_purchase_coordinator.dart';
 import '../../features/billing/domain/store_billing_client.dart';
 import '../../features/support/api/support_api.dart';
+import '../../features/support/data/support_repository.dart';
 import '../../features/family/api/consent_api.dart';
+import '../../features/family/data/child_profile_repository.dart';
 import '../../features/settings/api/account_api.dart';
+import '../../features/settings/data/account_repository.dart';
 import '../../features/billing/api/campaign_api.dart';
+import '../../features/billing/data/campaign_repository.dart';
 import '../../features/rewards/api/reward_programs_api.dart';
 import '../../features/rewards/application/achievements_controller.dart';
 import '../../features/rewards/application/catalogue_controller.dart';
@@ -103,6 +107,31 @@ final supportApiProvider = Provider<SupportApi>((ref) => SupportApi(ref.watch(ap
 final consentApiProvider = Provider<ConsentApi>((ref) => ConsentApi(ref.watch(apiClientProvider)));
 final accountApiProvider = Provider<AccountApi>((ref) => AccountApi(ref.watch(apiClientProvider)));
 final campaignApiProvider = Provider<CampaignApi>((ref) => CampaignApi(ref.watch(apiClientProvider)));
+
+// THE FOUR BOUNDARIES THE LAST FOUR `e.toString()` SCREENS NOW READ THROUGH.
+//
+// Same reasoning as `lifeIntelligenceRepositoryProvider` above: the API
+// providers stay exactly as they are, because other callers already compose
+// them, and the repository is added ALONGSIDE rather than in front. A screen
+// that reads a repository gets the conversion and the crash-reporter hop for
+// free; one that still reads an API is unchanged and still compiles, which is
+// what keeps this a correctness pass rather than a migration.
+final accountRepositoryProvider = Provider<AccountRepository>(
+  (ref) => AccountRepository(ref.watch(accountApiProvider)),
+);
+final campaignRepositoryProvider = Provider<CampaignRepository>(
+  (ref) => CampaignRepository(ref.watch(campaignApiProvider)),
+);
+final supportRepositoryProvider = Provider<SupportRepository>(
+  (ref) => SupportRepository(ref.watch(supportApiProvider)),
+);
+final childProfileRepositoryProvider = Provider<ChildProfileRepository>(
+  (ref) => ChildProfileRepository(
+    ref.watch(dashboardApiProvider),
+    ref.watch(pairingApiProvider),
+    ref.watch(consentApiProvider),
+  ),
+);
 
 final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
   (ref) => AuthController(ref.watch(authApiProvider), ref.watch(sessionStorageProvider)),

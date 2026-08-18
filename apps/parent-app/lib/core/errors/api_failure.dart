@@ -135,6 +135,35 @@ class ApiFailure {
   /// never on the sentence itself.
   bool get isUnexpected => code == _unexpectedCode;
 
+  /// THE SERVER SAW THIS REQUEST AND REFUSED IT.
+  ///
+  /// True only for a 4xx that came back through the B3 filter — i.e. the
+  /// request arrived, the server understood it, and the server decided the
+  /// answer is no. False for everything that never got an answer (offline,
+  /// timeout, [unexpected] — which includes a 4xx from a proxy that never
+  /// reached the filter) and false for a 5xx, where the request DID arrive
+  /// but the server broke while handling it.
+  ///
+  /// WHY A SCREEN NEEDS THIS AND CANNOT READ THE SENTENCE INSTEAD: on a
+  /// destructive or a one-shot flow the two cases mean opposite things to
+  /// the person reading them. «لم يتم حذف حسابك» is a fact when the server
+  /// refused the password, and a guess when the socket died mid-request —
+  /// and stating a guess as a fact on an account-deletion screen is exactly
+  /// the failure mode that makes a clearer message worse than a raw one.
+  bool get isServerRefusal =>
+      !isOffline &&
+      !isTimeout &&
+      !isUnexpected &&
+      statusCode != null &&
+      statusCode! >= 400 &&
+      statusCode! < 500;
+
+  /// The throttle answered, not the business rule. Separated from
+  /// [isServerRefusal] because a 429 says nothing at all about whether what
+  /// was submitted was valid — telling a parent their code is invalid
+  /// because they typed it twice in a minute would be a false statement.
+  bool get isRateLimited => statusCode == 429 || code == 'RATE_LIMITED';
+
   /// The one line a log or a Sentry breadcrumb wants: everything needed to
   /// join this failure to a backend log row, and NOTHING a parent would
   /// ever see. Deliberately not localised — logs are read by engineers.
