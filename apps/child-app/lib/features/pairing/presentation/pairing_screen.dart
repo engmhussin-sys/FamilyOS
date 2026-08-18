@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
@@ -130,20 +131,20 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     final worded = failure.withClientSentence(sentence);
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(KidSpace.md),
       decoration: BoxDecoration(
         color: KidTheme.coral.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(KidRadius.control),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('\u{1F914}', style: TextStyle(fontSize: 18)),
-          const SizedBox(width: 8),
+          const Icon(Icons.help_outline_rounded, size: KidSize.iconSm, color: KidColor.needsHelp),
+          const SizedBox(width: KidSpace.sm),
           Expanded(
             child: Text(
               worded.displayFor(arabic: isRtl),
-              style: const TextStyle(color: KidTheme.coral),
+              style: KidText.body(context).copyWith(color: KidColor.needsHelp),
             ),
           ),
         ],
@@ -162,25 +163,25 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       child: Scaffold(
         body: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(KidSpace.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Center(child: SparkyMascot(mood: SparkyMood.happy, size: 88)),
-                const SizedBox(height: 20),
+                const SizedBox(height: KidSpace.lg),
                 Text(
                   t('pairing.title'),
                   style: Theme.of(context).textTheme.displaySmall,
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: KidSpace.sm),
                 Text(
                   t('pairing.instruction'),
                   style: Theme.of(context).textTheme.bodyLarge,
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: KidSpace.xl),
                 TextField(
                   controller: _codeController,
                   textAlign: TextAlign.center,
@@ -193,20 +194,20 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                     filled: true,
                     fillColor: Colors.white,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(KidRadius.control),
                       borderSide: BorderSide(color: KidTheme.skyBlue.withOpacity(0.3)),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(KidRadius.control),
                       borderSide: const BorderSide(color: KidTheme.skyBlue, width: 2),
                     ),
                   ),
                 ),
                 if (_failure != null) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: KidSpace.lg),
                   _errorCard(_failure!, t, localeController.isRtl),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: KidSpace.xl),
                 FilledButton(
                   onPressed: _isSubmitting ? null : _submit,
                   child: _isSubmitting

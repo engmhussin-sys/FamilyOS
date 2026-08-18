@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
@@ -82,13 +83,13 @@ class _ProminentDisclosureScreenState
     if (_declined) {
       return Scaffold(
         body: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(KidSpace.xl),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(t('disclosure.declined'), style: const TextStyle(fontSize: 18)),
-              const SizedBox(height: 24),
+              Text(t('disclosure.declined'), style: KidText.cardTitle(context)),
+              const SizedBox(height: KidSpace.xl),
               FilledButton(
                 onPressed: () => setState(() => _declined = false),
                 child: Text(t('disclosure.declinedAction')),
@@ -108,22 +109,22 @@ class _ProminentDisclosureScreenState
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                 children: [
-                  Text(t('disclosure.intro'), style: const TextStyle(fontSize: 16, height: 1.5)),
-                  const SizedBox(height: 20),
+                  Text(t('disclosure.intro'), style: KidText.body(context)),
+                  const SizedBox(height: KidSpace.lg),
                   _sectionTitle(t('disclosure.dataHeading')),
                   ..._dataKeys.map((k) => _bullet(t(k), Icons.arrow_upward_rounded)),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: KidSpace.lg),
                   _sectionTitle(t('disclosure.notCollectedHeading')),
                   ..._notCollectedKeys.map((k) => _bullet(t(k), Icons.block_rounded)),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: KidSpace.lg),
                   _bullet(t('disclosure.whoSees'), Icons.family_restroom_rounded),
                   _bullet(t('disclosure.control'), Icons.settings_backup_restore_rounded),
                   // Shown ONLY when a real URL was supplied at build time
                   // (--dart-define=PRIVACY_POLICY_URL). A disclosure that
                   // links to nothing is worse than one that does not link.
                   if (AppConfig.privacyPolicyUrl.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Text(t('disclosure.privacyPolicy'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: KidSpace.md),
+                    Text(t('disclosure.privacyPolicy'), style: KidText.cardTitle(context)),
                     SelectableText(AppConfig.privacyPolicyUrl),
                   ],
                 ],
@@ -139,7 +140,7 @@ class _ProminentDisclosureScreenState
                       child: Text(t('disclosure.decline')),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: KidSpace.md),
                   Expanded(
                     flex: 2,
                     child: FilledButton(
@@ -157,21 +158,21 @@ class _ProminentDisclosureScreenState
   }
 
   Widget _sectionTitle(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(text, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        padding: const EdgeInsets.only(bottom: KidSpace.sm),
+        child: Text(text, style: KidText.cardTitle(context).copyWith(fontWeight: FontWeight.w700)),
       );
 
   Widget _bullet(String text, IconData icon) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.only(bottom: KidSpace.md),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.only(top: 2),
+              padding: const EdgeInsets.only(top: KidSpace.xs),
               child: Icon(icon, size: 18),
             ),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(fontSize: 15, height: 1.4))),
+            const SizedBox(width: KidSpace.md),
+            Expanded(child: Text(text, style: KidText.body(context))),
           ],
         ),
       );

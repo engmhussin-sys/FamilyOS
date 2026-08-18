@@ -295,7 +295,7 @@ class _DomainChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = isSelected ? KidColor.primary : KidColor.mutedInk;
     return Padding(
-      padding: const EdgeInsets.only(right: KidSpace.sm),
+      padding: const EdgeInsetsDirectional.only(end: KidSpace.sm),
       child: Semantics(
         button: true,
         selected: isSelected,

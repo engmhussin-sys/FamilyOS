@@ -124,7 +124,9 @@ Future<void> _pump(
       ),
     ),
   );
-  // Not pumpAndSettle: the loading state's progress indicator never settles.
+  // Not pumpAndSettle: the loading state animates forever — it was an
+  // indeterminate progress indicator and is now a pulsing skeleton, and
+  // neither ever settles.
   await tester.pump();
 }
 

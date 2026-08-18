@@ -160,14 +160,14 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
       SnackBar(
         content: Row(
           children: [
-            const Text('\u{1F389}', style: TextStyle(fontSize: 20)),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))),
+            const Icon(Icons.celebration_rounded, size: KidSize.iconSm, color: KidColor.onColour),
+            const SizedBox(width: KidSpace.sm),
+            Expanded(child: Text(message, style: KidText.onColour(context).copyWith(fontWeight: FontWeight.w600))),
           ],
         ),
         backgroundColor: color,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(KidRadius.control)),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -248,7 +248,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
           appBar: AppBar(title: Text(t('myGrowth.title'))),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: _logWater,
-            icon: const Text('\u{1F4A7}', style: TextStyle(fontSize: 20)),
+            icon: const Icon(Icons.water_drop_rounded, size: KidSize.iconSm),
             label: Text(t('myGrowth.logWater')),
           ),
           body: _failure != null
@@ -259,7 +259,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                       color: KidTheme.skyBlue,
                       onRefresh: _loadAll,
                       child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                        padding: const EdgeInsetsDirectional.fromSTEB(KidSpace.lg, KidSpace.sm, KidSpace.lg, 96),
                         children: [
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
@@ -268,12 +268,23 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                                 child: DailyProgressRing(
                                   completed: _completedToday,
                                   total: _totalTasks,
-                                  childName: _childName,
+                                  // The ring used to hold these five
+                                  // sentences as English literals. They are
+                                  // resolved here, where `t` lives.
+                                  greeting: _totalTasks > 0 && _completedToday >= _totalTasks
+                                      ? t('myGrowth.ringGreetingAllDone', options: {'name': _childName})
+                                      : t('myGrowth.ringGreeting', options: {'name': _childName}),
+                                  encouragement: _totalTasks > 0 && _completedToday >= _totalTasks
+                                      ? t('myGrowth.ringAllDone')
+                                      : _totalTasks > 0
+                                          ? t('myGrowth.ringKeepGoing')
+                                          : t('myGrowth.ringNothingYet'),
+                                  allDoneSemanticLabel: t('myGrowth.ringAllDoneLabel'),
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: KidSpace.sm),
                           Align(
                             alignment: Alignment.center,
                             child: SparkyMascot(
@@ -283,13 +294,13 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                               size: 64,
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: KidSpace.lg),
                           // Sprint 16.4 — CLOSES A REAL GAP: a compact coins/XP
                           // summary, real data only (never rendered if
                           // _rewardsAccount hasn't loaded — no placeholder numbers).
                           if (_rewardsAccount != null) ...[
                             _RewardsSummaryChip(account: _rewardsAccount!, t: t),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: KidSpace.lg),
                           ],
                           // Sprint 16.4 continuation — CLOSES A REAL GAP: Coaching
                           // had zero Child App representation before this.
@@ -299,7 +310,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                           // placeholder message).
                           if (_coachingTips != null && _coachingTips!.isNotEmpty) ...[
                             ..._coachingTips!.map((tip) => _CoachingTipCard(tip: tip as Map<String, dynamic>)),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: KidSpace.lg),
                           ],
                           // Sprint continuation — CLOSES A REAL GAP: SmartTaskEngineService
                           // had zero UI consumer. Only SUGGESTED tasks shown — an
@@ -315,12 +326,12 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                                       onAccept: () => _decideSmartTask(task['id'] as String, 'ACCEPTED'),
                                       onDismiss: () => _decideSmartTask(task['id'] as String, 'DISMISSED'),
                                     )),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: KidSpace.lg),
                           ],
                           if (_messages!.isNotEmpty) ...[
-                            _SectionHeader(emoji: '\u{1F48C}', title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
+                            _SectionHeader(icon: Icons.mail_rounded, title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
                             ..._messages!.map((m) => _MessageCard(message: m as Map<String, dynamic>)),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: KidSpace.xl),
                           ],
                           // Sprint 16.4 — CLOSES A REAL GAP: Health had zero
                           // Child App representation before this sprint's new
@@ -328,18 +339,18 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                           // whole card is simply absent if the fetch failed,
                           // never a fake/zero placeholder.
                           if (_healthProgress != null) ...[
-                            _SectionHeader(emoji: '\u{1F4AA}', title: t('myGrowth.healthTitle'), color: KidTheme.healthAccent),
+                            _SectionHeader(icon: Icons.favorite_rounded, title: t('myGrowth.healthTitle'), color: KidTheme.healthAccent),
                             _HealthProgressCard(progress: _healthProgress!, t: t),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: KidSpace.xl),
                           ],
                           // Sprint 16.4 — CLOSES A REAL GAP: Education had zero
                           // Child App representation before this sprint.
                           if (_learningProgress != null) ...[
-                            _SectionHeader(emoji: '\u{1F4DA}', title: t('myGrowth.learningTitle'), color: KidTheme.messagesAccent),
+                            _SectionHeader(icon: Icons.menu_book_rounded, title: t('myGrowth.learningTitle'), color: KidTheme.messagesAccent),
                             _LearningProgressCard(progress: _learningProgress!, t: t, onLogSession: _logStudySession),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: KidSpace.xl),
                           ],
-                          _SectionHeader(emoji: '\u{2B50}', title: t('myGrowth.myHabits'), color: KidTheme.habitsAccent),
+                          _SectionHeader(icon: Icons.check_circle_rounded, title: t('myGrowth.myHabits'), color: KidTheme.habitsAccent),
                           if (_habits!.isEmpty) _EmptyHint(text: t('myGrowth.noHabitsYet')),
                           ..._habits!.map(
                             (h) => _TaskCard(
@@ -351,8 +362,8 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                               onDone: () => _completeHabit(h['id'] as String, h['title'] as String? ?? 'habit'),
                             ),
                           ),
-                          const SizedBox(height: 24),
-                          _SectionHeader(emoji: '\u{1F54C}', title: t('myGrowth.faith'), color: KidTheme.faithAccent),
+                          const SizedBox(height: KidSpace.xl),
+                          _SectionHeader(icon: Icons.mosque_rounded, title: t('myGrowth.faith'), color: KidTheme.faithAccent),
                           if (_practices!.isEmpty) _EmptyHint(text: t('myGrowth.noPracticesYet')),
                           ..._practices!.map(
                             (p) => _TaskCard(
@@ -396,16 +407,20 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.emoji, required this.title, required this.color});
+  const _SectionHeader({required this.icon, required this.title, required this.color});
 
-  final String emoji;
+  /// WAS a `String emoji`. An emoji is drawn by whatever emoji font the
+  /// device happens to ship; a Material glyph is inside the APK, renders
+  /// identically on every phone in this product's market, and takes the
+  /// section's own accent colour instead of its own.
+  final IconData icon;
   final String title;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10, top: 4),
+      padding: const EdgeInsets.only(bottom: KidSpace.md, top: KidSpace.xs),
       child: Row(
         children: [
           Container(
@@ -413,9 +428,9 @@ class _SectionHeader extends StatelessWidget {
             height: 36,
             decoration: BoxDecoration(color: color.withOpacity(0.18), shape: BoxShape.circle),
             alignment: Alignment.center,
-            child: Text(emoji, style: const TextStyle(fontSize: 18)),
+            child: Icon(icon, size: KidSize.iconSm, color: color),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: KidSpace.md),
           Text(title, style: Theme.of(context).textTheme.headlineMedium),
         ],
       ),
@@ -430,7 +445,7 @@ class _EmptyHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: KidSpace.md),
       child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
     );
   }
@@ -452,27 +467,23 @@ class _CoachingTipCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
+      padding: const EdgeInsets.all(KidSpace.md),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.habitsAccent.withOpacity(0.18), KidTheme.habitsAccent.withOpacity(0.06)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(18),
+        gradient: KidGradient.tint(KidTheme.habitsAccent),
+        borderRadius: BorderRadius.circular(KidRadius.control),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('\u{1F31F}', style: TextStyle(fontSize: 20)),
-          const SizedBox(width: 10),
+          const Icon(Icons.auto_awesome_rounded, size: KidSize.iconSm, color: KidTheme.habitsAccent),
+          const SizedBox(width: KidSpace.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(tip['title'] as String? ?? '', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
+                const SizedBox(height: KidSpace.xs),
                 Text(tip['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyMedium),
               ],
             ),
@@ -505,27 +516,23 @@ class _SmartTaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
+      padding: const EdgeInsets.all(KidSpace.md),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.skyBlue.withOpacity(0.18), KidTheme.skyBlue.withOpacity(0.06)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(18),
+        gradient: KidGradient.tint(KidTheme.skyBlue),
+        borderRadius: BorderRadius.circular(KidRadius.control),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Text('\u{1F4A1}', style: TextStyle(fontSize: 18)),
-              const SizedBox(width: 8),
+              const Icon(Icons.lightbulb_rounded, size: KidSize.iconSm, color: KidTheme.skyBlue),
+              const SizedBox(width: KidSpace.sm),
               Expanded(child: Text(task['title'] as String? ?? '', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700))),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: KidSpace.md),
           Row(
             children: [
               Expanded(
@@ -534,7 +541,7 @@ class _SmartTaskCard extends StatelessWidget {
                   child: Text(dismissLabel),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: KidSpace.sm),
               Expanded(
                 child: FilledButton(
                   onPressed: onAccept,
@@ -558,34 +565,34 @@ class _RewardsSummaryChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+      padding: const EdgeInsets.symmetric(vertical: KidSpace.md, horizontal: KidSpace.lg),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.sunshineYellow.withOpacity(0.25), KidTheme.coral.withOpacity(0.15)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        gradient: KidGradient.duo(KidTheme.sunshineYellow, KidTheme.coral),
+        borderRadius: BorderRadius.circular(KidRadius.card),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _rewardStat('\u{1FA99}', '${account['coins'] ?? 0}', t('myGrowth.coins')),
+          _rewardStat(context, Icons.monetization_on_rounded, '${account['coins'] ?? 0}', t('myGrowth.coins'), KidTheme.sunshineYellow),
           Container(width: 1, height: 32, color: KidTheme.mutedInk.withOpacity(0.2)),
-          _rewardStat('\u2B50', '${account['xp'] ?? 0}', 'XP'),
+          _rewardStat(context, Icons.star_rounded, '${account['xp'] ?? 0}', t('myGrowth.xp'), KidTheme.berryPurple),
           Container(width: 1, height: 32, color: KidTheme.mutedInk.withOpacity(0.2)),
-          _rewardStat('\u{1F3C6}', '${account['level'] ?? 1}', t('myGrowth.level')),
+          _rewardStat(context, Icons.emoji_events_rounded, '${account['level'] ?? 1}', t('myGrowth.level'), KidTheme.coral),
         ],
       ),
     );
   }
 
-  Widget _rewardStat(String emoji, String value, String label) {
+  Widget _rewardStat(BuildContext context, IconData icon, String value, String label, Color colour) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(emoji, style: const TextStyle(fontSize: 20)),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-        Text(label, style: const TextStyle(fontSize: 11, color: KidTheme.mutedInk)),
+        Icon(icon, size: KidSize.iconSm, color: colour),
+        KidSpace.gapXs,
+        // Was `fontSize: 16, w700` and `fontSize: 11` — two sizes that are
+        // on no scale in this app.
+        Text(value, style: KidText.stat(context)),
+        Text(label, style: KidText.caption(context)),
       ],
     );
   }
@@ -605,52 +612,47 @@ class _HealthProgressCard extends StatelessWidget {
     final hydration = progress['hydration'] as Map<String, dynamic>?;
     final activity = progress['activity'] as Map<String, dynamic>?;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [
-        BoxShadow(color: KidTheme.healthAccent.withOpacity(0.10), blurRadius: 14, offset: const Offset(0, 5)),
-      ]),
+    // WAS a hand-built `Container` with its own white fill, its own radius
+    // and its own shadow, holding a private `_progressRow` that drew an
+    // emoji, a bar and — for "you did it" — the single character
+    // U+2705. Meaning stated only in an emoji font is meaning a cheap
+    // Android phone can render as a grey outline or a tofu box, and it is
+    // also colour-only once the bar turns green. `KidProgressRow` states
+    // it three ways: a Material glyph that ships inside the app, the
+    // colour, and a localised label a screen reader can read out.
+    return KidCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (hydration != null)
-            _progressRow('\u{1F4A7}', t('myGrowth.waterLabel'), hydration['actualMl'] as int? ?? 0, hydration['targetMl'] as int? ?? 1, hydration['isAchieved'] as bool? ?? false, 'ml'),
-          if (hydration != null && activity != null) const SizedBox(height: 12),
+            KidProgressRow(
+              icon: Icons.water_drop_rounded,
+              label: t('myGrowth.waterLabel'),
+              valueLabel: '${hydration['actualMl'] as int? ?? 0}/${hydration['targetMl'] as int? ?? 1} ${t('myGrowth.millilitresUnit')}',
+              fraction: _fraction(hydration['actualMl'], hydration['targetMl']),
+              achieved: hydration['isAchieved'] as bool? ?? false,
+              achievedSemanticLabel: t('myGrowth.achievedLabel'),
+              color: KidTheme.healthAccent,
+            ),
           if (activity != null)
-            _progressRow('\u{1F3C3}', t('myGrowth.activityLabel'), activity['totalMinutes'] as int? ?? 0, activity['targetMinutes'] as int? ?? 1, activity['isAchieved'] as bool? ?? false, t('myGrowth.minutesUnit')),
+            KidProgressRow(
+              icon: Icons.directions_run_rounded,
+              label: t('myGrowth.activityLabel'),
+              valueLabel: '${activity['totalMinutes'] as int? ?? 0}/${activity['targetMinutes'] as int? ?? 1} ${t('myGrowth.minutesUnit')}',
+              fraction: _fraction(activity['totalMinutes'], activity['targetMinutes']),
+              achieved: activity['isAchieved'] as bool? ?? false,
+              achievedSemanticLabel: t('myGrowth.achievedLabel'),
+              color: KidTheme.healthAccent,
+            ),
         ],
       ),
     );
   }
 
-  Widget _progressRow(String emoji, String label, int actual, int target, bool achieved, String unit) {
-    return Row(
-      children: [
-        Text(emoji, style: const TextStyle(fontSize: 22)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 4),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: LinearProgressIndicator(
-                  value: target > 0 ? (actual / target).clamp(0.0, 1.0) : 0,
-                  minHeight: 8,
-                  backgroundColor: KidTheme.mutedInk.withOpacity(0.1),
-                  valueColor: AlwaysStoppedAnimation(achieved ? KidTheme.habitsAccent : KidTheme.healthAccent),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 10),
-        Text('$actual/$target $unit', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-        if (achieved) const Padding(padding: EdgeInsets.only(left: 6), child: Text('\u2705')),
-      ],
-    );
+  static double _fraction(Object? actual, Object? target) {
+    final a = actual is int ? actual : 0;
+    final b = target is int ? target : 0;
+    return b > 0 ? (a / b) : 0;
   }
 }
 
@@ -669,8 +671,8 @@ class _LearningProgressCard extends StatelessWidget {
     final totalSessions = progress['totalSessions'] as int? ?? 0;
 
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [
+      padding: const EdgeInsets.all(KidSpace.lg),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(KidRadius.card), boxShadow: [
         BoxShadow(color: KidTheme.messagesAccent.withOpacity(0.10), blurRadius: 14, offset: const Offset(0, 5)),
       ]),
       child: Row(
@@ -681,10 +683,12 @@ class _LearningProgressCard extends StatelessWidget {
               children: [
                 Text(
                   streakDays > 0 ? t('myGrowth.learningStreak', options: {'count': streakDays}) : t('myGrowth.learningNoStreak'),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  style: KidText.cardTitle(context),
                 ),
-                const SizedBox(height: 4),
-                Text(t('myGrowth.sessionsCount', options: {'count': totalSessions}), style: const TextStyle(fontSize: 12, color: KidTheme.mutedInk)),
+                KidSpace.gapXs,
+                // Was `fontSize: 12` — off the scale, and with no line
+                // height, which is what clips an Arabic descender.
+                Text(t('myGrowth.sessionsCount', options: {'count': totalSessions}), style: KidText.caption(context)),
               ],
             ),
           ),
@@ -715,20 +719,20 @@ class _TaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
       decoration: BoxDecoration(
         color: isDone ? color.withOpacity(0.06) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(KidRadius.card),
         boxShadow: isDone
             ? null
             : [BoxShadow(color: color.withOpacity(0.12), blurRadius: 16, offset: const Offset(0, 6))],
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        padding: const EdgeInsetsDirectional.fromSTEB(KidSpace.lg, KidSpace.md, KidSpace.md, KidSpace.md),
         child: Row(
           children: [
-            Container(width: 6, height: 40, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
-            const SizedBox(width: 14),
+            Container(width: 6, height: 40, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(KidRadius.sm))),
+            const SizedBox(width: KidSpace.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -806,14 +810,10 @@ class _MessageCard extends ConsumerWidget {
     final isRtl = Directionality.of(context) == TextDirection.rtl;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.messagesAccent.withOpacity(0.16), KidTheme.messagesAccent.withOpacity(0.06)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        gradient: KidGradient.tint(KidTheme.messagesAccent),
+        borderRadius: BorderRadius.circular(KidRadius.card),
         border: isNew ? Border.all(color: KidTheme.messagesAccent, width: 1.5) : null,
       ),
       // Transparency, so the ripple draws over the gradient above instead of
@@ -821,17 +821,17 @@ class _MessageCard extends ConsumerWidget {
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(KidRadius.card),
           onTap: link == null
               ? null
               : () => ChildDeepLinkRouter.followLink(context, ref, link),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(KidSpace.lg),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('\u{1F48C}', style: TextStyle(fontSize: 24)),
-                const SizedBox(width: 12),
+                const Icon(Icons.mail_rounded, size: KidSize.iconMd, color: KidTheme.messagesAccent),
+                const SizedBox(width: KidSpace.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -839,21 +839,26 @@ class _MessageCard extends ConsumerWidget {
                       Row(
                         children: [
                           Expanded(child: Text(message['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium)),
-                          if (isNew) Container(width: 8, height: 8, margin: const EdgeInsets.only(left: 6), decoration: const BoxDecoration(color: KidTheme.messagesAccent, shape: BoxShape.circle)),
+                          // WAS an 8px coloured dot and nothing else —
+                          // "this one is new" stated in hue alone, which a
+                          // colour-blind child and a screen reader both miss.
+                          // A badge says it in words.
+                          if (isNew) ...[
+                            KidSpace.hGapSm,
+                            KidBadge(label: t('myGrowth.newLabel'), color: KidTheme.messagesAccent),
+                          ],
                         ],
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: KidSpace.xs),
                       Text(message['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyLarge),
                     ],
                   ),
                 ),
                 // The one affordance, and only when the tap leads somewhere.
-                // Mirrored by hand: the glyph points the way the child reads.
+                // The hand-written `isRtl ? ... : ...` mirror is now a token,
+                // so every chevron in the app answers to one rule.
                 if (link != null)
-                  Icon(
-                    isRtl ? Icons.chevron_left_rounded : Icons.chevron_right_rounded,
-                    color: KidTheme.messagesAccent,
-                  ),
+                  KidIcons.disclosure(context, color: KidTheme.messagesAccent),
               ],
             ),
           ),

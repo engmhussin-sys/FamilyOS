@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../application/oem_background_service.dart';
@@ -89,42 +90,42 @@ class _OemSetupScreenState extends ConsumerState<OemSetupScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                 children: [
-                  Text(t('oem.intro'), style: const TextStyle(fontSize: 16, height: 1.5)),
-                  const SizedBox(height: 12),
-                  Text(t('oem.reassure'), style: const TextStyle(fontSize: 14)),
-                  const SizedBox(height: 20),
+                  Text(t('oem.intro'), style: KidText.body(context)),
+                  const SizedBox(height: KidSpace.md),
+                  Text(t('oem.reassure'), style: KidText.caption(context)),
+                  const SizedBox(height: KidSpace.lg),
                   if (info == null)
-                    Text(t('common.checking'), style: const TextStyle(color: Colors.grey))
+                    Text(t('common.checking'), style: KidText.caption(context).copyWith(color: KidColor.unknown))
                   else ...[
                     if (info.manufacturer.isNotEmpty)
                       Text(
                         t('oem.deviceLabel', options: {'manufacturer': info.manufacturer}),
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: KidText.cardTitle(context),
                       ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: KidSpace.md),
                     Text(
                       t('oem.stepsHeading'),
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                      style: KidText.cardTitle(context).copyWith(fontWeight: FontWeight.w700),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: KidSpace.sm),
                     // Vendor-specific instructions, resolved from the
                     // detected manufacturer. An unrecognised device
                     // resolves to `oem.step.generic` inside
                     // OemBackgroundInfo, so this can never miss a key.
-                    Text(t(info.stepsKey), style: const TextStyle(fontSize: 15, height: 1.5)),
+                    Text(t(info.stepsKey), style: KidText.body(context)),
                   ],
                   if (_openedMessageKey != null) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: KidSpace.lg),
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(KidSpace.md),
                       decoration: BoxDecoration(
                         // withOpacity, NOT withValues: the CI pin is
                         // Flutter 3.24.5 and Color.withValues only exists
                         // from 3.27. See build-apk.yml's env block.
-                        color: Colors.amber.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8),
+                        color: KidColor.highlight.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(KidRadius.sm),
                       ),
-                      child: Text(t(_openedMessageKey!), style: const TextStyle(fontSize: 14)),
+                      child: Text(t(_openedMessageKey!), style: KidText.caption(context)),
                     ),
                   ],
                 ],
@@ -142,7 +143,7 @@ class _OemSetupScreenState extends ConsumerState<OemSetupScreen> {
                       label: Text(t('oem.open')),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: KidSpace.sm),
                   Row(
                     children: [
                       Expanded(
@@ -151,7 +152,7 @@ class _OemSetupScreenState extends ConsumerState<OemSetupScreen> {
                           child: Text(t('oem.skip')),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: KidSpace.md),
                       Expanded(
                         child: OutlinedButton(
                           onPressed: _finish,

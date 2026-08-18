@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/localization/locale_controller.dart';
 
 /// F2 — PRE-PERMISSION PRIMING for the AccessibilityService
@@ -53,22 +54,22 @@ class AccessibilityPrimingScreen extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                 children: [
-                  Text(t('priming.what'), style: const TextStyle(fontSize: 16, height: 1.5)),
-                  const SizedBox(height: 18),
-                  _line(t('priming.reads'), Icons.visibility_outlined),
-                  _line(t('priming.doesNotRead'), Icons.lock_outline_rounded),
-                  _line(t('priming.why'), Icons.schedule_rounded),
-                  const SizedBox(height: 18),
+                  Text(t('priming.what'), style: KidText.body(context)),
+                  const SizedBox(height: KidSpace.lg),
+                  _line(context, t('priming.reads'), Icons.visibility_outlined),
+                  _line(context, t('priming.doesNotRead'), Icons.lock_outline_rounded),
+                  _line(context, t('priming.why'), Icons.schedule_rounded),
+                  const SizedBox(height: KidSpace.lg),
                   Text(
                     t('priming.stepsHeading'),
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    style: KidText.cardTitle(context).copyWith(fontWeight: FontWeight.w700),
                   ),
-                  const SizedBox(height: 8),
-                  _step('1', t('priming.step1')),
-                  _step('2', t('priming.step2')),
-                  _step('3', t('priming.step3')),
-                  const SizedBox(height: 12),
-                  Text(t('priming.reversible'), style: const TextStyle(fontSize: 14)),
+                  const SizedBox(height: KidSpace.sm),
+                  _step(context, '1', t('priming.step1')),
+                  _step(context, '2', t('priming.step2')),
+                  _step(context, '3', t('priming.step3')),
+                  const SizedBox(height: KidSpace.md),
+                  Text(t('priming.reversible'), style: KidText.caption(context)),
                 ],
               ),
             ),
@@ -82,7 +83,7 @@ class AccessibilityPrimingScreen extends ConsumerWidget {
                       child: Text(t('priming.later')),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: KidSpace.md),
                   Expanded(
                     flex: 2,
                     child: FilledButton(
@@ -99,26 +100,26 @@ class AccessibilityPrimingScreen extends ConsumerWidget {
     );
   }
 
-  Widget _line(String text, IconData icon) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+  Widget _line(BuildContext context, String text, IconData icon) => Padding(
+        padding: const EdgeInsets.only(bottom: KidSpace.md),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(padding: const EdgeInsets.only(top: 2), child: Icon(icon, size: 20)),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(fontSize: 15, height: 1.4))),
+            Padding(padding: const EdgeInsets.only(top: KidSpace.xs), child: Icon(icon, size: KidSize.iconSm)),
+            const SizedBox(width: KidSpace.md),
+            Expanded(child: Text(text, style: KidText.body(context))),
           ],
         ),
       );
 
-  Widget _step(String number, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+  Widget _step(BuildContext context, String number, String text) => Padding(
+        padding: const EdgeInsets.only(bottom: KidSpace.sm),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(radius: 12, child: Text(number, style: const TextStyle(fontSize: 12))),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(fontSize: 15, height: 1.4))),
+            CircleAvatar(radius: 12, child: Text(number, style: KidText.caption(context))),
+            const SizedBox(width: KidSpace.md),
+            Expanded(child: Text(text, style: KidText.body(context))),
           ],
         ),
       );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/localization/locale_controller.dart';
 
 /// G18 — PRE-PERMISSION PRIMING for POST_NOTIFICATIONS.
@@ -64,21 +65,21 @@ class NotificationPrimingScreen extends ConsumerWidget {
                 children: [
                   Text(
                     t('notifPriming.what'),
-                    style: const TextStyle(fontSize: 16, height: 1.5),
+                    style: KidText.body(context),
                   ),
-                  const SizedBox(height: 18),
-                  _line(t('notifPriming.example1'), Icons.card_giftcard_rounded),
-                  _line(t('notifPriming.example2'), Icons.nightlight_round),
-                  _line(t('notifPriming.example3'), Icons.emoji_events_outlined),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: KidSpace.lg),
+                  _line(context, t('notifPriming.example1'), Icons.card_giftcard_rounded),
+                  _line(context, t('notifPriming.example2'), Icons.nightlight_round),
+                  _line(context, t('notifPriming.example3'), Icons.emoji_events_outlined),
+                  const SizedBox(height: KidSpace.sm),
                   Text(
                     t('notifPriming.why'),
-                    style: const TextStyle(fontSize: 15, height: 1.5),
+                    style: KidText.body(context),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: KidSpace.md),
                   Text(
                     t('notifPriming.noSpam'),
-                    style: const TextStyle(fontSize: 14, height: 1.4),
+                    style: KidText.caption(context),
                   ),
                 ],
               ),
@@ -93,7 +94,7 @@ class NotificationPrimingScreen extends ConsumerWidget {
                       child: Text(t('notifPriming.later')),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: KidSpace.md),
                   Expanded(
                     flex: 2,
                     child: FilledButton(
@@ -110,14 +111,14 @@ class NotificationPrimingScreen extends ConsumerWidget {
     );
   }
 
-  Widget _line(String text, IconData icon) => Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+  Widget _line(BuildContext context, String text, IconData icon) => Padding(
+        padding: const EdgeInsets.only(bottom: KidSpace.md),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(padding: const EdgeInsets.only(top: 2), child: Icon(icon, size: 20)),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(fontSize: 15, height: 1.4))),
+            Padding(padding: const EdgeInsets.only(top: KidSpace.xs), child: Icon(icon, size: 20)),
+            const SizedBox(width: KidSpace.md),
+            Expanded(child: Text(text, style: KidText.body(context))),
           ],
         ),
       );

@@ -64,7 +64,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
             content: Text(ref.read(localeControllerProvider.notifier).t('rewards.requested', options: {'title': title})),
             backgroundColor: KidTheme.celebrationAccent,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(KidRadius.control)),
           ),
         );
       }
@@ -114,12 +114,12 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                         children: [
                           _CoinBalanceCard(account: _account!, coinsLabel: t('rewards.coinsLabel'), xpLabel: t('rewards.xpLabel')),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: KidSpace.xl),
                           Text(t('rewards.storeTitle'), style: Theme.of(context).textTheme.headlineMedium),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: KidSpace.md),
                           if (_store!.isEmpty)
                             Padding(
-                              padding: const EdgeInsets.only(top: 8),
+                              padding: const EdgeInsets.only(top: KidSpace.sm),
                               child: Text(t('rewards.noRewardsYet')),
                             ),
                           ..._store!.map((item) {
@@ -184,21 +184,17 @@ class _CoinBalanceCard extends StatelessWidget {
     final xp = account['xp'] as int? ?? 0;
 
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+      padding: const EdgeInsets.symmetric(vertical: KidSpace.xl, horizontal: KidSpace.lg),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.sunshineYellow.withOpacity(0.25), KidTheme.coral.withOpacity(0.15)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(28),
+        gradient: KidGradient.duo(KidTheme.sunshineYellow, KidTheme.coral),
+        borderRadius: BorderRadius.circular(KidRadius.lg),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _BalanceStat(emoji: '\u{1FA99}', value: '$coins', label: coinsLabel),
+          _BalanceStat(icon: Icons.monetization_on_rounded, colour: KidTheme.sunshineYellow, value: '$coins', label: coinsLabel),
           Container(width: 1, height: 50, color: KidTheme.mutedInk.withOpacity(0.2)),
-          _BalanceStat(emoji: '\u2B50', value: '$xp', label: xpLabel),
+          _BalanceStat(icon: Icons.star_rounded, colour: KidTheme.berryPurple, value: '$xp', label: xpLabel),
         ],
       ),
     );
@@ -206,17 +202,25 @@ class _CoinBalanceCard extends StatelessWidget {
 }
 
 class _BalanceStat extends StatelessWidget {
-  const _BalanceStat({required this.emoji, required this.value, required this.label});
-  final String emoji;
+  const _BalanceStat({required this.icon, required this.colour, required this.value, required this.label});
+
+  /// WAS a `String emoji`. Coins and XP are the two numbers this screen
+  /// exists for, and both were drawn in whatever emoji font the phone
+  /// happens to ship — which on a cheap Android in this product's market
+  /// can be a grey outline or a tofu box. A Material glyph is inside the
+  /// APK.
+  final IconData icon;
+  final Color colour;
   final String value;
   final String label;
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(emoji, style: const TextStyle(fontSize: 28)),
-        const SizedBox(height: 4),
+        Icon(icon, size: KidSize.iconLg, color: colour),
+        KidSpace.gapXs,
         Text(value, style: Theme.of(context).textTheme.headlineMedium),
         Text(label, style: Theme.of(context).textTheme.bodyMedium),
       ],
@@ -248,20 +252,20 @@ class _StoreItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
       decoration: BoxDecoration(
         color: canAfford ? Colors.white : KidTheme.mutedInk.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(KidRadius.card),
         boxShadow: canAfford
             ? [BoxShadow(color: KidTheme.sunshineYellow.withOpacity(0.15), blurRadius: 14, offset: const Offset(0, 5))]
             : null,
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        padding: const EdgeInsetsDirectional.fromSTEB(KidSpace.lg, KidSpace.md, KidSpace.md, KidSpace.md),
         child: Row(
           children: [
-            const Text('\u{1F381}', style: TextStyle(fontSize: 28)),
-            const SizedBox(width: 12),
+            const Icon(Icons.card_giftcard_rounded, size: KidSize.iconLg, color: KidTheme.sunshineYellow),
+            const SizedBox(width: KidSpace.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -269,21 +273,30 @@ class _StoreItemCard extends StatelessWidget {
                   Text(title, style: Theme.of(context).textTheme.titleMedium),
                   Row(
                     children: [
-                      const Text('\u{1FA99} ', style: TextStyle(fontSize: 14)),
-                      Text(costLabel, style: Theme.of(context).textTheme.bodyMedium),
+                      const Icon(Icons.monetization_on_rounded, size: KidSize.iconXs, color: KidTheme.sunshineYellow),
+                      KidSpace.hGapSm,
+                      Text(costLabel, style: KidText.caption(context)),
                     ],
                   ),
                 ],
               ),
             ),
             if (isRedeeming)
-              const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2.5))
+              const SizedBox(
+                width: KidSize.spinnerSm,
+                height: KidSize.spinnerSm,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              )
             else
               FilledButton(
                 onPressed: onRedeem,
                 style: FilledButton.styleFrom(
-                  backgroundColor: canAfford ? KidTheme.sunshineYellow : Colors.grey.shade300,
-                  minimumSize: const Size(80, 44),
+                  backgroundColor: canAfford ? KidTheme.sunshineYellow : KidColor.border,
+                  // WAS `Size(80, 44)`. 44 is BELOW this app's own 56px
+                  // minimum touch target — the one commitment the child
+                  // app's theme makes explicitly, on the only button on
+                  // this card, for the youngest hands in the product.
+                  minimumSize: const Size(96, KidSize.touchTarget),
                 ),
                 child: Text(canAfford ? getItLabel : needMoreLabel),
               ),

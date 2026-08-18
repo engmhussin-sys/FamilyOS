@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../plugins/permissions/domain/permission_status.dart';
@@ -242,13 +243,13 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
         body: RefreshIndicator(
           onRefresh: _refreshPermissions,
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(KidSpace.lg),
             children: [
               Text(
                 t('deviceStatus.pairedHeartbeat'),
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: KidText.cardTitle(context),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: KidSpace.lg),
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const MyGrowthScreen()),
@@ -256,7 +257,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
                 icon: const Icon(Icons.emoji_events_outlined),
                 label: Text(t('deviceStatus.myGrowth')),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: KidSpace.md),
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const RewardsScreen()),
@@ -264,11 +265,11 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
                 icon: const Icon(Icons.card_giftcard_rounded),
                 label: Text(t('deviceStatus.myRewards')),
               ),
-              const SizedBox(height: 16),
-              Text(t('deviceStatus.runtimeStatus'), style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
+              const SizedBox(height: KidSpace.lg),
+              Text(t('deviceStatus.runtimeStatus'), style: KidText.cardTitle(context)),
+              const SizedBox(height: KidSpace.sm),
               _buildEnforcementStatusTile(t),
-              const SizedBox(height: 8),
+              const SizedBox(height: KidSpace.sm),
               // Always reachable, not only on first run: the OEM setting
               // is the one a factory reset, a system update or a
               // "battery saver" sweep silently undoes.
@@ -277,20 +278,20 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
                 icon: const Icon(Icons.battery_saver_outlined),
                 label: Text(t('oem.title')),
               ),
-              const SizedBox(height: 16),
-              Text(t('deviceStatus.diagnostics'), style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
+              const SizedBox(height: KidSpace.lg),
+              Text(t('deviceStatus.diagnostics'), style: KidText.cardTitle(context)),
+              const SizedBox(height: KidSpace.sm),
               _buildDiagnosticsTile(t),
-              const SizedBox(height: 16),
-              Text(t('deviceStatus.permissions'), style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
+              const SizedBox(height: KidSpace.lg),
+              Text(t('deviceStatus.permissions'), style: KidText.cardTitle(context)),
+              const SizedBox(height: KidSpace.sm),
               if (_isLoadingPermissions)
                 const Center(child: CircularProgressIndicator())
               else
                 ..._permissions.map((p) => _buildPermissionTile(p, t)),
-              const SizedBox(height: 24),
-              Text(t('deviceStatus.capabilities'), style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
+              const SizedBox(height: KidSpace.xl),
+              Text(t('deviceStatus.capabilities'), style: KidText.cardTitle(context)),
+              const SizedBox(height: KidSpace.sm),
               ElevatedButton(
                 onPressed: _isSyncingCapabilities ? null : _syncCapabilities,
                 child: _isSyncingCapabilities
@@ -302,7 +303,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
                     : Text(t('deviceStatus.syncCapabilities')),
               ),
               if (_syncMessage != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: KidSpace.sm),
                 Text(_syncMessage!),
               ],
             ],
@@ -315,13 +316,13 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
   Widget _buildEnforcementStatusTile(String Function(String, {int? count, Map<String, Object>? options}) t) {
     final status = _enforcementStatus;
     if (status == null) {
-      return Text(t('common.checking'), style: const TextStyle(color: Colors.grey));
+      return Text(t('common.checking'), style: KidText.caption(context).copyWith(color: KidColor.unknown));
     }
     final isActive = status.accessibilityServiceEnabled && status.hasEverSyncedPolicy;
     return ListTile(
       leading: Icon(
         isActive ? Icons.shield : Icons.shield_outlined,
-        color: isActive ? Colors.green : Colors.orange,
+        color: isActive ? KidColor.done : KidColor.notNow,
       ),
       title: Text(isActive ? t('deviceStatus.protectionActive') : t('deviceStatus.protectionNotActive')),
       subtitle: Text(
@@ -337,7 +338,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
   Widget _buildDiagnosticsTile(String Function(String, {int? count, Map<String, Object>? options}) t) {
     final telemetry = _telemetry;
     if (telemetry == null) {
-      return Text(t('common.checking'), style: const TextStyle(color: Colors.grey));
+      return Text(t('common.checking'), style: KidText.caption(context).copyWith(color: KidColor.unknown));
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,14 +349,14 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
         if (telemetry.warnings.isNotEmpty)
           Text(
             telemetry.warnings.join(', '),
-            style: const TextStyle(color: Colors.orange),
+            style: KidText.caption(context).copyWith(color: KidColor.notNow),
           ),
         if (_queuedEventCount > 0)
           Padding(
-            padding: const EdgeInsets.only(top: 4),
+            padding: const EdgeInsets.only(top: KidSpace.xs),
             child: Text(
               t('deviceStatus.queuedUpdates', options: {'count': _queuedEventCount}),
-              style: const TextStyle(color: Colors.orange),
+              style: KidText.caption(context).copyWith(color: KidColor.notNow),
             ),
           ),
       ],
@@ -366,7 +367,7 @@ class _DeviceHomeScreenState extends ConsumerState<DeviceHomeScreen> with Widget
     return ListTile(
       leading: Icon(
         status.isGranted ? Icons.check_circle : Icons.warning_amber_rounded,
-        color: status.isGranted ? Colors.green : Colors.orange,
+        color: status.isGranted ? KidColor.done : KidColor.notNow,
       ),
       title: Text(t(status.labelKey)),
       trailing: status.isGranted
