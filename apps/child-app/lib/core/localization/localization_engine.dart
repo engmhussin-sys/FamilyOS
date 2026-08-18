@@ -239,7 +239,24 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'pairing.instruction': 'Ask a grown-up for the code from their app, then type it in below.',
     'pairing.codeLabel': 'Pairing code',
     'pairing.codeHint': 'XXXX-XXXX',
-    'pairing.genericError': "Something went wrong. Let's try again!",
+    // TWO OUTCOMES, AND ONLY ONE OF THEM IS ABOUT THE CODE THE CHILD TYPED.
+    //
+    // `/pairing/accept` answers a wrong or expired code with a bare
+    // UnauthorizedException, so B3's per-status fallback supplies «انتهت
+    // جلستك. سجّل الدخول مرة أخرى للمتابعة.» — right for an expired session,
+    // meaningless to a child on the first screen this app shows, who has no
+    // session and has never logged in. There is no endpoint-written sentence
+    // to carry through, so these two are the client's, and the server's own
+    // text stays on `ApiFailure.diagnostic` where no widget reads it.
+    //
+    // Neither of them says "wrong", "failed", or blames the reader. The
+    // second opens by saying the problem is not the child's, because a
+    // first-run network error is the easiest moment in the whole product to
+    // teach a seven-year-old that they broke something.
+    'pairing.codeNotAccepted':
+        "That code isn't working. Ask a grown-up to check it, or to make you a new one.",
+    'pairing.cannotReach':
+        "It's not you — we can't get through right now. Try again in a little bit.",
     'pairing.submit': "Let's Go!",
 
     'myGrowth.title': 'My Growth',
@@ -643,7 +660,10 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'pairing.instruction': 'اطلب من حد كبير الكود من تطبيقه، وبعدين اكتبه تحت.',
     'pairing.codeHint': 'XXXX-XXXX',
     'pairing.codeLabel': 'كود الاقتران',
-    'pairing.genericError': 'حصل حاجة غلط. يلا نجرب تاني!',
+    'pairing.codeNotAccepted':
+        'الكود ده مش شغّال. اطلب من حد كبير يتأكد منه، أو يعملك كود جديد.',
+    'pairing.cannotReach':
+        'مش منك \u2014 مش قادرين نوصل دلوقتي. جرّب تاني بعد شوية.',
     'pairing.submit': 'يلا بينا!',
 
     'myGrowth.title': 'نموّي',

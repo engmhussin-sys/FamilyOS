@@ -141,4 +141,118 @@ void main() {
       expect(ApiFailure.from(original).requestId, 'req_1');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // WHOSE PROBLEM IS IT. `PairingScreen` may only say something about the code
+  // a child typed when the SERVER said so; everything else is the grown-ups'
+  // problem and must be worded that way.
+  // -------------------------------------------------------------------------
+  group('ApiFailure.isServerRefusal', () {
+    test('true for the 401 that /pairing/accept answers a wrong or expired '
+        'code with', () {
+      final failure = ApiFailure.from(ApiException(
+        'Invitation code is invalid or has expired.',
+        401,
+        code: 'UNAUTHENTICATED',
+        messageAr: 'انتهت جلستك. سجّل الدخول مرة أخرى للمتابعة.',
+        requestId: 'req_pair_1',
+      ));
+
+      expect(failure.isServerRefusal, isTrue);
+    });
+
+    test('false when nothing reached the server', () {
+      final offline = ApiFailure.from(ApiException(
+        'No internet connection.',
+        0,
+        code: 'CLIENT_OFFLINE',
+        messageAr: 'مفيش نت دلوقتي.',
+      ));
+
+      expect(offline.isOffline, isTrue);
+      expect(offline.isServerRefusal, isFalse);
+    });
+
+    test('FALSE FOR A 502 — a proxy page is not a verdict on what the child '
+        'typed', () {
+      final failure = ApiFailure.from(ApiException(
+        'The request returned an invalid status code of 502.',
+        502,
+      ));
+
+      expect(failure.isUnexpected, isTrue);
+      expect(failure.isServerRefusal, isFalse);
+    });
+
+    test('false for something that is not even an ApiException — the server '
+        'never saw anything', () {
+      final failure = ApiFailure.from(
+        const FormatException('Unexpected end of input'),
+      );
+
+      expect(failure.isServerRefusal, isFalse);
+      expect(failure.isUnexpected, isTrue);
+    });
+  });
+
+  group('ApiFailure.isRateLimited', () {
+    test('a 429 is a verdict on the timing, never on the code — a child '
+        'retyping a code read out to them will trip the throttle with a '
+        'perfectly good one', () {
+      final failure = ApiFailure.from(ApiException(
+        'Too many requests.',
+        429,
+        code: 'RATE_LIMITED',
+        messageAr: 'استنى شوية وجرّب تاني.',
+      ));
+
+      expect(failure.isRateLimited, isTrue);
+      // It is still a 4xx the server answered; the screen combines the two.
+      expect(failure.isServerRefusal, isTrue);
+    });
+  });
+
+  group('ApiFailure.withClientSentence', () {
+    test('replaces what is shown and keeps everything a log needs, including '
+        "the server's own untouched text", () {
+      final original = ApiFailure.from(ApiException(
+        'Invitation code is invalid or has expired.',
+        401,
+        code: 'UNAUTHENTICATED',
+        messageAr: 'انتهت جلستك. سجّل الدخول مرة أخرى للمتابعة.',
+        requestId: 'req_pair_2',
+      ));
+
+      final worded = original.withClientSentence('الكود ده مش شغّال');
+
+      // What the child reads, in either locale — the caller already resolved
+      // it, so the flag cannot pick the wrong one.
+      expect(worded.displayFor(arabic: true), 'الكود ده مش شغّال');
+      expect(worded.displayFor(arabic: false), 'الكود ده مش شغّال');
+      // The session sentence — right for a session, wrong for a child on the
+      // first screen — is gone from everything a widget reads.
+      expect(worded.display, isNot(contains('سجّل الدخول')));
+
+      // AND NOTHING DIAGNOSTIC WAS DROPPED.
+      expect(worded.diagnostic, 'Invitation code is invalid or has expired.');
+      expect(worded.code, 'UNAUTHENTICATED');
+      expect(worded.statusCode, 401);
+      expect(worded.requestId, 'req_pair_2');
+      // The classification still holds on the reworded copy, so a screen can
+      // word first and branch after without changing meaning.
+      expect(worded.isServerRefusal, isTrue);
+    });
+
+    test('a failure nobody worded keeps its transport text in diagnostic '
+        'after being reworded', () {
+      final worded = ApiFailure.from(ApiException(
+        'The request returned an invalid status code of 502.',
+        502,
+      )).withClientSentence('مش منك — النت بطيء شوية.');
+
+      expect(worded.display, 'مش منك — النت بطيء شوية.');
+      expect(worded.diagnostic, contains('invalid status code of 502'));
+      expect(worded.display, isNot(contains('502')));
+    });
+  });
 }

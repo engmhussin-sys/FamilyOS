@@ -118,6 +118,62 @@ class ApiFailure {
   /// never on the sentence itself.
   bool get isUnexpected => code == _unexpectedCode;
 
+  /// THE SERVER SAW THIS REQUEST AND REFUSED IT. Twin of the Parent App's
+  /// getter of the same name — see that file for the full argument.
+  ///
+  /// True only for a 4xx that came back through the B3 filter. False for
+  /// anything that never got an answer (offline, timeout, [unexpected] —
+  /// which includes a 4xx from a proxy that never reached the filter) and
+  /// false for a 5xx, where the request arrived and the server broke.
+  ///
+  /// ON A CHILD'S SCREEN THIS DECIDES WHOSE PROBLEM IT IS. "The code you
+  /// typed is not the right one" is a sentence about the child's input, and
+  /// may only be said when the SERVER said so. A dropped socket or a 502 is
+  /// the grown-ups' problem and must never be worded as if the child did
+  /// something wrong.
+  bool get isServerRefusal =>
+      !isOffline &&
+      !isTimeout &&
+      !isUnexpected &&
+      statusCode != null &&
+      statusCode! >= 400 &&
+      statusCode! < 500;
+
+  /// The throttle answered, not the business rule. A 429 says nothing about
+  /// whether what was submitted was right — a child retyping a code they were
+  /// read aloud will hit `/pairing/accept`'s limit with a perfectly good one.
+  bool get isRateLimited => statusCode == 429 || code == 'RATE_LIMITED';
+
+  /// THE NARROW CASE WHERE THE CLIENT, NOT THE SERVER, OWNS THE SENTENCE.
+  ///
+  /// Everywhere else in this app the server's Arabic IS the product (CONTEXT
+  /// §3 principle 7) and is carried through untouched. `/pairing/accept` is
+  /// the exception, and it is a real one: a wrong or expired code is a bare
+  /// `UnauthorizedException`, so B3's per-status fallback supplies the
+  /// Arabic — «انتهت جلستك. سجّل الدخول مرة أخرى للمتابعة.» That sentence is
+  /// correct for an expired session and meaningless to a seven-year-old on
+  /// the first screen this app ever shows, who has no session and has never
+  /// logged in. There is no endpoint-specific sentence to preserve here,
+  /// because the endpoint never wrote one.
+  ///
+  /// [sentence] is stored in BOTH [message] and [messageAr] on purpose: it is
+  /// not a translation pair, it is one line the caller already resolved in
+  /// the reader's own locale through `LocaleController.t`, so [displayFor]
+  /// must return it whichever way the locale flag points.
+  ///
+  /// NOTHING DIAGNOSTIC IS LOST. `code`, `statusCode`, `requestId` and
+  /// `fieldErrors` all survive, and the server's untouched text stays in
+  /// [diagnostic] — which no widget reads.
+  ApiFailure withClientSentence(String sentence) => ApiFailure(
+        message: sentence,
+        messageAr: sentence,
+        code: code,
+        statusCode: statusCode,
+        requestId: requestId,
+        fieldErrors: fieldErrors,
+        diagnostic: _firstNonEmpty([diagnostic, message]),
+      );
+
   /// THE ONE CONVERSION, AND THE POINT AT WHICH RAW TEXT STOPS.
   ///
   /// Three outcomes, in order:

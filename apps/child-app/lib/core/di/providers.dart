@@ -8,6 +8,7 @@ import '../platform/agent_channel_impl.dart';
 import '../storage/secure_token_storage.dart';
 import '../../features/pairing/api/pairing_api.dart';
 import '../../features/pairing/application/device_registration_service.dart';
+import '../../features/pairing/data/pairing_repository.dart';
 import '../../features/pairing/application/heartbeat_service.dart';
 import '../../features/pairing/application/push_token_registration_service.dart';
 import '../../features/device_status/application/capability_reporting_service.dart';
@@ -112,6 +113,13 @@ final deviceRegistrationServiceProvider = Provider<DeviceRegistrationService>((r
     ref.watch(antiTamperProvider),
   );
 });
+
+/// The boundary `PairingScreen` now reads through, so `ApiException` ->
+/// `ApiFailure` happens below the widget layer rather than inside it. The
+/// service provider above is untouched — nothing else needed rewiring.
+final childPairingRepositoryProvider = Provider<ChildPairingRepository>(
+  (ref) => ChildPairingRepository(ref.watch(deviceRegistrationServiceProvider)),
+);
 
 // --- Sprint 5: Runtime Enforcement Engine ---
 
