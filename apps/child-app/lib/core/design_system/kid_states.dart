@@ -17,25 +17,38 @@ import 'kid_tokens.dart';
 /// Every string is passed in and resolved by the caller through
 /// `LocaleController.t(...)`. No sentence is hardcoded here.
 
+/// WAITING, WITH SOMETHING TO LOOK AT.
+///
+/// Sparky and a line of text stay — a child alone with a spinner does not
+/// know whether anything is coming — but the spinner underneath is now a
+/// skeleton of the cards that are about to land, so the wait shows the
+/// shape of the answer and the content does not jump when it arrives.
+/// Pass `skeletonRows: null` for the rare place with no predictable
+/// layout; the spinner is still there for it.
 class KidLoadingState extends StatelessWidget {
-  const KidLoadingState({super.key, this.label});
+  const KidLoadingState({super.key, this.label, this.skeletonRows = 3});
 
   final String? label;
+  final int? skeletonRows;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: KidSpace.xxl),
+      padding: const EdgeInsets.symmetric(vertical: KidSpace.lg),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const SparkyMascot(mood: SparkyMood.neutral, size: 64),
-          KidSpace.gapLg,
-          const CircularProgressIndicator(),
+          const SparkyMascot(mood: SparkyMood.neutral, size: KidSize.iconHero),
+          KidSpace.gapMd,
           if (label != null) ...[
-            KidSpace.gapLg,
             Text(label!, style: KidText.caption(context), textAlign: TextAlign.center),
+            KidSpace.gapMd,
           ],
+          if (skeletonRows != null)
+            KidSkeletonList(rows: skeletonRows!)
+          else
+            const CircularProgressIndicator(),
         ],
       ),
     );
@@ -178,6 +191,7 @@ class KidStateView<T> extends StatelessWidget {
     this.arabic = true,
     this.emptyActionLabel,
     this.onEmptyAction,
+    this.skeletonRows = 3,
   });
 
   final UiState<T> state;
@@ -192,10 +206,14 @@ class KidStateView<T> extends StatelessWidget {
   final String? emptyActionLabel;
   final VoidCallback? onEmptyAction;
 
+  /// How many card outlines the wait draws. `null` falls back to the
+  /// spinner, for a screen whose layout genuinely is not predictable.
+  final int? skeletonRows;
+
   @override
   Widget build(BuildContext context) {
     return state.when(
-      loading: () => KidLoadingState(label: loadingLabel),
+      loading: () => KidLoadingState(label: loadingLabel, skeletonRows: skeletonRows),
       empty: () => KidEmptyState(
         title: emptyTitle,
         body: emptyBody,
