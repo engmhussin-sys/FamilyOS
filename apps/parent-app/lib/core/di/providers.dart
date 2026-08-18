@@ -23,6 +23,8 @@ import '../../features/support/data/support_repository.dart';
 import '../../features/family/api/consent_api.dart';
 import '../../features/family/application/child_detail_controller.dart';
 import '../../features/family/data/child_profile_repository.dart';
+import '../../features/safety/application/safety_controller.dart';
+import '../../features/safety/data/safety_repository.dart';
 import '../../features/settings/api/account_api.dart';
 import '../../features/settings/data/account_repository.dart';
 import '../../features/billing/api/campaign_api.dart';
@@ -135,13 +137,34 @@ final childProfileRepositoryProvider = Provider<ChildProfileRepository>(
 );
 
 // ---------------------------------------------------------------------------
-// ONE CHILD — the surface `abny://child/<childId>` has been falling off.
+// THE TWO SURFACES A DEEP LINK USED TO FALL OFF: SAFETY, AND ONE CHILD.
 //
-// Composed from an API that ALREADY EXISTS: `DashboardApi`, which owns
-// `/children` and now `/children/:childId` as well. No second HTTP client and
-// no endpoint this backend does not serve.
+// Both are composed from APIs that ALREADY EXIST — `NotificationsApi.list()`
+// (the inbox's own call) and `DashboardApi` (`/children` and
+// `/children/:childId`). No second HTTP client, no new endpoint, and no route
+// this backend does not serve. See `features/safety/domain/safety_event.dart`
+// for why the safety feed reads the notifications route rather than
+// `GET /pairing/alerts`.
 // ---------------------------------------------------------------------------
 
+final safetyRepositoryProvider = Provider<SafetyRepository>(
+  (ref) => SafetyRepository(
+    ref.watch(notificationsApiProvider),
+    ref.watch(dashboardApiProvider),
+  ),
+);
+
+/// `autoDispose` because a safety feed read on Tuesday is not the answer on
+/// Thursday, and this screen is usually opened from a link about something that
+/// has just happened. Keeping it alive would hand a parent a cached list on the
+/// one surface where staleness is least acceptable.
+final safetyControllerProvider =
+    StateNotifierProvider.autoDispose<SafetyController, SafetyState>(
+  (ref) => SafetyController(ref.watch(safetyRepositoryProvider)),
+);
+
+/// `family` on the childId, `autoDispose` for the same reason every other
+/// id-scoped controller in this file is.
 final childDetailControllerProvider = StateNotifierProvider.autoDispose
     .family<ChildDetailController, UiState<ChildProfile>, String>(
   (ref, childId) =>

@@ -411,4 +411,9 @@ Future<void> pumpParentScreen(
 
 /// The Arabic string [key] resolves to, so an assertion names the KEY and no
 /// test hard-codes a sentence that a copy change would break.
-String ar(String key) => translate(AppLocale.ar, key);
+///
+/// [count] and [options] are forwarded unchanged, for the keys that interpolate
+/// (`{{name}}`, `{{count}}`, `{{time}}`) — a test asserting one of those has to
+/// resolve it exactly as the screen did, or it is asserting a different string.
+String ar(String key, {int? count, Map<String, Object>? options}) =>
+    translate(AppLocale.ar, key, count: count, options: options);

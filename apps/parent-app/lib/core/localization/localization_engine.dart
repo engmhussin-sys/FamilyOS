@@ -752,6 +752,63 @@ const Map<AppLocale, Map<String, String>> _resources = {
         'This part of the app is not ready yet — we have kept you in your notifications.',
 
     // -----------------------------------------------------------------------
+    // THE SAFETY SURFACE. Every line here is APP CHROME — the label of a kind
+    // of event, the band, and what a parent can do about it. The sentence that
+    // says WHAT HAPPENED is the server's (`title`/`body`), rendered verbatim
+    // and never through this map.
+    //
+    // TONE, AND IT IS A REQUIREMENT RATHER THAN A PREFERENCE: calm, specific,
+    // and never alarming for its own sake. Each guidance line answers «what can
+    // I do», because an alert a parent cannot act on is only anxiety. The
+    // wellbeing line additionally states the privacy guarantee out loud, since
+    // the server deliberately sends a GENERIC alert on that path and a parent
+    // may otherwise assume the app is withholding something.
+    // -----------------------------------------------------------------------
+    'safety.title': 'Safety & protection',
+    'safety.introTitle': 'Protection alerts for your family',
+    'safety.introBody':
+        'Protection and screen-time alerts, newest first, exactly as they reached you. What your child writes is never shown here.',
+    'safety.emptyTitle': 'No alerts',
+    'safety.emptyBody':
+        'Nothing about protection or screen time has come through. That is the normal state.',
+    'safety.errorTitle': 'The alerts could not be shown',
+    'safety.notInRecentTitle': 'We could not find that alert',
+    'safety.notInRecent':
+        'That alert is no longer among the most recent ones. The list below is the latest that reached you.',
+    'safety.genericType': 'Protection alert',
+    'safety.genericGuidance': 'Check the device at the next convenient moment.',
+    'safety.new': 'New',
+    'safety.openChild': 'Open the child page',
+    'safety.openChildNamed': 'Open the page for {{name}}',
+    'safety.whenToday': 'Today {{time}}',
+    'safety.whenYesterday': 'Yesterday {{time}}',
+    'safety.whenOn': '{{date}} — {{time}}',
+
+    'safetyBand.needsAttention': 'Needs your attention',
+    'safetyBand.worthReviewing': 'Worth reviewing',
+    'safetyBand.forInformation': 'For your information',
+
+    'safetyType.ACCESSIBILITY_DISABLED': 'Protection is off on the device',
+    'safetyType.PROTECTION_BYPASS_ATTEMPT': 'An attempt to turn protection off',
+    'safetyType.CHILD_WELLBEING_CHECKIN': 'Check in with your child',
+    'safetyType.POLICY_VIOLATION': 'Something to review in the settings',
+    'safetyType.SCREEN_TIME_EXCEEDED': 'The screen-time allowance ended',
+    'safetyType.RUNTIME_ALERT': 'An alert from the device',
+
+    'safetyGuidance.ACCESSIBILITY_DISABLED':
+        'While this service is off, no screen-time limit and no blocking rule is applied. Open the Accessibility settings on the device and turn it back on.',
+    'safetyGuidance.PROTECTION_BYPASS_ATTEMPT':
+        'An attempt to turn protection off was recorded. Check the device, then make it a calm conversation with your child before changing any setting.',
+    'safetyGuidance.CHILD_WELLBEING_CHECKIN':
+        'What your child wrote was not stored and is not shown to you — only this general alert was sent. The best next step is a quiet moment and a simple question: how was your day?',
+    'safetyGuidance.POLICY_VIOLATION':
+        'Nothing needs doing right now. Review the settings for this device when it suits you.',
+    'safetyGuidance.SCREEN_TIME_EXCEEDED':
+        'The limit was applied on the device automatically. You can review and adjust the time from the child page.',
+    'safetyGuidance.RUNTIME_ALERT':
+        'The device recorded this alert. Check the device status at the next convenient moment.',
+
+    // -----------------------------------------------------------------------
     // ONE CHILD — the screen `abny://child/<id>` opens, and the host for the
     // three child-scoped screens no link can ever name a child for.
     // -----------------------------------------------------------------------
@@ -1469,6 +1526,60 @@ const Map<AppLocale, Map<String, String>> _resources = {
 
     'deepLink.unavailable':
         'هذا الجزء من التطبيق ليس جاهزًا بعد — أبقيناك في صندوق الإشعارات.',
+
+    // -----------------------------------------------------------------------
+    // سطح الأمان والحماية. كل سطر هنا نصٌّ يخصّ التطبيق نفسه — اسم نوع الحدث،
+    // ودرجة الاهتمام، وما يمكن للأب أو الأم فعله. أمّا الجملة التي تصف ما حدث
+    // فهي من الخادم (`title` / `body`) وتُعرض كما هي ولا تمرّ من هنا أبدًا.
+    //
+    // النبرة شرطٌ لا تفضيل: هادئة ومحدّدة ولا تُثير القلق بلا داعٍ. كل سطر
+    // إرشاد يجيب على «ماذا أفعل الآن؟»، لأنّ تنبيهًا بلا خطوة عملية ليس إلا
+    // قلقًا. وسطر الاطمئنان يذكر ضمانة الخصوصية صراحةً، لأنّ الخادم يرسل
+    // تنبيهًا عامًّا عن قصد في هذا المسار.
+    // -----------------------------------------------------------------------
+    'safety.title': 'الأمان والحماية',
+    'safety.introTitle': 'ما يخصّ حماية أطفالك',
+    'safety.introBody':
+        'تنبيهات الحماية ووقت الشاشة كما وصلتك، الأحدث أولًا. ولا نعرض هنا ما يكتبه طفلك.',
+    'safety.emptyTitle': 'لا توجد تنبيهات',
+    'safety.emptyBody':
+        'لم يصلك أي تنبيه يخصّ الحماية أو وقت الشاشة. وهذا هو الوضع الطبيعي.',
+    'safety.errorTitle': 'تعذّر عرض التنبيهات',
+    'safety.notInRecentTitle': 'لم نعثر على هذا التنبيه',
+    'safety.notInRecent':
+        'هذا التنبيه لم يعد ضمن أحدث التنبيهات. والقائمة أدناه هي آخر ما وصلك.',
+    'safety.genericType': 'تنبيه يخصّ الحماية',
+    'safety.genericGuidance': 'راجع الجهاز في أول وقت مناسب لك.',
+    'safety.new': 'جديد',
+    'safety.openChild': 'افتح صفحة الطفل',
+    'safety.openChildNamed': 'افتح صفحة {{name}}',
+    'safety.whenToday': 'اليوم {{time}}',
+    'safety.whenYesterday': 'أمس {{time}}',
+    'safety.whenOn': '{{date}} — {{time}}',
+
+    'safetyBand.needsAttention': 'يحتاج انتباهك',
+    'safetyBand.worthReviewing': 'يستحق المراجعة',
+    'safetyBand.forInformation': 'للعلم',
+
+    'safetyType.ACCESSIBILITY_DISABLED': 'الحماية متوقّفة على الجهاز',
+    'safetyType.PROTECTION_BYPASS_ATTEMPT': 'محاولة لإيقاف الحماية',
+    'safetyType.CHILD_WELLBEING_CHECKIN': 'اطمئنّ على طفلك',
+    'safetyType.POLICY_VIOLATION': 'أمر يستحق مراجعتك في الإعدادات',
+    'safetyType.SCREEN_TIME_EXCEEDED': 'انتهى وقت الشاشة المخصّص',
+    'safetyType.RUNTIME_ALERT': 'تنبيه من الجهاز',
+
+    'safetyGuidance.ACCESSIBILITY_DISABLED':
+        'ما دامت هذه الخدمة متوقّفة، لا يُطبَّق أي حدٍّ لوقت الشاشة ولا أي قاعدة حجب. افتح إعدادات إمكانية الوصول على الجهاز وأعد تفعيلها.',
+    'safetyGuidance.PROTECTION_BYPASS_ATTEMPT':
+        'سُجِّلت محاولة لإيقاف الحماية. تحقّق من الجهاز، ثم اجعلها حديثًا هادئًا مع طفلك قبل تغيير أي إعداد.',
+    'safetyGuidance.CHILD_WELLBEING_CHECKIN':
+        'ما كتبه طفلك لم يُحفَظ ولا يُعرض لك — وصلك تنبيه عام فقط. وأفضل خطوة الآن وقتٌ هادئ وسؤال بسيط: كيف كان يومك؟',
+    'safetyGuidance.POLICY_VIOLATION':
+        'لا حاجة إلى إجراء فوري. راجع إعدادات هذا الجهاز حين يناسبك.',
+    'safetyGuidance.SCREEN_TIME_EXCEEDED':
+        'طُبِّق الحد تلقائيًا على الجهاز. ويمكنك مراجعة الوقت وتعديله من صفحة الطفل.',
+    'safetyGuidance.RUNTIME_ALERT':
+        'سجّل الجهاز هذا التنبيه. راجع حالة الجهاز في أول وقت مناسب لك.',
 
     // -----------------------------------------------------------------------
     // صفحة طفل واحد — ما يفتحه `abny://child/<id>`، وهي المضيف للشاشات الثلاث
