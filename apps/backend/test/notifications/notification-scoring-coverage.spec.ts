@@ -205,7 +205,7 @@ function bareContext(eventType: string): NotificationContext {
     locale: 'ar',
     timeZone: 'Africa/Cairo',
     countryCode: null,
-    event: { eventType, sourceEventId: `guard:${eventType}`, trigger: 'DOMAIN_EVENT', variables: {} },
+    event: { eventType, cause: null, sourceEventId: `guard:${eventType}`, trigger: 'DOMAIN_EVENT', variables: {} },
     recentActivity: { completionsToday: 0, minutesSinceLastActivity: null, isEngagedNow: false },
     recentNotifications: [],
     goal: null,

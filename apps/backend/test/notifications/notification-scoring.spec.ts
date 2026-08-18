@@ -46,6 +46,7 @@ function ctx(overrides: Partial<NotificationContext> = {}): NotificationContext 
     countryCode: 'EG',
     event: {
       eventType: 'REWARD_GRANTED',
+      cause: null,
       sourceEventId: 'evt:test',
       trigger: 'DOMAIN_EVENT',
       variables: {},
@@ -296,6 +297,7 @@ describe('PHASE F — explainable scoring', () => {
     const worked = ctx({
       event: {
         eventType: 'LEARNING_GOAL_ACHIEVED',
+        cause: null,
         sourceEventId: 'evt:worked-example',
         trigger: 'DEADLINE_WATCH',
         variables: { unitNoun: 'آيات' },

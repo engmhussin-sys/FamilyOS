@@ -122,6 +122,20 @@ export class NotificationRewardConsumer implements OnModuleInit {
       achievementSummaryAr?: string | null;
       /** Summed from `rewards_ledger_entries` by the same producer. */
       pointsGranted?: number;
+      /**
+       * `F1-002` — THE ORIGINATING DOMAIN EVENT TYPE. `RewardsCompletionConsumer`
+       * has always put it here (`sourceEventType: envelope.type`); this consumer
+       * has always thrown it away. It is the whole of the defect: the SPECIFIC
+       * cause existed on the wire and was collapsed into the generic one at the
+       * door.
+       */
+      sourceEventType?: string | null;
+      /** `F1-002` — `CompletionEvent.verifiedBy`: `PARENT` only when a human
+       * pressed approve. */
+      verifiedBy?: string | null;
+      /** `F1-002` — the streak length, recomputed from real completion rows by
+       * `StreakDetectionConsumer`. `null` for every non-streak cause. */
+      streakDays?: number | null;
     };
     const childId = payload.childId ?? envelope.childId;
     if (!childId) {
@@ -185,10 +199,81 @@ export class NotificationRewardConsumer implements OnModuleInit {
           ? payload.pointsGranted
           : null;
 
+      /**
+       * ====================================================================
+       * `F1-002` — THE CAUSE, PRESERVED INSTEAD OF COLLAPSED.
+       * ====================================================================
+       *
+       * WHAT WAS MEASURED. Four domain causes — `STREAK_ACHIEVED`,
+       * `DAILY_GOAL_COMPLETED`, `LEARNING_GOAL_ACHIEVED`, `ACHIEVEMENT_VERIFIED`
+       * — reach the Rewards Engine, are paid, and arrive at THIS door as one
+       * word: `REWARD_GRANTED`. The specific cause was on the envelope the whole
+       * time (`sourceEventType`, written by `RewardsCompletionConsumer`) and was
+       * read by nothing. So a child who kept a seven-day streak and a child
+       * whose parent confirmed «الآيات 1–5 من سورة الملك» were told the same
+       * sentence, and four copy variants — each in four tone bands, in Arabic
+       * and English, each with a scoring row and a deep-link destination — could
+       * not be selected by any production path.
+       *
+       * WHAT IS AND IS NOT CHANGED BY PASSING IT.
+       *   `eventType` — UNCHANGED, and that is deliberate. `notifications.type`
+       *      is what `notification-scoring.ts` weights, what
+       *      `notification-class.ts` classifies for quiet hours and what the
+       *      analytics count; a producer that renamed it to say something about
+       *      copy would move a reporting axis to fix a sentence.
+       *   `cause`     — NEW, and read by exactly one thing: the `COPY_RULES`
+       *      table in `RuleBasedNotificationDecisionProvider`, which chooses the
+       *      key and records it on `notification_decisions.copy_key`.
+       *
+       * NO NEW NOTIFICATION IS PRODUCED. This is still the same two
+       * `handleEvent` calls — one parent, one child — behind the same
+       * `ConsumerIdempotency.once` and the same `sourceEventId`. B9's
+       * `notifications (family_id, source_event_id, user_id)` and
+       * `child_messages (family_id, source_event_id)` refuse a second row for
+       * the same cause exactly as before; making the sentence specific cannot
+       * make the count two.
+       */
+      const cause =
+        typeof payload.sourceEventType === 'string' && payload.sourceEventType.trim().length > 0
+          ? payload.sourceEventType.trim()
+          : null;
+
+      /**
+       * THE CHILD'S FACTS, AND THE TWO GATES ON THEM.
+       *
+       * `days` — the streak length, stated only when the cause IS a streak.
+       *      A day count attached to a hydration goal would be a number about
+       *      something else.
+       * `goalTitle` — `RewardProgram.targetSummaryAr`, stated to the CHILD only
+       *      when a HUMAN confirmed the achievement, because the child's
+       *      sentence is «تم تأكيد إنجازك … من أهلك». `AchievementService`
+       *      records `SYSTEM` for every server-verified program (SELF_CHECK,
+       *      DURATION, QUIZ) and `PARENT` only when a parent pressed approve, so
+       *      this gate is the difference between a true sentence and a flattering
+       *      one. The PARENT's own sentence is not gated: «محمد أكمل … وحصل على
+       *      ٢٠ نقطة» is true however the server established it.
+       *
+       * A missing fact is OMITTED rather than defaulted. The rule that would
+       * select the specific template then does not fire, `REWARD_GRANTED_CHILD`
+       * is chosen instead, and the child reads a whole sentence — never a
+       * `{placeholder}`, which `renderNotificationCopy` would refuse anyway, and
+       * never `GENERIC`.
+       */
+      const streakDays =
+        cause === 'STREAK_ACHIEVED' &&
+        typeof payload.streakDays === 'number' &&
+        Number.isInteger(payload.streakDays) &&
+        payload.streakDays > 0
+          ? payload.streakDays
+          : null;
+      const confirmedByAHuman = payload.verifiedBy === 'PARENT';
+      const childGoalTitle = cause === 'ACHIEVEMENT_VERIFIED' && confirmedByAHuman ? summaryAr : null;
+
       const parent = await this.engine.handleEvent({
         familyId: envelope.familyId,
         childId,
         eventType: 'REWARD_GRANTED',
+        cause,
         sourceEventId,
         trigger: 'DOMAIN_EVENT',
         variables: {
@@ -237,8 +322,18 @@ export class NotificationRewardConsumer implements OnModuleInit {
         familyId: envelope.familyId,
         childId,
         eventType: 'REWARD_GRANTED_CHILD',
+        /**
+         * `F1-002` — the same cause, to the other audience. The TYPE is
+         * unchanged and so is the number of calls; only the sentence the
+         * provider can now select is different. See the block above `parent`.
+         */
+        cause,
         sourceEventId,
         trigger: 'DOMAIN_EVENT',
+        variables: {
+          ...(streakDays === null ? {} : { days: streakDays }),
+          ...(childGoalTitle === null ? {} : { goalTitle: childGoalTitle }),
+        },
       });
 
       this.assertChildAudience(child);

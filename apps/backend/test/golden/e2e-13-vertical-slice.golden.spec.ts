@@ -958,10 +958,31 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       );
       expect(parent.body).toContain(home.childName);
 
-      // THE CHILD'S IS ADDRESSED TO THE CHILD. Second person — «حصلتَ», not
-      // «حصل فلان» — and it does not name them, because you do not say a child's
-      // own name back at them on their own phone.
-      expect(child.body).toContain('حصلت');
+      /**
+       * THE CHILD'S IS ADDRESSED TO THE CHILD. Second person, and it does not
+       * name them, because you do not say a child's own name back at them on
+       * their own phone.
+       *
+       * `F1-002` — WHAT THIS ASSERTED BEFORE, VERBATIM:
+       *
+       *     expect(child.body).toContain('حصلت');
+       *
+       * That word came from `COPY_CATALOGUE.REWARD_GRANTED_CHILD` — «حصلت على
+       * مكافأة جديدة» — which was the ONLY sentence a child could ever receive
+       * for a reward, whatever earned it. `REWARD_GRANTED` is what four
+       * different domain causes collapse into at the notification door, so a
+       * child who kept a seven-day streak and this child, whose parent
+       * confirmed «الآيات ١–٥ من سورة الملك» after they submitted evidence and
+       * WAITED, read the identical line.
+       *
+       * The child now reads the answer to the thing they actually did — «تم
+       * تأكيد إنجازك في … من أهلك», `COPY_CATALOGUE.ACHIEVEMENT_VERIFIED` at
+       * this child's own tone band. The property this assertion was defending —
+       * SECOND PERSON, NOT THIRD, and never the child's own name — is asserted
+       * below and is unchanged; only the verb it happened to be spelled with
+       * has moved.
+       */
+      expect(child.body).toContain('إنجازك');
       expect(child.body).not.toContain(home.childName);
       expect(child.body).not.toContain('حصل ');
 
@@ -1064,12 +1085,39 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       const child = await childMessageRow();
 
       expect(child.body).not.toBe(parent.body);
+      /**
+       * `F1-002` — WHAT THIS ASSERTED BEFORE, VERBATIM:
+       *
+       *     expect(child.body).not.toContain(THE_TARGET_SUMMARY);
+       *     expect(child.body).not.toContain('سورة الملك');
+       *
+       * and the reason given was that the parent gaining detail must not drag
+       * the child's sentence along with it. THAT REASON STILL HOLDS AND IS
+       * STILL ASSERTED — the two sentences are still different sentences, and
+       * the child's still withholds the two facts it was written to withhold:
+       * the POINTS and the grant COUNT, which are a receipt read at a child.
+       *
+       * What changed is not the parent's sentence leaking into the child's; it
+       * is that the CHILD'S OWN CAUSE finally reaches the copy layer. This
+       * child submitted evidence against a goal and waited for a human to look
+       * at it, and «حصلت على مكافأة جديدة» never said that a human had. The
+       * catalogue has held «تم تأكيد إنجازك في {goalTitle}» in four tone bands
+       * and two languages since `F6-002` with nothing able to select it.
+       *
+       * THE TITLE IS NOT THE PARENT'S COPY. The parent reads «{childName} أكمل
+       * {goalTitle} اليوم وحصل على {points} نقطة. افتح التطبيق لتشجيعه» — a
+       * third-person report with a number and a call to act. The child reads a
+       * second-person confirmation with no number and no name. Same fact, two
+       * audiences, two registers.
+       */
+      expect(child.body).toContain(THE_TARGET_SUMMARY.replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)]));
+      // AND STILL NOT THE PARENT'S LATIN NUMERALS. `describeTargetSpec` writes
+      // «الآيات 1–5»; a child's Arabic sentence gets «الآيات ١–٥» (`PF-E-002`).
       expect(child.body).not.toContain(THE_TARGET_SUMMARY);
-      expect(child.body).not.toContain('سورة الملك');
       // No points, no counts: the child's own app already shows the balance.
       expect(child.body).not.toContain('نقطة');
       // Second person, and still not their own name back at them.
-      expect(child.body).toContain('حصلت');
+      expect(child.body).toContain('إنجازك');
       expect(child.body).not.toContain(home.childName);
 
       // PHASE F1 — AND THE PAYLOAD DID NOT HAND OVER WHAT THE SENTENCE
@@ -1085,7 +1133,14 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       // as of the parent's FCM payload.
       const childData = typeof child.data === 'string' ? JSON.parse(child.data) : child.data;
       expect(Object.keys(childData ?? {})).toEqual(['deepLink']);
-      expect(childData.deepLink).toBe('abny://rewards');
+      // `F1-002` — WAS `abny://rewards`, and it moved with the SENTENCE rather
+      // than on its own: `notification-destination.ts` sends
+      // `REWARD_GRANTED_CHILD` to the reward and `ACHIEVEMENT_VERIFIED` to the
+      // goal («the review happens ON the goal»), and the engine resolves the
+      // link from `composed.resolvedCopyKey` precisely so a tap can never land
+      // somewhere the sentence did not describe. The child is told their goal
+      // was confirmed, and the tap opens the goal.
+      expect(childData.deepLink).toBe('abny://goals');
       const childPayload = JSON.stringify(childData);
       for (const id of [home.familyId, home.childId, deviceId, programId, achievementId]) {
         if (id) expect(childPayload).not.toContain(id);
@@ -1194,13 +1249,22 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
       // names, at the band it names, must reproduce the stored sentence exactly
       // — which is what «the string is not typed into a service» means as an
       // assertion rather than as a claim.
+      //
+      // `F1-002` — WHAT THIS PASSED BEFORE, VERBATIM: `variables: {}`.
+      // `REWARD_GRANTED_CHILD` declares no variables, so an empty record
+      // reproduced it. The key the decision row now names is
+      // `ACHIEVEMENT_VERIFIED`, whose sentence states WHICH goal was confirmed,
+      // and the fact is read back out of the PROGRAM the parent created rather
+      // than restated here — a second derivation that drifted by one character
+      // would fail on this line.
       const rendered = renderNotificationCopy({
         key: decision.copy_key,
         audience: 'CHILD',
         toneBand: '11-13',
         locale: 'ar',
-        variables: {},
+        variables: { goalTitle: THE_TARGET_SUMMARY },
       });
+      expect(decision.copy_key).toBe('ACHIEVEMENT_VERIFIED');
       expect(child.body).toBe(rendered.body);
       expect(child.title).toBe(rendered.title);
 
@@ -1217,7 +1281,7 @@ describeGolden('GOLDEN E2E-13 — one Saudi household, from registration to an a
         audience: 'CHILD',
         toneBand: '5-7',
         locale: 'ar',
-        variables: {},
+        variables: { goalTitle: THE_TARGET_SUMMARY },
       });
       expect(child.body).not.toBe(forASevenYearOld.body);
 

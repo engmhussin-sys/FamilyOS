@@ -69,6 +69,13 @@ export interface NotificationEventInput {
   readonly familyId: string;
   readonly childId: string | null;
   readonly eventType: string;
+  /**
+   * `F1-002` — THE SPECIFIC DOMAIN CAUSE, when the type is a generic one.
+   * Passed straight through to `NotificationEventFacts.cause`, which carries the
+   * whole argument. Optional, because most producers have nothing more specific
+   * to say than their own type.
+   */
+  readonly cause?: string | null;
   readonly sourceEventId: string;
   readonly trigger: NotificationTrigger;
   readonly variables?: Readonly<Record<string, string | number>>;
@@ -133,6 +140,7 @@ export class NotificationContextAssembler {
       countryCode: await this.readCountry(input.familyId),
       event: {
         eventType: input.eventType,
+        cause: input.cause ?? null,
         sourceEventId: input.sourceEventId,
         trigger: input.trigger,
         variables: input.variables ?? {},

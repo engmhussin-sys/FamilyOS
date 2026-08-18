@@ -164,6 +164,73 @@ const COPY_RULES: readonly CopyRule[] = Object.freeze([
       typeof v.points === 'number' &&
       v.points > 0,
   },
+
+  /**
+   * ==========================================================================
+   * `F1-002` — THE CHILD'S OWN SENTENCE FOR THE THING THEY ACTUALLY DID.
+   * ==========================================================================
+   *
+   * WHAT WAS MEASURED. `STREAK_ACHIEVED` and `ACHIEVEMENT_VERIFIED` are
+   * REWARD-TRIGGER / DOMAIN types: they reach `RewardsCompletionConsumer`, which
+   * pays them, and the only thing that ever arrived at the notification door was
+   * the word `REWARD_GRANTED`. The cause was collapsed into the generic on the
+   * way, so a child who kept a seven-day streak and a child whose parent
+   * confirmed «الآيات 1–5 من سورة الملك» both read «حصلت على مكافأة جديدة
+   * اليوم» — and two sentences written in four tone bands, in two languages,
+   * with a scoring row and a deep-link destination each, were unreachable.
+   *
+   * THE FIX IS HERE AND NOT IN THE PRODUCER, for the reason the reward rule
+   * above states: the producer holds the FACTS (`c.event.cause`, `days`,
+   * `goalTitle`); WHICH SENTENCE those facts deserve is this provider's
+   * decision, recorded on `notification_decisions.copy_key`.
+   *
+   * `notifications.type` IS UNCHANGED — still `REWARD_GRANTED_CHILD`. The
+   * scorer, the quiet-hours matrix and the analytics read `type`, and none of
+   * them learns a new word from this table.
+   *
+   * PINNED TO `REWARD_GRANTED_CHILD`, so these rules cannot fire on any other
+   * child-facing event, and REQUIRING THE VARIABLE THE TEMPLATE NEEDS, so a
+   * producer that has the cause but not the fact falls through to
+   * `REWARD_GRANTED_CHILD` — a complete sentence — and never to a
+   * half-substituted template or to `GENERIC`.
+   */
+  {
+    key: 'STREAK_ACHIEVED',
+    audience: 'CHILD',
+    /**
+     * «حافظت على سلسلتك ٧ أيام 🎉» rather than «حصلت على مكافأة جديدة».
+     * `days` is the streak length `StreakDetectionConsumer` recomputed from the
+     * child's real completion rows with `computeCurrentStreak` — never a
+     * counter, never a client's claim.
+     */
+    when: (c, v) =>
+      c.event.eventType === 'REWARD_GRANTED_CHILD' &&
+      c.event.cause === 'STREAK_ACHIEVED' &&
+      typeof v.days === 'number' &&
+      Number.isFinite(v.days) &&
+      v.days > 0,
+  },
+  {
+    key: 'ACHIEVEMENT_VERIFIED',
+    audience: 'CHILD',
+    /**
+     * «تم تأكيد إنجازك في الآيات 1–5 من سورة الملك من أهلك» — the answer to a
+     * submission the child made and then waited on.
+     *
+     * `goalTitle` IS `RewardProgram.targetSummaryAr`, derived once by
+     * `describeTargetSpec` at program creation, and the producer supplies it to
+     * the CHILD ONLY WHEN A HUMAN ACTUALLY CONFIRMED. That is not a policy this
+     * rule invents — it is what the sentence SAYS. «أهلك أكدوا» about a
+     * SELF_CHECK, a DURATION or a QUIZ program, all of which the server verifies
+     * with `verifiedBy: 'SYSTEM'`, would be a false statement to a child, and a
+     * false statement is worse than a general one. Those keep
+     * `REWARD_GRANTED_CHILD`.
+     */
+    when: (c, v) =>
+      c.event.eventType === 'REWARD_GRANTED_CHILD' &&
+      c.event.cause === 'ACHIEVEMENT_VERIFIED' &&
+      usable(v.goalTitle),
+  },
 ]);
 
 @Injectable()

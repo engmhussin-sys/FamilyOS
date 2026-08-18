@@ -823,15 +823,52 @@ export function hasEnumOrPlaceholderLeak(text: string): boolean {
   return LEAK_PATTERN.test(text);
 }
 
+/**
+ * `F1-002` — WHY A SUBSTITUTED **STRING** MAY ALSO NEED ITS DIGITS TRANSLATED,
+ * AND WHY ONLY ON THE CHILD SURFACE TODAY.
+ *
+ * `formatNumber` has always been applied to NUMERIC variables, so «٢٠ نقطة»
+ * comes out in Arabic-Indic. It was never applied to STRING variables, and the
+ * one string this product substitutes into Arabic prose is
+ * `RewardProgram.targetSummaryAr` — «الآيات 1–5 من سورة الملك», written by
+ * `describeTargetSpec` with LATIN numerals. So a sentence carrying both read
+ * «… أكمل الآيات 1–5 من سورة الملك اليوم وحصل على ٢٠ نقطة»: two numeral systems
+ * in one line, which is exactly the «reads as a translation» failure `PF-E-002`
+ * names and rule 1 of this file forbids.
+ *
+ * THE CHILD SURFACE IS WHERE THAT RULE IS ACTUALLY PINNED — `e2e-06`, `e2e-10`
+ * and `e2e-13` each assert that a child's body matches NO Latin digit — so any
+ * child sentence that names a goal («أنهيت {goalTitle}»، «تم تأكيد إنجازك في
+ * {goalTitle}»، «يحتاج {goalTitle} مراجعة») was unshippable while every
+ * substituted string went through verbatim, WHATEVER its producer did. That is
+ * the defect this narrowing closes, and closing it is what makes those keys
+ * producible at all.
+ *
+ * IT IS DELIBERATELY NOT APPLIED TO PARENT COPY, and that is a scoping decision
+ * rather than a claim that Latin numerals are fine there. Three parent
+ * sentences are byte-pinned in suites this change has no mandate over
+ * (`e2e-05`, `e2e-13 STEP 14`, `e2e-14`), and every one of those pins asserts
+ * the CURRENT mixed-numeral string. Changing them is a deliberate act for
+ * whoever owns them; silently rewriting a parent's pinned sentence while fixing
+ * a child's would be a worse outcome than the inconsistency. RECORDED HERE so
+ * it is a known gap and not a forgotten one.
+ *
+ * `en` IS UNTOUCHED — `formatNumber` returns its input unchanged for every
+ * locale but `ar` — so an English household still reads «Al-Mulk 1–5», and
+ * `notifications.data` still carries the summary verbatim, because a machine
+ * field is not prose.
+ */
 function substitute(
   template: string,
   variables: Readonly<Record<string, string | number>>,
   locale: NotificationLocale,
+  localiseStringDigits: boolean,
 ): string {
   return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (whole, name: string) => {
     const value = variables[name];
     if (value === undefined || value === null || value === '') return whole;
-    return typeof value === 'number' ? formatNumber(value, locale) : String(value);
+    if (typeof value === 'number') return formatNumber(value, locale);
+    return localiseStringDigits ? formatNumber(String(value), locale) : String(value);
   });
 }
 
@@ -851,14 +888,16 @@ export function renderNotificationCopy(request: RenderCopyRequest): RenderedCopy
 
     const order: readonly CopyVariantKey[] =
       request.audience === 'PARENT' ? ['PARENT'] : BAND_FALLBACK[request.toneBand];
+    /** `F1-002` — see `substitute`'s own header for the whole argument. */
+    const localiseStringDigits = request.audience !== 'PARENT';
 
     for (const variantKey of order) {
       const localised = entry.variants[variantKey];
       if (!localised) continue;
       // Arabic is the fallback, never English — CONTEXT §1.
       const template = localised[request.locale] ?? localised.ar;
-      const title = substitute(template.title, request.variables, request.locale);
-      const body = substitute(template.body, request.variables, request.locale);
+      const title = substitute(template.title, request.variables, request.locale, localiseStringDigits);
+      const body = substitute(template.body, request.variables, request.locale, localiseStringDigits);
       if (hasEnumOrPlaceholderLeak(title) || hasEnumOrPlaceholderLeak(body)) return null;
       return {
         title,

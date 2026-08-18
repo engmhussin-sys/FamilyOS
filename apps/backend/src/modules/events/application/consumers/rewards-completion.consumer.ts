@@ -233,6 +233,24 @@ export class RewardsCompletionConsumer implements OnModuleInit {
         envelope.idempotencyKey,
       );
 
+      /**
+       * `F1-002` — THE STREAK LENGTH, CARRIED RATHER THAN DISCARDED.
+       *
+       * `StreakDetectionConsumer` puts `streakDays` on the completion's own
+       * `metadata` after recomputing it with `computeCurrentStreak` over the
+       * child's real completion rows — the same function `completeHabit` uses,
+       * never an incremented counter. It travelled this far and was then dropped
+       * here, so «حافظت على سلسلتك ٧ أيام» had no number to state and the child
+       * read the generic reward sentence instead.
+       *
+       * READ DEFENSIVELY because `metadata` has crossed the outbox as JSON: a
+       * value that is not a finite positive integer is treated as ABSENT, and an
+       * absent day count makes the notification fall back to the sentence that
+       * states no number. It is STABLE ACROSS REDELIVERY for the same reason
+       * `achievementSummaryAr` is — it rides on the immutable originating event.
+       */
+      const streakDays = positiveIntegerOrNull((completion.metadata ?? {}).streakDays);
+
       await this.outbox.write({
         type: 'REWARD_GRANTED',
         aggregateType: 'RewardGrant',
@@ -261,9 +279,35 @@ export class RewardsCompletionConsumer implements OnModuleInit {
           // inventing a title for a habit would not be.
           achievementSummaryAr,
           pointsGranted,
+          /**
+           * `F1-002` — WHO ESTABLISHED THAT THIS HAPPENED, forwarded verbatim
+           * from `CompletionEvent.verifiedBy`.
+           *
+           * The child's confirmation sentence is «تم تأكيد إنجازك … من أهلك»,
+           * and that sentence is only TRUE when a human confirmed it.
+           * `AchievementService` writes `SYSTEM` for every server-verified
+           * program (SELF_CHECK, DURATION, QUIZ) and `PARENT` only when a parent
+           * pressed approve, so this one word is what keeps the notification
+           * from telling a child their family confirmed something their family
+           * never saw.
+           */
+          verifiedBy: completion.verifiedBy,
+          /** `F1-002`. `null` for every completion that is not a streak
+           * milestone — see the derivation above. */
+          streakDays,
           newBalance: { xp: account.xp, coins: account.coins, stars: account.stars, level: account.level },
         },
       });
     });
   }
+}
+
+/**
+ * A day count fit to be stated to a child, or `null`. `metadata` crossed the
+ * outbox as JSON, so its shape is a claim; a fraction, a string, a zero or a
+ * negative number is treated as ABSENT rather than coerced, because the only
+ * consumer of this value renders it into «سلسلتك وصلت {days} أيام».
+ */
+function positiveIntegerOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
 }

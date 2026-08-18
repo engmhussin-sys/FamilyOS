@@ -65,6 +65,35 @@ export type NotificationCategory = string;
 export interface NotificationEventFacts {
   /** WHY: selects the copy key and the `notification-class.ts` row. */
   readonly eventType: string;
+  /**
+   * THE SPECIFIC DOMAIN CAUSE BEHIND A GENERIC EVENT TYPE — `F1-002`.
+   *
+   * WHY: the copy key, and nothing else. `REWARD_GRANTED` / `REWARD_GRANTED_CHILD`
+   * are the types the product PAYS on, and four different things earn them: a
+   * streak milestone, a daily goal, a learning goal, a verified achievement.
+   * Every one of those arrived at this door as the single word `REWARD_GRANTED`,
+   * so a child who kept a seven-day streak and a child whose parent confirmed
+   * «الآيات 1–5 من سورة الملك» read the identical sentence, and four written,
+   * scored, deep-linked copy variants were unreachable from production.
+   *
+   * It is the ORIGINATING DOMAIN EVENT TYPE (`STREAK_ACHIEVED`,
+   * `ACHIEVEMENT_VERIFIED`, …), carried through unchanged — never a new
+   * vocabulary invented at the notification layer, and never a value a client
+   * chose. `null` when the producer has no more specific cause than the type
+   * itself, which is the honest answer for every producer that is not a reward.
+   *
+   * IT DOES NOT TOUCH `notifications.type`, DELIBERATELY. The scorer
+   * (`notification-scoring.ts`), the quiet-hours matrix
+   * (`notification-class.ts`) and the analytics all read `type`; this fact
+   * varies only the COPY KEY, through `COPY_RULES`, and the chosen key is
+   * recorded on `notification_decisions.copy_key` so «why did this child read
+   * that sentence?» has an answer in a row.
+   *
+   * NOT: the payload it came from, the aggregate id, the device. One enum-shaped
+   * token, never rendered — no template references it, and
+   * `hasEnumOrPlaceholderLeak` would refuse the string if one ever did.
+   */
+  readonly cause: string | null;
   /** WHY: `notification-source-key.ts` composes idempotency from the cause; the
    * engine must pass the producer's key through unchanged, never invent one. */
   readonly sourceEventId: string;
