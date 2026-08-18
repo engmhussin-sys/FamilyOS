@@ -273,6 +273,16 @@ export class RewardsEngineService implements IRewardTriggerWriter {
     const caps = this.buildCaps(businessDate, applicable, grants);
 
     let actualGrantCount = 0;
+    /**
+     * SPRINT F1 (DECISION 2) — THE RULES THAT MATCHED AND WERE REFUSED BY THEIR
+     * OWN CAP. `applyEarn` returns `false` for a cap refusal AND for an
+     * idempotency duplicate, and this list deliberately does not try to tell
+     * them apart here: it records «a CAP was in force for this source and no row
+     * was written», and `announceCappedCompletion` resolves the ambiguity
+     * against the LEDGER, which is the only durable authority on whether this
+     * business event was ever paid.
+     */
+    const cappedSources: string[] = [];
 
     for (const grant of grants) {
       const grantIdempotencyKey = event.idempotencyKey ? `${event.idempotencyKey}:${grant.rewardType}:${grant.source}` : undefined;
@@ -284,6 +294,7 @@ export class RewardsEngineService implements IRewardTriggerWriter {
         const awarded = await this.repository.awardBadgeIfNotAlready(childId, badge.id);
         if (awarded) {
           const granted = await this.repository.applyEarn(childId, 'BADGE', 1, undefined, grant.source, grantIdempotencyKey, cap, businessDate);
+          if (!granted && cap) cappedSources.push(grant.source);
           if (granted) {
             actualGrantCount++;
             await this.timeline.record({
@@ -330,14 +341,143 @@ export class RewardsEngineService implements IRewardTriggerWriter {
         if (!Number.isFinite(amount) || amount <= 0) continue; // malformed rule config — skip, don't crash
         const granted = await this.grantAmount(childId, familyId, grant.rewardType, amount, grant.source, grantIdempotencyKey, cap, businessDate);
         if (granted) actualGrantCount++;
+        else if (cap) cappedSources.push(grant.source);
       }
     }
 
     if (actualGrantCount > 0) {
       await this.announceGrant(childId, familyId, event, actualGrantCount);
+    } else if (cappedSources.length > 0) {
+      await this.announceCappedCompletion(childId, familyId, event, businessDate);
     }
 
     return actualGrantCount;
+  }
+
+  /**
+   * ==========================================================================
+   * SPRINT F1 (DECISION 2) — THE COMPLETION THAT PAID NOTHING AND STILL
+   * HAPPENED.
+   * ==========================================================================
+   *
+   * THE RULE THIS CHANGES, STATED SO IT IS NOT DISCOVERED LATER. CONTEXT §5 and
+   * `RewardsCompletionConsumer`'s own header say «no grant ⇒ no notification»,
+   * and that rule is kept everywhere it was aimed: a completion no Reward Rule
+   * matched still announces nothing, and a DUPLICATE still announces nothing.
+   * The one case it is wrong about is this one.
+   *
+   * THE REASONING FOR CHANGING IT. A child who completed their goal completed
+   * it. `maxPerDay` / `maxPerWeek` is a REWARD POLICY — a parent's own decision
+   * about how often the economy pays out — and it is not a reason to hide the
+   * child's effort from the person who set the goal. Reading «no grant ⇒ no
+   * notification» as «no grant ⇒ the work did not happen» makes the product
+   * silently punish a child for finishing a second goal on a day the family
+   * capped at one, which is CONTEXT §3.7 (NO PUNITIVE UX) by omission.
+   *
+   * AND THE SENTENCE DOES NOT PRETEND OTHERWISE. `GOAL_COMPLETED_PARENT` reads
+   * «{childName} أكمل هدفه في {goalTitle}، وهذه {weekCount} مرة هذا الأسبوع» —
+   * a completion and a count, with no points, no coins and no «مكافأة» in it.
+   * That is the whole reason this key rather than `REWARD_GRANTED_WITH_GOAL`:
+   * announcing a cap-refused completion with a reward sentence would be the lie
+   * the old rule was protecting against.
+   *
+   * IT IS SCOPED TO THE UNPAID COMPLETION AND CANNOT REACH THE PAID ONE. Four
+   * conditions, and each one closes a specific double-notification:
+   *
+   *   1. `actualGrantCount === 0` — the caller's own branch. A trigger that paid
+   *      anything at all announces `REWARD_GRANTED` instead, which on a
+   *      parent-authored goal composes `REWARD_GRANTED_WITH_GOAL`. `e2e-01` and
+   *      `e2e-13` forbid a second parent notification for that cause and this
+   *      branch is never reached on it.
+   *   2. `cappedSources` non-empty — a rule MATCHED and a CAP was in force.
+   *      «No rule matched» is still silent.
+   *   3. THE LEDGER HOLDS NOTHING FOR THIS TRIGGER. This is what separates a
+   *      CAP refusal from an IDEMPOTENCY refusal, and it is the same durable
+   *      question `PC-B-001` had to ask for the same reason: `applyEarn` returns
+   *      `false` for both, and a per-attempt boolean cannot tell them apart. On
+   *      a REDELIVERY of an already-paid completion the cap check fires first
+   *      (the earlier grant fills the window), so without this the recovery path
+   *      would announce a completion that `REWARD_GRANTED` has already announced
+   *      — exactly the second parent notification the goldens pin against.
+   *   4. A NAMEABLE GOAL AND A REAL WEEK COUNT. Both are template variables the
+   *      sentence cannot be rendered without; a habit tick at its cap has
+   *      neither and stays silent, which is honest rather than a gap.
+   *
+   * `announcedViaOutbox` IS DELIBERATELY NOT CONSULTED, unlike `announceGrant`.
+   * That flag means «a `REWARD_GRANTED` outbox message is already coming», and
+   * on this path there is no such message: `RewardsCompletionConsumer` returns
+   * before writing one whenever the ledger holds nothing. So the two paths
+   * cannot both announce — one of them announces the grant and the other
+   * announces the completion, and condition 3 is what keeps them exclusive.
+   *
+   * IDEMPOTENT AT THE DATABASE, not by an `if`. The key is
+   * `forEntity('reward', childId, <trigger key>, 'completed-unpaid')`: THIS
+   * child, THIS business event, THIS facet — derived, stable across every
+   * replay, and distinct from the grant's own key so the two can never
+   * deduplicate each other. `notifications (family_id, source_event_id,
+   * user_id)` refuses the second row, `notification_decisions (family_id,
+   * source_event_id, target_audience)` refuses the second decision, and
+   * `notification_deliveries (family_id, source_event_id)` refuses the second
+   * deferral. A trigger with NO idempotency key produces no notification at all
+   * — PA-B-013's keyless legacy triggers exist, and a key composed from nothing
+   * would be a constant that silenced this household forever.
+   *
+   * BEST-EFFORT, like every other side effect in this file.
+   */
+  private async announceCappedCompletion(
+    childId: string,
+    familyId: string,
+    event: IRewardTriggerEvent,
+    businessDate: string,
+  ): Promise<void> {
+    const triggerKey = event.idempotencyKey;
+    if (!triggerKey) return;
+
+    // CONDITION 4a — the goal, by name. `RewardProgram.targetSummaryAr`, derived
+    // ONCE by `describeTargetSpec` at program creation and carried on the
+    // completion's own metadata. `null` for every cause that is not a
+    // parent-authored program, which is what scopes this producer to the goals
+    // a parent actually set.
+    const goalTitle = achievementSummaryArOf(event.payload);
+    if (goalTitle === null) return;
+
+    try {
+      // CONDITION 3 — asked of the LEDGER, the only authority. Cheap and only on
+      // this path: a trigger that paid never reaches this method.
+      const alreadyPaid = await this.repository.countGrantsForTrigger(childId, triggerKey);
+      if (alreadyPaid > 0) return;
+
+      // CONDITION 4b — the count the sentence states. The SAME rolling seven
+      // family-local days `buildCaps` counts `maxPerWeek` over, so the number a
+      // parent reads and the number that refused the payment are one window.
+      const weekCount = await this.repository.countVerifiedCompletionsInWindow(
+        childId,
+        FamilyDateService.addDays(businessDate, -6),
+        businessDate,
+      );
+      // A completion that is not recorded as VERIFIED cannot be counted, and
+      // «وهذه صفر مرة هذا الأسبوع» is not a sentence. Silence beats a number
+      // that is wrong.
+      if (weekCount < 1) return;
+
+      await this.notifications.handleEvent({
+        familyId,
+        childId,
+        eventType: 'GOAL_COMPLETED_PARENT',
+        cause: event.type,
+        sourceEventId: forEntity('reward', childId, triggerKey, 'completed-unpaid'),
+        trigger: 'DOMAIN_EVENT',
+        // `weekCount` stays a NUMBER: `copyFor` turns it into the locale's own
+        // ordinal («ثالث» in ar, «3rd» in en), because Arabic ordinals below ten
+        // are irregular and a template cannot inflect.
+        variables: { goalTitle, weekCount },
+      });
+    } catch (err) {
+      this.logger.warn(
+        'Failed to announce a capped goal completion',
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   /**

@@ -103,6 +103,50 @@ export class PrismaRewardsRepository {
   }
 
   /**
+   * ==========================================================================
+   * SPRINT F1 (DECISION 2) — «AND THIS IS THE THIRD TIME THIS WEEK», COUNTED.
+   * ==========================================================================
+   *
+   * `COPY_CATALOGUE.GOAL_COMPLETED_PARENT` ends «…وهذه {weekCount} مرة هذا
+   * الأسبوع» and that number is the whole reason the key had no producer: a
+   * sentence cannot state a count nothing computes, and supplying a guess would
+   * publish an invented fact to a parent.
+   *
+   * IT IS COMPUTABLE HONESTLY, AND THIS IS THE COMPUTATION.
+   * `achievement_requests` is the record of goal ATTEMPTS and `status =
+   * 'VERIFIED'` is the record of goal COMPLETIONS — the same rows
+   * `countVerifiedBetween` decides `maxPerDay` / `maxPerWeek` against, so the
+   * number in the sentence and the number that governed the cap come from one
+   * table rather than from two derivations that could disagree.
+   *
+   * ACROSS ALL PROGRAMS, unlike `countVerifiedBetween`, and deliberately: the
+   * sentence says «this is the Nth time this week», not «the Nth time on this
+   * goal». A parent counting their child's week counts the week.
+   *
+   * ON `local_date`, WHICH IS THE FAMILY'S OWN CALENDAR DAY. That column was
+   * written by `FamilyDateService.toDateColumn` at attempt-start time; both
+   * sides of this comparison are therefore family-local days and nothing here
+   * re-derives one from an instant. A Cairo household and a Riyadh household
+   * asking at the same moment ask about different windows, which is correct.
+   *
+   * A ROLLING SEVEN DAYS, the same window `buildCaps` uses for `maxPerWeek` —
+   * the product has no «week start» setting and inventing one in a repository
+   * would be a product decision taken in the wrong layer.
+   */
+  countVerifiedCompletionsInWindow(childId: string, fromDate: string, toDate: string): Promise<number> {
+    return this.prisma.achievementRequest.count({
+      where: {
+        childId,
+        status: 'VERIFIED',
+        // `@db.Date` columns store midnight UTC, which is the convention every
+        // other reader of this column already uses (`countVerifiedBetween`,
+        // `countOpenOn`, `maxAttemptNo`).
+        localDate: { gte: new Date(`${fromDate}T00:00:00.000Z`), lte: new Date(`${toDate}T00:00:00.000Z`) },
+      },
+    });
+  }
+
+  /**
    * «HOW MANY POINTS DID THIS BUSINESS EVENT ACTUALLY PAY?», asked of the
    * LEDGER — the only authority on the answer.
    *

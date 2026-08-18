@@ -774,12 +774,7 @@ const PRODUCERLESS_DEFECT_LEDGER: readonly LedgerEntry[] = Object.freeze([
     evidence: 'src/modules/life-intelligence/application/services/health-engine.service.ts:128',
     detail: 'MISSING DATA: no server-owned Arabic name for a daily goal exists. `TYPE_SPECS.aggregateType = \'DailyGoal\'` names a model with no table behind it, and the only candidate text is device-supplied `metadata` — client prose, which must never be rendered as if the server wrote it. Needs a server-owned daily-goal title before the sentence can name anything.',
   },
-  {
-    copyKey: 'GOAL_COMPLETED_PARENT',
-    evidence: 'test/notifications/notification-scoring-coverage.spec.ts (PF-E-003)',
-    detail:
-      'BLOCKED BY A CONFLICT, not by missing data. `weekCount` IS computable honestly (a rolling 7-day count of VERIFIED `achievement_requests` by `local_date`). But on the paid path this would be a SECOND parent notification for a cause already served by REWARD_GRANTED_WITH_GOAL, which e2e-01 and e2e-13 forbid. Its only honest niche is the UNPAID completion (a rule at its maxPerDay/maxPerWeek cap), and filling it changes «no grant ⇒ no notification» (CONTEXT §5) — a product decision.',
-  },]);
+]);
 
 // ===========================================================================
 // 6. THE CLIENT HALF — read from the Flutter apps, never edited
