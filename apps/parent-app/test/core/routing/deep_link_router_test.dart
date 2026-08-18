@@ -61,6 +61,28 @@ void main() {
       expect(route.kind, DeepLinkRouteKind.named);
       expect(route.routeName, AppRoutes.notifications);
     });
+
+    test('screen-time lands on the safety surface — the SERVER calls it that', () {
+      // NOT a reinterpretation by this client. `safetyDestination` in
+      // `notification-destination.ts` is literally
+      // `idLink('safety', alertId, surfaceLink('screen-time'))`, so the server
+      // itself defines `abny://screen-time` as the ID-LESS FORM OF `safety` —
+      // and since no producer carries an `alertId` today, it is the ONLY form
+      // any of the four device alerts is ever emitted as.
+      final route = DeepLinkRouter.resolveLink('abny://screen-time');
+      expect(route.kind, DeepLinkRouteKind.named);
+      expect(route.routeName, AppRoutes.safety);
+    });
+
+    test('a bare safety destination lands on the same surface, not the inbox', () {
+      // Unreachable through `parseDeepLink`; reachable by a caller building a
+      // destination by hand. A destination that names no alert still names the
+      // surface, and the surface now exists.
+      const handBuilt = DeepLinkDestination(DeepLinkSurface.safety);
+      final route = DeepLinkRouter.resolve(handBuilt);
+      expect(route.kind, DeepLinkRouteKind.named);
+      expect(route.routeName, AppRoutes.safety);
+    });
   });
 
   group('DeepLinkRouter.resolve — the id-scoped surfaces are PAGES, never names', () {
@@ -87,20 +109,43 @@ void main() {
       const handBuilt = DeepLinkDestination(DeepLinkSurface.goal);
       expect(DeepLinkRouter.resolve(handBuilt).kind, DeepLinkRouteKind.unavailable);
     });
+
+    test('one safety alert is a constructed page carrying the alert id', () {
+      final route = DeepLinkRouter.resolveLink('abny://safety/$_uuid');
+      expect(route.kind, DeepLinkRouteKind.page);
+      expect(route.pageBuilder, isNotNull);
+      expect(route.routeName, isNull);
+    });
+
+    test('one child is a constructed page, not a name with an untyped argument', () {
+      final route = DeepLinkRouter.resolveLink('abny://child/$_uuid');
+      expect(route.kind, DeepLinkRouteKind.page);
+      expect(route.pageBuilder, isNotNull);
+      expect(route.routeName, isNull);
+    });
+
+    test('a child destination built without an id names nobody, and says so', () {
+      // `ChildDetailScreen` cannot be constructed without a childId, and there
+      // is no «the child list» to degrade to that is not simply the dashboard.
+      const handBuilt = DeepLinkDestination(DeepLinkSurface.child);
+      expect(DeepLinkRouter.resolve(handBuilt).kind, DeepLinkRouteKind.unavailable);
+    });
   });
 
   group('DeepLinkRouter.resolve — the surfaces with no screen say so', () {
-    // These five are the honest gap. `progress`, `coach` and `screen-time` have
-    // screens that cannot be built without a childId AND a childName, neither of
-    // which any `abny://` link will ever carry (the server pins
-    // `notifications.data` identifier-free). `child` and `safety` have no parent
-    // screen at all.
+    // TWO REMAIN, not five. `safety`, `child` and `screen-time` are now open.
+    //
+    // `progress` and `coach` stay unavailable for a reason that is a PRODUCT
+    // decision rather than a missing screen: their screens exist and both need
+    // `childId` AND `childName`, which no `abny://` link carries — the server
+    // pins `notifications.data` identifier-free on purpose. `ChildDetailScreen`
+    // is now the natural HOST for both, but hosting is not opening: `resolve`
+    // is a pure function of the DESTINATION, and a destination with no id names
+    // no child. Choosing one here would be this client deciding something the
+    // server declined to say.
     const unopenable = <String>[
       'abny://progress',
       'abny://coach',
-      'abny://screen-time',
-      'abny://safety/$_uuid',
-      'abny://child/$_uuid',
     ];
 
     test('each one resolves to unavailable — never a null builder, never a throw', () {
@@ -109,6 +154,22 @@ void main() {
         expect(route.kind, DeepLinkRouteKind.unavailable, reason: link);
         expect(route.routeName, isNull, reason: link);
         expect(route.pageBuilder, isNull, reason: link);
+      }
+    });
+
+    test('the three that used to be here are not unavailable any more', () {
+      // Pinned in the POSITIVE direction as well, so a later edit that quietly
+      // re-broke one of them fails here rather than on a parent's phone.
+      for (final link in <String>[
+        'abny://screen-time',
+        'abny://safety/$_uuid',
+        'abny://child/$_uuid',
+      ]) {
+        expect(
+          DeepLinkRouter.resolveLink(link).kind,
+          isNot(DeepLinkRouteKind.unavailable),
+          reason: link,
+        );
       }
     });
   });

@@ -6,6 +6,7 @@ import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../family/presentation/child_detail_screen.dart';
 import '../../life_intelligence/presentation/digital_twin_screen.dart';
 import '../../life_intelligence/presentation/life_timeline_screen.dart';
 import '../../life_intelligence/presentation/habit_tracker_screen.dart';
@@ -500,6 +501,22 @@ class _ChildCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // F1 — the child page, which is what `abny://child/<childId>` now
+            // opens. It leads the sheet because it is the one entry that
+            // ANSWERS «who is this», and because the three screens it hosts
+            // (progress, coach, screen-time) are the ones no link can name a
+            // child for.
+            ListTile(
+              leading: const Icon(Icons.person_outline_rounded),
+              title: Text(t('childActions.childPage')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => ChildDetailScreen(childId: childId)),
+                );
+              },
+            ),
+            const Divider(height: 1),
             // B6 — GROWTH FIRST. The two goal entries lead this sheet
             // deliberately: the product's thesis is that a parent opens this
             // app to set and reward a goal, and only then to look at a
@@ -749,6 +766,14 @@ class _QuickActions extends ConsumerWidget {
           onPressed: () => Navigator.of(context).pushNamed(AppRoutes.createChild),
           icon: const Icon(Icons.add),
           label: Text(t('dashboard.addChild')),
+        ),
+        // F1 — the safety & protection surface. A screen reachable only from a
+        // notification is a screen a parent cannot go and LOOK at, which is
+        // exactly what somebody does the day after an alert.
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).pushNamed(AppRoutes.safety),
+          icon: const Icon(Icons.shield_outlined),
+          label: Text(t('dashboard.openSafety')),
         ),
         OutlinedButton.icon(
           onPressed: null, // Reports (Sprint 8, backend-real) — mobile screen not built this sprint

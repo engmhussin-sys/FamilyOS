@@ -41,4 +41,17 @@ class AppRoutes {
   static const goals = '/goals';
   static const goalReviewQueue = '/goal-review-queue';
   static const fulfilments = '/fulfilments';
+
+  // --- F1: the parent's safety & protection surface ---
+  //
+  // A NAMED route, and it passes the test the paragraph above sets:
+  // `SafetyScreen` is genuinely constructible with no arguments. Its one
+  // parameter is OPTIONAL and only selects which card leads the list, so
+  // `pushNamed` here can never produce the runtime cast that registering
+  // `ChildDetailScreen` — whose `childId` is required — would.
+  //
+  // `abny://safety/<alertId>` is still pushed as a page with a real
+  // constructor argument. Both forms live in `deep_link_router.dart`, and why
+  // one screen has two kinds is argued there.
+  static const safety = '/safety';
 }

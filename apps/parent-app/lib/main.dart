@@ -30,6 +30,7 @@ import 'core/observability/crash_reporting.dart';
 import 'features/rewards/presentation/fulfilments_screen.dart';
 import 'features/rewards/presentation/pending_achievements_screen.dart';
 import 'features/rewards/presentation/programs_list_screen.dart';
+import 'features/safety/presentation/safety_screen.dart';
 
 void main() {
   // F2 (audit MA-004) — identical guard to the child app's main(), for the
@@ -137,6 +138,10 @@ class ParentApp extends ConsumerWidget {
         AppRoutes.goals: (_) => const ProgramsListScreen(),
         AppRoutes.goalReviewQueue: (_) => const PendingAchievementsScreen(),
         AppRoutes.fulfilments: (_) => const FulfilmentsScreen(),
+        // F1 — the safety & protection surface. Argument-free, which is
+        // what qualifies it for this table; `abny://safety/<alertId>` is
+        // pushed as a page instead. See `deep_link_router.dart`.
+        AppRoutes.safety: (_) => const SafetyScreen(),
       },
     );
   }

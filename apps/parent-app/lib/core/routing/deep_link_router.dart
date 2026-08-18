@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../features/family/presentation/child_detail_screen.dart';
 import '../../features/rewards/presentation/achievement_review_screen.dart';
 import '../../features/rewards/presentation/program_detail_screen.dart';
+import '../../features/safety/presentation/safety_screen.dart';
 import 'app_routes.dart';
 import 'deep_link.dart';
 
@@ -23,27 +25,56 @@ import 'deep_link.dart';
 /// them.
 ///
 /// ---------------------------------------------------------------------------
-/// WHAT [DeepLinkRouteKind.unavailable] MEANS, stated plainly because five of
-/// the twelve surfaces are in it today: THIS APP HAS NO SCREEN THIS DESTINATION
-/// CAN OPEN. Two different causes, one honest answer:
+/// THREE OF THE FIVE UNAVAILABLE SURFACES ARE NOW OPEN. This block used to
+/// read «five of the twelve surfaces have no screen»; `safety`, `child` and
+/// `screen-time` do now, and the two that remain do so for a reason that is a
+/// PRODUCT DECISION rather than a missing screen.
 ///
-///   * `progress`, `coach`, `screen-time` — the screens exist
-///     (`LearningProgressScreen`, `CoachingScreen`, `WellbeingScreen`) but every
-///     one of them requires `childId` AND `childName`, and the link carries
-///     neither. That is not an oversight in the link: the server pins
-///     `notifications.data` identifier-free on purpose (`e2e-13 STEP 14` asserts
-///     the payload contains no `childId`), so no `abny://` link will ever carry
-///     a child. Opening one of these needs a child chosen first, and this app's
-///     child picker is the dashboard, not a deep link.
-///   * `child/<id>`, `safety/<id>` — no parent screen exists at all. There is no
-///     child-detail screen (the dashboard's `_ChildCard` fans out to eight
-///     child-scoped screens instead), and no safety-alert detail screen.
+/// WHAT WAS BUILT, AND WHAT EACH ONE LANDS ON:
 ///
-/// In BOTH cases the tap lands on the inbox — where the notification itself
+///   * `safety/<alertId>` → `SafetyScreen(alertId: …)`, and bare `safety` →
+///     the same screen by name. It reads `GET /notifications` filtered to the
+///     server's own SAFETY classification (`notification-class.ts`), so a
+///     `PROTECTION_BYPASS_ATTEMPT`, an `ACCESSIBILITY_DISABLED`, a
+///     `POLICY_VIOLATION` and the `CHILD_WELLBEING_CHECKIN` distress alert all
+///     have somewhere to go.
+///   * `child/<childId>` → `ChildDetailScreen(childId: …)`, reading
+///     `GET /children/:childId`.
+///   * `screen-time` → the SAME `SafetyScreen`, by name, and this is the one
+///     that needs arguing rather than asserting. It is NOT this client
+///     reinterpreting a surface: `safetyDestination` in
+///     `notification-destination.ts` IS `idLink('safety', alertId,
+///     surfaceLink('screen-time'))` — the server itself defines
+///     `abny://screen-time` as THE ID-LESS FORM OF `safety`, and its own
+///     comment calls it «the screen-time & protection surface, which is where
+///     a parent actually acts on every one of these four alerts». Since no
+///     producer carries an `alertId` today, `screen-time` is in fact the ONLY
+///     form any of the four device alerts is ever emitted as. Routing it
+///     anywhere else would leave the gap exactly where it was.
+///
+/// WHAT [DeepLinkRouteKind.unavailable] STILL MEANS, and it is now two
+/// surfaces rather than five:
+///
+///   * `progress` and `coach` — the screens exist (`LearningProgressScreen`,
+///     `CoachingScreen`) and both require `childId` AND `childName`, which the
+///     link carries neither of. That is not an oversight in the link: the
+///     server pins `notifications.data` identifier-free on purpose (`e2e-13
+///     STEP 14` asserts the payload contains no `childId`), so no `abny://`
+///     link will ever carry a child.
+///
+///     `ChildDetailScreen` is now the natural HOST for both — it supplies
+///     `childId` and `childName` and puts each one tap away — but hosting them
+///     is not the same as opening them. [resolve] is a pure function of the
+///     DESTINATION, and a destination with no id names no child; picking one
+///     here would be this client deciding something the server declined to
+///     say. `coach` is additionally moot today: its only producer
+///     (`CHILD_WELLBEING_CHECKIN`) writes through `createForFamilyOwner`,
+///     which attaches no `deepLink` at all, so that tap reaches
+///     `parseDeepLink(null)` and the inbox regardless of this table.
+///
+/// For those two the tap lands on the inbox — where the notification itself
 /// is — and says so out loud in a snackbar. Never a blank screen, never a
 /// crash, and never the silent no-op that this whole change exists to remove.
-/// The moment one of those screens gains an argument-free entry point, it is
-/// one line in [resolve] and nothing else moves.
 enum DeepLinkRouteKind {
   /// A registered name in `main.dart`'s `routes:` table.
   named,
@@ -128,12 +159,31 @@ class DeepLinkRouter {
       case DeepLinkSurface.notifications:
         return DeepLinkRoute.named(AppRoutes.notifications);
 
+      case DeepLinkSurface.safety:
+        // A NAMED route for the bare form and a PAGE for the id-scoped one —
+        // `app_routes.dart`'s distinction, applied to a surface that has both.
+        // `id == null` cannot arrive from `parseDeepLink` (a bare id-bearing
+        // surface is already the inbox there); a destination built by hand
+        // without one names no alert, and the safety surface itself is then the
+        // truthful landing rather than a fallback.
+        return id == null
+            ? DeepLinkRoute.named(AppRoutes.safety)
+            : DeepLinkRoute.page((_) => SafetyScreen(alertId: id));
+
+      case DeepLinkSurface.screenTime:
+        // THE ID-LESS FORM OF `safety`, by the server's own definition — see
+        // the header. This is the form all four device alerts are actually
+        // emitted as today.
+        return DeepLinkRoute.named(AppRoutes.safety);
+
+      case DeepLinkSurface.child:
+        return id == null
+            ? DeepLinkRoute.unavailable()
+            : DeepLinkRoute.page((_) => ChildDetailScreen(childId: id));
+
       // --- No screen this app can open from a link alone. See the header. ---
       case DeepLinkSurface.progress:
       case DeepLinkSurface.coach:
-      case DeepLinkSurface.screenTime:
-      case DeepLinkSurface.safety:
-      case DeepLinkSurface.child:
         return DeepLinkRoute.unavailable();
     }
   }

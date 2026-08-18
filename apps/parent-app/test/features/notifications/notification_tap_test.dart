@@ -46,13 +46,22 @@ import 'package:parent_app/core/localization/localization_engine.dart';
 import 'package:parent_app/core/notifications/push_registration_service.dart';
 import 'package:parent_app/core/routing/app_routes.dart';
 import 'package:parent_app/core/theme/app_theme.dart';
+import 'package:parent_app/features/family/data/child_profile_repository.dart';
+import 'package:parent_app/features/family/presentation/child_detail_screen.dart';
 import 'package:parent_app/features/notifications/api/notifications_api.dart';
 import 'package:parent_app/features/notifications/presentation/notifications_screen.dart';
 import 'package:parent_app/features/rewards/domain/achievement.dart';
 import 'package:parent_app/features/rewards/domain/reward_program.dart';
 import 'package:parent_app/features/rewards/presentation/achievement_review_screen.dart';
 import 'package:parent_app/features/rewards/presentation/program_detail_screen.dart';
+import 'package:parent_app/features/safety/data/safety_repository.dart';
+import 'package:parent_app/features/safety/domain/safety_event.dart';
+import 'package:parent_app/features/safety/presentation/safety_screen.dart';
 
+// `show` and nothing more: both harnesses declare `ar` and `pending`, and this
+// file has always used the reward harness's pair. Importing the whole of the
+// other one would make both names ambiguous.
+import '../../support/last_screens_test_harness.dart' show FakeChildProfileRepository;
 import '../../support/reward_test_harness.dart';
 
 const String _uuid = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
@@ -112,6 +121,27 @@ class _FakePushRegistrationService implements PushRegistrationService {
       );
 }
 
+/// F1 — the safety feed, stubbed to a chosen outcome. The REAL `SafetyScreen`
+/// is mounted for the safety route rather than a landing pad: what is being
+/// asserted there is that a safety-class notification reaches the safety
+/// SCREEN, and a stub bearing the route name would prove only that a string
+/// matched.
+class _FakeSafetyRepository implements SafetyRepository {
+  _FakeSafetyRepository({this.events = const <SafetyEvent>[]});
+
+  final List<SafetyEvent> events;
+
+  @override
+  Future<List<SafetyEvent>> listSafetyEvents() async => events;
+
+  @override
+  Future<Map<String, String>> childNamesById() async => <String, String>{};
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('_FakeSafetyRepository has no stub for ${invocation.memberName}.');
+}
+
 /// A named-route landing pad. Renders its own route name, so an assertion reads
 /// «we arrived at AppRoutes.goals» rather than «some screen appeared».
 class _StubScreen extends StatelessWidget {
@@ -148,6 +178,8 @@ Future<void> _pumpInbox(
   WidgetTester tester, {
   required _FakeNotificationsApi api,
   FakeRewardProgramsRepository? repository,
+  _FakeSafetyRepository? safety,
+  FakeChildProfileRepository? children,
 }) async {
   GoogleFonts.config.allowRuntimeFetching = false;
 
@@ -158,6 +190,9 @@ Future<void> _pumpInbox(
         pushRegistrationServiceProvider.overrideWithValue(_FakePushRegistrationService()),
         rewardProgramsRepositoryProvider
             .overrideWithValue(repository ?? FakeRewardProgramsRepository()),
+        safetyRepositoryProvider.overrideWithValue(safety ?? _FakeSafetyRepository()),
+        childProfileRepositoryProvider
+            .overrideWithValue(children ?? FakeChildProfileRepository()),
         localeControllerProvider.overrideWith(
           (ref) => LocaleController(storage: InMemoryLocaleStorage(AppLocale.ar)),
         ),
@@ -182,6 +217,8 @@ Future<void> _pumpInbox(
           AppRoutes.goalReviewQueue: (_) => const _StubScreen(AppRoutes.goalReviewQueue),
           AppRoutes.fulfilments: (_) => const _StubScreen(AppRoutes.fulfilments),
           AppRoutes.subscription: (_) => const _StubScreen(AppRoutes.subscription),
+          // THE REAL SCREEN, for the reason given above `_FakeSafetyRepository`.
+          AppRoutes.safety: (_) => const SafetyScreen(),
         },
       ),
     ),
@@ -265,6 +302,100 @@ void main() {
 
     final review = tester.widget<AchievementReviewScreen>(find.byType(AchievementReviewScreen));
     expect(review.achievementId, _uuid);
+  });
+
+  testWidgets('a SAFETY-class notification now reaches the safety screen, not the inbox',
+      (tester) async {
+    // THE TAP THIS WHOLE SURFACE EXISTS FOR. `PROTECTION_BYPASS_ATTEMPT`,
+    // `ACCESSIBILITY_DISABLED` and `POLICY_VIOLATION` all resolve server-side
+    // through `safetyDestination`, which degrades to `abny://screen-time`
+    // because no producer carries an `alertId` — so this link is what a parent
+    // actually receives today, and it used to land back in the inbox.
+    final api = _FakeNotificationsApi(<dynamic>[
+      _row(title: 'محاولة تعطيل الحماية', deepLink: 'abny://screen-time'),
+    ]);
+    await _pumpInbox(tester, api: api);
+
+    await tester.tap(find.text('محاولة تعطيل الحماية'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byType(SafetyScreen), findsOneWidget);
+    // And it is NOT the honest-fallback path any more.
+    expect(find.text(ar('deepLink.unavailable')), findsNothing);
+    // The row is still marked read — the behaviour navigation was never allowed
+    // to cost.
+    expect(api.markedRead, <String>['n_1']);
+  });
+
+  testWidgets('an id-scoped safety link opens the safety screen with the alert id',
+      (tester) async {
+    final api = _FakeNotificationsApi(<dynamic>[_row(deepLink: 'abny://safety/$_uuid')]);
+    await _pumpInbox(tester, api: api);
+
+    await tester.tap(find.text('إشعار'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final safety = tester.widget<SafetyScreen>(find.byType(SafetyScreen));
+    expect(safety.alertId, _uuid);
+  });
+
+  testWidgets('a safety link whose alert is not in the feed degrades, never crashes',
+      (tester) async {
+    // An alert that has scrolled past the server's 100-row window, or an id
+    // from a table this screen does not read. The screen must say so and still
+    // show what it has — never a blank page and never an exception.
+    final api = _FakeNotificationsApi(<dynamic>[_row(deepLink: 'abny://safety/$_uuid')]);
+    await _pumpInbox(tester, api: api, safety: _FakeSafetyRepository());
+
+    await tester.tap(find.text('إشعار'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(SafetyScreen), findsOneWidget);
+  });
+
+  testWidgets('a child link opens the child page with the id off the link',
+      (tester) async {
+    final api = _FakeNotificationsApi(<dynamic>[_row(deepLink: 'abny://child/$_uuid')]);
+    // The child page will ask for the child; leaving it pending keeps it in its
+    // loading state, which is all this test needs it to reach.
+    final children = FakeChildProfileRepository(
+      onGetChild: () => pending<ChildProfile>(),
+    );
+    await _pumpInbox(tester, api: api, children: children);
+
+    await tester.tap(find.text('إشعار'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final child = tester.widget<ChildDetailScreen>(find.byType(ChildDetailScreen));
+    expect(child.childId, _uuid);
+    expect(children.requestedChildIds, <String>[_uuid]);
+  });
+
+  testWidgets('a child link whose id is not an id never reaches a screen at all',
+      (tester) async {
+    // `parseDeepLink` rejects the shape before the router ever sees it, so this
+    // is the inbox — not a child page asking the API for garbage.
+    final api = _FakeNotificationsApi(<dynamic>[
+      _row(deepLink: 'abny://child/not an id'),
+    ]);
+    final children = FakeChildProfileRepository();
+    await _pumpInbox(tester, api: api, children: children);
+
+    await tester.tap(find.text('إشعار'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ChildDetailScreen), findsNothing);
+    expect(find.byType(NotificationsScreen), findsOneWidget);
+    // Nothing was asked of the server on behalf of an id we could not read.
+    expect(children.requestedChildIds, isEmpty);
   });
 
   testWidgets('a destination with no screen leaves the parent in the inbox, and says so',
