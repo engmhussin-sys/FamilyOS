@@ -9,6 +9,7 @@ import { ConsentCheckService } from '../../../consent-check/application/consent-
 import { BaselineCalculatorService } from './baseline-calculator.service';
 import { PatternDetectionService } from './pattern-detection.service';
 import { AnomalyDetectionService } from './anomaly-detection.service';
+import { ChildSignalService } from './child-signal.service';
 import { SmartNotificationEngineService } from '../../../notification-engine/application/services/smart-notification-engine.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessDayOfWeek } from '../../../../common/time/family-date';
@@ -72,6 +73,28 @@ export class DigitalWellbeingEngineService {
     private readonly patternDetection: PatternDetectionService,
     private readonly anomalyDetection: AnomalyDetectionService,
     private readonly familyDate: FamilyDateService,
+    /**
+     * SPRINT F1 — THE FIVE CHILD-FACING KEYS THAT HAD NO PRODUCER, and the
+     * reason their producer is called from HERE.
+     *
+     * `HYDRATION_REMINDER`, `STUDY_REMINDER`, `EXERCISE_ENCOURAGEMENT`,
+     * `GOAL_DEADLINE_NEAR` and `STREAK_AT_RISK` are all statements about a day
+     * that is STILL IN PROGRESS. The 02:00 rollover — the product's only
+     * scheduled per-family moment — judges days that have CLOSED and runs
+     * inside every household's quiet hours, so a child reminder produced there
+     * would be correctly suppressed every night forever.
+     *
+     * This method is the one recurring intra-day, server-side moment this
+     * product actually has: the child app posts it on startup, every four
+     * hours, and after every further fifteen minutes of screen time. It also
+     * already carries the exact figure the hydration condition is about, and it
+     * is already a `handleEvent` producer, so nothing new is introduced but the
+     * question.
+     *
+     * `ChildSignalService.sweepChild` never throws and writes nothing itself —
+     * see its header. A reminder problem cannot cost this child their upload.
+     */
+    private readonly childSignals: ChildSignalService,
   ) {}
 
   /** The daily batch upload — one call per device per day, carrying
@@ -81,6 +104,16 @@ export class DigitalWellbeingEngineService {
     familyId: string,
     deviceId: string,
     input: IDailyUsageSummaryInput,
+    /**
+     * SPRINT F1 — `now` IS A PARAMETER, for the reason every decision on this
+     * path takes one (`PHASE D`): the sweep below asks whether the family's
+     * local clock is inside a habit's window and how many hours of the family's
+     * day are left, and a function that reads the clock inside itself cannot be
+     * proven correct across a midnight or a DST boundary without faking the
+     * timers the database driver needs. Defaulted, so no existing caller
+     * changes.
+     */
+    now: Date = new Date(),
   ): Promise<IDailyUsageSummary> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
@@ -92,6 +125,37 @@ export class DigitalWellbeingEngineService {
     const isFirstEver = (await this.repository.findSnapshotsInWindow(childId, new Date(0))).length === 0;
 
     const result = await this.repository.upsertDailySummary(childId, deviceId, input);
+
+    /**
+     * SPRINT F1 — THE CHILD'S OWN FOUR SIGNALS, ASKED AT THE MOMENT THE DEVICE
+     * SAYS IT IS THERE.
+     *
+     * BEFORE the `isFirstEver` return below, and deliberately: that branch
+     * exists because the DETECTION pipeline has no baseline on day one, and
+     * none of the four conditions this sweep asks needs a baseline. A child who
+     * is behind on water on their first day is behind on water.
+     *
+     * THE SCREEN FIGURE IS ONLY USED WHEN IT IS ABOUT TODAY. `usageDate` is the
+     * DEVICE'S own local calendar day, written by the child app from
+     * `DateTime.now()`; the family's day is the server's, derived from
+     * `Family.timezone`. When they disagree — a queued upload drained after
+     * midnight, a device in another zone — the figure is withheld rather than
+     * trusted, because «you have been on screen a long time TODAY» must not be
+     * said on the strength of yesterday's total. `null` is an honest absence:
+     * the hydration condition simply does not hold, and the other three
+     * signals, which do not read it, are unaffected.
+     */
+    const businessDate = await this.familyDate.getBusinessDate(familyId, now);
+    await this.childSignals.sweepChild({
+      familyId,
+      childId,
+      now,
+      screenMinutesToday:
+        String(input.usageDate).slice(0, 10) === businessDate ? input.totalScreenMinutes : null,
+      // The device is talking to this server right now, which is the fact
+      // `RELEVANCE` is scored on. Stated by the caller that observed it.
+      isEngagedNow: true,
+    });
 
     if (isFirstEver) {
       await this.timeline.record({

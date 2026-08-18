@@ -10,6 +10,8 @@ import { ConsentCheckService } from '../../src/modules/consent-check/application
 import { BaselineCalculatorService } from '../../src/modules/life-intelligence/application/services/baseline-calculator.service';
 import { PatternDetectionService } from '../../src/modules/life-intelligence/application/services/pattern-detection.service';
 import { AnomalyDetectionService } from '../../src/modules/life-intelligence/application/services/anomaly-detection.service';
+import { ChildSignalService } from '../../src/modules/life-intelligence/application/services/child-signal.service';
+import { EMPTY_CHILD_SIGNAL_REPORT } from '../../src/modules/life-intelligence/domain/child-signal.types';
 import { familyDateProvider } from '../common/family-date.testing';
 
 describe('DigitalWellbeingEngineService', () => {
@@ -50,6 +52,18 @@ describe('DigitalWellbeingEngineService', () => {
   const baselineCalculatorMock = { compute: jest.fn() };
   const patternDetectionMock = { detect: jest.fn() };
   const anomalyDetectionMock = { detectRecurrence: jest.fn() };
+  /**
+   * SPRINT F1 — the CHILD-facing signal sweep this method now also runs.
+   *
+   * A COLLABORATOR STUB, not a weakened assertion: this file's subject is the
+   * wellbeing pipeline (ownership, consent, timeline, pattern detection), and
+   * `ChildSignalService` is proven end to end against a real PostgreSQL — real
+   * engine, real safety filter, real unique indexes — in
+   * `test/life-intelligence/child-signal-producer.e2e.spec.ts`. What IS asserted
+   * here is the wiring this file owns: that the sweep is invoked, with the
+   * family's own screen figure, and only when the check-in is about today.
+   */
+  const childSignalsMock = { sweepChild: jest.fn() };
 
   let service: DigitalWellbeingEngineService;
   const childId = 'child-1';
@@ -82,6 +96,7 @@ describe('DigitalWellbeingEngineService', () => {
     anomalyDetectionMock.detectRecurrence.mockReturnValue([]);
     repositoryMock.updateDetectionResults.mockResolvedValue(undefined);
     repositoryMock.findRecentPatterns.mockResolvedValue([]);
+    childSignalsMock.sweepChild.mockResolvedValue(EMPTY_CHILD_SIGNAL_REPORT);
     const moduleRef = await Test.createTestingModule({
       providers: [
         DigitalWellbeingEngineService,
@@ -93,6 +108,7 @@ describe('DigitalWellbeingEngineService', () => {
         { provide: BaselineCalculatorService, useValue: baselineCalculatorMock },
         { provide: PatternDetectionService, useValue: patternDetectionMock },
         { provide: AnomalyDetectionService, useValue: anomalyDetectionMock },
+        { provide: ChildSignalService, useValue: childSignalsMock },
         // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
         familyDateProvider()
       ],
@@ -125,6 +141,72 @@ describe('DigitalWellbeingEngineService', () => {
       await service.recordDailySummary(childId, familyId, deviceId, sampleInput);
 
       expect(timelineMock.record).not.toHaveBeenCalled();
+    });
+
+    /**
+     * SPRINT F1 — THE WIRING THIS FILE OWNS.
+     *
+     * `HYDRATION_REMINDER`, `STUDY_REMINDER`, `EXERCISE_ENCOURAGEMENT` and
+     * `STREAK_AT_RISK` had copy, scoring and a destination and no producer,
+     * because the only entry point that could reach them (`processSignals`) has
+     * zero callers in `src/`. This method is now that caller — so the three
+     * assertions below are «is it actually invoked», «with the family's own
+     * figure» and «and never on the strength of yesterday's total».
+     */
+    describe('the CHILD signal sweep (SPRINT F1)', () => {
+      const priorSnapshot = [{ totalScreenMinutes: 90, pickupCount: 20, nightUsageMinutes: 0, blockedAttemptCount: 0 }];
+      // The stub family is UTC (`familyDateProvider`), so a check-in dated
+      // 2026-08-10 is «today» for an instant on 2026-08-10.
+      const onThatDay = new Date('2026-08-10T14:00:00.000Z');
+
+      it('is invoked with the screen figure the device just uploaded', async () => {
+        repositoryMock.findSnapshotsInWindow.mockResolvedValue(priorSnapshot);
+        repositoryMock.upsertDailySummary.mockResolvedValue({ id: 's3', childId, deviceId, ...sampleInput, createdAt: new Date() });
+
+        await service.recordDailySummary(childId, familyId, deviceId, sampleInput, onThatDay);
+
+        expect(childSignalsMock.sweepChild).toHaveBeenCalledWith({
+          familyId,
+          childId,
+          now: onThatDay,
+          screenMinutesToday: sampleInput.totalScreenMinutes,
+          // The device is talking to this server right now, which is the fact
+          // `RELEVANCE` is scored on.
+          isEngagedNow: true,
+        });
+      });
+
+      it('withholds the figure when the DEVICE day is not the FAMILY day', async () => {
+        repositoryMock.findSnapshotsInWindow.mockResolvedValue(priorSnapshot);
+        repositoryMock.upsertDailySummary.mockResolvedValue({ id: 's4', childId, deviceId, ...sampleInput, createdAt: new Date() });
+
+        // A queued upload drained a day late: `usageDate` is 2026-08-10 and the
+        // family's day is the 11th. «You have been on screen a long time TODAY»
+        // must not be said on the strength of yesterday's total.
+        await service.recordDailySummary(
+          childId,
+          familyId,
+          deviceId,
+          sampleInput,
+          new Date('2026-08-11T09:00:00.000Z'),
+        );
+
+        expect(childSignalsMock.sweepChild).toHaveBeenCalledWith(
+          expect.objectContaining({ screenMinutesToday: null }),
+        );
+      });
+
+      it('runs on the FIRST-EVER snapshot too — a child with no baseline can still be behind on water', async () => {
+        repositoryMock.findSnapshotsInWindow.mockResolvedValue([]);
+        repositoryMock.upsertDailySummary.mockResolvedValue({ id: 's5', childId, deviceId, ...sampleInput, createdAt: new Date() });
+
+        await service.recordDailySummary(childId, familyId, deviceId, sampleInput, onThatDay);
+
+        // The DETECTION pipeline is correctly skipped on day one (no baseline);
+        // the signal sweep needs none and is not.
+        expect(patternDetectionMock.detect).not.toHaveBeenCalled();
+        expect(childSignalsMock.sweepChild).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

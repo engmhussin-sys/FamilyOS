@@ -35,6 +35,11 @@ import { QuietHoursReleaseService } from './application/services/quiet-hours-rel
 // `DigitalWellbeingEngineService`), rather than in the scheduler: the scheduler
 // owns WHEN a sweep runs, this module owns WHAT the sweep asks and says.
 import { StalledGoalService } from './application/services/stalled-goal.service';
+// SPRINT F1 — the producer the five CHILD copy keys never had
+// (`HYDRATION_REMINDER`, `STUDY_REMINDER`, `EXERCISE_ENCOURAGEMENT`,
+// `GOAL_DEADLINE_NEAR`, `STREAK_AT_RISK`). Registered beside `StalledGoalService`
+// for the same reason: this module owns WHAT a sweep asks and says.
+import { ChildSignalService } from './application/services/child-signal.service';
 import { SmartNotificationIntegrationService } from './application/services/smart-notification-integration.service';
 import { BaselineCalculatorService } from './application/services/baseline-calculator.service';
 import { PatternDetectionService } from './application/services/pattern-detection.service';
@@ -152,6 +157,7 @@ import { SmartNotificationEngineService } from '../notification-engine/applicati
     SmartNotificationIntegrationService,
     QuietHoursReleaseService,
     StalledGoalService,
+    ChildSignalService,
     BaselineCalculatorService,
     PatternDetectionService,
     AnomalyDetectionService,
@@ -195,6 +201,10 @@ import { SmartNotificationEngineService } from '../notification-engine/applicati
     // SPRINT F1 — exported so `SchedulerModule`'s rollover job reaches THIS
     // instance rather than constructing a second producer with its own engine.
     StalledGoalService,
+    // SPRINT F1 — exported for the same reason `StalledGoalService` is: a future
+    // family-local scheduled sweep must reach THIS instance rather than
+    // constructing a second producer with its own engine.
+    ChildSignalService,
     RewardRuleService,
     LIFE_TIMELINE_WRITER,
     REWARD_TRIGGER_WRITER,
