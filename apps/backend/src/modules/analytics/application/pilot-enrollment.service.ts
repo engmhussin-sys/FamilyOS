@@ -215,6 +215,89 @@ export class PilotEnrollmentService {
     return { cohortId: row.cohortId, countryCode: row.countryCode, redeemedAt: row.redeemedAt };
   }
 
+  /**
+   * F1 — THE READ SIDE. Until now this service could only WRITE: the gate was
+   * called from registration and nothing could ask it how the pilot was going,
+   * which is why the admin dashboard rendered the pilot panel as NOT MEASURED.
+   *
+   * INVITED IS ATTRIBUTED BY `pilot_invites.country_code`, NOT by
+   * `familyCountryWhere()`, AND THAT IS NOT AN INCONSISTENCY — it is the only
+   * possible answer. An invitation exists BEFORE the household does; there is
+   * no family to attribute, so the operator's own record of which market they
+   * invited into is the fact. Every other market number in this module goes
+   * through the family predicate because every other one counts households.
+   *
+   * `activated` IS «REDEEMED» AND NOTHING ELSE. `redeemed_at` and
+   * `redeemed_by_family_id` are written in one update, so a redeemed row always
+   * names the household that redeemed it — no half-state is representable and
+   * no invitation can be counted as activated without an account behind it.
+   *
+   * `pending` IS COUNTED, NOT SUBTRACTED, for the same reason `free` is in
+   * `MarketReportingService`: a subtraction hides a disagreement between the
+   * two queries instead of surfacing it.
+   *
+   * BOUNDED: three `groupBy`s, one row per cohort off the wire. Not a
+   * `findMany` over an allow-list that grows with every wave.
+   */
+  async enrolmentCounts(
+    countryCode: string | null,
+    cohortId?: string,
+  ): Promise<{
+    countryCode: string | null;
+    invited: number;
+    activated: number;
+    pending: number;
+    byCohort: { cohortId: string; invited: number; activated: number; pending: number }[];
+  }> {
+    const where = {
+      ...(countryCode === null ? {} : { countryCode }),
+      ...(cohortId ? { cohortId } : {}),
+    };
+
+    const [invitedRows, activatedRows, pendingRows] = await runInSystemScope(
+      'ADMIN_CONSOLE',
+      'pilot_invites is a GLOBAL allow-list with no family_id column; an operator is reading how a pilot wave is filling up.',
+      () =>
+        Promise.all([
+          this.prisma.pilotInvite.groupBy({ by: ['cohortId'], where, _count: { _all: true } }),
+          this.prisma.pilotInvite.groupBy({
+            by: ['cohortId'],
+            where: { ...where, redeemedAt: { not: null } },
+            _count: { _all: true },
+          }),
+          this.prisma.pilotInvite.groupBy({
+            by: ['cohortId'],
+            where: { ...where, redeemedAt: null },
+            _count: { _all: true },
+          }),
+        ]),
+    );
+
+    const at = (
+      rows: { cohortId: string; _count: { _all: number } }[],
+      cohort: string,
+    ): number => rows.find((row) => row.cohortId === cohort)?._count?._all ?? 0;
+
+    const cohorts = [...new Set(invitedRows.map((row: { cohortId: string }) => row.cohortId))].sort();
+    const byCohort = cohorts.map((cohort) => ({
+      cohortId: cohort,
+      invited: at(invitedRows, cohort),
+      activated: at(activatedRows, cohort),
+      pending: at(pendingRows, cohort),
+    }));
+
+    const total = (rows: { _count: { _all: number } }[]): number =>
+      rows.reduce((sum, row) => sum + row._count._all, 0);
+
+    return {
+      countryCode,
+      invited: total(invitedRows),
+      activated: total(activatedRows),
+      pending: total(pendingRows),
+      byCohort,
+    };
+  }
+
   private findInvite(
     email: string,
     cohortId: string,

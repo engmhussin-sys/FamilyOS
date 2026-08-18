@@ -14,6 +14,7 @@ import { GrowthAlertsService } from './application/growth-alerts.service';
 import { GrowthAggregationService } from './application/growth-aggregation.service';
 import { ReferralRewardService } from './application/referral-reward.service';
 import { GrowthDomainEventBridge } from './application/growth-domain-event.bridge';
+import { MarketReportingService } from './application/market-reporting.service';
 
 /**
  * Sprint 8's Analytics Core, EXTENDED by Phase D (Growth) rather than replaced.
@@ -52,6 +53,10 @@ import { GrowthDomainEventBridge } from './application/growth-domain-event.bridg
     GrowthAggregationService,
     ReferralRewardService,
     GrowthDomainEventBridge,
+    // F1: the per-market reads (families, plan mix, product engagement) the
+    // admin dashboard rendered as NOT MEASURED until `families.country_code`
+    // existed. Read-only, cross-tenant by definition, admin-guarded.
+    MarketReportingService,
   ],
   exports: [
     // The MODULE is re-exported, not the provider: `EventCollectorService` is

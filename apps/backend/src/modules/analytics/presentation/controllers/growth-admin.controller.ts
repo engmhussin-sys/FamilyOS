@@ -35,6 +35,8 @@ import { ForecastService } from '../../application/forecast.service';
 import { GrowthAlertsService } from '../../application/growth-alerts.service';
 import { GrowthAggregationService } from '../../application/growth-aggregation.service';
 import { GrowthSettingsService } from '../../application/growth-settings.service';
+import { MarketReportingService } from '../../application/market-reporting.service';
+import { PilotEnrollmentService } from '../../application/pilot-enrollment.service';
 import { KPI_DEFINITIONS } from '../../domain/kpi-definitions';
 import {
   FUNNEL_STEPS,
@@ -173,6 +175,29 @@ class SetSettingDto {
   @IsString() @MaxLength(200) value!: string;
 }
 
+/** F1. A half-open `[from, to)` window, with no channel/campaign slicing. */
+class WindowQueryDto extends ScopeQueryDto {
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+}
+
+/**
+ * F1. `cohortId` is FREE TEXT against `growth_settings.pilot.cohortId`, so it is
+ * length-bounded here and nowhere else — it names a marketing wave, not a row a
+ * tenant could reach.
+ */
+class PilotQueryDto extends ScopeQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  cohortId?: string;
+}
+
 class AlertQueryDto {
   @IsOptional()
   @Type(() => Boolean)
@@ -219,6 +244,8 @@ export class GrowthAdminController {
     private readonly alerts: GrowthAlertsService,
     private readonly aggregation: GrowthAggregationService,
     private readonly settings: GrowthSettingsService,
+    private readonly markets: MarketReportingService,
+    private readonly pilot: PilotEnrollmentService,
   ) {}
 
   private scope(countryCode: string | undefined): string {
@@ -312,6 +339,61 @@ export class GrowthAdminController {
       this.scope(query.countryCode),
       from.toISOString().slice(0, 10),
       to.toISOString().slice(0, 10),
+    );
+  }
+
+  // ---- F1: THE MARKET READS ------------------------------------------------
+  //
+  // Four routes that exist because `families.country_code` does. Each one is
+  // per-market and each one carries `scopeIncludesUnattributable`, so a
+  // dashboard can tell «Egypt» from «the platform, including households whose
+  // market nobody knows» without guessing. None of them returns money, and none
+  // of them returns a zero it did not measure — read the header of
+  // `MarketReportingService` for the five rules they all obey.
+
+  /**
+   * FAMILIES PER MARKET — registered (stock) and active (the MAU definition).
+   * `countryCode` defaults to `**`; pass `EG` or `SA` for one market.
+   */
+  @Get('families')
+  @SystemRoute('ADMIN_CONSOLE', 'A market\'s household count is an aggregate over every tenant; that is the whole question being asked.')
+  families(@Query() query: ScopeQueryDto) {
+    return this.markets.families(this.scope(query.countryCode), this.instant(query.asOf, new Date()));
+  }
+
+  /** THE PLAN MIX — free / monthly / quarterly / annual, per market. */
+  @Get('subscriptions')
+  @SystemRoute('ADMIN_CONSOLE', 'The plan mix groups every household\'s subscription; no tenant may ask what other households bought.')
+  subscriptions(@Query() query: ScopeQueryDto) {
+    return this.markets.subscriptionMix(this.scope(query.countryCode), this.instant(query.asOf, new Date()));
+  }
+
+  /**
+   * PILOT ENROLMENT — invited vs activated, by country and cohort.
+   *
+   * `pilot_invites` is a GLOBAL allow-list with no `family_id`, and it is
+   * attributed by ITS OWN `country_code` because an invitation predates the
+   * household — see `PilotEnrollmentService.enrolmentCounts`.
+   */
+  @Get('pilot')
+  @SystemRoute('ADMIN_CONSOLE', 'pilot_invites is a GLOBAL operator allow-list; reading it is a platform question and has no tenant form.')
+  pilotEnrolment(@Query() query: PilotQueryDto) {
+    const country = this.scope(query.countryCode);
+    return this.pilot.enrolmentCounts(country === PLATFORM_SCOPE ? null : country, query.cohortId);
+  }
+
+  /**
+   * GOALS COMPLETED AND REWARDS GRANTED over `[from, to)`, per market.
+   * Defaults to the last 30 days, the same default `funnel` and `daily` use.
+   */
+  @Get('product')
+  @SystemRoute('ADMIN_CONSOLE', 'Goal completions and reward grants are counted across every household; the aggregation is the feature.')
+  product(@Query() query: WindowQueryDto) {
+    const now = new Date();
+    return this.markets.product(
+      this.scope(query.countryCode),
+      this.instant(query.from, new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)),
+      this.instant(query.to, now),
     );
   }
 
