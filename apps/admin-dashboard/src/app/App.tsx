@@ -17,7 +17,26 @@ import { AcquisitionPage } from '../features/growth/pages/AcquisitionPage';
 import { ReferralPage } from '../features/growth/pages/ReferralPage';
 import { ProductAiPage } from '../features/growth/pages/ProductAiPage';
 import { ProtectedRoute } from './ProtectedRoute';
+import { AdminKeyGate } from '../features/admin-key/AdminKeyGate';
 import { LocaleProvider } from '../shared/i18n/LocaleProvider';
+import type { ReactNode } from 'react';
+
+/**
+ * Every platform-admin view sits behind BOTH gates, in this order: the
+ * parent session (ProtectedRoute) and then the operator key (AdminKeyGate),
+ * which is what the backend's `InternalAdminGuard` actually checks. The
+ * family-facing routes below deliberately do not mount `AdminKeyGate` at all
+ * — they need no key and keep working without one.
+ */
+function PlatformAdminScreen({ children }: { children: ReactNode }) {
+  return (
+    <ProtectedRoute>
+      <DashboardShell>
+        <AdminKeyGate>{children}</AdminKeyGate>
+      </DashboardShell>
+    </ProtectedRoute>
+  );
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,83 +89,35 @@ export function App() {
                 Egypt" is not a question a tenant may ask. */}
             <Route
               path="/growth"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <ExecutiveOverviewPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><ExecutiveOverviewPage /></PlatformAdminScreen>}
             />
             <Route
               path="/growth/funnel"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <FunnelPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><FunnelPage /></PlatformAdminScreen>}
             />
             <Route
               path="/growth/forecast"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <ForecastPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><ForecastPage /></PlatformAdminScreen>}
             />
             <Route
               path="/growth/retention"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <RetentionPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><RetentionPage /></PlatformAdminScreen>}
             />
             <Route
               path="/growth/unit-economics"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <UnitEconomicsPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><UnitEconomicsPage /></PlatformAdminScreen>}
             />
             <Route
               path="/growth/acquisition"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <AcquisitionPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><AcquisitionPage /></PlatformAdminScreen>}
             />
             <Route
               path="/growth/referral"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <ReferralPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><ReferralPage /></PlatformAdminScreen>}
             />
             <Route
               path="/growth/product"
-              element={
-                <ProtectedRoute>
-                  <DashboardShell>
-                    <ProductAiPage />
-                  </DashboardShell>
-                </ProtectedRoute>
-              }
+              element={<PlatformAdminScreen><ProductAiPage /></PlatformAdminScreen>}
             />
             <Route
               path="/invitations/:invitationId/accept"

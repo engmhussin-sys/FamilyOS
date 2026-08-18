@@ -1,4 +1,4 @@
-import { httpClient } from '../../../shared/lib/httpClient';
+import { adminGet, adminPost, adminQuery as query } from '../../../shared/lib/adminHttp';
 import type {
   Campaign,
   CampaignSpendInput,
@@ -24,39 +24,18 @@ import type {
 /**
  * The `/admin/growth/*` client.
  *
- * Auth is `x-internal-admin-key` (contract §1), not the parent JWT — so
- * every call passes `skipAuth`, which also keeps these requests out of the
- * refresh-token retry path where they have nothing to refresh. Rejection is
- * 401 without a key and 403 with a wrong one; both surface as `ApiError`
- * with the B3 envelope (`code` / `messageAr` / `requestId`) intact.
+ * Auth is `x-internal-admin-key` (contract §1), not the parent JWT. The key
+ * is NOT a build-time env var any more — a browser bundle cannot keep a
+ * shared secret, so the operator types it in at runtime and it lives in
+ * memory only (`features/admin-key/adminKeyStore.ts` states the reasoning in
+ * full). `adminGet`/`adminPost` attach the header, and turn a 401/403 into
+ * "discard the key and ask again" rather than a retry loop against a
+ * known-bad secret.
+ *
+ * Rejection is 401 without a key and 403 with the wrong role; both surface
+ * as `ApiError` with the B3 envelope (`code` / `messageAr` / `requestId`)
+ * intact and with no trace of the key in them.
  */
-const ADMIN_KEY_HEADER = 'x-internal-admin-key';
-
-function adminKey(): string {
-  return import.meta.env.VITE_INTERNAL_ADMIN_API_KEY ?? '';
-}
-
-function adminGet<T>(path: string): Promise<T> {
-  return httpClient<T>(path, { skipAuth: true, headers: { [ADMIN_KEY_HEADER]: adminKey() } });
-}
-
-function adminPost<T>(path: string, body: unknown): Promise<T> {
-  return httpClient<T>(path, {
-    method: 'POST',
-    body,
-    skipAuth: true,
-    headers: { [ADMIN_KEY_HEADER]: adminKey() },
-  });
-}
-
-function query(params: Record<string, string | number | undefined | null>): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
-  }
-  const s = search.toString();
-  return s ? `?${s}` : '';
-}
 
 /** Definitions only — no tenant data at all, safe to cache hard. Its whole
  * point is that this dashboard does NOT hardcode the KPI list, the channel

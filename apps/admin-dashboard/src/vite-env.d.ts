@@ -3,12 +3,13 @@
 interface ImportMetaEnv {
   readonly VITE_API_BASE_URL: string;
   /**
-   * The internal admin key for `/admin/growth/*` (GROWTH_ANALYTICS_API §1).
-   * Optional at the type level because a build without it still compiles and
-   * still runs — every admin call simply fails 401 with the B3 envelope, and
-   * the growth views render their error state instead of a blank screen.
+   * There is deliberately NO `VITE_INTERNAL_ADMIN_API_KEY` here any more.
+   * Everything named `VITE_*` is inlined into the JavaScript bundle at build
+   * time, so shipping the platform admin secret that way publishes it to
+   * anyone who opens the network tab. The operator enters the key at runtime
+   * instead and it is held in memory only — the reasoning is written out in
+   * `src/features/admin-key/adminKeyStore.ts`.
    */
-  readonly VITE_INTERNAL_ADMIN_API_KEY?: string;
 }
 
 interface ImportMeta {

@@ -624,5 +624,17 @@
       "allChannels": "All channels",
       "year": "Year"
     }
+  },
+  "adminKey": {
+    "eyebrow": "Operator surface",
+    "title": "Enter the operator key",
+    "subtitle": "These screens read platform-wide numbers, and the server asks for a shared key on every request. The key is not shipped inside the app, so you enter it when you use it.",
+    "label": "Operator key",
+    "storageNote": "The key stays in this page's memory only: never saved in the browser, never in the URL, and gone the moment you reload or close the tab.",
+    "submit": "Unlock the dashboard",
+    "lock": "Lock the dashboard",
+    "rejected": "The server did not accept that key. Check it with whoever runs the server, then enter it again.",
+    "locked": "The dashboard is locked. Enter the key again to continue.",
+    "missing": "No operator key has been entered in this page yet."
   }
 }

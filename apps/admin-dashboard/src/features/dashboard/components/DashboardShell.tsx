@@ -5,6 +5,7 @@ import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 import { LanguageSwitcher } from '../../../shared/i18n/LanguageSwitcher';
 import { SearchBar } from '../../search/components/SearchBar';
+import { AdminKeyLockButton } from '../../admin-key/AdminKeyGate';
 
 /**
  * The growth surface's nav, ordered by what an operator opens first rather
@@ -73,6 +74,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <SearchBar />
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
+            {/* Renders only while an operator key is held: locking is a real
+                action here, not a decorative one — it wipes the key out of
+                memory and returns the platform views to the unlock screen. */}
+            <AdminKeyLockButton />
             <Button variant="ghost" onClick={() => logout()}>
               {t('shell.logout')}
             </Button>
