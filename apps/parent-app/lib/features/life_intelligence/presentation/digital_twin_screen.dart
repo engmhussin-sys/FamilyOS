@@ -84,21 +84,21 @@ class _DigitalTwinScreenState extends ConsumerState<DigitalTwinScreen> {
               ),
             )
           : _twin == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4, hero: true)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(DsSpace.lg),
                     children: [
                       Text(widget.childName, style: Theme.of(context).textTheme.headlineMedium),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: DsSpace.xs),
                       Text(
                         t('digitalTwin.notARankingTool'),
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: DsSpace.lg),
                       _GrowthScoreCard(twin: _twin!, t: t),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: DsSpace.lg),
                       ..._subScoreOrder.map(
                         (meta) => _SubScoreTile(
                           label: t(meta.labelKey),
@@ -141,14 +141,14 @@ class _GrowthScoreCard extends StatelessWidget {
     final hasBreakdown = contributing is num && total is num;
 
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(DsSpace.xl),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
           colors: [AppTheme.guardian950, AppTheme.guardian950.withOpacity(0.85)],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(DsRadius.lg),
       ),
       child: Row(
         children: [
@@ -167,18 +167,18 @@ class _GrowthScoreCard extends StatelessWidget {
                           '$rawScore',
                           style: Theme.of(context).textTheme.headlineMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
                         )
-                      : const Icon(Icons.hourglass_empty_rounded, color: Colors.white54),
+                      : const Icon(Icons.hourglass_empty_rounded, color: DsColor.onDarkFaint),
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 20),
+          const SizedBox(width: DsSpace.lg),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(t('digitalTwin.growthScore'), style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.white)),
-                const SizedBox(height: 6),
+                const SizedBox(height: DsSpace.xs),
                 if (hasBreakdown)
                   Text(
                     t(
@@ -188,10 +188,10 @@ class _GrowthScoreCard extends StatelessWidget {
                         'total': total as Object,
                       },
                     ),
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DsColor.onDarkMuted),
                   )
                 else
-                  Text(t('digitalTwin.notYetAvailable'), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70)),
+                  Text(t('digitalTwin.notYetAvailable'), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DsColor.onDarkMuted)),
               ],
             ),
           ),
@@ -299,11 +299,11 @@ class _SubScoreTileState extends State<_SubScoreTile> {
     // WAS `subScore['score'] as num` — an unchecked cast on a field the
     // backend documents as nullable for a child with no data yet.
     final score = rawScore is num ? rawScore : null;
-    final color = score != null ? _scoreColor(score) : Colors.grey;
+    final color = score != null ? _scoreColor(score) : DsColor.stateMuted;
     final inputs = _readableInputs(subScore);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: DsSpace.sm),
       child: ExpansionTile(
         enabled: subScore != null,
         onExpansionChanged: subScore == null ? null : (v) => setState(() => _expanded = v),
@@ -320,7 +320,7 @@ class _SubScoreTileState extends State<_SubScoreTile> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text('$score', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: color, fontWeight: FontWeight.w700)),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: DsSpace.sm),
                   Icon(_expanded ? Icons.expand_less : Icons.expand_more),
                 ],
               ),
@@ -328,7 +328,7 @@ class _SubScoreTileState extends State<_SubScoreTile> {
             ? const []
             : [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: DsSpace.lg, vertical: DsSpace.sm),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: inputs.isEmpty
@@ -340,7 +340,7 @@ class _SubScoreTileState extends State<_SubScoreTile> {
                           ]
                         : inputs
                             .map((e) => Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 2),
+                                  padding: const EdgeInsets.symmetric(vertical: DsSpace.xs),
                                   child: Text(
                                     '${widget.locale.t('digitalTwinInput.${e.key}')}: ${e.value}',
                                     style: Theme.of(context).textTheme.bodyMedium,

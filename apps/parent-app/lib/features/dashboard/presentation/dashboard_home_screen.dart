@@ -149,7 +149,7 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const DsSkeletonList(rows: 3, hero: true)
           : _failure != null
               ? Center(
                   child: SingleChildScrollView(
@@ -188,7 +188,7 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
               // belongs.
               // -------------------------------------------------------------
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(DsSpace.lg),
                 children: [
                   // Question 2 first, deliberately. A parent who opens this app
                   // between two errands mostly needs to know whether they can
@@ -198,14 +198,14 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
                     pendingMessages: _pendingApprovalsCount,
                     t: t,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: DsSpace.lg),
                   // Question 1: one row per child, each carrying a plain
                   // answer for that child rather than a severity code.
                   if (_children != null && _children!.isEmpty)
                     _FirstChildEmptyState(t: t)
                   else ...[
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.only(bottom: DsSpace.sm),
                       child: Text(
                         t('dashboard.childStatusTitle'),
                         style: Theme.of(context).textTheme.titleMedium,
@@ -213,16 +213,16 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
                     ),
                     ...?_children?.map((child) => _ChildCard(child: child, devices: _devices ?? [], t: t)),
                   ],
-                  const SizedBox(height: 16),
+                  const SizedBox(height: DsSpace.lg),
                   _GoalsHubCard(t: t, pendingReviews: _pendingGoalReviewCount),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: DsSpace.lg),
                   _FamilySummaryCard(
                     childrenCount: _children?.length ?? 0,
                     devicesCount: _devices?.length ?? 0,
                     alertsCount: _unreadCount,
                     t: t,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: DsSpace.lg),
                   _QuickActions(t: t),
                 ],
               ),
@@ -272,7 +272,7 @@ class _NeedsYouCard extends StatelessWidget {
             children: [
               Icon(calm ? Icons.check_circle_outline_rounded : Icons.pending_actions_rounded,
                   color: accent, size: 22),
-              const SizedBox(width: 8),
+              const SizedBox(width: DsSpace.sm),
               Expanded(
                 child: Text(t('dashboard.needsYouTitle'), style: DsText.sectionTitle(context)),
               ),
@@ -314,16 +314,16 @@ class _NeedsYouRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(DsRadius.control),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: DsSpace.sm),
         child: Row(
           children: [
             Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
-            const SizedBox(width: 10),
+            const SizedBox(width: DsSpace.sm),
             Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyLarge)),
-            Icon(Icons.chevron_right_rounded,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
+            // Was a fixed right-pointing chevron.
+            DsIcons.disclosure(context),
           ],
         ),
       ),
@@ -347,14 +347,14 @@ class _FamilySummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(DsSpace.lg),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
           colors: [AppTheme.guardian950, AppTheme.guardian950.withOpacity(0.85)],
         ),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(DsRadius.lg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -363,7 +363,7 @@ class _FamilySummaryCard extends StatelessWidget {
             t('dashboard.familySummary'),
             style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.white),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: DsSpace.lg),
           Row(
             children: [
               _StatTile(icon: Icons.child_care_rounded, value: '$childrenCount', label: t('dashboard.children', count: childrenCount)),
@@ -400,9 +400,9 @@ class _StatTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, color: color, size: 20),
-          const SizedBox(height: 8),
+          const SizedBox(height: DsSpace.sm),
           Text(value, style: Theme.of(context).textTheme.headlineMedium?.copyWith(color: color)),
-          Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70)),
+          Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DsColor.onDarkMuted)),
         ],
       ),
     );
@@ -414,7 +414,7 @@ class _StatDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(width: 1, height: 44, color: Colors.white.withOpacity(0.15), margin: const EdgeInsets.symmetric(horizontal: 8));
+    return Container(width: 1, height: 44, color: Colors.white.withOpacity(0.15), margin: const EdgeInsets.symmetric(horizontal: DsSpace.sm));
   }
 }
 
@@ -437,43 +437,51 @@ class _ChildCard extends StatelessWidget {
 
     return Card(
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(DsRadius.card),
         onTap: () => _showChildActions(context, child, t),
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(DsSpace.md),
           child: Row(
             children: [
               Container(
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [AppTheme.sage500, AppTheme.guardian950]),
+                  // `LinearGradient` DEFAULTS to centerLeft -> centerRight,
+                  // and `Alignment` never mirrors, so this avatar lit from
+                  // the same physical side in Arabic as in English.
+                  gradient: const LinearGradient(
+                    begin: AlignmentDirectional.centerStart,
+                    end: AlignmentDirectional.centerEnd,
+                    colors: [AppTheme.sage500, AppTheme.guardian950],
+                  ),
                   shape: BoxShape.circle,
                 ),
                 alignment: Alignment.center,
                 child: Text(
                   firstName.isNotEmpty ? firstName.characters.first : '?',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
+                  // Was an inline `fontSize: 18, w700`.
+                  style: DsText.sectionTitle(context).copyWith(color: DsColor.onDark),
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: DsSpace.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(firstName, style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: DsSpace.xs),
                     Row(
                       children: [
                         Container(
                           width: 8,
                           height: 8,
                           decoration: BoxDecoration(
-                            color: isOnline ? AppTheme.sage500 : Colors.grey.shade400,
+                            color: isOnline ? AppTheme.sage500 : DsColor.stateMuted,
                             shape: BoxShape.circle,
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: DsSpace.xs),
                         Text(isOnline ? t('dashboard.online') : t('dashboard.offline'), style: Theme.of(context).textTheme.bodyMedium),
                       ],
                     ),
@@ -481,8 +489,9 @@ class _ChildCard extends StatelessWidget {
                 ),
               ),
               if (childDevice != null) _RiskChip(riskLevel: riskLevel, t: t),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right_rounded, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
+              const SizedBox(width: DsSpace.xs),
+              // Was a hard right-pointing chevron — wrong direction in Arabic.
+              DsIcons.disclosure(context),
             ],
           ),
         ),
@@ -696,7 +705,7 @@ class _RiskChip extends StatelessWidget {
       case 'LOW':
         return AppTheme.sage500;
       default:
-        return Colors.grey;
+        return DsColor.stateMuted;
     }
   }
 
@@ -705,8 +714,8 @@ class _RiskChip extends StatelessWidget {
     final color = _colorFor(riskLevel);
     final key = _known.contains(riskLevel) ? riskLevel! : 'UNKNOWN';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(20)),
+      padding: const EdgeInsets.symmetric(horizontal: DsSpace.sm, vertical: DsSpace.xs),
+      decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(DsRadius.lg)),
       child: Text(
         t('riskLevel.$key'),
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color, fontWeight: FontWeight.w600),
@@ -723,23 +732,23 @@ class _FirstChildEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(28),
+      padding: const EdgeInsets.all(DsSpace.xl),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
           colors: [AppTheme.sage500.withOpacity(0.10), AppTheme.guardian950.withOpacity(0.05)],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(DsRadius.lg),
       ),
       child: Column(
         children: [
           Icon(Icons.family_restroom_rounded, size: 48, color: AppTheme.sage500),
-          const SizedBox(height: 16),
+          const SizedBox(height: DsSpace.lg),
           Text(t('dashboard.firstChildTitle'), style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
-          const SizedBox(height: 8),
+          const SizedBox(height: DsSpace.sm),
           Text(t('dashboard.firstChildBody'), style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
-          const SizedBox(height: 20),
+          const SizedBox(height: DsSpace.lg),
           FilledButton.icon(
             onPressed: () => Navigator.of(context).pushNamed(AppRoutes.createChild),
             icon: const Icon(Icons.add_rounded),

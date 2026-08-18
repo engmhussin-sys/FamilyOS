@@ -98,29 +98,29 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(DsSpace.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.all(DsSpace.lg),
+                  decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(DsRadius.card)),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
                           const Icon(Icons.warning_amber_rounded, color: AppTheme.brick500),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: DsSpace.sm),
                           Text(t('deleteAccount.warningTitle'), style: Theme.of(context).textTheme.titleMedium?.copyWith(color: AppTheme.brick500)),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: DsSpace.sm),
                       Text(t('deleteAccount.warningBody'), style: Theme.of(context).textTheme.bodyMedium),
                     ],
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
                   controlAffinity: ListTileControlAffinity.leading,
@@ -128,7 +128,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
                   onChanged: (value) => setState(() => _hasConfirmedUnderstanding = value ?? false),
                   title: Text(t('deleteAccount.confirmCheckbox')),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: DsSpace.md),
                 TextField(
                   controller: _passwordController,
                   obscureText: true,
@@ -137,7 +137,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
                   decoration: InputDecoration(labelText: t('deleteAccount.currentPassword'), prefixIcon: const Icon(Icons.lock_outline_rounded)),
                 ),
                 if (_failure != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: DsSpace.md),
                   DsErrorState(
                     failure: _failure!,
                     // A REFUSAL IS A FACT; A SILENCE IS NOT.
@@ -155,7 +155,7 @@ class _DeleteAccountScreenState extends ConsumerState<DeleteAccountScreen> {
                     onRetry: () => setState(() => _failure = null),
                   ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 FilledButton(
                   onPressed: (_hasConfirmedUnderstanding && !_isSubmitting && _passwordController.text.isNotEmpty) ? _submit : null,
                   style: FilledButton.styleFrom(backgroundColor: AppTheme.brick500),

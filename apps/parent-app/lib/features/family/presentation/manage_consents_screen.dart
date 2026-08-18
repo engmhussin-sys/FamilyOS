@@ -148,11 +148,11 @@ class _ManageConsentsScreenState extends ConsumerState<ManageConsentsScreen> {
               ),
             )
           : (_children == null || (_isLoading && _consentByType.isEmpty))
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4)
               : _children!.isEmpty
-                  ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(t('consents.noChildren'), textAlign: TextAlign.center)))
+                  ? Center(child: Padding(padding: const EdgeInsets.all(DsSpace.xl), child: Text(t('consents.noChildren'), textAlign: TextAlign.center)))
                   : ListView(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(DsSpace.lg),
                       children: [
                         if (_children!.length > 1)
                           DropdownButtonFormField<String>(
@@ -177,9 +177,9 @@ class _ManageConsentsScreenState extends ConsumerState<ManageConsentsScreen> {
                               _loadConsents(value);
                             },
                           ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: DsSpace.lg),
                         Text(t('consents.explanation'), style: Theme.of(context).textTheme.bodyMedium),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: DsSpace.lg),
                         ..._consentTypes.map((type) => _ConsentTile(
                               title: t('consents.type.$type.title'),
                               description: t('consents.type.$type.description'),
@@ -211,9 +211,9 @@ class _ConsentTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: DsSpace.sm),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: DsSpace.lg, vertical: DsSpace.sm),
         child: Row(
           children: [
             Expanded(
@@ -221,7 +221,7 @@ class _ConsentTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title, style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: DsSpace.xs),
                   Text(description, style: Theme.of(context).textTheme.bodyMedium),
                 ],
               ),

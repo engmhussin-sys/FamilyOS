@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
@@ -82,28 +83,28 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(DsSpace.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 8),
+                const SizedBox(height: DsSpace.sm),
                 TextField(
                   controller: _fullNameController,
                   decoration: InputDecoration(labelText: t('auth.fullName'), prefixIcon: const Icon(Icons.person_outline_rounded)),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 TextField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(labelText: t('auth.email'), prefixIcon: const Icon(Icons.mail_outline_rounded)),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 TextField(
                   controller: _passwordController,
                   obscureText: true,
                   decoration: InputDecoration(labelText: t('auth.password'), prefixIcon: const Icon(Icons.lock_outline_rounded)),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 // CLOSES A REAL GAP (proactive business/code audit):
                 // registration had zero Terms of Service acceptance
                 // requirement. HONEST NOTE: this checkbox's text
@@ -124,14 +125,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 // Instance of 'DioException'» — which told a parent nothing and
                 // threw away the `messageAr` the B3 envelope already carried.
                 if (errorText != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: DsSpace.md),
                   Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.all(DsSpace.md),
+                    decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(DsRadius.control)),
                     child: Row(
                       children: [
                         const Icon(Icons.error_outline_rounded, color: AppTheme.brick500, size: 18),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: DsSpace.sm),
                         Expanded(
                           child: Text(
                             errorText,
@@ -142,7 +143,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 FilledButton(
                   onPressed: (_isSubmitting || !_acceptedTerms) ? null : _submit,
                   child: _isSubmitting

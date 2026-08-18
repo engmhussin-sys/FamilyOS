@@ -197,11 +197,8 @@ class _Initial extends StatelessWidget {
       alignment: Alignment.center,
       child: Text(
         name.isEmpty ? '?' : name.characters.first,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w700,
-          fontSize: 18,
-        ),
+        // Was an inline `fontSize: 18, w700` — that is `sectionTitle`.
+        style: DsText.sectionTitle(context).copyWith(color: DsColor.onDark),
       ),
     );
   }
@@ -238,7 +235,9 @@ class _OnwardTile extends StatelessWidget {
               ],
             ),
           ),
-          Icon(Icons.chevron_right_rounded, color: DsColor.stateMuted),
+          // Was a hard right-pointing chevron: in Arabic, which is this
+          // product's default, "onward" points LEFT.
+          DsIcons.disclosure(context),
         ],
       ),
     );

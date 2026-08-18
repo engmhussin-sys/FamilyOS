@@ -64,18 +64,18 @@ class _BillingHistoryScreenState extends ConsumerState<BillingHistoryScreen> {
               ),
             )
           : _invoices == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4)
               : _invoices!.isEmpty
                   ? Center(
                       child: Padding(
-                        padding: const EdgeInsets.all(24),
+                        padding: const EdgeInsets.all(DsSpace.xl),
                         child: Text(t('billingHistory.empty'), textAlign: TextAlign.center),
                       ),
                     )
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView.builder(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(DsSpace.lg),
                         itemCount: _invoices!.length,
                         itemBuilder: (context, index) {
                           final invoice = _invoices![index] as Map<String, dynamic>;
@@ -104,7 +104,7 @@ class _InvoiceRow extends StatelessWidget {
       case 'VOID':
         return AppTheme.brick500;
       default:
-        return Colors.grey;
+        return DsColor.stateMuted;
     }
   }
 
@@ -145,7 +145,7 @@ class _InvoiceRow extends StatelessWidget {
     final color = _statusColor(status);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: DsSpace.sm),
       child: ListTile(
         leading: Container(
           width: 40,
@@ -155,14 +155,10 @@ class _InvoiceRow extends StatelessWidget {
         ),
         title: Text('${(amountCents / 100).toStringAsFixed(2)} $currency'),
         subtitle: Text(_formatDate(invoice['issuedAt'] as String?)),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(20)),
-          child: Text(
-            _statusLabel(status),
-            style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
-          ),
-        ),
+        // Was a hand-rolled pill: its own padding, its own radius and its
+        // own `fontSize: 12`. Same shape as the badge the rest of the app
+        // uses, so it is that badge now.
+        trailing: DsBadge(label: _statusLabel(status), color: color),
       ),
     );
   }

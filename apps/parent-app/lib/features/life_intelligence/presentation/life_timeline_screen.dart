@@ -31,12 +31,12 @@ class _CategoryMeta {
 
 const _categoryMeta = <String, _CategoryMeta>{
   'HEALTH': _CategoryMeta(Icons.favorite_rounded, AppTheme.brick500),
-  'LEARNING': _CategoryMeta(Icons.school_rounded, Color(0xFF3D6FB4)),
-  'FAITH': _CategoryMeta(Icons.mosque_rounded, Color(0xFF6B5B95)),
+  'LEARNING': _CategoryMeta(Icons.school_rounded, DsColor.indigo),
+  'FAITH': _CategoryMeta(Icons.mosque_rounded, DsColor.plum),
   'REWARDS': _CategoryMeta(Icons.emoji_events_rounded, AppTheme.amber500),
   'SAFETY': _CategoryMeta(Icons.shield_rounded, AppTheme.guardian950),
   'HABITS': _CategoryMeta(Icons.checklist_rounded, AppTheme.sage500),
-  'FAMILY': _CategoryMeta(Icons.groups_rounded, Color(0xFFB4653D)),
+  'FAMILY': _CategoryMeta(Icons.groups_rounded, DsColor.clay),
 };
 
 class _LifeTimelineScreenState extends ConsumerState<LifeTimelineScreen> {
@@ -78,7 +78,7 @@ class _LifeTimelineScreenState extends ConsumerState<LifeTimelineScreen> {
             height: 48,
             child: ListView(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: DsSpace.md, vertical: DsSpace.xs),
               children: [
                 _CategoryChip(
                   label: t('lifeTimeline.all'),
@@ -115,7 +115,7 @@ class _LifeTimelineScreenState extends ConsumerState<LifeTimelineScreen> {
                     ),
                   )
                 : _events == null
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const DsSkeletonList(rows: 5)
                     : _events!.isEmpty
                         ? Center(child: Text(t('lifeTimeline.empty')))
                         : RefreshIndicator(
@@ -126,7 +126,7 @@ class _LifeTimelineScreenState extends ConsumerState<LifeTimelineScreen> {
                               itemBuilder: (context, index) {
                                 final event = _events![index] as Map<String, dynamic>;
                                 final category = event['category'] as String?;
-                                final meta = _categoryMeta[category] ?? const _CategoryMeta(Icons.circle_rounded, Colors.grey);
+                                final meta = _categoryMeta[category] ?? const _CategoryMeta(Icons.circle_rounded, DsColor.stateMuted);
                                 final isLast = index == _events!.length - 1;
                                 return _TimelineRow(
                                   icon: meta.icon,
@@ -184,15 +184,15 @@ class _TimelineRow extends StatelessWidget {
               if (showConnector) Expanded(child: Container(width: 2, color: color.withOpacity(0.15))),
             ],
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: DsSpace.md),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 18),
+              padding: const EdgeInsets.only(bottom: DsSpace.lg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title, style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: DsSpace.xs),
                   Text(date, style: Theme.of(context).textTheme.bodyMedium),
                 ],
               ),
@@ -216,7 +216,7 @@ class _CategoryChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final chipColor = color ?? AppTheme.guardian950;
     return Padding(
-      padding: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsetsDirectional.only(start: DsSpace.sm),
       child: ChoiceChip(
         label: Text(label),
         selected: selected,

@@ -67,13 +67,13 @@ class _FamilyStoreScreenState extends ConsumerState<FamilyStoreScreen> {
               ),
             )
           : _items == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4)
               : _items!.isEmpty
                   ? Center(child: Text(t('familyStore.empty')))
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: GridView.builder(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(DsSpace.lg),
                         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
                           mainAxisSpacing: 12,
@@ -84,10 +84,10 @@ class _FamilyStoreScreenState extends ConsumerState<FamilyStoreScreen> {
                         itemBuilder: (context, index) {
                           final item = _items![index] as Map<String, dynamic>;
                           return Container(
-                            padding: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(DsSpace.lg),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(DsRadius.card),
                               boxShadow: [BoxShadow(color: AppTheme.amber500.withOpacity(0.10), blurRadius: 12, offset: const Offset(0, 4))],
                             ),
                             child: Column(
@@ -109,7 +109,7 @@ class _FamilyStoreScreenState extends ConsumerState<FamilyStoreScreen> {
                                 Row(
                                   children: [
                                     const Icon(Icons.monetization_on_rounded, color: AppTheme.amber500, size: 16),
-                                    const SizedBox(width: 4),
+                                    const SizedBox(width: DsSpace.xs),
                                     Text(
                                       '${item['costCoins']} ${t('familyStore.coins')}',
                                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),

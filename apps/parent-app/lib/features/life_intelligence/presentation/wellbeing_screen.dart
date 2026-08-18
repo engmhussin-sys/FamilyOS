@@ -124,43 +124,43 @@ class _WellbeingScreenState extends ConsumerState<WellbeingScreen> {
           : !_hasData
               ? Center(
                   child: Padding(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(DsSpace.xl),
                     child: Text(t('wellbeing.noData'), textAlign: TextAlign.center),
                   ),
                 )
               : _snapshot == null
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const DsSkeletonList(rows: 4)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(DsSpace.lg),
                         children: [
                           if (_insight != null) _InsightCard(insight: _insight!, t: t),
-                          _MetricCard(
+                          DsMetricRow(
                             icon: Icons.smartphone_rounded,
-                            color: AppTheme.guardian950,
+                            color: DsColor.domainSafety,
                             label: t('wellbeing.avgScreenTime'),
                             value: _minutesText(t, 'averageDailyScreenMinutes'),
                           ),
-                          _MetricCard(
+                          DsMetricRow(
                             icon: Icons.touch_app_rounded,
-                            color: AppTheme.sage500,
+                            color: DsColor.domainHabits,
                             label: t('wellbeing.avgPickups'),
                             value: _countText(t, 'averagePickups'),
                           ),
-                          _MetricCard(
+                          DsMetricRow(
                             icon: Icons.bedtime_rounded,
-                            color: const Color(0xFF6B5B95),
+                            color: DsColor.domainSleep,
                             label: t('wellbeing.nightUsage'),
                             value: _minutesText(t, 'averageNightUsageMinutes'),
                           ),
-                          _MetricCard(
+                          DsMetricRow(
                             icon: Icons.block_rounded,
-                            color: AppTheme.brick500,
+                            color: DsColor.domainHealth,
                             label: t('wellbeing.blockedAttempts'),
                             value: _countText(t, 'totalBlockedAttempts'),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: DsSpace.sm),
                           if (_number('windowDays') != null && _number('daysWithData') != null)
                             Text(
                               t('wellbeing.windowNote', options: {
@@ -200,30 +200,30 @@ class _InsightCard extends StatelessWidget {
     if (humanSummary == null) return const SizedBox.shrink();
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: DsSpace.lg),
       color: AppTheme.sand50,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(DsSpace.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 const Icon(Icons.insights_rounded, color: AppTheme.guardian950),
-                const SizedBox(width: 8),
+                const SizedBox(width: DsSpace.sm),
                 Text(t('wellbeing.insightTitle'), style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: DsSpace.sm),
             Text(humanSummary, style: Theme.of(context).textTheme.bodyLarge),
             if (patterns.isNotEmpty) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: DsSpace.md),
               ...patterns.map((p) {
                 final map = p as Map<String, dynamic>;
                 final explanation = map['explanation'] as String? ?? '';
                 final isPositive = map['isPositive'] as bool? ?? false;
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.only(bottom: DsSpace.xs),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -232,7 +232,7 @@ class _InsightCard extends StatelessWidget {
                         size: 18,
                         color: isPositive ? AppTheme.sage500 : AppTheme.amber500,
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: DsSpace.sm),
                       Expanded(child: Text(explanation, style: Theme.of(context).textTheme.bodyMedium)),
                     ],
                   ),
@@ -240,10 +240,10 @@ class _InsightCard extends StatelessWidget {
               }),
             ],
             if (recommendation != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: DsSpace.sm),
               Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: AppTheme.guardian950.withOpacity(0.05), borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.all(DsSpace.sm),
+                decoration: BoxDecoration(color: AppTheme.guardian950.withOpacity(0.05), borderRadius: BorderRadius.circular(DsRadius.control)),
                 child: Text(recommendation, style: Theme.of(context).textTheme.bodySmall),
               ),
             ],
@@ -254,28 +254,6 @@ class _InsightCard extends StatelessWidget {
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.icon, required this.color, required this.label, required this.value});
-
-  final IconData icon;
-  final Color color;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(color: color.withOpacity(0.14), shape: BoxShape.circle),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        title: Text(label),
-        trailing: Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: color, fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-}
+// REMOVED: the third private copy of the metric row (it was called
+// `_MetricCard` here and `_MetricRow` in two sibling screens — same
+// widget, three names). It is `DsMetricRow` now.

@@ -119,7 +119,7 @@ class _CreateChildScreenState extends ConsumerState<CreateChildScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(DsSpace.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -127,12 +127,12 @@ class _CreateChildScreenState extends ConsumerState<CreateChildScreen> {
                   controller: _firstNameController,
                   decoration: InputDecoration(labelText: t('createChild.firstName'), prefixIcon: const Icon(Icons.person_outline_rounded)),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 TextField(
                   controller: _lastNameController,
                   decoration: InputDecoration(labelText: t('createChild.lastNameOptional')),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 InkWell(
                   onTap: _pickDateOfBirth,
                   child: InputDecorator(
@@ -144,25 +144,25 @@ class _CreateChildScreenState extends ConsumerState<CreateChildScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 // Sprint 1 (Option C): the explicit consent copy —
                 // continuing past this screen means the baseline
                 // consent types below are granted, individually
                 // revocable later via Settings > Manage Consents.
                 Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.08), borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.all(DsSpace.lg),
+                  decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.08), borderRadius: BorderRadius.circular(DsRadius.card)),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
                           const Icon(Icons.shield_outlined, size: 18, color: AppTheme.sage500),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: DsSpace.sm),
                           Text(t('createChild.consentTitle'), style: Theme.of(context).textTheme.titleMedium),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: DsSpace.sm),
                       Text(t('createChild.consentBody'), style: Theme.of(context).textTheme.bodyMedium),
                     ],
                   ),
@@ -172,15 +172,15 @@ class _CreateChildScreenState extends ConsumerState<CreateChildScreen> {
                 // on this screen, with no server envelope behind it and
                 // nothing to retry.
                 if (_validationMessage != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: DsSpace.md),
                   Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.all(DsSpace.md),
+                    decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(DsRadius.control)),
                     child: Text(_validationMessage!, style: const TextStyle(color: AppTheme.brick500)),
                   ),
                 ],
                 if (_failure != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: DsSpace.md),
                   DsErrorState(
                     failure: _failure!,
                     title: t('createChild.saveFailedTitle'),
@@ -191,7 +191,7 @@ class _CreateChildScreenState extends ConsumerState<CreateChildScreen> {
                     onRetry: () => setState(() => _failure = null),
                   ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 FilledButton(
                   onPressed: _isSubmitting ? null : _submit,
                   child: _isSubmitting

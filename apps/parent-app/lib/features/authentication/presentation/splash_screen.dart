@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
@@ -53,15 +54,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               height: 80,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+                  begin: AlignmentDirectional.topStart,
+                  end: AlignmentDirectional.bottomEnd,
                   colors: [AppTheme.guardian950, AppTheme.sage500],
                 ),
-                borderRadius: BorderRadius.circular(22),
+                borderRadius: BorderRadius.circular(DsRadius.lg),
               ),
               child: const Icon(Icons.shield_rounded, color: Colors.white, size: 40),
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: DsSpace.xl),
             const SizedBox(
               width: 24,
               height: 24,

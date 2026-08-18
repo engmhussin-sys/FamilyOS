@@ -22,7 +22,7 @@ class FaithProgressScreen extends ConsumerStatefulWidget {
 }
 
 class _FaithProgressScreenState extends ConsumerState<FaithProgressScreen> {
-  static const _faithAccent = Color(0xFF6B5B95);
+  static const _faithAccent = DsColor.plum;
 
   List<dynamic>? _practices;
   ApiFailure? _failure;
@@ -92,7 +92,7 @@ class _FaithProgressScreenState extends ConsumerState<FaithProgressScreen> {
               ),
             )
           : _practices == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4)
               : Column(
                   children: [
                     if (_actionFailure != null)
@@ -111,16 +111,16 @@ class _FaithProgressScreenState extends ConsumerState<FaithProgressScreen> {
                           : RefreshIndicator(
                               onRefresh: _load,
                               child: ListView.builder(
-                                padding: const EdgeInsets.all(16),
+                                padding: const EdgeInsets.all(DsSpace.lg),
                                 itemCount: _practices!.length,
                                 itemBuilder: (context, index) {
                                   final practice = _practices![index] as Map<String, dynamic>;
                                   final isDone = practice['completedToday'] as bool? ?? false;
                                   return Container(
-                                    margin: const EdgeInsets.only(bottom: 10),
+                                    margin: const EdgeInsets.only(bottom: DsSpace.sm),
                                     decoration: BoxDecoration(
                                       color: isDone ? _faithAccent.withOpacity(0.06) : Colors.white,
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(DsRadius.card),
                                       boxShadow: isDone
                                           ? null
                                           : [BoxShadow(color: _faithAccent.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 4))],
@@ -135,7 +135,7 @@ class _FaithProgressScreenState extends ConsumerState<FaithProgressScreen> {
                                             decoration: BoxDecoration(color: _faithAccent.withOpacity(0.14), shape: BoxShape.circle),
                                             child: const Icon(Icons.mosque_rounded, color: _faithAccent, size: 20),
                                           ),
-                                          const SizedBox(width: 12),
+                                          const SizedBox(width: DsSpace.md),
                                           Expanded(
                                             child: Text(
                                               practice['title'] as String? ?? '',

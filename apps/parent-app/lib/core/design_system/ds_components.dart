@@ -529,12 +529,17 @@ class DsSkeletonList extends StatelessWidget {
   Widget build(BuildContext context) {
     // A skeleton is decoration; the screen's own loading label is what a
     // screen reader should announce, not eleven grey rectangles.
+    //
+    // A plain `Column(mainAxisSize: min)` and NOT a scroll view: this is
+    // dropped into `Scaffold.body`, into a `Column` branch and into a
+    // ternary inside another `Column` across this app, and a viewport
+    // given unbounded height in the second of those throws at runtime.
     return ExcludeSemantics(
-      child: SingleChildScrollView(
+      child: Padding(
         padding: padding,
-        physics: const NeverScrollableScrollPhysics(),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (hero) ...[
               const DsSkeletonBlock(height: 108, radius: DsRadius.lg),

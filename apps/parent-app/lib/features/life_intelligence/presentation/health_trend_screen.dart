@@ -5,7 +5,6 @@ import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
-import '../../../core/theme/app_theme.dart';
 
 /// DESIGN PASS: the score card is now a gradient hero (matching the
 /// visual weight given to Digital Twin's Growth Score), and each
@@ -85,11 +84,11 @@ class _HealthTrendScreenState extends ConsumerState<HealthTrendScreen> {
               ),
             )
           : _health == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4, hero: true)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: DsSpace.screen,
                     children: [
                       if (_actionFailure != null)
                         DsErrorState(
@@ -101,32 +100,16 @@ class _HealthTrendScreenState extends ConsumerState<HealthTrendScreen> {
                           compact: true,
                           onRetry: () => setState(() => _actionFailure = null),
                         ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [AppTheme.brick500.withOpacity(0.85), AppTheme.brick500.withOpacity(0.6)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Column(
-                          children: [
-                            Text(t('healthTrend.score'), style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white70)),
-                            const SizedBox(height: 8),
-                            Text(
-                              _scoreText(t),
-                              style: Theme.of(context).textTheme.displaySmall?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
-                            ),
-                          ],
-                        ),
+                      DsHeroPanel(
+                        label: t('healthTrend.score'),
+                        value: _scoreText(t),
+                        base: DsColor.domainHealth,
                       ),
-                      const SizedBox(height: 16),
-                      _MetricRow(icon: Icons.water_drop_rounded, color: const Color(0xFF3D8FB4), label: t('healthTrend.hydration'), value: _hydrationText(t)),
-                      _MetricRow(icon: Icons.directions_run_rounded, color: AppTheme.sage500, label: t('healthTrend.activity'), value: _activityText(t)),
-                      _MetricRow(icon: Icons.bedtime_rounded, color: const Color(0xFF6B5B95), label: t('healthTrend.sleep'), value: _sleepText(t)),
-                      _MetricRow(icon: Icons.restaurant_rounded, color: AppTheme.amber500, label: t('healthTrend.meals'), value: _mealsText(t)),
+                      DsSpace.gapLg,
+                      DsMetricRow(icon: Icons.water_drop_rounded, color: DsColor.domainHydration, label: t('healthTrend.hydration'), value: _hydrationText(t)),
+                      DsMetricRow(icon: Icons.directions_run_rounded, color: DsColor.domainHabits, label: t('healthTrend.activity'), value: _activityText(t)),
+                      DsMetricRow(icon: Icons.bedtime_rounded, color: DsColor.domainSleep, label: t('healthTrend.sleep'), value: _sleepText(t)),
+                      DsMetricRow(icon: Icons.restaurant_rounded, color: DsColor.domainRewards, label: t('healthTrend.meals'), value: _mealsText(t)),
                     ],
                   ),
                 ),
@@ -184,28 +167,7 @@ class _HealthTrendScreenState extends ConsumerState<HealthTrendScreen> {
   }
 }
 
-class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.icon, required this.color, required this.label, required this.value});
-
-  final IconData icon;
-  final Color color;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(color: color.withOpacity(0.14), shape: BoxShape.circle),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        title: Text(label),
-        trailing: Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: color, fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-}
+// REMOVED: a private `_MetricRow` that was one of four copies of the same
+// widget across this feature (here, learning_progress_screen,
+// digital_twin_screen and wellbeing_screen), each with its own leading
+// swatch size and its own margin. It is `DsMetricRow` now.

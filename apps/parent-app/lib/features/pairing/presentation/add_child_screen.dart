@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
@@ -459,20 +460,20 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(t('pairing.addChildTitle'))),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(DsSpace.xl),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (_children == null)
-              const Center(child: CircularProgressIndicator())
+              const DsSkeletonList(rows: 3)
             else if (_children!.isEmpty)
               Center(
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(DsSpace.xl),
                   child: Column(
                     children: [
                       Icon(Icons.child_care_rounded, size: 48, color: AppTheme.guardian950.withOpacity(0.3)),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: DsSpace.md),
                       Text(t('pairing.noChildrenYet'), textAlign: TextAlign.center),
                     ],
                   ),
@@ -487,7 +488,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
                     .toList(),
                 onChanged: (value) => setState(() => _selectedChildId = value),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: DsSpace.xl),
               if (_code == null || _secondsLeft <= 0)
                 FilledButton.icon(
                   onPressed: _isGenerating ? null : _generateCode,
@@ -498,14 +499,14 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
                 )
               else
                 Container(
-                  padding: const EdgeInsets.all(28),
+                  padding: const EdgeInsets.all(DsSpace.xl),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                      begin: AlignmentDirectional.topStart,
+                      end: AlignmentDirectional.bottomEnd,
                       colors: [AppTheme.guardian950, AppTheme.guardian950.withOpacity(0.85)],
                     ),
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(DsRadius.lg),
                   ),
                   child: Column(
                     children: [
@@ -513,7 +514,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
                         _code!,
                         style: Theme.of(context).textTheme.displaySmall?.copyWith(color: Colors.white, letterSpacing: 6, fontWeight: FontWeight.w700),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: DsSpace.lg),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(4),
                         child: LinearProgressIndicator(
@@ -523,24 +524,24 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
                           valueColor: const AlwaysStoppedAnimation(AppTheme.amber500),
                         ),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: DsSpace.sm),
                       Text(
                         '${t('pairing.validFor')} ${_secondsLeft ~/ 60}:${(_secondsLeft % 60).toString().padLeft(2, '0')}',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DsColor.onDarkMuted),
                       ),
                     ],
                   ),
                 ),
               ..._buildWatchSection(context, t),
               if (_errorMessage != null) ...[
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.all(DsSpace.md),
+                  decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(DsRadius.control)),
                   child: Row(
                     children: [
                       const Icon(Icons.error_outline_rounded, color: AppTheme.brick500, size: 18),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: DsSpace.sm),
                       Expanded(child: Text(_errorMessage!, style: const TextStyle(color: AppTheme.brick500))),
                     ],
                   ),
@@ -560,7 +561,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
   ) {
     if (_wasRevoked) {
       return [
-        const SizedBox(height: 16),
+        const SizedBox(height: DsSpace.lg),
         _Banner(
           icon: Icons.link_off_rounded,
           color: AppTheme.brick500,
@@ -576,7 +577,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
 
       case PairingWatchPhase.waiting:
         return [
-          const SizedBox(height: 16),
+          const SizedBox(height: DsSpace.lg),
           _Banner(
             icon: Icons.hourglass_bottom_rounded,
             color: AppTheme.guardian950,
@@ -592,7 +593,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
 
       case PairingWatchPhase.connected:
         return [
-          const SizedBox(height: 16),
+          const SizedBox(height: DsSpace.lg),
           _Banner(
             icon: Icons.check_circle_rounded,
             color: AppTheme.sage500,
@@ -605,7 +606,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
           if (_pairedDeviceId != null && !_pairedDeviceIsActive)
             ..._buildActivationSection(context, t),
           if (_activationNotice != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: DsSpace.md),
             _Banner(
               icon: Icons.info_outline_rounded,
               color: AppTheme.amber500,
@@ -618,7 +619,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
             ),
           ],
           if (_pairedDeviceId != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: DsSpace.md),
             OutlinedButton.icon(
               onPressed: _isRevoking ? null : () => _confirmRevoke(context, t),
               icon: _isRevoking ? null : const Icon(Icons.link_off_rounded),
@@ -626,14 +627,14 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                   : Text(t('pairing.revokeAction')),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: DsSpace.xs),
             Text(t('pairing.revokeHint'), style: Theme.of(context).textTheme.bodySmall),
           ],
         ];
 
       case PairingWatchPhase.gaveUp:
         return [
-          const SizedBox(height: 16),
+          const SizedBox(height: DsSpace.lg),
           _Banner(
             icon: Icons.schedule_rounded,
             color: AppTheme.amber500,
@@ -646,7 +647,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
 
       case PairingWatchPhase.cannotConfirm:
         return [
-          const SizedBox(height: 16),
+          const SizedBox(height: DsSpace.lg),
           _Banner(
             icon: Icons.info_outline_rounded,
             color: AppTheme.amber500,
@@ -672,9 +673,9 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
   ) {
     if (_readiness == DeviceReadiness.preparing) {
       return [
-        const SizedBox(height: 12),
+        const SizedBox(height: DsSpace.md),
         Text(t('pairing.activatePreparingBody'), style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 8),
+        const SizedBox(height: DsSpace.sm),
         OutlinedButton.icon(
           onPressed: _isCheckingReadiness ? null : _checkReadinessNow,
           icon: _isCheckingReadiness ? null : const Icon(Icons.refresh_rounded),
@@ -686,7 +687,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
     }
 
     return [
-      const SizedBox(height: 12),
+      const SizedBox(height: DsSpace.md),
       FilledButton.icon(
         onPressed: _isActivating ? null : _activatePairedDevice,
         icon: _isActivating ? null : const Icon(Icons.verified_user_rounded),
@@ -698,7 +699,7 @@ class _AddChildScreenState extends ConsumerState<AddChildScreen> {
               )
             : Text(t('pairing.activateAction')),
       ),
-      const SizedBox(height: 4),
+      const SizedBox(height: DsSpace.xs),
       Text(t('pairing.activateHint'), style: Theme.of(context).textTheme.bodySmall),
     ];
   }
@@ -759,16 +760,16 @@ class _Banner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(DsSpace.md),
       decoration: BoxDecoration(
         color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(DsRadius.control),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           leading ?? Icon(icon, color: color, size: 20),
-          const SizedBox(width: 10),
+          const SizedBox(width: DsSpace.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -777,7 +778,7 @@ class _Banner extends StatelessWidget {
                   title,
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(color: color, fontWeight: FontWeight.w700),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: DsSpace.xs),
                 Text(body, style: Theme.of(context).textTheme.bodySmall),
               ],
             ),

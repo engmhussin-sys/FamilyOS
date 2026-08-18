@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../design_system/design_system.dart';
 import '../connectivity/connectivity_controller.dart';
 import '../di/providers.dart';
 import '../localization/locale_controller.dart';
@@ -25,17 +26,21 @@ class OfflineBanner extends ConsumerWidget {
           Container(
             width: double.infinity,
             color: Theme.of(context).colorScheme.error,
-            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+            padding: const EdgeInsets.symmetric(vertical: DsSpace.sm, horizontal: DsSpace.md),
             child: SafeArea(
               bottom: false,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.wifi_off, color: Colors.white, size: 16),
-                  const SizedBox(width: 8),
+                  const Icon(Icons.wifi_off, color: DsColor.onDark, size: DsIconSize.sm),
+                  DsSpace.hGapSm,
                   Text(
                     t('common.offlineBanner'),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    // Was `TextStyle(color: Colors.white, fontSize: 13)` —
+                    // a size that exists nowhere in the scale and carried
+                    // no line height, on the one piece of chrome that can
+                    // appear above any screen in the app.
+                    style: DsText.caption(context).copyWith(color: DsColor.onDark),
                   ),
                   const _PendingOperationsBadge(),
                 ],
@@ -59,8 +64,11 @@ class _PendingOperationsBadge extends ConsumerWidget {
         final count = snapshot.data ?? 0;
         if (count == 0) return const SizedBox.shrink();
         return Padding(
-          padding: const EdgeInsets.only(left: 8),
-          child: Text('($count)', style: const TextStyle(color: Colors.white, fontSize: 13)),
+          // Was an absolute `EdgeInsets.only(left:)` inset, which put the
+          // count on the WRONG side of the label in Arabic — this
+          // product's default language.
+          padding: const EdgeInsetsDirectional.only(start: DsSpace.sm),
+          child: Text('($count)', style: DsText.caption(context).copyWith(color: DsColor.onDark)),
         );
       },
     );

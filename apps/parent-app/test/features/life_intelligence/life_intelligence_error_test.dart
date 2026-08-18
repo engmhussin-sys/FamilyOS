@@ -50,7 +50,17 @@ void main() {
         ),
       );
 
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      // UPDATED BY THE DESIGN PASS, DELIBERATELY.
+      // Was: `expect(find.byType(CircularProgressIndicator), findsOneWidget);`
+      // The assertion's INTENT is unchanged — a silent repository leaves
+      // this screen in its LOADING state and not its error state. What
+      // changed is what a loading state draws: this screen renders a list
+      // of cards, a shape known before the data arrives, so it now draws a
+      // skeleton of that shape instead of a bare spinner. The assertion is
+      // strengthened rather than weakened: it pins BOTH that the skeleton
+      // is there and that the spinner it replaced is gone.
+      expect(find.byType(DsSkeletonList), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.byType(DsErrorState), findsNothing);
     });
 

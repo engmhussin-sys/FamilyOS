@@ -178,40 +178,40 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
               ),
             )
           : (_plans == null || _subscriptionInfo == null)
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 3)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(DsSpace.lg),
                     children: [
                       _StatusBanner(
                         info: _subscriptionInfo!,
                         t: t,
                         planLabel: _planLabel(locale),
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: DsSpace.lg),
                       // Shown INSTEAD of nothing happening. The previous code
                       // could not reach this state because it always succeeded.
                       if (_purchaseFailure != null) ...[
                         Container(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(DsSpace.lg),
                           decoration: BoxDecoration(
                             color: AppTheme.amber500.withOpacity(0.10),
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(DsRadius.card),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Icon(Icons.info_outline_rounded, color: AppTheme.amber500),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: DsSpace.md),
                               Expanded(child: Text(_purchaseMessage(t, _purchaseFailure!))),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: DsSpace.lg),
                       ],
                       Text(t('subscription.availablePlans'), style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: DsSpace.md),
                       ..._plans!.map((p) => _PlanCard(
                             plan: p as Map<String, dynamic>,
                             currentTier: (_subscriptionInfo!['subscription'] as Map<String, dynamic>?)?['planTier'] as String?,
@@ -219,19 +219,19 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                             onSubscribe: () => _subscribe(p['tier'] as String),
                             t: t,
                           )),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: DsSpace.lg),
                       OutlinedButton.icon(
                         onPressed: () => Navigator.of(context).pushNamed(AppRoutes.billingHistory),
                         icon: const Icon(Icons.receipt_long_rounded),
                         label: Text(t('subscription.viewHistory')),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: DsSpace.md),
                       OutlinedButton.icon(
                         onPressed: () => Navigator.of(context).pushNamed(AppRoutes.redeemCode),
                         icon: const Icon(Icons.confirmation_number_outlined),
                         label: Text(t('redeemCode.entryPoint')),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: DsSpace.md),
                       if ((_subscriptionInfo!['subscription'] as Map<String, dynamic>?)?['status'] == 'ACTIVE')
                         OutlinedButton(
                           onPressed: _isSubmitting ? null : _cancel,
@@ -338,19 +338,19 @@ class _StatusBanner extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(16)),
+      padding: const EdgeInsets.all(DsSpace.lg),
+      decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(DsRadius.card)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, color: color, size: 28),
-          const SizedBox(width: 12),
+          const SizedBox(width: DsSpace.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: color)),
-                const SizedBox(height: 4),
+                const SizedBox(height: DsSpace.xs),
                 Text(body, style: Theme.of(context).textTheme.bodyMedium),
               ],
             ),
@@ -385,9 +385,9 @@ class _PlanCard extends StatelessWidget {
     final features = (plan['features'] as List<dynamic>?) ?? [];
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: DsSpace.md),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(DsSpace.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -401,24 +401,24 @@ class _PlanCard extends StatelessWidget {
               ],
             ),
             if (features.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: DsSpace.sm),
               ...features.map((f) => Padding(
-                    padding: const EdgeInsets.only(top: 2),
+                    padding: const EdgeInsets.only(top: DsSpace.xs),
                     child: Row(
                       children: [
                         const Icon(Icons.check_rounded, size: 16, color: AppTheme.sage500),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: DsSpace.xs),
                         Expanded(child: Text('$f', style: Theme.of(context).textTheme.bodyMedium)),
                       ],
                     ),
                   )),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: DsSpace.md),
             if (isCurrent)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.14), borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: DsSpace.sm),
+                decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.14), borderRadius: BorderRadius.circular(DsRadius.control)),
                 child: Text(t('subscription.currentPlan'), textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.sage500, fontWeight: FontWeight.w600)),
               )
             else

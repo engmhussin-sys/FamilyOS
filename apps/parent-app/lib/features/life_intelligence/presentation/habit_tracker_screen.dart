@@ -95,7 +95,7 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
               ),
             )
           : _habits == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4)
               : Column(
                   children: [
                     if (_actionFailure != null)
@@ -114,7 +114,7 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
                             : RefreshIndicator(
                                 onRefresh: _load,
                                 child: ListView.builder(
-                                  padding: const EdgeInsets.all(16),
+                                  padding: const EdgeInsets.all(DsSpace.lg),
                                   itemCount: _habits!.length,
                                   itemBuilder: (context, index) {
                                     final habit = _habits![index] as Map<String, dynamic>;
@@ -122,10 +122,10 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
                                     final isDone = habit['completedToday'] as bool? ?? false;
                                     final category = _categoryLabel(locale, habit['category']);
                                     return Container(
-                                      margin: const EdgeInsets.only(bottom: 10),
+                                      margin: const EdgeInsets.only(bottom: DsSpace.sm),
                                       decoration: BoxDecoration(
                                         color: isDone ? AppTheme.sage500.withOpacity(0.06) : Colors.white,
-                                        borderRadius: BorderRadius.circular(14),
+                                        borderRadius: BorderRadius.circular(DsRadius.card),
                                         boxShadow: isDone
                                             ? null
                                             : [BoxShadow(color: AppTheme.guardian950.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 4))],
@@ -140,7 +140,7 @@ class _HabitTrackerScreenState extends ConsumerState<HabitTrackerScreen> {
                                               decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.14), shape: BoxShape.circle),
                                               child: const Icon(Icons.checklist_rounded, color: AppTheme.sage500, size: 20),
                                             ),
-                                            const SizedBox(width: 12),
+                                            const SizedBox(width: DsSpace.md),
                                             Expanded(
                                               child: Column(
                                                 crossAxisAlignment: CrossAxisAlignment.start,

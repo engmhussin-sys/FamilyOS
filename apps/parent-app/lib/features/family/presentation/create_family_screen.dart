@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
@@ -88,7 +89,7 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(DsSpace.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -96,7 +97,7 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                   controller: _nameController,
                   decoration: InputDecoration(labelText: t('family.name'), prefixIcon: const Icon(Icons.home_rounded)),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 DropdownButtonFormField<String>(
                   value: _countryCode,
                   decoration: InputDecoration(labelText: t('family.country'), prefixIcon: const Icon(Icons.public_rounded)),
@@ -107,7 +108,7 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                       ? null
                       : (value) => setState(() => _countryCode = value ?? _countryCode),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: DsSpace.md),
                 // The zone is stated in words, not as a raw IANA string: a
                 // parent should not have to know what "Africa/Cairo" means
                 // to understand that their day starts at midnight Cairo
@@ -117,7 +118,7 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Icon(Icons.schedule_rounded, size: 18, color: AppTheme.sage500),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: DsSpace.sm),
                     Expanded(
                       child: Text(
                         t('family.timezoneExplainer', options: {'country': countryLabels[_countryCode] ?? _countryCode}),
@@ -131,14 +132,14 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                 // Instance of 'DioException'» — which told a parent nothing and
                 // threw away the `messageAr` the B3 envelope already carried.
                 if (_failure != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: DsSpace.md),
                   Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.all(DsSpace.md),
+                    decoration: BoxDecoration(color: AppTheme.brick500.withOpacity(0.08), borderRadius: BorderRadius.circular(DsRadius.control)),
                     child: Row(
                       children: [
                         const Icon(Icons.error_outline_rounded, color: AppTheme.brick500, size: 18),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: DsSpace.sm),
                         Expanded(
                           child: Text(
                             _failure!.displayFor(arabic: locale.isRtl),
@@ -149,7 +150,7 @@ class _CreateFamilyScreenState extends ConsumerState<CreateFamilyScreen> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 FilledButton(
                   onPressed: _isSubmitting ? null : _submit,
                   child: _isSubmitting

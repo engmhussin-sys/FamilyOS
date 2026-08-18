@@ -121,14 +121,14 @@ class _RedeemCodeScreenState extends ConsumerState<RedeemCodeScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(DsSpace.xl),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Icon(Icons.confirmation_number_outlined, size: 48, color: AppTheme.sage500),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 Text(t('redeemCode.explanation'), style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 TextField(
                   controller: _codeController,
                   textCapitalization: TextCapitalization.characters,
@@ -136,14 +136,14 @@ class _RedeemCodeScreenState extends ConsumerState<RedeemCodeScreen> {
                   decoration: InputDecoration(labelText: t('redeemCode.codeLabel'), prefixIcon: const Icon(Icons.qr_code_rounded)),
                 ),
                 if (_redeemed) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: DsSpace.lg),
                   Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.1), borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.all(DsSpace.lg),
+                    decoration: BoxDecoration(color: AppTheme.sage500.withOpacity(0.1), borderRadius: BorderRadius.circular(DsRadius.card)),
                     child: Row(
                       children: [
                         const Icon(Icons.check_circle_rounded, color: AppTheme.sage500),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: DsSpace.md),
                         // The server's own sentence, or — only when it sent
                         // none — a localised line. It used to be
                         // `?? 'Success!'`, an English literal on an
@@ -154,7 +154,7 @@ class _RedeemCodeScreenState extends ConsumerState<RedeemCodeScreen> {
                   ),
                 ],
                 if (_failure != null) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: DsSpace.lg),
                   DsErrorState(
                     failure: _failure!,
                     title: _codeWasRejected
@@ -167,7 +167,7 @@ class _RedeemCodeScreenState extends ConsumerState<RedeemCodeScreen> {
                     onRetry: () => setState(() => _failure = null),
                   ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 FilledButton(
                   onPressed: (_isSubmitting || _codeController.text.trim().isEmpty) ? null : _submit,
                   child: _isSubmitting

@@ -34,13 +34,21 @@ class DsColor {
   static const Color stateError = danger;
   static const Color stateSuccess = accent;
   static const Color statePending = warn;
-  static Color get stateMuted => ink.withOpacity(0.45);
 
-  /// Hairlines, fills and dividers — the three opacities that were being
-  /// hand-typed as `withOpacity(0.08)` / `(0.12)` / `(0.25)` across the app.
-  static Color get hairline => ink.withOpacity(0.08);
-  static Color get border => ink.withOpacity(0.12);
-  static Color get borderStrong => ink.withOpacity(0.25);
+  /// WHY THESE ARE `const` AND NOT `ink.withOpacity(x)` GETTERS.
+  /// `withOpacity` is a method call, so a getter built on it can never
+  /// appear inside a `const` widget — and half the call sites in this app
+  /// are `const Icon(...)` / `const _Meta(...)`. A design token that
+  /// cannot be used where the value is needed gets replaced by a literal,
+  /// which is the exact failure this file exists to prevent. The alpha
+  /// bytes below are `(255 * opacity).round()`, the same arithmetic
+  /// `Color.withOpacity` performs, over [ink] = 0xFF14213D:
+  ///   0.08 → 20 (0x14)   0.12 → 31 (0x1F)
+  ///   0.25 → 64 (0x40)   0.45 → 115 (0x73)
+  static const Color stateMuted = Color(0x7314213D);
+  static const Color hairline = Color(0x1414213D);
+  static const Color border = Color(0x1F14213D);
+  static const Color borderStrong = Color(0x4014213D);
 
   /// THE FOUR HUES THAT WERE BEING RE-TYPED AS RAW HEX. Audit of this
   /// pass: `Color(0xFF6B5B95)` appeared in four screens, `0xFF3D8FB4` in
@@ -71,9 +79,11 @@ class DsColor {
   /// `Colors.white54` were being typed inline; both are now named, and
   /// the muted one is deliberately lighter than Material's 70% because
   /// Arabic strokes are thinner than Latin at the same optical size.
+  /// `const` for the same reason as [stateMuted] above: 0.78 → 199
+  /// (0xC7), 0.60 → 153 (0x99) over pure white.
   static const Color onDark = Colors.white;
-  static Color get onDarkMuted => Colors.white.withOpacity(0.78);
-  static Color get onDarkFaint => Colors.white.withOpacity(0.60);
+  static const Color onDarkMuted = Color(0xC7FFFFFF);
+  static const Color onDarkFaint = Color(0x99FFFFFF);
 }
 
 /// A 4pt spacing scale. Every gap in the B6/B7 surface is one of these six

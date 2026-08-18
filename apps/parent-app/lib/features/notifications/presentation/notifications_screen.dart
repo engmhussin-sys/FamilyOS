@@ -174,10 +174,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(DsSpace.lg),
       decoration: BoxDecoration(
         color: AppTheme.sage500.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(DsRadius.control),
         border: Border.all(color: AppTheme.sage500.withOpacity(0.35)),
       ),
       child: Column(
@@ -186,21 +186,24 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           Row(
             children: [
               const Icon(Icons.notifications_off_outlined, size: 20),
-              const SizedBox(width: 8),
+              const SizedBox(width: DsSpace.sm),
               Expanded(
                 child: Text(
                   t('notifications.permTitle'),
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                  // Was `fontSize: 15, w600` — i.e. `titleMedium`, retyped.
+                  style: DsText.cardTitle(context),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: DsSpace.sm),
           Text(
             t('notifications.permBody'),
-            style: const TextStyle(fontSize: 14, height: 1.4),
+            // Was `fontSize: 14, height: 1.4` — a size off the scale with a
+            // line height too tight for Arabic. The theme now sets both.
+            style: DsText.body(context),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: DsSpace.md),
           Align(
             alignment: AlignmentDirectional.centerEnd,
             child: FilledButton(
@@ -230,13 +233,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
               ),
             )
           : _notifications == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 5)
               : _notifications!.isEmpty
                   ? Center(child: Text(t('notifications.empty')))
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView.separated(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(vertical: DsSpace.sm),
                         itemCount: _notifications!.length,
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, index) {
@@ -248,11 +251,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                               leading: Container(
                                 width: 10,
                                 height: 10,
-                                margin: const EdgeInsets.only(top: 4),
+                                margin: const EdgeInsets.only(top: DsSpace.xs),
                                 decoration: BoxDecoration(
                                   color: isUnread ? AppTheme.sage500 : Colors.transparent,
                                   shape: BoxShape.circle,
-                                  border: isUnread ? null : Border.all(color: Colors.grey.shade300),
+                                  border: isUnread ? null : Border.all(color: DsColor.border),
                                 ),
                               ),
                               title: Text(

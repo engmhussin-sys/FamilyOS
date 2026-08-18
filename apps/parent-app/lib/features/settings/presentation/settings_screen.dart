@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/localization/localization_engine.dart';
@@ -54,7 +55,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(t('settings.title'))),
       body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.symmetric(vertical: DsSpace.sm),
         children: [
           _SettingsRow(
             icon: Icons.language_rounded,
@@ -104,7 +105,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             title: t('consents.title'),
             onTap: () => Navigator.of(context).pushNamed(AppRoutes.manageConsents),
           ),
-          const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider(height: 1)),
+          const Padding(padding: EdgeInsets.symmetric(vertical: DsSpace.sm), child: Divider(height: 1)),
           _SettingsRow(
             icon: Icons.delete_forever_rounded,
             color: AppTheme.brick500,

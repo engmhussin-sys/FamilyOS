@@ -92,13 +92,13 @@ class _CoachingScreenState extends ConsumerState<CoachingScreen> {
               ),
             )
           : _recommendations == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 3)
               : _recommendations!.isEmpty
                   ? Center(child: Text(t('coaching.empty')))
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView.builder(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(DsSpace.lg),
                         itemCount: _recommendations!.length,
                         itemBuilder: (context, index) {
                           final rec = _recommendations![index] as Map<String, dynamic>;
@@ -111,14 +111,14 @@ class _CoachingScreenState extends ConsumerState<CoachingScreen> {
                           // row with a neutral label.
                           final meta = _trackMeta[rec['track']] ?? _unknownTrack;
                           return Container(
-                            margin: const EdgeInsets.only(bottom: 12),
+                            margin: const EdgeInsets.only(bottom: DsSpace.md),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(DsRadius.card),
                               boxShadow: [BoxShadow(color: meta.color.withOpacity(0.10), blurRadius: 14, offset: const Offset(0, 5))],
                             ),
                             child: Padding(
-                              padding: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.all(DsSpace.lg),
                               child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -127,7 +127,7 @@ class _CoachingScreenState extends ConsumerState<CoachingScreen> {
                                     height: 64,
                                     decoration: BoxDecoration(color: meta.color, borderRadius: BorderRadius.circular(2)),
                                   ),
-                                  const SizedBox(width: 12),
+                                  const SizedBox(width: DsSpace.md),
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -135,13 +135,13 @@ class _CoachingScreenState extends ConsumerState<CoachingScreen> {
                                         Row(
                                           children: [
                                             Icon(meta.icon, size: 14, color: meta.color),
-                                            const SizedBox(width: 5),
+                                            const SizedBox(width: DsSpace.xs),
                                             Text(t(meta.labelKey), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: meta.color, fontWeight: FontWeight.w600)),
                                           ],
                                         ),
-                                        const SizedBox(height: 6),
+                                        const SizedBox(height: DsSpace.xs),
                                         Text(rec['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium),
-                                        const SizedBox(height: 4),
+                                        const SizedBox(height: DsSpace.xs),
                                         Text(rec['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyLarge),
                                       ],
                                     ),

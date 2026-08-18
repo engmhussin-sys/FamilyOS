@@ -83,7 +83,7 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
             ? _buildSuccessState(t)
             : SingleChildScrollView(
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(DsSpace.xl),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -92,19 +92,19 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
                         keyboardType: TextInputType.emailAddress,
                         decoration: InputDecoration(labelText: t('support.email'), prefixIcon: const Icon(Icons.mail_outline_rounded)),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: DsSpace.lg),
                       TextField(
                         controller: _subjectController,
                         decoration: InputDecoration(labelText: t('support.subject'), prefixIcon: const Icon(Icons.subject_rounded)),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: DsSpace.lg),
                       TextField(
                         controller: _messageController,
                         maxLines: 6,
                         decoration: InputDecoration(labelText: t('support.message'), alignLabelWithHint: true),
                       ),
                       if (_failure != null) ...[
-                        const SizedBox(height: 12),
+                        const SizedBox(height: DsSpace.md),
                         DsErrorState(
                           failure: _failure!,
                           title: t('support.sendFailedTitle'),
@@ -118,7 +118,7 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
                           onRetry: () => setState(() => _failure = null),
                         ),
                       ],
-                      const SizedBox(height: 24),
+                      const SizedBox(height: DsSpace.xl),
                       FilledButton(
                         onPressed: _isSubmitting ? null : _submit,
                         child: _isSubmitting
@@ -136,16 +136,16 @@ class _ContactSupportScreenState extends ConsumerState<ContactSupportScreen> {
   Widget _buildSuccessState(String Function(String, {int? count, Map<String, Object>? options}) t) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(DsSpace.xxl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.check_circle_rounded, color: AppTheme.sage500, size: 56),
-            const SizedBox(height: 16),
+            const SizedBox(height: DsSpace.lg),
             Text(t('support.sentTitle'), style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
-            const SizedBox(height: 8),
+            const SizedBox(height: DsSpace.sm),
             Text(t('support.sentBody'), textAlign: TextAlign.center),
-            const SizedBox(height: 24),
+            const SizedBox(height: DsSpace.xl),
             FilledButton(onPressed: () => Navigator.of(context).pop(), child: Text(t('common.done'))),
           ],
         ),

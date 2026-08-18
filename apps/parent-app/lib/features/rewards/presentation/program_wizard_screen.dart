@@ -75,7 +75,9 @@ class _ProgramWizardScreenState extends ConsumerState<ProgramWizardScreen> {
       appBar: AppBar(
         title: Text(t('wizard.title')),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          // Was `Icons.arrow_back` — a fixed left arrow. "Back" points
+          // toward the start of the line, which in Arabic is the right.
+          icon: DsIcons.back(context),
           tooltip: t('common.back'),
           onPressed: () {
             if (state.step == WizardStep.child) {
