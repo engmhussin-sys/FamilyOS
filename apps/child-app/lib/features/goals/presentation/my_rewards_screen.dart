@@ -31,7 +31,6 @@ class MyRewardsScreen extends ConsumerWidget {
     final t = locale.t;
     final state = ref.watch(childRewardsControllerProvider);
     final controller = ref.read(childRewardsControllerProvider.notifier);
-    final now = DateTime.now();
 
     return RefreshIndicator(
       onRefresh: controller.load,
@@ -51,37 +50,63 @@ class MyRewardsScreen extends ConsumerWidget {
               title: t('myRewards.bonusSection'),
               subtitle: t('myRewards.bonusHint'),
             ),
-            KidStatTile(
-              // Computed SERVER-SIDE over unexpired, unrevoked grants. The
-              // client shows the number; it does not re-add the list.
-              value: snapshot.activeBonusMinutes.toString(),
-              label: t('myRewards.bonusMinutes'),
-              icon: Icons.hourglass_bottom_rounded,
-              color: KidColor.primary,
-            ),
-            KidSpace.gapMd,
-            for (final grant in snapshot.grants)
+            // THE ONE LIVE NUMBER ON THIS SCREEN, AND IT IS THE SERVER'S.
+            // Computed in `PrismaRewardProgramRepository.activeBonusMinutes`
+            // over `revokedAt: null, expiresAt > now` at the SERVER's `now`.
+            // The client shows it; it does not re-add the rows below, and —
+            // since the row list is history and carries no live flag — it no
+            // longer marks individual rows live or finished either. See
+            // `ChildScreenTimeGrant`'s docstring for why the child's route
+            // cannot answer that per row.
+            if (snapshot.activeBonusMinutes == null)
+              // NOT A ZERO. The server did not send the total, so the screen
+              // says it could not read it rather than telling a child their
+              // minutes are gone.
               KidCard(
                 padding: const EdgeInsets.all(KidSpace.md),
-                dimmed: !grant.isActiveAt(now),
-                accent: grant.isActiveAt(now) ? KidColor.done : null,
                 child: Row(
                   children: [
+                    const Icon(
+                      Icons.help_outline_rounded,
+                      size: KidSize.iconSm,
+                      color: KidColor.unknown,
+                    ),
+                    const SizedBox(width: KidSpace.sm),
                     Expanded(
                       child: Text(
-                        t('myRewards.grantMinutes', options: {'count': grant.minutes}),
-                        style: KidText.cardTitle(context),
+                        t('myRewards.bonusUnknown'),
+                        style: KidText.body(context),
                       ),
-                    ),
-                    KidBadge(
-                      label: grant.isActiveAt(now)
-                          ? t('myRewards.grantActive')
-                          : t('myRewards.grantFinished'),
-                      color: grant.isActiveAt(now) ? KidColor.done : KidColor.mutedInk,
                     ),
                   ],
                 ),
+              )
+            else
+              KidStatTile(
+                value: snapshot.activeBonusMinutes!.toString(),
+                label: t('myRewards.bonusMinutes'),
+                icon: Icons.hourglass_bottom_rounded,
+                color: KidColor.primary,
               ),
+            KidSpace.gapMd,
+            if (snapshot.grants.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: KidSpace.sm),
+                child: Text(
+                  t('myRewards.grantsHistoryHint'),
+                  style: KidText.caption(context),
+                ),
+              ),
+              KidSpace.gapSm,
+              for (final grant in snapshot.grants)
+                KidCard(
+                  padding: const EdgeInsets.all(KidSpace.md),
+                  child: Text(
+                    t('myRewards.grantMinutes', options: {'count': grant.minutes}),
+                    style: KidText.cardTitle(context),
+                  ),
+                ),
+            ],
             KidSpace.gapLg,
             KidSectionHeader(
               title: t('myRewards.prizesSection'),

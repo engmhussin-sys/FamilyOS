@@ -129,6 +129,13 @@ class ChildAchievementsApi {
   Future<Map<String, dynamic>> streaks() => _client.get('$_base/streaks');
 
   /// `{activeBonusMinutes, screenTimeGrants, fulfilments}`.
+  ///
+  /// `activeBonusMinutes` is the server's LIVE total. `screenTimeGrants` is the
+  /// unrevoked HISTORY — `revokedAt: null` and nothing else, so no expiry
+  /// filter and no per-grant live flag. This route does not say which of those
+  /// rows the total is made of, and the route that does
+  /// (`…/screen-time-policy/effective`) is parent-only. See
+  /// `ChildScreenTimeGrant`.
   Future<Map<String, dynamic>> rewards() => _client.get('$_base/rewards');
 
   /// The points/level account. A DIFFERENT module's endpoint, reused rather

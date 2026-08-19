@@ -27,6 +27,33 @@ class StreakSet {
       });
 }
 
+/// One batch of earned screen-time minutes, exactly as the server reported it.
+///
+/// NOTE WHAT IS NOT HERE ANY MORE: `isActiveAt(now)`. It answered «is this
+/// grant still running?» by comparing [expiresAt] against this handset's
+/// `DateTime.now()` — a second implementation of a rule the server had already
+/// applied, evaluated on a clock nobody controls. `my_rewards_screen.dart`
+/// dimmed and badged every row with that local answer while rendering the
+/// server's `activeBonusMinutes` immediately above them, so a phone running
+/// fast, or an expiry passing while the screen sat open, made the total and the
+/// rows contradict each other in front of the child — about minutes the child
+/// earned.
+///
+/// AND IT CANNOT BE RESTORED HONESTLY ON THIS ROUTE. `GET
+/// /self/achievements/rewards` (`ChildAchievementsController.rewards`) returns
+/// `screenTimeGrants` filtered on `revokedAt: null` and nothing else — the full
+/// unrevoked history, with no per-grant live flag and no set of the ids the
+/// server currently counts. The route that carries that set, `GET
+/// /children/:childId/screen-time-policy/effective`, is `@ParentSurface()`
+/// behind `JwtAuthGuard`; a paired child device's token cannot reach it, and
+/// this app cannot change the backend. So «is THIS row live right now?» is a
+/// question the child app has no server answer to, and it has stopped
+/// inventing one. The live figure it does have — the server's
+/// [ChildRewardsSnapshot.activeBonusMinutes] — is the one the screen shows.
+///
+/// [expiresAt] and [revokedAt] stay because they are facts the server sent and
+/// the model should not drop them. They decide nothing here: no member of this
+/// class compares either of them against a clock.
 class ChildScreenTimeGrant {
   const ChildScreenTimeGrant({
     required this.id,
@@ -39,9 +66,6 @@ class ChildScreenTimeGrant {
   final int minutes;
   final DateTime? expiresAt;
   final DateTime? revokedAt;
-
-  bool isActiveAt(DateTime now) =>
-      revokedAt == null && (expiresAt == null || expiresAt!.isAfter(now));
 
   factory ChildScreenTimeGrant.fromJson(Map<String, dynamic> json) => ChildScreenTimeGrant(
         id: json['id']?.toString() ?? '',
@@ -79,9 +103,16 @@ class ChildFulfilment {
 }
 
 /// `GET /self/achievements/rewards` — `{activeBonusMinutes, screenTimeGrants,
-/// fulfilments}`. The bonus-minute total is computed SERVER-SIDE over
-/// unexpired, unrevoked grants; the client displays it and does not re-add
-/// the list itself.
+/// fulfilments}`.
+///
+/// [grants] is the HISTORY — every unrevoked grant this child was ever given,
+/// live or long finished. [activeBonusMinutes] is the LIVE figure, and it is
+/// not a summary of that list: the server computes it in
+/// `PrismaRewardProgramRepository.activeBonusMinutes` over
+/// `revokedAt: null, expiresAt > now` at the SERVER's `now`, which is the same
+/// number `ScreenTimeService.getEffectivePolicy` adds to the base policy and
+/// the same number the parent's screens render. The client displays it and
+/// never re-adds the list.
 class ChildRewardsSnapshot {
   const ChildRewardsSnapshot({
     required this.activeBonusMinutes,
@@ -89,14 +120,24 @@ class ChildRewardsSnapshot {
     required this.fulfilments,
   });
 
-  final int activeBonusMinutes;
+  /// `null` means THE SERVER DID NOT SAY — the field was absent or unreadable
+  /// in the response. It is not zero, and the screen does not print it as
+  /// zero: it prints `myRewards.bonusUnknown`, «مقدرناش نعرف دقايقك الزيادة
+  /// دلوقتي», which is a different sentence from «صفر دقيقة». Telling a child
+  /// their earned minutes vanished because a field did not arrive is the
+  /// worse of the two mistakes.
+  final int? activeBonusMinutes;
+
   final List<ChildScreenTimeGrant> grants;
   final List<ChildFulfilment> fulfilments;
 
+  /// A read that returned an explicit zero and nothing else is genuinely
+  /// empty. An UNKNOWN total is not: `null` falls through to the data view,
+  /// which states that it could not be read.
   bool get isEmpty => activeBonusMinutes == 0 && grants.isEmpty && fulfilments.isEmpty;
 
   factory ChildRewardsSnapshot.fromJson(Map<String, dynamic> json) => ChildRewardsSnapshot(
-        activeBonusMinutes: (json['activeBonusMinutes'] as num?)?.toInt() ?? 0,
+        activeBonusMinutes: (json['activeBonusMinutes'] as num?)?.toInt(),
         grants: (json['screenTimeGrants'] as List<dynamic>? ?? const [])
             .whereType<Map<String, dynamic>>()
             .map(ChildScreenTimeGrant.fromJson)

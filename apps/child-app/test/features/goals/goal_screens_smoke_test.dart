@@ -90,6 +90,19 @@ Future<T> _failing<T>() => Future<T>.error(_failure);
 
 String _ar(String key) => translate(AppLocale.ar, key);
 
+String _arWith(String key, Map<String, Object> options) =>
+    translate(AppLocale.ar, key, options: options);
+
+/// A grant whose `expiresAt` is already in the past on WHATEVER device runs
+/// this test. Anything that draws its standing from the local clock will call
+/// it finished; the server, in the tests below, still counts it.
+ChildScreenTimeGrant _grant({required String id, int minutes = 15}) =>
+    ChildScreenTimeGrant(
+      id: id,
+      minutes: minutes,
+      expiresAt: DateTime.utc(2020),
+    );
+
 Future<void> _pump(
   WidgetTester tester,
   Widget screen,
@@ -302,6 +315,110 @@ void main() {
       );
       await tester.pump();
       expect(find.byType(KidErrorState), findsNothing);
+    });
+
+    // -----------------------------------------------------------------------
+    // THE REGRESSION GUARD FOR THE DEVICE CLOCK.
+    //
+    // This screen rendered the server's `activeBonusMinutes` and, in the rows
+    // immediately under it, dimmed and badged each grant with
+    // `grant.isActiveAt(DateTime.now())` — the handset's own clock re-deciding
+    // something the server had already decided. A phone running fast, or an
+    // expiry crossing while the screen sat open, and the total and the rows
+    // disagreed in front of the child about minutes the child earned.
+    //
+    // Every grant below expires in 2020, so it is ALREADY PAST on any device
+    // that runs these tests. That is the point: a local re-derivation gives a
+    // different answer from the server's, which is the only way a test can
+    // tell the two apart. These fail if anything ever puts the device clock
+    // back in charge of a grant's standing.
+    // -----------------------------------------------------------------------
+    testWidgets(
+        'shows the SERVER total even when every row looks expired to this '
+        'device', (tester) async {
+      await _pump(
+        tester,
+        const MyRewardsScreen(),
+        _FakeAchievementsRepository(
+          onRewards: () async => ChildRewardsSnapshot(
+            // The server still counts both. The device clock says otherwise.
+            activeBonusMinutes: 30,
+            grants: [_grant(id: 'g_1'), _grant(id: 'g_2')],
+            fulfilments: const <ChildFulfilment>[],
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('30'), findsOneWidget);
+      // What a local sum over `expiresAt < now` would have produced.
+      expect(find.text('0'), findsNothing);
+      expect(
+        find.text(_arWith('myRewards.grantMinutes', {'count': 15})),
+        findsNWidgets(2),
+      );
+    });
+
+    testWidgets('never draws a row as live or finished on its own authority',
+        (tester) async {
+      await _pump(
+        tester,
+        const MyRewardsScreen(),
+        _FakeAchievementsRepository(
+          onRewards: () async => ChildRewardsSnapshot(
+            activeBonusMinutes: 30,
+            grants: [_grant(id: 'g_1'), _grant(id: 'g_2')],
+            fulfilments: const <ChildFulfilment>[],
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // `GET /self/achievements/rewards` returns the unrevoked HISTORY with no
+      // per-grant live flag, and the route that has one
+      // (`…/screen-time-policy/effective`) is `@ParentSurface()` — unreachable
+      // with a device token. So no row carries a standing badge at all, and
+      // nothing here is greyed out for having "finished".
+      expect(find.byType(KidBadge), findsNothing);
+      expect(
+        tester.widgetList<KidCard>(find.byType(KidCard)).every((c) => !c.dimmed),
+        isTrue,
+      );
+      expect(find.text(_ar('myRewards.grantsHistoryHint')), findsOneWidget);
+    });
+
+    testWidgets(
+        'a total the server did not send reads as unknown, in Arabic, not as '
+        'zero', (tester) async {
+      await _pump(
+        tester,
+        const MyRewardsScreen(),
+        _FakeAchievementsRepository(
+          // Straight through the parser, because the fabricated zero lived
+          // there: `activeBonusMinutes` used to default to 0 when the field
+          // was absent, which tells a child their earned minutes are gone.
+          onRewards: () async => ChildRewardsSnapshot.fromJson(
+            const <String, dynamic>{
+              'screenTimeGrants': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'g_1',
+                  'minutes': 15,
+                  'expiresAt': '2020-01-01T00:00:00.000Z',
+                },
+              ],
+              'fulfilments': <Map<String, dynamic>>[],
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text(_ar('myRewards.bonusUnknown')), findsOneWidget);
+      expect(find.byType(KidStatTile), findsNothing);
+      expect(find.text('0'), findsNothing);
+      // An unread total is not an empty screen and not an error screen.
+      expect(find.byType(KidErrorState), findsNothing);
+      expect(find.text(_ar('myRewards.emptyTitle')), findsNothing);
     });
   });
 }
