@@ -113,7 +113,19 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                       child: ListView(
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                         children: [
-                          _CoinBalanceCard(account: _account!, coinsLabel: t('rewards.coinsLabel'), xpLabel: t('rewards.xpLabel')),
+                          // ONE NAME FOR ONE BALANCE. `xp` here and `xp` on
+                          // «نقطي» are the same ledger number for the same
+                          // child; this card called it «نقاط خبرة» and that
+                          // screen called it «نقطة», so two tabs read as two
+                          // economies. `progress.points` is the product's
+                          // word for it — the parent app labels the same
+                          // number the same way — and `rewards.xpLabel` is
+                          // gone from both locale files.
+                          _CoinBalanceCard(
+                            account: _account!,
+                            coinsLabel: t('rewards.coinsLabel'),
+                            xpLabel: t('progress.points'),
+                          ),
                           const SizedBox(height: KidSpace.xl),
                           Text(t('rewards.storeTitle'), style: Theme.of(context).textTheme.headlineMedium),
                           const SizedBox(height: KidSpace.md),

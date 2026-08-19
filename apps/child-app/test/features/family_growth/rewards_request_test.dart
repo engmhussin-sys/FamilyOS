@@ -155,6 +155,19 @@ void main() {
     });
   });
 
+  group('the balance card', () {
+    // ONE NAME FOR ONE BALANCE. `my_progress_screen.dart` renders the same
+    // `xp` under «نقطة»; this card rendered it under «نقاط خبرة», so the same
+    // child on two tabs read two economies.
+    testWidgets('labels xp with the product\'s one word for it', (tester) async {
+      final api = _FakeGrowthApi(coins: 12, store: const <dynamic>[]);
+      await _pumpRewards(tester, api);
+
+      expect(find.text(_ar('progress.points')), findsOneWidget);
+      expect(find.text(_ar('rewards.coinsLabel')), findsOneWidget);
+    });
+  });
+
   group('an empty family store', () {
     testWidgets('says so instead of showing a bare screen', (tester) async {
       final api = _FakeGrowthApi(coins: 10, store: const <dynamic>[]);

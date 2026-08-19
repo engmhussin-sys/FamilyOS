@@ -328,7 +328,6 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'rewards.loadError': "Oops! Something didn't load.",
     'rewards.tryAgain': 'Try Again',
     'rewards.coinsLabel': 'Coins',
-    'rewards.xpLabel': 'XP',
     'rewards.getIt': 'Get it!',
     'rewards.askAnyway': "You're {{count}} coins short — ask anyway, a grown-up can help!",
 
@@ -753,7 +752,6 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'rewards.loadError': 'ياااه! حاجة ما حمّلتش.',
     'rewards.tryAgain': 'حاول تاني',
     'rewards.coinsLabel': 'كوينز',
-    'rewards.xpLabel': 'نقاط خبرة',
     'rewards.getIt': 'هاتها!',
     'rewards.askAnyway': 'ناقصك {{count}} كوينز — اطلبها برضه، ممكن حد كبير يساعدك!',
 
