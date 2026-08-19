@@ -186,6 +186,9 @@ export class PrismaNotificationDecisionRepository implements INotificationDecisi
           outcomeSuppressed,
           duplicates,
           fatigueBlocked: Number(agg?.fatigue_blocked ?? 0),
+          // The never-suppressible slice of `total`, counted in the SAME scan
+          // as the rate it qualifies. See the port's docstring.
+          bypassed: Number(agg?.bypassed ?? 0),
           deliveryFailures: Number(agg?.delivery_failures ?? 0),
           aiRewritten,
           aiFailed: Number(agg?.ai_failed ?? 0),

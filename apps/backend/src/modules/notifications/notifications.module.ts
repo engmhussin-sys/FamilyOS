@@ -15,6 +15,7 @@ import {
   PrismaNotificationDecisionRepository,
   PrismaNotificationPolicyRepository,
 } from './infrastructure/repositories/prisma-notification-decision.repository';
+import { EngineBypassDecisionRecorder } from './application/services/engine-bypass-decision.recorder';
 
 /**
  * Sprint 8's Notification Center. Deliberately a NEW, standalone module
@@ -46,6 +47,24 @@ import {
     // that reads them lives next to the pipeline it calls.
     { provide: NOTIFICATION_DECISION_REPOSITORY, useClass: PrismaNotificationDecisionRepository },
     { provide: NOTIFICATION_POLICY_REPOSITORY, useClass: PrismaNotificationPolicyRepository },
+    /**
+     * THE RECEIPT FOR A NOTIFICATION THE ENGINE NEVER DECIDED.
+     *
+     * A CLASS AND NOT A PORT, and the asymmetry with the four bindings above is
+     * deliberate rather than an oversight. Those are PERSISTENCE seams, and an
+     * interface is what keeps `notification-engine/` depending on a contract
+     * instead of on a Prisma model. This is not persistence: it is a small
+     * policy about which columns a bypassed notification's row carries, it has
+     * exactly one implementation that could ever be correct, and a port would
+     * make «what does a bypass row look like» swappable — which is the last
+     * thing an audit trail should be.
+     *
+     * PROVIDED HERE, in the module that owns `notification_decisions`, and
+     * consumed by `PairingModule` — the module that owns the single writer of
+     * `notifications`. That direction is one-way and stays acyclic:
+     * `NotificationsModule` imports nothing at all.
+     */
+    EngineBypassDecisionRecorder,
   ],
   exports: [
     NotificationsService,
@@ -53,6 +72,7 @@ import {
     NOTIFICATION_DELIVERY_REPOSITORY,
     NOTIFICATION_DECISION_REPOSITORY,
     NOTIFICATION_POLICY_REPOSITORY,
+    EngineBypassDecisionRecorder,
   ],
 })
 export class NotificationsModule {}

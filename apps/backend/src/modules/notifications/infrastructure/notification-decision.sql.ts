@@ -15,7 +15,53 @@
  * `InternalAdminGuard` + `@SystemRoute`, exactly as `SQL_DELIVERY_BACKLOG` does,
  * and they return COUNTS ONLY. No title, no body, no child id, no family id
  * leaves any of them.
+ *
+ * ---------------------------------------------------------------------------
+ * ENGINE-BYPASSED ROWS ARE IN THE POPULATION, BY DECISION AND NOT BY DEFAULT.
+ *
+ * `notification_decisions` now also carries a row for every notification that
+ * reached a parent WITHOUT the engine — the two SYSTEM producers on
+ * `ENGINE_BYPASS_ALLOWLIST`, stamped `provider_id = 'safety-bypass'` (see
+ * `notification-bypass.ts`). Whether those rows belong in these five statements
+ * is a real question with a real cost either way, so it is answered here, once,
+ * in writing:
+ *
+ *   THEY ARE INCLUDED. Excluding them would reproduce, one layer up, exactly
+ *   the invisibility this work closed: an operator asking «how many safety
+ *   escalations went out in Egypt last week» would get zero from the surface
+ *   built to answer that shape of question, and the ledger would once again
+ *   know something the dashboard could not say. A platform roll-up that hides
+ *   its own safety traffic is not a roll-up.
+ *
+ *   AND THE COST IS NAMED RATHER THAN HIDDEN. These rows were never ELIGIBLE
+ *   for suppression — no scorer, no cap and no quiet-hours matrix was ever
+ *   asked about them — so they sit in the denominator of `suppressionRate`
+ *   while being incapable of contributing to its numerator. `bypassed` below is
+ *   that quantity, on the SAME object as the rate, so an operator reading
+ *   «suppression is 12%» can see the size of the never-suppressible slice of
+ *   the 100% without a second query. `avg_score` carries the same caveat for
+ *   the same reason — a bypass row's score is a statement of unconditionality
+ *   rather than a measurement, and `notification-bypass.ts` argues that value
+ *   at length.
+ *
+ *   THE BREAKDOWN NEEDS NO NEW COLUMN because it already answers this: its
+ *   PROVENANCE dimension is `GROUP BY provider_id`, so `safety-bypass` is
+ *   its own bucket beside `rule-based`, with all six counts, subtractable
+ *   from `totals` by construction. That the two surfaces answer the same
+ *   question in two shapes is the point of their being two; that they answer it
+ *   over the SAME population is what keeps them comparable, and it is why
+ *   neither statement carries a `provider_id` filter.
  */
+
+import { ENGINE_BYPASS_PROVENANCE } from '../domain/engine/notification-bypass';
+
+/**
+ * The provenance literal, quoted for SQL and interpolated from the ONE constant
+ * that defines it — `SQL_DELIVERY_ERROR_REASONS`' pattern, for its reason: a
+ * second spelling of a closed vocabulary value is a panel that silently counts
+ * nothing the day the first spelling changes.
+ */
+export const SQL_ENGINE_BYPASS_PROVENANCE = `'${ENGINE_BYPASS_PROVENANCE}'`;
 
 /**
  * RECORD A DECISION. `ON CONFLICT DO NOTHING` on
@@ -103,8 +149,11 @@ SELECT "id", "child_id", "source_event_id", "trigger", "event_type",
  * WHY ONE QUERY AND NOT NINE. Every number the dashboard shows must be computed
  * over the SAME filtered population, or «suppression rate» and «AI-rewrite rate»
  * will be percentages of two different denominators and nobody will notice until
- * they disagree. `FILTER (WHERE ...)` gives nine numerators over one scan and
- * one `WHERE`.
+ * they disagree. `FILTER (WHERE ...)` gives every numerator over one scan and
+ * one `WHERE` — `bypassed` included, which is why it is a tenth `FILTER` here
+ * rather than a second statement: the count of never-suppressible rows and the
+ * suppression rate they dilute must come from the same scan or the caveat can
+ * disagree with the number it is a caveat about.
  *
  * OPEN RATE AND ACTION RATE come from `notifications.read_at`, joined on the
  * causal key rather than on a foreign key — deliberately, because the join must
@@ -139,6 +188,8 @@ SELECT
                                                                            AS fatigue_blocked,
   COUNT(*) FILTER (WHERE d."outcome_reason" IN ('DELIVERY_ERROR', 'DEFER_ENQUEUE_FAILED'))::int
                                                                            AS delivery_failures,
+  COUNT(*) FILTER (WHERE d."provider_id" = ${SQL_ENGINE_BYPASS_PROVENANCE})::int
+                                                                           AS bypassed,
   COUNT(*) FILTER (WHERE d."ai_rewritten")::int                            AS ai_rewritten,
   COUNT(*) FILTER (WHERE d."ai_failed")::int                               AS ai_failed,
   COUNT(n."id") FILTER (WHERE n."read_at" IS NOT NULL)::int                AS opened,
@@ -198,7 +249,7 @@ SELECT d."notification_type" AS type,
  *                                   DOMAIN_EVENT, PERIODIC_SIGNAL, …). The
  *                                   producer-side origin.
  *   PROVENANCE  `provider_id`       WHICH DECISION PROVIDER produced the
- *                                   verdict (`rule-based-v1` today, an AI
+ *                                   verdict (`rule-based` today, an AI
  *                                   provider tomorrow). The provider
  *                                   abstraction exists precisely so that
  *                                   «which one decided this» is askable.

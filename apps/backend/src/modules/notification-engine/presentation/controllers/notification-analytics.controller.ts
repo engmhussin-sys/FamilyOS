@@ -16,6 +16,21 @@
  * Egypt this week», and putting it here would make a platform dashboard the
  * place a child's notifications are readable.
  *
+ * ENGINE-BYPASSED NOTIFICATIONS ARE IN THESE NUMBERS, AND THE ANSWER IS
+ * EXPLICIT RATHER THAN INCIDENTAL. The two SYSTEM producers on
+ * `ENGINE_BYPASS_ALLOWLIST` — the child-distress escalation and the device
+ * runtime-integrity alert — now write a `notification_decisions` row of their
+ * own (`notification-bypass.ts`), stamped `provider_id = 'safety-bypass'`.
+ * This route COUNTS them, because a platform roll-up that hid its own safety
+ * traffic would answer «how many escalations went out last week» with a zero it
+ * had manufactured. The price is that `suppressionRate`'s DENOMINATOR contains
+ * rows that were never eligible for suppression — so the same response carries
+ * `bypassed`, the count of exactly those rows, and an operator never has to
+ * guess which of the two conventions this endpoint chose. The sibling route,
+ * `GET /system/notifications/decision-breakdown`, answers the same question
+ * with its PROVENANCE dimension over the SAME population; the two are
+ * deliberately not filtered differently.
+ *
  * ACTION RATE IS RETURNED AS `null`, DELIBERATELY. This product has no
  * deep-link attribution and no in-app action receipt, so «acted on a
  * notification» cannot be measured today. A fabricated zero would look like a

@@ -15,12 +15,21 @@ import {
   isValidDeepLink,
   resolveNotificationDestination,
 } from '../../../notifications/domain/engine/notification-destination';
+import { EngineBypassDecisionRecorder } from '../../../notifications/application/services/engine-bypass-decision.recorder';
 
 @Injectable()
 export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
   constructor(
     private readonly prisma: PrismaService,
     private readonly pushNotification: PushNotificationService,
+    /**
+     * THE DECISION LEDGER'S BYPASS ENTRY POINT. Injected from
+     * `NotificationsModule`, which owns `notification_decisions`, exactly as
+     * `notification-destination.ts` is imported from the module that owns the
+     * map. This repository still decides nothing — it asks two questions of two
+     * owners and writes the answers down.
+     */
+    private readonly bypassLedger: EngineBypassDecisionRecorder,
   ) {}
 
   /**
@@ -169,6 +178,56 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
       throw err;
     }
 
+    /**
+     * ======================================================================
+     * THE RECEIPT, FOR THE PRODUCERS THAT DO NOT COME THROUGH THE ENGINE.
+     * ======================================================================
+     *
+     * WHAT WAS MEASURED, driving a real distress check-in through the real
+     * route against a real PostgreSQL (`e2e-16 ACT IV`): one `ai_alerts` row,
+     * one `notifications` row, and ZERO `notification_decisions` rows. The two
+     * SYSTEM entries on `ENGINE_BYPASS_ALLOWLIST` reach this method without
+     * `SmartNotificationEngineService.handleEvent`, the ledger is written from
+     * that door and only from it, and so the most important notification this
+     * product sends was invisible to `GET /system/notifications/analytics`, to
+     * `GET /system/notifications/decision-breakdown` and to
+     * `GET /notifications/decisions`.
+     *
+     * IT IS FIXED HERE, AT THE SINGLE WRITER, for `withDestination`'s reason
+     * twenty lines below and it is the same reason: a third direct producer
+     * added tomorrow gets a ledger row without anyone remembering to give it
+     * one. THE BYPASS ITSELF IS UNTOUCHED — nothing above this line asks a
+     * scorer, a fatigue cap or a quiet-hours matrix anything, and nothing here
+     * can refuse a write that has already happened. This records what
+     * happened; it does not decide it.
+     *
+     * IT RUNS FOR EVERY WRITE, INCLUDING THE ENGINE'S OWN, and no flag says
+     * which is which. `SmartNotificationEngineService.recordDecision` writes
+     * its row BEFORE calling the pipeline, so for an engine-decided
+     * notification the row already exists on the same `(family_id,
+     * source_event_id, target_audience)` and `record` conflicts and returns
+     * `null`. The DATABASE tells the two apart; this file does not have to.
+     *
+     * AFTER THE ROW AND BEFORE THE PUSH, mirroring the engine's own ordering:
+     * a process that dies mid-delivery still leaves the decision recorded,
+     * which is the case a support engineer most needs.
+     *
+     * IT CANNOT FAIL THIS METHOD. `EngineBypassDecisionRecorder.record` never
+     * throws — a ledger that cannot be written is a diagnostics problem, and
+     * failing a child-safety notification because of one would be the loudest
+     * possible way to turn an observability feature into an outage.
+     */
+    const decisionId = await this.bypassLedger.record({
+      familyId: input.familyId,
+      childId,
+      sourceEventId: input.sourceEventId,
+      notificationType,
+      priority: input.priority ?? 'NORMAL',
+      // No extra query: the same `familyMember` row that chose the recipient.
+      recipientLocale: recipient.locale,
+      now: new Date(),
+    });
+
     // Sprint 5 (Push Notifications) — CLOSES A REAL GAP: every
     // critical alert already flowed through this exact method
     // (accessibility disabled, and now the five Digital Wellbeing
@@ -185,6 +244,17 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
     // to retry. Every other caller passes nothing and behaves exactly as before.
     if (input.deferPushToCaller !== true) {
       await this.pushToUser(recipient.userId, input.title, input.body);
+    }
+
+    /**
+     * WHAT THE DELIVERY DID, ON THE RECEIPT THIS METHOD JUST WROTE — and only
+     * on that one. `decisionId` is non-null ONLY when this call created a
+     * bypass row, so an engine-decided notification (whose `record` conflicted
+     * and returned `null`) never has its outcome overwritten from here. The
+     * engine records its own, with the pipeline's own vocabulary.
+     */
+    if (decisionId) {
+      await this.bypassLedger.recordOutcome(input.familyId, decisionId, true);
     }
 
     return true;
@@ -263,15 +333,32 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
    * the write path and the push-retry path. Two copies of «who gets notified»
    * is how a retry ends up on a different phone than the original.
    */
-  private async resolveRecipient(familyId: string): Promise<{ userId: string } | null> {
+  private async resolveRecipient(
+    familyId: string,
+  ): Promise<{ userId: string; locale: string | null } | null> {
+    /**
+     * `include: { user: … }` RATHER THAN A SECOND QUERY. The decision ledger
+     * stores the household's language on every row, and
+     * `NotificationContextAssembler.readLocale` resolves it from the OWNER's
+     * `users.locale` — the very row this method already fetches to decide who
+     * gets notified. Reading it here costs one join on a query that was already
+     * happening; reading it in `EngineBypassDecisionRecorder` would have cost a
+     * second round trip on the notification write path to learn the same fact.
+     *
+     * `null` when the member has no locale set, and `resolveLocale` — the one
+     * function that owns the fallback — turns that into the product's first
+     * language. This method does not decide what «no locale» means.
+     */
     const owner = await this.prisma.familyMember.findFirst({
       where: { familyId, role: 'OWNER', deletedAt: null },
+      include: { user: { select: { locale: true } } },
     });
-    if (owner) return { userId: owner.userId };
+    if (owner) return { userId: owner.userId, locale: owner.user?.locale ?? null };
     const anyMember = await this.prisma.familyMember.findFirst({
       where: { familyId, deletedAt: null },
+      include: { user: { select: { locale: true } } },
     });
-    return anyMember ? { userId: anyMember.userId } : null;
+    return anyMember ? { userId: anyMember.userId, locale: anyMember.user?.locale ?? null } : null;
   }
 
   /**

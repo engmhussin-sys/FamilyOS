@@ -119,6 +119,25 @@ export interface DecisionAnalyticsReport {
   readonly deliveryFailures: number;
   readonly aiRewritten: number;
   readonly aiFailed: number;
+  /**
+   * HOW MUCH OF `total` WAS NEVER ELIGIBLE FOR SUPPRESSION — the rows written
+   * by the producers on `ENGINE_BYPASS_ALLOWLIST`, which reach a parent without
+   * the engine and are therefore never scored, never fatigue-capped and never
+   * quiet-hours-deferred (`notification-bypass.ts`).
+   *
+   * IT IS A COUNT AND DELIBERATELY NOT A RATE. Its job is to qualify a
+   * denominator, not to become a sixth percentage on a page that already has
+   * five; an operator who wants the proportion can divide by `total`, and doing
+   * that arithmetic here would invite it to be read as a product metric.
+   *
+   * WHY IT EXISTS AT ALL. These rows are INCLUDED in every number on this
+   * object — a roll-up that hid its own safety traffic would re-open the gap
+   * their producer was built to close — so `suppressionRate` has a denominator
+   * containing traffic that could not contribute to its numerator. That is
+   * defensible only while it is VISIBLE, and this is where it is visible.
+   * `notification-decision.sql.ts` carries the full argument.
+   */
+  readonly bypassed: number;
   readonly opened: number;
   readonly notificationRows: number;
   readonly averageScore: number;
@@ -143,7 +162,7 @@ export interface DecisionAnalyticsReport {
  * ONE BUCKET OF A BREAKDOWN — a named slice of the ledger and its six counts.
  *
  * `bucket` is the VALUE of the dimension being grouped on: `'PARENT'`,
- * `'DOMAIN_EVENT'`, `'rule-based-v1'`, `'2026-01-15'`, `'REWARD_GRANTED'`. It
+ * `'DOMAIN_EVENT'`, `'rule-based'`, `'2026-01-15'`, `'REWARD_GRANTED'`. It
  * is a column this codebase writes, never anything a user typed and never an
  * identifier — which is what makes a platform-wide table of these safe to show.
  *
