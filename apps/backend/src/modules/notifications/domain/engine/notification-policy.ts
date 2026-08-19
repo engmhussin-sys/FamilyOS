@@ -410,6 +410,172 @@ export const COOLDOWN_EXEMPT_TYPES: Readonly<Record<string, number>> = Object.fr
   DAILY_GOAL_COMPLETED: 0,
 });
 
+/**
+ * ============================================================================
+ * THE TYPES WHOSE OCCURRENCE CANNOT COME BACK, AND THE DATABASE FACT THAT SAYS
+ * SO PER ENTRY.
+ * ============================================================================
+ *
+ * WHAT WAS MEASURED, from persisted `notification_decisions` rows against a
+ * real PostgreSQL, at `maxPerHour = 3`. A twelve-year-old crossed their
+ * hydration goal at 12:00 and their activity goal at 12:05. The hydration
+ * crossing spent the whole hour on the CHILD's own inbox:
+ *
+ *   BADGE_EARNED          aud=CHILD  SEND  score=42  fatigue  0      today=0/6 hour=0/3
+ *   REWARD_GRANTED_CHILD  aud=CHILD  SEND  score=30  fatigue −8.33   today=1/6 hour=1/3
+ *   DAILY_GOAL_COMPLETED  aud=CHILD  SEND  score=26  fatigue −16.67  today=2/6 hour=2/3
+ *
+ * and then the activity crossing arrived into a full hour:
+ *
+ *   BADGE_EARNED          aud=CHILD  SUPPRESS SCORE_BELOW_FLOOR score=17
+ *                                    fatigue −25  today=3/6 hour=3/3 category=1/2
+ *   BADGE_EARNED_PARENT   aud=PARENT SEND     score=25
+ *                                    fatigue −16.67 today=2/6 hour=2/3 category=1/2
+ *
+ * THE TWO BADGES ARE NOT THE SAME BADGE. `first_hydration_goal` and
+ * `first_activity_goal` are two different rows of `badge_definitions`, awarded
+ * once each in this child's entire life. The child was told about neither the
+ * second badge nor anything else that afternoon; the PARENT's row for the very
+ * same badge scored eight points higher purely because the parent's inbox had
+ * been quieter, and was decided SEND.
+ *
+ * A DAILY RECEIPT LOSING TO VOLUME IS RIGHT. A ONCE-EVER BADGE LOSING TO
+ * ARRIVAL ORDER IS NOT. `DAILY_GOAL_COMPLETED` at 12:05 can be earned again
+ * tomorrow; `REWARD_GRANTED_CHILD` names a grant the child can earn again this
+ * afternoon. `first_activity_goal` happens exactly once and is then gone
+ * forever — so a cap whose whole purpose is «you have heard enough of THIS
+ * KIND of thing lately» is answering a question that does not apply, and the
+ * cost of its wrong answer is permanent rather than a deferral.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT «ONCE-EVER» IS ALLOWED TO MEAN HERE, AND WHY IT IS A DATABASE FACT.
+ * ---------------------------------------------------------------------------
+ *
+ * `child_badge_awards (child_id, badge_id)` is UNIQUE, and
+ * `RewardsEngineService` writes the ledger row, the timeline entry and the two
+ * notifications ONLY when that insert actually succeeded. So «this child will
+ * never see this notification again» is enforced by PostgreSQL, not asserted
+ * by a copy-writer. THAT is the bar for a row in this table, and every entry
+ * below therefore names the constraint that holds it up. `badge-catalogue.ts`
+ * makes the same argument from the other side: every badge in the product is a
+ * FIRST-TIME milestone precisely because the unique constraint is the only
+ * badge shape the engine can express correctly.
+ *
+ * THE CANDIDATES THAT WERE CONSIDERED AND REFUSED, because a table like this
+ * is only narrow if the refusals are written down too:
+ *
+ *   `LEVEL_UP`               recurs. A child reaches level 2, then 3, then 4;
+ *                            `ACHIEVEMENT_BASELINE_BY_TYPE` gives it the same
+ *                            0.75 as a badge, which is exactly the «high
+ *                            achievement value» predicate this table refuses to
+ *                            be. Value is not permanence.
+ *   `STREAK_ACHIEVED`        recurs — `HealthEngineService` fires it at 3, 7,
+ *                            14 and 30 days, and again on the next streak.
+ *   `LEARNING_GOAL_ACHIEVED` recurs per goal, and a child may create goals
+ *                            without limit.
+ *   `DAILY_GOAL_COMPLETED`   recurs by definition; it is `COOLDOWN_EXEMPT_TYPES`'
+ *                            entry for a DIFFERENT reason (two goals in one
+ *                            day, not one fact in one lifetime) and it must
+ *                            keep taking the fatigue penalty. It is the CONTROL
+ *                            that proves this exemption is narrow.
+ *   `ACHIEVEMENT_VERIFIED`   recurs; a parent verifies many achievements.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE EXEMPTION IS FROM ALL THREE LOADS AND NOT ONLY THE HOUR.
+ * ---------------------------------------------------------------------------
+ *
+ * The hour is where it was measured, but the hour is not what is wrong with it.
+ * What is wrong is that a VOLUME reading is being used to rank a fact that has
+ * no second chance, and the day (`maxPerDay = 6`) and the per-type day
+ * (`categoryMaxPerDay = 2`) are volume readings too. Exempting only `hourLoad`
+ * would move the same defect to a busy day and to a child who earns their third
+ * first-ever badge on the afternoon they discover the app — the identical
+ * report, one axis over, and no better argument for keeping it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS DOES NOT WEAKEN THE ANTI-SPAM GUARD, AND THE BOUND IS THE SAME
+ * CONSTRAINT.
+ * ---------------------------------------------------------------------------
+ *
+ * A child buried in notifications is a real harm, and an exemption with no
+ * ceiling would be a hole. This one has a ceiling, and it is the SAME UNIQUE
+ * INDEX that earned the exemption: `child_badge_awards (child_id, badge_id)`
+ * times the number of rows in `badge_definitions`. That is `lifetimeMaxPerChild`
+ * below — nine messages, per audience, in a childhood. Not nine per day, per
+ * week or per year. Every OTHER type this child can receive keeps every cap it
+ * had, and a badge is still subject to the DUPLICATE rule and to both unique
+ * delivery indexes.
+ *
+ * ---------------------------------------------------------------------------
+ * QUIET HOURS ARE DELIBERATELY NOT EXEMPTED, AND THAT IS NOT AN OVERSIGHT.
+ * ---------------------------------------------------------------------------
+ *
+ * DEFERRAL IS NOT LOSS. `notification-class.ts` already classes both badge
+ * types `DEFER` with the sentence this whole file agrees with — «a badge is
+ * permanent; seeing it at 07:00 is the product working; never seeing it is the
+ * product lying about a reward it granted». A badge held until 07:00 is still
+ * told, so quiet hours cost the child nothing that matters, whereas waking a
+ * nine-year-old at 02:30 to say «you earned a badge» is the exact harm the
+ * window exists to prevent. Promoting a badge to the DELIVER class would also
+ * put it beside `PROTECTION_BYPASS_ATTEMPT`, which is a claim about SAFETY that
+ * a badge cannot make.
+ *
+ * `QUIET_HOURS_PENALTY` therefore still applies to these types in full, and the
+ * verdict is still DEFER. The provider's `scoreOnArrival` already computes the
+ * band on the score the notification will carry in the MORNING, so the quiet
+ * hours cannot turn that deferral into a suppression — which is the only thing
+ * that would have made an exemption necessary here.
+ */
+export interface OnceEverGuarantee {
+  /** The database object whose UNIQUE constraint makes a second occurrence
+   * impossible. Not prose: the row a support engineer can go and read. */
+  readonly enforcedBy: string;
+  /** Why that constraint means THIS notification cannot come round again. */
+  readonly reason: string;
+  /** How many of this type one child can receive in a lifetime, given that
+   * constraint. The ceiling that keeps the exemption from being a hole. */
+  readonly lifetimeMaxPerChild: number;
+}
+
+export const ONCE_EVER_TYPES: Readonly<Record<string, OnceEverGuarantee>> = Object.freeze({
+  BADGE_EARNED: Object.freeze({
+    enforcedBy: 'child_badge_awards (child_id, badge_id) UNIQUE',
+    reason:
+      'The child half of a badge. RewardsEngineService notifies only when the INSERT into child_badge_awards actually succeeded, so this exact sentence about this exact badge can reach this child once and never again. Every badge in badge-catalogue.ts is a first-time milestone for precisely this reason.',
+    lifetimeMaxPerChild: 9,
+  }),
+  BADGE_EARNED_PARENT: Object.freeze({
+    enforcedBy: 'child_badge_awards (child_id, badge_id) UNIQUE',
+    reason:
+      'The parent half of the same award, issued from the same successful INSERT under the same badgeKey. It is listed for the SAME guarantee rather than by association: leaving it out would keep the asymmetry alive pointing the other way, because a parent inbox that happened to be the busy one would then lose a badge the child was told about.',
+    lifetimeMaxPerChild: 9,
+  }),
+});
+
+/** Is this type one whose occurrence a UNIQUE constraint guarantees cannot
+ * recur? Read by the scorer's fatigue term and by the engine's cap gate, so the
+ * two layers cannot disagree about which types the table names. */
+export function isOnceEverType(type: string): boolean {
+  return Object.prototype.hasOwnProperty.call(ONCE_EVER_TYPES, type);
+}
+
+/**
+ * The cooldown exemption the once-ever table implies, in
+ * `cooldownMinutesByType`'s own shape so the gate applies both tables the same
+ * way.
+ *
+ * MEASURED, in the same run as the fatigue defect above: the parent's second
+ * badge of the afternoon was decided SEND and then refused at the gate with
+ * `outcome_reason = COOLDOWN`, because `defaultCooldownMinutes = 30` is keyed
+ * on the TYPE and both badges are `BADGE_EARNED_PARENT`. That is
+ * `COOLDOWN_EXEMPT_TYPES`' own argument — «a cooldown keyed on the TYPE could
+ * only ever silence the second of them» — arriving at a type where the second
+ * one is not merely a different fact but an unrepeatable one.
+ */
+export const ONCE_EVER_COOLDOWN_EXEMPTIONS: Readonly<Record<string, number>> = Object.freeze(
+  Object.fromEntries(Object.keys(ONCE_EVER_TYPES).map((type) => [type, 0])),
+);
+
 export function toFatiguePolicy(policy: NotificationPolicy): IFatiguePolicy {
   return {
     cooldownMinutesByType: policy.cooldownMinutesByType,

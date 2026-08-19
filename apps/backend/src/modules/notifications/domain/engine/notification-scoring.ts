@@ -37,6 +37,7 @@ import { getStartOfBusinessDay } from '../../../../common/time/family-date';
 import { quietHoursClassOf } from '../../../../shared/notifications/notification-class';
 import { forAudience } from '../../../../shared/notifications/notification-source-key';
 import type { NotificationContext, RecentNotificationFact } from './notification-context';
+import { isOnceEverType } from './notification-policy';
 import type { NotificationPolicy, NotificationScoringConfig } from './notification-policy';
 import {
   NOTIFICATION_PENALTY_COMPONENTS,
@@ -403,6 +404,52 @@ function fatigue(
   const dayLoad = clamp01(today.length / Math.max(1, policy.maxPerDay));
   const hourLoad = clamp01(lastHour / Math.max(1, policy.maxPerHour));
   const categoryLoad = clamp01(sameCategory / Math.max(1, policy.categoryMaxPerDay));
+
+  /**
+   * ==========================================================================
+   * THE ONE QUESTION THIS TERM CANNOT ANSWER: «HOW MANY MORE OF THESE ARE
+   * COMING?»
+   * ==========================================================================
+   *
+   * The three loads above are all readings of VOLUME, and volume is the right
+   * axis for every type whose occurrence has a successor. «You have had three
+   * in the last hour» is a reason to rank the fourth below a strong one BECAUSE
+   * the fourth kind of thing will happen again — tomorrow's daily goal, this
+   * afternoon's second reward, next week's streak.
+   *
+   * `ONCE_EVER_TYPES` names the types where that premise is false, and it names
+   * them BY NAME with the UNIQUE constraint that holds each one up — read its
+   * header for the measurement, the entries, the candidates it REFUSES and why
+   * the exemption cannot grow. `first_activity_goal` scored 17 against a floor
+   * of 25 with `today=3/6 hour=3/3 category=1/2`, and there is no fourth badge
+   * of that kind coming: the child simply was not told, permanently, because a
+   * hydration crossing five minutes earlier had used the hour.
+   *
+   * SO THE PENALTY IS ZERO FOR THOSE TYPES, and it is zero on all three axes
+   * rather than only on the hour — the day and the per-type day are volume
+   * readings too, and exempting one of the three would only move the same
+   * report to a busier day.
+   *
+   * IT IS NOT A DISCOUNT AND IT IS NOT «HIGH ACHIEVEMENT VALUE». `LEVEL_UP`
+   * carries the same 0.75 in `ACHIEVEMENT_BASELINE_BY_TYPE` as `BADGE_EARNED`
+   * and is NOT here, because a child reaches level 3 after level 2 and a
+   * predicate over worth would have swallowed it — and then everything else.
+   *
+   * THE NOTE STILL CARRIES THE THREE REAL COUNTS. An explanation that hid the
+   * household's actual load because the penalty happened to be waived would
+   * stop reconciling with the row beside it, and `notification_decisions.explanation`
+   * is read by a human who needs to see BOTH that the hour was full AND that
+   * this type does not pay for it.
+   */
+  if (isOnceEverType(context.event.eventType)) {
+    return component(
+      'FATIGUE_PENALTY',
+      0,
+      policy.scoring.penaltyFatigue,
+      `once-ever type — exempt from volume; today=${today.length}/${policy.maxPerDay} hour=${lastHour}/${policy.maxPerHour} category=${sameCategory}/${policy.categoryMaxPerDay}`,
+    );
+  }
+
   const raw = Math.max(dayLoad, hourLoad, categoryLoad);
 
   return component(

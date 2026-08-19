@@ -55,6 +55,7 @@ import { getBusinessDate, getStartOfBusinessDay } from '../../../../common/time/
 import {
   evaluateFatigue,
   type IFatigueDecision,
+  type IFatiguePolicy,
 } from '../../../life-intelligence/application/services/notification-fatigue-guard';
 import {
   SmartNotificationIntegrationService,
@@ -74,6 +75,8 @@ import type { NotificationDecision } from '../../../notifications/domain/engine/
 import type { NotificationContext } from '../../../notifications/domain/engine/notification-context';
 import {
   COOLDOWN_EXEMPT_TYPES,
+  ONCE_EVER_COOLDOWN_EXEMPTIONS,
+  isOnceEverType,
   toFatiguePolicy,
   type NotificationPolicy,
 } from '../../../notifications/domain/engine/notification-policy';
@@ -430,7 +433,22 @@ export class SmartNotificationEngineService {
         // is applied HERE rather than in the bridge so that
         // `toFatiguePolicy(DEFAULT_NOTIFICATION_POLICY)` keeps reproducing
         // Sprint 16's numbers exactly for every other caller.
-        cooldownMinutesByType: { ...policy.cooldownMinutesByType, ...COOLDOWN_EXEMPT_TYPES },
+        //
+        // `ONCE_EVER_COOLDOWN_EXEMPTIONS` is the SECOND table applied at this
+        // one point, and it is applied the same way for the same structural
+        // reason. It was needed because of a MEASURED refusal on this exact
+        // line: a child's two first-ever badges five minutes apart produced two
+        // `BADGE_EARNED_PARENT` candidates, and the second was decided SEND and
+        // then refused here with `outcome_reason = COOLDOWN`, because
+        // `defaultCooldownMinutes = 30` is keyed on the TYPE while
+        // `first_hydration_goal` and `first_activity_goal` are two different
+        // rows of `badge_definitions`. See `ONCE_EVER_TYPES`.
+        cooldownMinutesByType: {
+          ...policy.cooldownMinutesByType,
+          ...COOLDOWN_EXEMPT_TYPES,
+          ...ONCE_EVER_COOLDOWN_EXEMPTIONS,
+        },
+        ...this.onceEverCapExemption(decision.notificationType),
       },
     );
 
@@ -441,6 +459,46 @@ export class SmartNotificationEngineService {
       return null;
     }
     return verdict.blockedReason;
+  }
+
+  /**
+   * ==========================================================================
+   * THE THREE VOLUME CAPS, TURNED OFF FOR THE TYPES THAT CANNOT COME BACK —
+   * STATED AS POLICY, IN THE GUARD'S OWN VOCABULARY.
+   * ==========================================================================
+   *
+   * `ONCE_EVER_TYPES` holds the whole argument, the measurement and the
+   * refusals; this method is only how that argument reaches `evaluateFatigue`.
+   * The scorer's `FATIGUE_PENALTY` and this gate read the SAME table through
+   * the same `isOnceEverType`, so the term that RANKS and the guard that
+   * REFUSES cannot end up disagreeing about which types are exempt — which is
+   * exactly how the defect survived: the scorer suppressed the child's badge
+   * before the gate was ever asked, and fixing only one layer would have moved
+   * `SCORE_BELOW_FLOOR` to `HOURLY_MAX` and told the child nothing either way.
+   *
+   * IT IS AN OVERRIDE OF THREE NAMED FIELDS, NOT A SKIPPED CALL. `evaluateFatigue`
+   * is still asked, and still answers `DUPLICATE` and `QUIET_HOURS`, and will
+   * still answer any rule it grows tomorrow. A badge remains refused by
+   * `notifications (family_id, source_event_id, user_id)` and by
+   * `child_messages (family_id, source_event_id)` if the same cause arrives
+   * twice. What is switched off is precisely «you have heard enough of this
+   * KIND of thing lately», for the two types where there is no next one.
+   *
+   * `hourlyMax: undefined` IS THE GUARD'S OWN WAY OF SAYING «this rule did not
+   * exist for you» — its `IFatiguePolicy` docstring says so for every caller
+   * written before F6. `dailyMax` and `categoryDailyMax` are required numbers
+   * with no such spelling, so they are raised to a ceiling no child can reach:
+   * `child_badge_awards (child_id, badge_id)` UNIQUE caps a child's lifetime
+   * badge count at the size of the catalogue, which is the same constraint that
+   * earned the exemption in the first place.
+   */
+  private onceEverCapExemption(type: string): Partial<IFatiguePolicy> {
+    if (!isOnceEverType(type)) return {};
+    return {
+      hourlyMax: undefined,
+      dailyMax: Number.MAX_SAFE_INTEGER,
+      categoryDailyMax: Number.MAX_SAFE_INTEGER,
+    };
   }
 
   /**
