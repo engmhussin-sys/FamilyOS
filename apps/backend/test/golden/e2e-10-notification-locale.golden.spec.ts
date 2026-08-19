@@ -465,6 +465,46 @@ describeGolden('GOLDEN E2E-10 — G10/G11/G12/G13: the language of the household
         world.prisma.user.update({ where: { id: english.ownerUserId }, data: { locale: 'fr-FR' } }),
       );
 
+      /**
+       * ====================================================================
+       * THIS HOUSEHOLD RAISES ITS OWN CAPS FIRST, AND THE REASON IS THE
+       * SUBJECT OF THIS FILE.
+       * ====================================================================
+       *
+       * `english` has already been told about two rewards at `GOLDEN_NOON`,
+       * and the product's defaults are three notifications an hour and two per
+       * CATEGORY per day. A third REWARD-category message inside that same hour
+       * is therefore refused by FATIGUE_PENALTY — correctly, and identically
+       * for the PARENT, whose own third `REWARD_GRANTED` has been suppressed by
+       * those caps for as long as they have existed.
+       *
+       * IT USED TO ARRIVE ANYWAY, AND ONLY BECAUSE OF A DEFECT: the CHILD's
+       * fatigue history was read from the PARENT's `notifications` table, where
+       * a child-audience type never appears, so this child was scored against a
+       * stream that was not theirs and had no caps at all. Scoping the history
+       * to the audience made the child exactly as capped as the parent, which is
+       * what `notification-class.ts` asks for when it says the two audiences
+       * must be «capped and scored independently».
+       *
+       * SO THE SCENARIO SAYS WHAT IT NEEDS AND NO ASSERTION MOVES. This file is
+       * about WHICH LANGUAGE a decision is written in; how many rewards a child
+       * may hear about in one afternoon belongs to `notification-policy.spec.ts`
+       * and to the two suites that measure the caps directly. The caps are
+       * PER-FAMILY CONFIGURATION — that is the whole point of migration 0018 —
+       * so a household that wants to hear more says so in its own settings,
+       * which is a supported product action and not a test back door.
+       */
+      await world.sys('this household asks to hear more', async () => {
+        for (const [key, value] of [
+          ['notification.cap.maxPerHour', '10'],
+          ['notification.cap.categoryMaxPerDay', '10'],
+        ]) {
+          await world.prisma.notificationPolicySetting.create({
+            data: { familyId: english.familyId, key, value },
+          });
+        }
+      });
+
       await earnAReward(english, 'third task');
 
       const paired = await pairedChildMessages(english);

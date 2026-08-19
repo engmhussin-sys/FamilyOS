@@ -1,60 +1,76 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires */
 /**
  * ============================================================================
- * THE CHILD'S VERY FIRST COMPLETION, MEASURED — WHAT 0026 CHANGED, AND WHAT
- * ACTUALLY REFUSED THE SECOND MESSAGE.
+ * THE CHILD'S VERY FIRST COMPLETION, MEASURED — AND THE STREAM THE CHILD IS
+ * NOW SCORED AGAINST.
  * ============================================================================
  *
  * WHY THIS FILE EXISTS. Migration `0026_badge_catalogue` made badges earnable
  * for the first time, and a badge announces itself to BOTH audiences
  * (`rewards-engine.service.ts`: «badges are the most milestone-worthy grant
  * type … a deliberate product distinction»). So a child's FIRST habit, session,
- * streak or learning goal now produces FOUR notification candidates in one
- * instant instead of two, and one of them — the child's own reward sentence —
- * stops being delivered.
+ * streak or learning goal produces FOUR notification candidates in one instant
+ * instead of two — and one of them, the child's own reward sentence, used to
+ * stop being delivered.
  *
- * That side effect was reported with a mechanism attached: «two ACHIEVEMENT
- * causes land in the same instant and `NotificationFatigueGuard` correctly
- * delivers one». BOTH HALVES OF THAT SENTENCE ARE WRONG, and this file is the
- * execution that says so. What is right is the consequence: the child loses the
- * reward sentence on the one completion that matters most.
+ * That side effect was first reported with a mechanism attached: «two
+ * ACHIEVEMENT causes land in the same instant and `NotificationFatigueGuard`
+ * correctly delivers one». BOTH HALVES OF THAT SENTENCE WERE WRONG, and this
+ * file is the execution that said so. What was right was the consequence: the
+ * child lost the reward sentence on the one completion that matters most.
+ *
+ * WHAT IT ACTUALLY WAS, measured out of the persisted row rather than reasoned
+ * about:
+ *
+ *     REWARD_GRANTED_CHILD  aud=CHILD  copy=LEARNING_GOAL_ACHIEVED
+ *       decision=SUPPRESS reason=SCORE_BELOW_FLOOR score=21 (floor 25)
+ *       FATIGUE_PENALTY=-16.67  note="today=2/6 hour=2/3 category=1/2"
+ *
+ * The `2` was `notifications` — THE PARENT'S INBOX. The child's own inbox held
+ * one row. `NotificationContextAssembler` filled `recentNotifications` from
+ * `findRecentForChild` for every candidate, so a child-audience notification was
+ * penalised in proportion to how busy the PARENT'S day had been — which
+ * `notification-class.ts` forbids in words on `REWARD_GRANTED_CHILD`'s own
+ * `why`: «a parent at their daily maximum must not be able to silence the
+ * child's own news about their own work.»
+ *
+ * The assembler now reads the audience's own inbox — `notifications` for a
+ * PARENT candidate, `child_messages` for a CHILD one — and this file measures
+ * that from the ledger rows rather than from the fix's own description of
+ * itself.
  *
  * ---------------------------------------------------------------------------
- * WHAT IS ACTUALLY MEASURED HERE, against a real PostgreSQL, a real Redis and
- * the real application — real `LearningEngineService`, real `RewardsEngineService`,
- * real platform Reward Rules (0007's 50 COINS and 0026's `first_learning_goal`
+ * WHAT IS MEASURED HERE, against a real PostgreSQL, a real Redis and the real
+ * application — real `LearningEngineService`, real `RewardsEngineService`, real
+ * platform Reward Rules (0007's 50 COINS and 0026's `first_learning_goal`
  * badge), real `SmartNotificationEngineService`, real decision provider, real
  * `ChildSafetyFilterService`, real delivery pipeline. Every count and every
  * sentence is read back out of PostgreSQL with SQL.
  *
- *   ACT I    THE FOUR CANDIDATES. One completion writes four
- *            `notification_decisions` rows. Three are SENT. The fourth —
- *            `REWARD_GRANTED_CHILD` — is SUPPRESSED, and its `copy_key` is
- *            still the right one, so the DECISION is correct and only the
- *            DELIVERY is lost.
+ *   ACT I    THE FOUR CANDIDATES, AND FOUR DELIVERIES. One completion writes
+ *            four `notification_decisions` rows: two PARENT rows that become
+ *            `notifications`, and two CHILD rows that become `child_messages`.
+ *            `REWARD_GRANTED_CHILD` carries `copy_key = LEARNING_GOAL_ACHIEVED`
+ *            — it always did; what changed is that it now arrives.
  *
- *   ACT II   WHAT REFUSED IT, NAMED. Not the fatigue guard: the guard lives
- *            behind `notifyEvent`, `SmartNotificationEngineService` returns
- *            before calling it on a SUPPRESS verdict, and the proof of that is
- *            in the row — `outcome IS NULL` means the pipeline was never
- *            reached, so `evaluateFatigue` never ran on this candidate at all.
- *            What refused it is `RuleBasedNotificationDecisionProvider`'s own
- *            arithmetic, `SCORE_BELOW_FLOOR`, and the component that took it
- *            under the floor is `FATIGUE_PENALTY` — counted over the PARENT'S
- *            stream. The two causes are not «two ACHIEVEMENT causes» either:
+ *   ACT II   THE STREAM IT IS SCORED AGAINST, NAMED. The `FATIGUE_PENALTY`
+ *            note's `today=` count is the CHILD's own inbox and is NOT the
+ *            parent's, established by reading both tables beside the number.
+ *            The two causes are not «two ACHIEVEMENT causes» either:
  *            `BADGE_EARNED` is ACHIEVEMENT and `REWARD_GRANTED_CHILD` is
- *            REWARD, which is why the per-category cap never fired.
+ *            REWARD, which is why the per-category axis reads zero.
  *
- *   ACT III  THE LOSS, PINNED WITH `it.failing`. The child's first-ever
- *            completion reaches them carrying no reward fact. This is the
- *            repository's own defect-ledger idiom (`notification-producer-chain.guard.spec.ts`):
- *            the case PASSES while the body throws and FAILS the day it stops,
- *            so the fix cannot land without deleting this entry.
+ *   ACT III  THE PRODUCT STATEMENT. A child's first-ever completion reaches
+ *            them carrying BOTH facts — the badge they were given and the goal
+ *            they finished. Two sentences, because they are two facts and this
+ *            product has no producer that supplies every slot of a combined
+ *            one; `notification-producer-chain.guard.spec.ts` is what keeps
+ *            that from being invented.
  *
  *   ACT IV   REPLAY, BY REPLAYING. The identical cause driven through the
  *            engine a second time with the ledger cleared — the only way to
- *            reach the announcer twice — still leaves one badge award, one
- *            child message and four decision rows. Refused by UNIQUE INDEXES
+ *            reach the announcer twice — still leaves one badge award, two
+ *            child messages and four decision rows. Refused by UNIQUE INDEXES
  *            (`child_badge_awards (child_id, badge_id)`,
  *            `child_messages (family_id, source_event_id)`,
  *            `notification_decisions (family_id, source_event_id, target_audience)`),
@@ -311,11 +327,11 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
   // ==========================================================================
   // 1. THE FOUR CANDIDATES
   // ==========================================================================
-  describe('1. one first-ever completion, four decisions, three deliveries', () => {
+  describe('1. one first-ever completion, four decisions, four deliveries', () => {
     let home: Household;
     let goalId = '';
 
-    it('the badge is awarded and the child receives exactly ONE message — the badge', async () => {
+    it('the badge is awarded and the child receives BOTH messages — the badge and the goal', async () => {
       jest.setSystemTime(NOON);
       home = await createHousehold('act-one');
       goalId = await aCompletableGoal(home, GOAL_TITLE);
@@ -344,20 +360,36 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
         'REWARD_GRANTED_CHILD',
       ]);
 
-      // ===== …and only THREE of them became a row a human can read =====
+      // ===== …and ALL FOUR became a row a human can read =====
+      //
+      // TWO PER AUDIENCE, IN TWO TABLES, because `deliverNow` routes on the
+      // audience: a PARENT candidate becomes a `notifications` row and a CHILD
+      // candidate becomes an approval-gated `child_messages` row. Counting them
+      // separately is the same statement the fix is about — these are two
+      // streams, not one.
       expect(await notifications(home.familyId)).toHaveLength(2); // both parent halves
       const messages = await childMessages(home.familyId);
-      expect(messages).toHaveLength(1);
-      expect(messages[0].category).toBe('BADGE_EARNED');
-      expect(messages[0].body).toContain(FIRST_GOAL_BADGE?.copy.ar.title);
-      assertItReadsLikeASentence(messages[0].body);
+      expect(messages).toHaveLength(2);
+      expect(messages.map((m) => String(m.category)).sort()).toEqual([
+        'BADGE_EARNED',
+        'REWARD_GRANTED_CHILD',
+      ]);
 
-      // THE SENTENCE THE CHILD DID NOT GET. `LEARNING_GOAL_ACHIEVED` names the
-      // goal; the badge sentence names the badge. They are not substitutes.
-      expect(messages[0].body).not.toContain(GOAL_TITLE);
+      const badgeMessage = messages.find((m) => String(m.category) === 'BADGE_EARNED');
+      const rewardMessage = messages.find((m) => String(m.category) === 'REWARD_GRANTED_CHILD');
+      expect(badgeMessage.body).toContain(FIRST_GOAL_BADGE?.copy.ar.title);
+      assertItReadsLikeASentence(badgeMessage.body);
+
+      // TWO SENTENCES BECAUSE THEY ARE TWO FACTS. `LEARNING_GOAL_ACHIEVED` names
+      // the goal; the badge sentence names the badge. They are not substitutes,
+      // and neither one contains the other's fact.
+      expect(badgeMessage.body).not.toContain(GOAL_TITLE);
+      expect(rewardMessage.body).toContain(GOAL_TITLE);
+      assertItReadsLikeASentence(rewardMessage.body);
+      expect(rewardMessage.body).not.toContain(FIRST_GOAL_BADGE?.copy.ar.title);
     }, 120_000);
 
-    it('the reward DECISION is correct — only the DELIVERY is lost', async () => {
+    it('the reward decision is correct AND delivered — the sentence and the outcome agree', async () => {
       const childReward = await decisionFor(home.familyId, 'REWARD_GRANTED_CHILD');
 
       // The provider picked the RIGHT sentence for the right audience: the
@@ -369,11 +401,16 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
       // the analytics still read what they always read.
       expect(childReward.notification_type).toBe('REWARD_GRANTED_CHILD');
 
-      // …and then it was refused.
-      expect(childReward.decision).toBe('SUPPRESS');
-
-      // The other three were not.
-      for (const type of ['BADGE_EARNED', 'BADGE_EARNED_PARENT', 'REWARD_GRANTED']) {
+      // ALL FOUR reached the pipeline and all four came back SEND. `outcome` is
+      // the PIPELINE's own verdict, written after `notifyEvent` returns, so a
+      // non-null `SEND` on this row is the statement that the delivery path —
+      // approval gate, safety filter, unique index — accepted it.
+      for (const type of [
+        'BADGE_EARNED',
+        'BADGE_EARNED_PARENT',
+        'REWARD_GRANTED',
+        'REWARD_GRANTED_CHILD',
+      ]) {
         const row = await decisionFor(home.familyId, type);
         expect(`${type}:${row.decision}`).toBe(`${type}:SEND`);
         expect(`${type}:${row.outcome}`).toBe(`${type}:SEND`);
@@ -382,7 +419,7 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
   });
 
   // ==========================================================================
-  // 2. WHAT ACTUALLY REFUSED IT
+  // 2. THE STREAM THE CHILD IS SCORED AGAINST
   // ==========================================================================
   describe('2. the mechanism, named out of the persisted row rather than assumed', () => {
     let home: Household;
@@ -395,42 +432,49 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
     }, 180_000);
 
     /**
-     * THE FATIGUE GUARD IS NOT WHAT REFUSED IT, AND THIS IS THE PROOF.
+     * THE DELIVERY PIPELINE IS REACHED, AND THE ROW IS WHERE THAT IS VISIBLE.
      *
-     * `evaluateFatigue` lives behind `SmartNotificationIntegrationService.notifyEvent`.
      * `SmartNotificationEngineService.handleEvent` RETURNS on a SUPPRESS verdict
-     * — «there is nothing to hand on» — before that call, and `recordOutcome` is
-     * only ever reached afterwards. So `outcome IS NULL` on a SUPPRESS row is
-     * not a detail: it is the statement that the delivery pipeline, and
-     * therefore the anti-fatigue guard, never saw this candidate at all.
+     * — «there is nothing to hand on» — BEFORE calling `notifyEvent`, and
+     * `recordOutcome` is only ever reached afterwards. So `outcome` is the one
+     * column that distinguishes «the engine decided not to» from «the engine
+     * decided to and the pipeline agreed», and on this row it is `SEND`.
+     *
+     * That distinction is not decoration: while this candidate was suppressed,
+     * `outcome IS NULL` proved that `evaluateFatigue` — the anti-fatigue GUARD,
+     * which several readers assumed was the refuser — had never seen it at all.
+     * The refuser was the decision provider's own arithmetic, one layer up.
      */
-    it('the delivery pipeline was never reached — `outcome` is NULL, so `evaluateFatigue` never ran', async () => {
+    it('the delivery pipeline was reached — `outcome` is SEND, so the engine and the pipeline agree', async () => {
       const childReward = await decisionFor(home.familyId, 'REWARD_GRANTED_CHILD');
-      expect(childReward.decision).toBe('SUPPRESS');
-      expect(childReward.outcome).toBeNull();
+      expect(childReward.decision).toBe('SEND');
+      expect(childReward.outcome).toBe('SEND');
       expect(childReward.outcome_reason).toBeNull();
 
-      // The three delivered candidates DID reach it, which is what makes the
-      // NULL above mean something.
+      // The other three reach it too, which is what makes the value above mean
+      // something rather than being the only row anyone looked at.
       const badge = await decisionFor(home.familyId, 'BADGE_EARNED');
       expect(badge.outcome).toBe('SEND');
     }, 120_000);
 
     /**
-     * WHAT DID REFUSE IT: the decision provider's own arithmetic, and the
-     * component that took it under the floor.
+     * IT CLEARS THE FLOOR, AND THE MARGIN IS THE FATIGUE PENALTY'S TO GIVE.
+     *
+     * The score is still penalised — the child really has had one message
+     * already this instant — but it is penalised by the child's OWN one row
+     * instead of by the parent's two, and the difference is the difference
+     * between 21 and 30 against a floor of 25.
      */
-    it('it was SCORE_BELOW_FLOOR, and the FATIGUE_PENALTY is what took it there', async () => {
+    it('it is above the floor, and FATIGUE_PENALTY is the term that decides the margin', async () => {
       const childReward = await decisionFor(home.familyId, 'REWARD_GRANTED_CHILD');
-      expect(childReward.reason).toBe('SCORE_BELOW_FLOOR');
+      expect(childReward.reason).not.toBe('SCORE_BELOW_FLOOR');
 
       const penalty = componentOf(childReward, 'FATIGUE_PENALTY');
       expect(penalty.contribution).toBeLessThan(0);
 
-      // Remove that one component and the candidate clears the floor: the
-      // sentence was not weak, it was penalised. Derived from the stored
-      // explanation rather than by re-running the scorer, so this cannot
-      // disagree with the row.
+      // The candidate carries a penalty AND still clears the floor. Derived from
+      // the stored explanation rather than by re-running the scorer, so this
+      // cannot disagree with the row.
       const withoutFatigue = Number(childReward.score) - Number(penalty.contribution);
       expect(Number(childReward.score)).toBeLessThan(withoutFatigue);
       const badge = await decisionFor(home.familyId, 'BADGE_EARNED');
@@ -439,27 +483,30 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
 
     /**
      * ==========================================================================
-     * AND THE HISTORY IT WAS PENALISED AGAINST IS THE **PARENT'S**.
+     * AND THE HISTORY IT IS PENALISED AGAINST IS THE **CHILD'S**.
      * ==========================================================================
      *
-     * `NotificationContextAssembler` fills the recent-activity facts from
-     * `INotificationRepository.findRecentForChild`, which reads the
-     * `notifications` table filtered by `child_id`. Every row in that table is a
-     * PARENT-audience row — the child's own messages are written to
-     * `child_messages` by `deliverNow`'s other branch and are never read back
-     * here. So the count that suppressed the child's message is a count of
-     * things the PARENT was told.
+     * THE DEFECT THIS CASE WAS WRITTEN FOR. `NotificationContextAssembler` used
+     * to fill `recentNotifications` from `INotificationRepository.findRecentForChild`
+     * for every candidate — the `notifications` table filtered by `child_id`.
+     * Every row in that table is a PARENT-audience row; the child's own messages
+     * are written to `child_messages` by `deliverNow`'s other branch and were
+     * never read back. So the count that suppressed the child's message was a
+     * count of things the PARENT was told, and the measured note read
+     * `today=2/6` against a child inbox holding one.
      *
-     * `notification-class.ts` already states the opposite as product policy, in
-     * `REWARD_GRANTED_CHILD`'s own `why`: «the two audiences must be capped and
-     * scored independently: a parent at their daily maximum must not be able to
-     * silence the child's own news about their own work.»
+     * `notification-class.ts` states the rule in `REWARD_GRANTED_CHILD`'s own
+     * `why`: «the two audiences must be capped and scored independently: a
+     * parent at their daily maximum must not be able to silence the child's own
+     * news about their own work.»
      *
-     * This case does not assert what the fix should be. It measures the number,
-     * beside the two tables it could have come from, so that the sentence above
-     * is a reading rather than an opinion.
+     * THIS CASE MEASURES THE NUMBER BESIDE BOTH TABLES IT COULD HAVE COME FROM,
+     * so «it is the child's stream» is a reading rather than an opinion. It is
+     * deliberately NOT written as «counted === 1»: a literal would pass again on
+     * the day the two streams re-merge at any household where the counts happen
+     * to coincide.
      */
-    it('the count that suppressed the child is a count of the PARENT stream', async () => {
+    it('the count the child is scored against is a count of the CHILD stream, not the parent’s', async () => {
       const childReward = await decisionFor(home.familyId, 'REWARD_GRANTED_CHILD');
       const penalty = componentOf(childReward, 'FATIGUE_PENALTY');
 
@@ -471,26 +518,40 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
       const parentRows = await notifications(home.familyId);
       const childRows = await childMessages(home.familyId);
 
-      // The counted history is EXACTLY the parent's table, and the child's own
-      // single message is not in it.
-      expect(counted).toBe(parentRows.length);
-      expect(childRows).toHaveLength(1);
-      expect(counted).not.toBe(childRows.length);
+      // THE SETUP IS NOT VACUOUS: the two tables hold DIFFERENT numbers of rows
+      // at the instant this candidate was scored, so «which one was counted» has
+      // an answer that a coincidence cannot supply. Two parent rows exist by the
+      // end; the child had exactly one — the badge — when the reward was scored,
+      // and gained the second by being delivered.
+      expect(parentRows).toHaveLength(2);
+      expect(childRows).toHaveLength(2);
+      expect(counted).toBe(childRows.length - 1);
+      expect(counted).not.toBe(parentRows.length);
 
-      // …and every one of those rows really is the PARENT's half of a cause,
-      // established from the decision ledger rather than assumed from the table.
+      // …and every one of the parent rows really is the PARENT's half of a
+      // cause, established from the decision ledger rather than assumed from the
+      // table — so «not the parent's count» names a real, non-empty stream.
       const parentTypes = parentRows.map((r) => String(r.type)).sort();
       expect(parentTypes).toEqual(['BADGE_EARNED_PARENT', 'REWARD_GRANTED']);
       for (const type of parentTypes) {
         const row = await decisionFor(home.familyId, type);
         expect(`${type}:${row.target_audience}`).toBe(`${type}:PARENT`);
       }
+
+      // AND THE PARENT'S OWN HALF IS UNCHANGED BY ANY OF IT: `REWARD_GRANTED` is
+      // scored over `notifications`, which is where the parent's rows are, and
+      // its note counts the ONE parent row that preceded it.
+      const parentReward = await decisionFor(home.familyId, 'REWARD_GRANTED');
+      const parentPenalty = componentOf(parentReward, 'FATIGUE_PENALTY');
+      const parentToday = /today=(\d+)\//.exec(String(parentPenalty.note));
+      expect(Number((parentToday as RegExpExecArray)[1])).toBe(1);
     }, 120_000);
 
     /**
      * AND THEY ARE NOT «TWO ACHIEVEMENT CAUSES», WHICH IS WHY THE PER-CATEGORY
-     * CAP NEVER FIRED. The category axis is `notification-class.ts`'s, and it
-     * puts the two causes in two different families.
+     * AXIS READS ZERO. The category axis is `notification-class.ts`'s, and it
+     * puts the two causes in two different families — so the child's badge does
+     * not spend the child's REWARD budget, in either direction.
      */
     it('the two child-facing causes are ACHIEVEMENT and REWARD, not two ACHIEVEMENTs', () => {
       expect(notificationCategoryOf('BADGE_EARNED')).toBe('ACHIEVEMENT');
@@ -502,9 +563,9 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
   });
 
   // ==========================================================================
-  // 3. THE LOSS, PINNED
+  // 3. THE PRODUCT STATEMENT
   // ==========================================================================
-  describe('3. THE DEFECT LEDGER — one entry, and it fails the build the day it is fixed', () => {
+  describe('3. the child’s first-ever completion carries BOTH facts', () => {
     let home: Household;
 
     beforeAll(async () => {
@@ -515,32 +576,50 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
     }, 180_000);
 
     /**
-     * `it.failing` PASSES WHILE THE BODY THROWS AND FAILS THE DAY IT STOPS —
-     * the idiom `notification-producer-chain.guard.spec.ts`'s
-     * `PRODUCERLESS_DEFECT_LEDGER` already uses in this repository, for the same
-     * purpose: a known defect that is RECORDED AS A DEFECT rather than asserted
-     * as behaviour, and that cannot be fixed silently.
+     * THIS CASE WAS AN `it.failing` DEFECT-LEDGER ENTRY — the idiom
+     * `notification-producer-chain.guard.spec.ts`'s `PRODUCERLESS_DEFECT_LEDGER`
+     * uses, where the body throws, the case passes, and the build breaks the day
+     * the defect is fixed. It broke. So the framing is deleted rather than
+     * carried: a ledger entry that outlives its defect is a scoreboard.
      *
-     * THE PRODUCT STATEMENT BEING PINNED: a child's first-ever completion is the
-     * single most important moment in this product's feedback loop, and the
-     * reward they earned must reach them in it. Today the badge sentence
-     * arrives, the reward sentence does not, and nothing the child can read
-     * mentions what they finished.
+     * THE PRODUCT STATEMENT IT PINNED, now asserted as behaviour: a child's
+     * first-ever completion is the single most important moment in this
+     * product's feedback loop, and the reward they earned must reach them in it.
      *
-     * DELETING THIS CASE REQUIRES THE FIX, not a decision.
+     * TWO SENTENCES, NOT ONE, AND THAT IS THE RIGHT ANSWER RATHER THAN A
+     * COMPROMISE. A combined «you finished X and earned a badge» copy key would
+     * need a producer that supplies the goal title AND the badge title AND the
+     * points in one payload, and no producer in this codebase does: the badge is
+     * announced by `RewardsEngineService`'s badge branch and the goal by its
+     * grant branch, from two different facts, through two different causal keys.
+     * Inventing the key anyway would put a slot in the catalogue that nothing
+     * fills, which is exactly what `PRODUCERLESS_DEFECT_LEDGER` exists to keep
+     * empty. Two true sentences beat one that leaks a placeholder.
      */
-    it.failing(
-      'the child’s first-ever completion carries the reward fact as well as the badge',
-      async () => {
-        const messages = await childMessages(home.familyId);
-        // The badge arrived.
-        expect(messages.some((m) => String(m.category) === 'BADGE_EARNED')).toBe(true);
-        // And the thing they actually finished should have reached them too —
-        // in a second sentence or, better, in the badge's own. It does not.
-        expect(messages.some((m) => String(m.body).includes(GOAL_TITLE))).toBe(true);
-      },
-      120_000,
-    );
+    it('both the badge and the goal reach the child, as two separate messages', async () => {
+      const messages = await childMessages(home.familyId);
+      expect(messages).toHaveLength(2);
+
+      // The badge arrived — it always did.
+      expect(messages.some((m) => String(m.category) === 'BADGE_EARNED')).toBe(true);
+      // And so did the thing they actually finished, named in the sentence.
+      expect(messages.some((m) => String(m.body).includes(GOAL_TITLE))).toBe(true);
+
+      // TWO MESSAGES, TWO CAUSAL KEYS. The `:child` facet is on both, and they
+      // differ — so these are two rows the database would keep apart, not one
+      // row counted twice.
+      const keys = messages.map((m) => String(m.source_event_id));
+      expect(new Set(keys).size).toBe(2);
+      for (const key of keys) expect(key.endsWith(':child')).toBe(true);
+
+      // AND EVERY ONE OF THEM READS LIKE A SENTENCE — Arabic, no placeholder, no
+      // leaked enum. A second message that arrives broken is not an improvement
+      // on a second message that never arrives.
+      for (const m of messages) {
+        expect(String(m.body)).toMatch(ARABIC_LETTERS);
+        assertItReadsLikeASentence(String(m.body));
+      }
+    }, 120_000);
   });
 
   // ==========================================================================
@@ -562,7 +641,7 @@ describeIfDb('0026 side effect — the FIRST completion, measured (real PostgreS
         parent: (await notifications(home.familyId)).length,
         child: (await childMessages(home.familyId)).length,
       };
-      expect(before).toEqual({ awards: 1, decisions: 4, parent: 2, child: 1 });
+      expect(before).toEqual({ awards: 1, decisions: 4, parent: 2, child: 2 });
       const firstAwardId = (await badgeAwards(home.familyId))[0].id;
 
       /**
