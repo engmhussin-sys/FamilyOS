@@ -25,7 +25,10 @@ import 'screen_time_overview_screen.dart';
 ///   * MORE THAN ONE CHILD → the CHILD LIST. Picking one of several children
 ///     on the parent's behalf would be this client inventing the thing the
 ///     server declined to say, which is the same objection `deep_link_router`
-///     already states about `progress` and `coach`.
+///     states about `progress` and `coach` — an objection that still stands,
+///     and that those two now answer the way this screen does: through
+///     `ChildPicker`, which is this screen's three-way resolution extracted so
+///     a third and fourth copy of it cannot drift.
 ///
 ///   * EXACTLY ONE CHILD → that child's overview, directly. This is NOT the
 ///     same act: with one child there is only one possible referent, so the

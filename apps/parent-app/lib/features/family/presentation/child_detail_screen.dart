@@ -29,18 +29,19 @@ import '../data/child_profile_repository.dart';
 /// purpose. This screen is the host that supplies both: once a parent is on a
 /// child, all four are one tap away with real arguments.
 ///
-/// IT DOES NOT, HOWEVER, MAKE `abny://progress` OR `abny://coach` OPENABLE, and
-/// pretending otherwise would be the client inventing a child the server did
-/// not name. `DeepLinkRouter.resolve` is a pure function of the DESTINATION, and
-/// a destination with no id names no child. The two remain `unavailable` and
-/// land on the inbox, honestly.
+/// THIS BLOCK USED TO END «and it does not make `abny://progress` or
+/// `abny://coach` openable». THAT IS NO LONGER TRUE, and the reason is worth
+/// keeping rather than deleting: hosting a screen is not opening a surface, and
+/// this screen never made either of them openable. What did was
+/// `ChildPicker` — the mechanism `abny://screen-time` already used, applied to
+/// the other two. It lands on a screen that resolves «which child» from the
+/// FAMILY'S OWN DATA: the list when there are several, that child's page
+/// directly when there is exactly one. `DeepLinkRouter.resolve` is still a pure
+/// function of the DESTINATION and still invents nothing; the SCREEN asks.
 ///
-/// `abny://screen-time` is the one case that IS wired, and it is wired without
-/// breaking that rule: it lands on `ScreenTimeChildrenScreen`, which resolves
-/// «which child» from the FAMILY'S OWN DATA — the list when there are several,
-/// that child's overview when there is exactly one. The router still invents
-/// nothing; the screen asks. (Until this feature existed the same link went to
-/// `SafetyScreen`, because there was no screen-time screen to send it to.)
+/// So all three links now land, and this screen keeps the job it was built for:
+/// it is where a parent who is already looking at ONE child reaches all four
+/// child-scoped screens with real arguments, without a picker in between.
 ///
 /// THE TWO SCREEN-TIME TILES ARE NOT THE SAME THING, and both belong here.
 /// `WellbeingScreen` READS — how the device has been used. The screen-time tile
