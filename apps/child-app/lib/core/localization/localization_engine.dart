@@ -265,6 +265,12 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'myGrowth.hydrationDone': 'Great job staying hydrated!',
     'myGrowth.faithDone': 'Well done! "{{title}}" complete!',
     'myGrowth.studyDone': 'Nice work studying today!',
+    // THE BUTTON SAYS THE NUMBER IT SENDS. One tap logs a fixed 20 minutes of
+    // movement — the same honest MVP shape as the study button and the 250 ml
+    // water button — so the label names the amount instead of implying this
+    // app measured anything.
+    'myGrowth.logActivity': 'Log 20 min',
+    'myGrowth.activityDone': 'Great moving today!',
     'myGrowth.smartTaskAccept': "I'll do it",
     'myGrowth.smartTaskDismiss': 'Not now',
     'myGrowth.healthTitle': 'My Health',
@@ -682,6 +688,8 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'myGrowth.hydrationDone': 'برافو عليك، بتشرب مية كويس!',
     'myGrowth.faithDone': 'برافو! "{{title}}" خلصت!',
     'myGrowth.studyDone': 'حلو إنك ذاكرت النهاردة!',
+    'myGrowth.logActivity': 'سجّل ٢٠ دقيقة',
+    'myGrowth.activityDone': 'برافو! اتحركت النهاردة.',
     'myGrowth.smartTaskAccept': 'هعملها',
     'myGrowth.smartTaskDismiss': 'مش دلوقتي',
     'myGrowth.healthTitle': 'صحتي',

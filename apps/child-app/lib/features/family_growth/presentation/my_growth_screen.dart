@@ -220,6 +220,56 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     await _loadAll();
   }
 
+  /// THE EXERCISE VERB, WHICH THIS APP HAD NO WAY TO SPEAK.
+  ///
+  /// `FamilyGrowthApi.logActivity` has existed since Sprint 16.4 with **zero
+  /// call sites** — the health card above has always RENDERED the activity row
+  /// («25/30 دقيقة») from `/self/health/progress`, so a child could watch a bar
+  /// that nothing in their app could ever move. `POST
+  /// /life-intelligence/self/health/activity-logs` is a real, guarded route
+  /// (`@ChildSurface`, `DeviceJwtAuthGuard`) and this is its first caller.
+  ///
+  /// THE THREE VALUES AND WHY EACH IS WHAT IT IS:
+  ///   * `activityType: 'exercise'` — a wire value, never rendered. `LogActivityDto`
+  ///     types it as a free `@IsString() @Length(1, 50)`, so there is no enum to
+  ///     leak to a child even by accident.
+  ///   * `socialContext: 'SOLO'` — the honest answer for a button a child taps
+  ///     alone on their own phone. The DTO's other two values (`GROUP`, `TEAM`)
+  ///     describe something this app cannot observe, so it does not claim them.
+  ///   * `durationMinutes: 20` — a fixed amount NAMED ON THE BUTTON
+  ///     («سجّل ٢٠ دقيقة»), exactly like the 250 ml water button beside it. The
+  ///     app measures nothing here and the label does not pretend it did.
+  ///
+  /// The DATE is sent because the DTO requires an ISO string, and it decides
+  /// nothing: the route passes `'DEVICE'` as the actor and the engine discards
+  /// a device's date, deriving the day server-side. That is PC-B-003 — a child
+  /// could otherwise back-fill a month of exercise they never did and collect
+  /// the streak for it — and this client must not look as though it has an
+  /// opinion about which day its own log lands on.
+  Future<void> _logActivity() async {
+    try {
+      final now = DateTime.now();
+      final dateStr =
+          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await ref.read(familyGrowthApiProvider).logActivity(
+            date: dateStr,
+            activityType: 'exercise',
+            durationMinutes: 20,
+            socialContext: 'SOLO',
+          );
+      _celebrate(
+        ref.read(localeControllerProvider.notifier).t('myGrowth.activityDone'),
+        KidTheme.healthAccent,
+      );
+    } catch (_) {
+      // Best-effort, same as the water, habit, faith and study taps beside it:
+      // a single low-stakes retry-safe log is not worth an error page, and the
+      // `_loadAll()` below re-reads the server's own numbers either way, so a
+      // failed log simply leaves the bar where it was.
+    }
+    await _loadAll();
+  }
+
   /// CLOSES A REAL GAP: the missing UI consumer for SmartTaskEngineService
   /// (context-aware suggestions, now server-computed after fixing a
   /// real backend design flaw). ACCEPTED is a real commitment
@@ -340,7 +390,11 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                           // never a fake/zero placeholder.
                           if (_healthProgress != null) ...[
                             _SectionHeader(icon: Icons.favorite_rounded, title: t('myGrowth.healthTitle'), color: KidTheme.healthAccent),
-                            _HealthProgressCard(progress: _healthProgress!, t: t),
+                            _HealthProgressCard(
+                              progress: _healthProgress!,
+                              t: t,
+                              onLogActivity: _logActivity,
+                            ),
                             const SizedBox(height: KidSpace.xl),
                           ],
                           // Sprint 16.4 — CLOSES A REAL GAP: Education had zero
@@ -603,9 +657,16 @@ class _RewardsSummaryChip extends StatelessWidget {
 /// REAL backend data (getDailyProgress, Sprint 15/16.1/16.3) —
 /// never a fabricated number.
 class _HealthProgressCard extends StatelessWidget {
-  const _HealthProgressCard({required this.progress, required this.t});
+  const _HealthProgressCard({
+    required this.progress,
+    required this.t,
+    required this.onLogActivity,
+  });
   final Map<String, dynamic> progress;
   final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  /// The activity row's missing verb. See [_MyGrowthScreenState._logActivity].
+  final VoidCallback onLogActivity;
 
   @override
   Widget build(BuildContext context) {
@@ -634,7 +695,7 @@ class _HealthProgressCard extends StatelessWidget {
               achievedSemanticLabel: t('myGrowth.achievedLabel'),
               color: KidTheme.healthAccent,
             ),
-          if (activity != null)
+          if (activity != null) ...[
             KidProgressRow(
               icon: Icons.directions_run_rounded,
               label: t('myGrowth.activityLabel'),
@@ -644,6 +705,24 @@ class _HealthProgressCard extends StatelessWidget {
               achievedSemanticLabel: t('myGrowth.achievedLabel'),
               color: KidTheme.healthAccent,
             ),
+            // The row above was a read-only bar in an app with no way to move
+            // it. Placed INSIDE the `activity != null` branch on purpose: with
+            // no activity target from the server there is no bar to move, and a
+            // button that logs into nothing visible is a dead tap.
+            KidSpace.gapSm,
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: FilledButton.icon(
+                onPressed: onLogActivity,
+                style: FilledButton.styleFrom(
+                  backgroundColor: KidTheme.healthAccent,
+                  minimumSize: const Size(96, KidSize.touchTarget),
+                ),
+                icon: const Icon(Icons.directions_run_rounded, size: KidSize.iconSm),
+                label: Text(t('myGrowth.logActivity')),
+              ),
+            ),
+          ],
         ],
       ),
     );
