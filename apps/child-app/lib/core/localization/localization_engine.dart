@@ -330,7 +330,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'rewards.coinsLabel': 'Coins',
     'rewards.xpLabel': 'XP',
     'rewards.getIt': 'Get it!',
-    'rewards.needMore': 'Need more',
+    'rewards.askAnyway': "You're {{count}} coins short — ask anyway, a grown-up can help!",
 
     'deviceStatus.title': 'Device Status',
     'deviceStatus.pairedHeartbeat': '✅ Device paired. Heartbeat running.',
@@ -755,7 +755,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'rewards.coinsLabel': 'كوينز',
     'rewards.xpLabel': 'نقاط خبرة',
     'rewards.getIt': 'هاتها!',
-    'rewards.needMore': 'محتاج أكتر',
+    'rewards.askAnyway': 'ناقصك {{count}} كوينز — اطلبها برضه، ممكن حد كبير يساعدك!',
 
     'deviceStatus.title': 'حالة الجهاز',
     'deviceStatus.pairedHeartbeat': '✅ الجهاز متربط. بينبض بانتظام.',

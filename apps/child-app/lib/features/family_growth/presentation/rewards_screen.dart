@@ -122,21 +122,34 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                               padding: const EdgeInsets.only(top: KidSpace.sm),
                               child: Text(t('rewards.noRewardsYet')),
                             ),
+                          // NO AFFORDABILITY GATE. `requestRedemption` accepts
+                          // a request from a child who is short, and says why
+                          // in its own words: «Requesting is allowed even if
+                          // the child is currently short on coins — a parent
+                          // may grant bonus coins after seeing the request.
+                          // The balance check that actually matters happens at
+                          // approval time.» This screen used to disable the
+                          // button, so a child ten coins short met a dead
+                          // control and the parent never learned they wanted
+                          // it. The cost is rendered and the gap is said out
+                          // loud; whether the request is granted stays with
+                          // the server and the parent.
                           ..._store!.map((item) {
                             final map = item as Map<String, dynamic>;
                             final costCoins = map['costCoins'] as int? ?? 0;
                             final coins = _account!['coins'] as int? ?? 0;
-                            final canAfford = coins >= costCoins;
                             final itemId = map['id'] as String;
                             return _StoreItemCard(
                               title: map['title'] as String? ?? '',
-                              costCoins: costCoins,
                               costLabel: t('rewards.coins', options: {'count': costCoins}),
-                              canAfford: canAfford,
+                              shortfallLabel: coins >= costCoins
+                                  ? null
+                                  : t('rewards.askAnyway',
+                                      options: {'count': costCoins - coins}),
                               isRedeeming: _redeemingItemId == itemId,
                               getItLabel: t('rewards.getIt'),
-                              needMoreLabel: t('rewards.needMore'),
-                              onRedeem: canAfford ? () => _redeem(itemId, map['title'] as String? ?? 'reward') : null,
+                              onRedeem: () =>
+                                  _redeem(itemId, map['title'] as String? ?? 'reward'),
                             );
                           }),
                         ],
@@ -231,34 +244,41 @@ class _BalanceStat extends StatelessWidget {
 class _StoreItemCard extends StatelessWidget {
   const _StoreItemCard({
     required this.title,
-    required this.costCoins,
     required this.costLabel,
-    required this.canAfford,
+    required this.shortfallLabel,
     required this.isRedeeming,
     required this.getItLabel,
-    required this.needMoreLabel,
     required this.onRedeem,
   });
 
   final String title;
-  final int costCoins;
   final String costLabel;
-  final bool canAfford;
+
+  /// `null` when the child already has enough. When it is not null the card
+  /// SAYS how far off they are and still offers the button — it is not a
+  /// refusal, because the server does not refuse.
+  final String? shortfallLabel;
   final bool isRedeeming;
   final String getItLabel;
-  final String needMoreLabel;
-  final VoidCallback? onRedeem;
+
+  /// Never null. The card had a `canAfford` flag that turned this off; the
+  /// button is now always live, because the request is always allowed.
+  final VoidCallback onRedeem;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: KidSpace.md),
       decoration: BoxDecoration(
-        color: canAfford ? Colors.white : KidTheme.mutedInk.withOpacity(0.04),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(KidRadius.card),
-        boxShadow: canAfford
-            ? [BoxShadow(color: KidTheme.sunshineYellow.withOpacity(0.15), blurRadius: 14, offset: const Offset(0, 5))]
-            : null,
+        boxShadow: [
+          BoxShadow(
+            color: KidTheme.sunshineYellow.withOpacity(0.15),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
       ),
       child: Padding(
         padding: const EdgeInsetsDirectional.fromSTEB(KidSpace.lg, KidSpace.md, KidSpace.md, KidSpace.md),
@@ -278,6 +298,11 @@ class _StoreItemCard extends StatelessWidget {
                       Text(costLabel, style: KidText.caption(context)),
                     ],
                   ),
+                  if (shortfallLabel != null)
+                    Text(
+                      shortfallLabel!,
+                      style: KidText.caption(context),
+                    ),
                 ],
               ),
             ),
@@ -291,14 +316,14 @@ class _StoreItemCard extends StatelessWidget {
               FilledButton(
                 onPressed: onRedeem,
                 style: FilledButton.styleFrom(
-                  backgroundColor: canAfford ? KidTheme.sunshineYellow : KidColor.border,
+                  backgroundColor: KidTheme.sunshineYellow,
                   // WAS `Size(80, 44)`. 44 is BELOW this app's own 56px
                   // minimum touch target — the one commitment the child
                   // app's theme makes explicitly, on the only button on
                   // this card, for the youngest hands in the product.
                   minimumSize: const Size(96, KidSize.touchTarget),
                 ),
-                child: Text(canAfford ? getItLabel : needMoreLabel),
+                child: Text(getItLabel),
               ),
           ],
         ),
