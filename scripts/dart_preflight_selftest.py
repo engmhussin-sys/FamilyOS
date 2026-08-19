@@ -11,7 +11,13 @@ METHOD
 ------
 1. Copy `apps/child-app` and `apps/parent-app` into a scratch tree.
 2. Record the BASELINE finding set on the untouched copy.
-3. For each control: apply one textual mutation, re-run the full preflight,
+3. Resolve every control's injection site up front and report ALL that no
+   longer resolve — a control whose anchor has rotted is a FAILURE, never a
+   skip, but it must not cancel the controls that are still sound (it used to:
+   the first stale anchor threw out of `main` and took the rest of the run and
+   the residue check with it). Anchors whose text can legitimately recur name a
+   declaration (`within=`) instead of hoping a string stays unique.
+4. For each control: apply one textual mutation, re-run the full preflight,
    and require (a) the expected check to fire on the expected file, and
    (b) revert to restore the baseline set exactly — a control that leaves
    residue is a bug in the harness, not evidence.
@@ -48,6 +54,7 @@ class Control:
         why: str,
         count: int = 1,
         expect_rel: str = "",
+        within: str = "",
     ):
         self.check = check
         self.rel_path = rel_path
@@ -58,12 +65,22 @@ class Control:
         # Some checks file the finding against the file the defect POINTS AT
         # rather than the file that was edited (PART-INTEGRITY is the case).
         self.expect_rel = expect_rel or rel_path
+        # SCOPE-QUALIFIED ANCHOR. When set, `find` is looked for ONLY inside the
+        # brace-balanced body introduced by this marker; the marker itself must
+        # occur exactly once in the file and must END at that body's opening
+        # brace. Use it whenever the anchor text is a shape that can legitimately
+        # recur (a bare `return x as T;`, a `super.dispose();`), so the control
+        # names a SITE — "that statement inside THIS declaration" — instead of a
+        # string that any future sibling method duplicates merely by existing.
+        # See the UNREACHABLE control for the case that forced this.
+        self.within = within
 
 
 # ---------------------------------------------------------------------------
 # The controls. Each `find` string is asserted to exist exactly `count` times
-# before mutation, so a refactor that moves the anchor fails loudly here rather
-# than silently disabling the control.
+# (inside `within`, when the control is scope-qualified) before mutation, so a
+# refactor that moves the anchor fails loudly here rather than silently
+# disabling the control.
 # ---------------------------------------------------------------------------
 CONTROLS: List[Control] = [
     Control(
@@ -219,12 +236,29 @@ CONTROLS: List[Control] = [
         "a local variable referenced nowhere in its file",
     ),
     Control(
+        # SCOPE-QUALIFIED, and here is the incident that earned the mechanism.
+        # This control originally anchored on the bare line
+        # `return response.data as List<dynamic>;`, which was unique in
+        # api_client.dart on the day it was written because `getList` was the
+        # only list-returning method. Commit 7928575 then added `postList` — a
+        # correct fix for a real defect (POST /smart-tasks/generate returns a
+        # bare array and `post`'s Map cast threw on every call) — and the anchor
+        # became ambiguous, which aborted the WHOLE harness at this control and
+        # took the six controls after it, plus the residue check, down with it.
+        #
+        # `getList` and `postList` are NOT a duplication to be merged: different
+        # verb, different parameters, and one of them is the entire point of the
+        # commit that added it. The single line they share is a one-statement
+        # return-and-cast, a shape that is identical in any two methods that
+        # return a list — so the fault was the ANCHOR, not the source, and the
+        # fix is to name the declaration the statement must live in.
         "UNREACHABLE",
         "apps/child-app/lib/core/network/api_client.dart",
         "      return response.data as List<dynamic>;",
         "      return response.data as List<dynamic>;\n"
         "      return response.data as List<dynamic>;",
         "a statement following a `return` in the same block",
+        within="Future<List<dynamic>> getList(String path) async {",
     ),
     Control(
         # NOTE the class chosen. `TodayGoalsController extends StateNotifier<…>`
@@ -271,16 +305,89 @@ CONTROLS: List[Control] = [
 ]
 
 
+def _body_span(src: str, marker: str, c: Control) -> Tuple[int, int]:
+    """Span of the brace-balanced body introduced by `marker` (which must end at
+    that body's opening brace) — [start, end) exclusive of the braces."""
+    n = src.count(marker)
+    if n != 1:
+        raise AssertionError(
+            f"scope marker {marker!r} occurs {n}x in {c.rel_path}, expected 1 — "
+            f"the declaration this control targets was renamed, reformatted or "
+            f"removed; re-point the control at the site it means"
+        )
+    if not marker.rstrip().endswith("{"):
+        raise AssertionError(
+            f"scope marker {marker!r} must end at the opening brace of the body "
+            f"it names"
+        )
+    open_at = src.index(marker) + len(marker.rstrip()) - 1
+    depth = 0
+    for i in range(open_at, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return open_at + 1, i
+    raise AssertionError(f"unbalanced braces after {marker!r} in {c.rel_path}")
+
+
+def _site(src: str, c: Control) -> int:
+    """Absolute offset of the injection site, or AssertionError saying why not.
+
+    Brace balancing does not know about braces inside string literals or
+    comments; it does not have to. A miscounted span can only ever make the
+    anchor count inside it come out wrong, and that is checked right here.
+    """
+    if c.within:
+        lo, hi = _body_span(src, c.within, c)
+        region, where = src[lo:hi], f"inside {c.within!r}"
+    else:
+        lo, region, where = 0, src, ""
+    n = region.count(c.find)
+    if n != c.count:
+        raise AssertionError(
+            f"anchor {c.find!r} occurs {n}x in {c.rel_path}{' ' + where if where else ''}, "
+            f"expected {c.count} — the control is stale, fix it, do not skip it"
+            + ("" if c.within else "; if the shape can legitimately recur, give "
+               "the control a `within=` scope rather than a longer string")
+        )
+    return lo + region.index(c.find)
+
+
+def stale_controls(root: str) -> List[Tuple[Control, str]]:
+    """Resolve EVERY control's anchor against the pristine copy, up front.
+
+    Before this existed, `_apply` raised on the first stale anchor and the
+    exception escaped `main`, so one rotted control did not merely fail — it
+    cancelled every control after it and the residue check as well, and the run
+    reported a traceback instead of a verdict. Staleness is now collected for
+    all controls at once, reported together, and counted as a failure, while
+    every control that still resolves runs and reports normally.
+    """
+    problems: List[Tuple[Control, str]] = []
+    for c in CONTROLS:
+        if c.check == "OVERRIDE":
+            continue  # _override_mutation locates its own site
+        try:
+            src = open(os.path.join(root, c.rel_path), encoding="utf-8").read()
+        except OSError as e:
+            problems.append((c, f"{c.rel_path} is unreadable: {e}"))
+            continue
+        try:
+            _site(src, c)
+        except AssertionError as e:
+            problems.append((c, str(e)))
+    return problems
+
+
 def _apply(root: str, c: Control) -> Tuple[str, str]:
     path = os.path.join(root, c.rel_path)
     src = open(path, encoding="utf-8").read()
-    n = src.count(c.find)
-    if n != c.count:
-        raise AssertionError(
-            f"[{c.check}] anchor {c.find!r} occurs {n}x in {c.rel_path}, "
-            f"expected {c.count} — the control is stale, fix it, do not skip it"
-        )
-    open(path, "w", encoding="utf-8").write(src.replace(c.find, c.replace, 1))
+    at = _site(src, c)
+    open(path, "w", encoding="utf-8").write(
+        src[:at] + c.replace + src[at + len(c.find) :]
+    )
     return path, src
 
 
@@ -343,7 +450,24 @@ def main() -> int:
         print(f"BASELINE on the untouched copy: {len(base_fp)} finding(s)")
 
         failures: List[str] = []
+
+        # Anchors first, all of them, on the untouched copy. A stale anchor is a
+        # control failure — never a skip — but it must not be allowed to cancel
+        # the controls that are still sound.
+        stale = stale_controls(scratch)
+        if stale:
+            print(f"  FAIL  anchor-resolution — {len(stale)} control(s) cannot be applied")
+            for c, why in stale:
+                print(f"          {c.check}: {why}")
+                failures.append(f"{c.check}: stale anchor — {why}")
+        else:
+            print(f"  PASS  anchor-resolution — all {len(CONTROLS)} anchors resolve uniquely")
+        blocked = {id(c) for c, _ in stale}
+
         for c in CONTROLS:
+            if id(c) in blocked:
+                print(f"  SKIP  {c.check:<16} — anchor stale (reported above)")
+                continue
             if c.check == "OVERRIDE":
                 path, original = _override_mutation(scratch)
                 rel = os.path.relpath(path, scratch)
@@ -398,7 +522,10 @@ def main() -> int:
             for f in failures:
                 print(f"  - {f}")
             return 1
-        print(f"All {len(CONTROLS)} negative controls passed, plus the residue check.")
+        print(
+            f"All {len(CONTROLS)} negative controls passed, plus anchor "
+            f"resolution and the residue check."
+        )
         return 0
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
