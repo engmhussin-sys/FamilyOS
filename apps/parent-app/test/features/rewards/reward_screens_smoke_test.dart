@@ -47,6 +47,7 @@ import 'package:parent_app/features/rewards/presentation/program_detail_screen.d
 import 'package:parent_app/features/rewards/presentation/programs_list_screen.dart';
 import 'package:parent_app/features/rewards/presentation/suggestions_screen.dart';
 import 'package:parent_app/features/screen_time/domain/screen_time_policy.dart';
+import 'package:parent_app/features/screen_time/presentation/screen_time_grant_row.dart';
 
 import '../../support/reward_test_harness.dart';
 
@@ -440,6 +441,10 @@ void main() {
           findsOneWidget);
       expect(find.text(ar('childRewards.activeBonus', options: {'count': 45})),
           findsNothing);
+      // ONE ROW WIDGET, shared with the Screen-Time tab. This screen had its
+      // own private copy of it, with its own copy of the date cut and its own
+      // «{{count}} دقيقة إضافية» key holding the same Arabic.
+      expect(find.byType(ScreenTimeGrantRow), findsNWidgets(3));
     });
 
     testWidgets(
@@ -467,8 +472,8 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.text(ar('childRewards.grantActive')), findsOneWidget);
-      expect(find.text(ar('childRewards.grantExpired')), findsNothing);
+      expect(find.text(ar('screenTime.grantActive')), findsOneWidget);
+      expect(find.text(ar('screenTime.grantExpired')), findsNothing);
     });
 
     testWidgets('says the total could not be read rather than showing a zero '
@@ -493,8 +498,8 @@ void main() {
       expect(find.text(ar('childRewards.activeBonus', options: {'count': 0})),
           findsNothing);
       // No standing it cannot back: neither badge is claimed.
-      expect(find.text(ar('childRewards.grantActive')), findsNothing);
-      expect(find.text(ar('childRewards.grantExpired')), findsNothing);
+      expect(find.text(ar('screenTime.grantActive')), findsNothing);
+      expect(find.text(ar('screenTime.grantExpired')), findsNothing);
     });
   });
 

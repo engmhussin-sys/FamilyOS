@@ -120,30 +120,77 @@ class ScreenTimePolicy {
   }
 }
 
-/// One earned, expiring, revocable grant of extra minutes, exactly as
-/// `IScreenTimeBonusGrant` declares it: `{id, minutes, grantedAt, expiresAt}`.
-/// The route only ever returns ACTIVE ones — not revoked, not expired at the
-/// server's `now` — so this type has no `isActive`: asking would imply the
-/// list might contain an inactive row, and it cannot.
-class ScreenTimeBonusGrant {
-  const ScreenTimeBonusGrant({
+/// WHERE ONE GRANT STANDS, as the SERVER sees it.
+///
+/// Never computed from `DateTime.now()` on the handset. `revoked` reads a
+/// timestamp the server wrote; `active` and `ended` come from the set of ids
+/// the effective-policy route reports as live right now. [unknown] is a real
+/// answer, not a default: it is what a screen has when that read failed, and
+/// it renders as no badge at all rather than as a standing nobody can back.
+enum GrantStanding { active, ended, revoked, unknown }
+
+/// ONE MODEL FOR ONE DATABASE ROW — `screen_time_reward_grant`.
+///
+/// There were two. This app read the same row through two routes and built a
+/// different class for each: `ScreenTimeBonusGrant` here for the pre-filtered
+/// `bonusGrants` of the effective policy, and a `ScreenTimeGrant` in
+/// `rewards/domain/fulfilment.dart` for the unfiltered history at
+/// `GET /reward-programs/screen-time-grants/:childId`. One of them decided
+/// active/expired/revoked locally, the other trusted the list it came in; each
+/// had its own date-cut helper, and the second one's comment admitted it was
+/// copying the first. Two answers to «is this grant live» in one app is the
+/// same defect class as two answers to «how many bonus minutes».
+///
+/// The two routes differ only in WHAT THEY OMIT, so the class carries both
+/// shapes and nothing is invented: `childId` and `revokedAt` are absent from
+/// the effective-policy shape (`IScreenTimeBonusGrant` is
+/// `{id, minutes, grantedAt, expiresAt}`), and absent means `null`, not a
+/// fabricated empty string.
+///
+/// Note what a grant is NOT: an edit to the child's screen-time policy. The
+/// base policy row is untouched and this expires on its own.
+class ScreenTimeGrant {
+  const ScreenTimeGrant({
     required this.id,
     required this.minutes,
+    this.childId,
     this.grantedAt,
     this.expiresAt,
+    this.revokedAt,
+    this.achievementId,
   });
 
   final String id;
   final int minutes;
+
+  /// Absent from the effective-policy shape, which is already scoped to one
+  /// child by its own route.
+  final String? childId;
+
   final DateTime? grantedAt;
   final DateTime? expiresAt;
 
-  factory ScreenTimeBonusGrant.fromJson(Map<String, dynamic> json) =>
-      ScreenTimeBonusGrant(
+  /// Absent from the effective-policy shape for a different reason: that route
+  /// never returns a revoked grant at all.
+  final DateTime? revokedAt;
+
+  final String? achievementId;
+
+  /// A STORED SERVER FACT — a timestamp the server wrote — not a comparison
+  /// against this handset's clock. That is why it survives while
+  /// `isActiveAt(now)` and `isExpiredAt(now)` were deleted: those asked the
+  /// device to re-decide something the server had already decided, and the
+  /// answer differed from the server's whenever the two clocks did.
+  bool get isRevoked => revokedAt != null;
+
+  factory ScreenTimeGrant.fromJson(Map<String, dynamic> json) => ScreenTimeGrant(
         id: json['id']?.toString() ?? '',
         minutes: (json['minutes'] as num?)?.toInt() ?? 0,
+        childId: json['childId']?.toString(),
         grantedAt: _parseDate(json['grantedAt']),
         expiresAt: _parseDate(json['expiresAt']),
+        revokedAt: _parseDate(json['revokedAt']),
+        achievementId: json['achievementId']?.toString(),
       );
 }
 
@@ -156,7 +203,7 @@ class EffectiveScreenTimePolicy {
     this.baseDailyLimitMinutes,
     this.effectiveDailyLimitMinutes,
     this.bonusMinutes = 0,
-    this.bonusGrants = const [],
+    this.bonusGrants = const <ScreenTimeGrant>[],
   });
 
   /// The same configured row the other route returns, embedded. Present here
@@ -166,7 +213,10 @@ class EffectiveScreenTimePolicy {
   final int? baseDailyLimitMinutes;
   final int? effectiveDailyLimitMinutes;
   final int bonusMinutes;
-  final List<ScreenTimeBonusGrant> bonusGrants;
+  /// The grants the SERVER counts right now — already filtered on
+  /// `revokedAt: null, expiresAt: { gt: now }` at the server's own clock. Their
+  /// ids are what tells any screen which rows of the full history are live.
+  final List<ScreenTimeGrant> bonusGrants;
 
   /// THE ONE CASE WHERE A REWARD BUYS NOTHING, AND THE UI HAS TO SAY SO.
   /// With no base limit the allowance is already unlimited, so bonus minutes
@@ -188,9 +238,9 @@ class EffectiveScreenTimePolicy {
       bonusGrants: grants is List
           ? grants
               .whereType<Map<String, dynamic>>()
-              .map(ScreenTimeBonusGrant.fromJson)
+              .map(ScreenTimeGrant.fromJson)
               .toList()
-          : const [],
+          : const <ScreenTimeGrant>[],
     );
   }
 }

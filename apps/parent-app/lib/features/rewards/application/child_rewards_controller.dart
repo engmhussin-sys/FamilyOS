@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/errors/api_failure.dart';
 import '../../../core/state/ui_state.dart';
 import '../../screen_time/data/screen_time_repository.dart';
+import '../../screen_time/domain/screen_time_policy.dart';
 import '../data/reward_programs_repository.dart';
 import '../domain/achievement.dart';
 import '../domain/fulfilment.dart';

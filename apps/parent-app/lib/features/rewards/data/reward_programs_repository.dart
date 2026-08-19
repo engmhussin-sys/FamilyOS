@@ -1,6 +1,9 @@
 import '../../../core/errors/api_failure.dart';
 import '../../../core/network/api_exception.dart';
 import '../../life_intelligence/api/life_intelligence_api.dart';
+// ONE MODEL FOR THE GRANT ROW, and it lives on the screen-time surface — see
+// `ScreenTimeGrant`'s own header for why there is no longer a second one here.
+import '../../screen_time/domain/screen_time_policy.dart';
 import '../api/reward_programs_api.dart';
 import '../domain/achievement.dart';
 import '../domain/fulfilment.dart';

@@ -193,7 +193,7 @@ EffectiveScreenTimePolicy testEffective({
   int? base = 120,
   int bonus = 30,
   ScreenTimePolicy? policy,
-  List<ScreenTimeBonusGrant>? grants,
+  List<ScreenTimeGrant>? grants,
 }) =>
     EffectiveScreenTimePolicy(
       policy: policy ?? testPolicy(dailyLimitMinutes: base),
@@ -202,14 +202,14 @@ EffectiveScreenTimePolicy testEffective({
       effectiveDailyLimitMinutes: base == null ? null : base + bonus,
       bonusGrants: grants ??
           (bonus > 0
-              ? <ScreenTimeBonusGrant>[
-                  ScreenTimeBonusGrant(
+              ? <ScreenTimeGrant>[
+                  ScreenTimeGrant(
                     id: 'grant_1',
                     minutes: bonus,
                     expiresAt: DateTime.utc(2026, 1, 2, 20),
                   ),
                 ]
-              : const <ScreenTimeBonusGrant>[]),
+              : const <ScreenTimeGrant>[]),
     );
 
 AppBlockRule testRule({

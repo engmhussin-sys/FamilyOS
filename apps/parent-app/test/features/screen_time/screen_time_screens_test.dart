@@ -45,6 +45,7 @@ import 'package:parent_app/features/screen_time/domain/screen_time_policy.dart';
 import 'package:parent_app/features/family/presentation/child_picker.dart';
 import 'package:parent_app/features/screen_time/presentation/blocked_apps_screen.dart';
 import 'package:parent_app/features/screen_time/presentation/screen_time_children_screen.dart';
+import 'package:parent_app/features/screen_time/presentation/screen_time_grant_row.dart';
 import 'package:parent_app/features/screen_time/presentation/screen_time_overview_screen.dart';
 import 'package:parent_app/features/screen_time/presentation/screen_time_policy_editor_screen.dart';
 
@@ -99,6 +100,13 @@ void main() {
             options: {'base': 120, 'bonus': 30, 'total': 150})),
         findsOneWidget,
       );
+      // ONE ROW WIDGET FOR ONE GRANT. The child's rewards page draws the same
+      // widget for the same database row; each screen used to have its own,
+      // with its own answer to «is this grant live» and its own copy of the
+      // timestamp cut. Every grant on THIS route is one the server counts, so
+      // the row reads «فعّالة» rather than a locally decided standing.
+      expect(find.byType(ScreenTimeGrantRow), findsOneWidget);
+      expect(find.text(ar('screenTime.grantActive')), findsOneWidget);
     });
 
     testWidgets('with no bonus earned, it says so instead of implying one',

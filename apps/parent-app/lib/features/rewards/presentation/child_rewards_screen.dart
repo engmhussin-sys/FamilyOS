@@ -4,8 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../screen_time/presentation/screen_time_grant_row.dart';
 import '../application/child_rewards_controller.dart';
-import '../domain/fulfilment.dart';
 
 /// WHAT THIS CHILD HAS EARNED — the ledger balance, the live screen-time
 /// grants, and the record of completed goals.
@@ -116,10 +116,13 @@ class ChildRewardsScreen extends ConsumerWidget {
                 DsCard(child: Text(t('childRewards.noGrants'), style: DsText.caption(context)))
               else
                 for (final grant in snapshot.grants)
-                  _GrantCard(
+                  // THE SHARED ROW. The Screen-Time tab draws the same widget
+                  // for the same row; it had its own copy until F5.
+                  ScreenTimeGrantRow(
                     grant: grant,
                     standing: snapshot.standingOf(grant),
                     busy: state.busyGrantId == grant.id,
+                    revokeLabel: t('childRewards.revoke'),
                     onRevoke: () => _confirmRevoke(context, t, controller, grant.id),
                   ),
               if (snapshot.streaks.isNotEmpty) ...[
@@ -235,79 +238,5 @@ class ChildRewardsScreen extends ConsumerWidget {
       ),
     );
     if (confirmed == true) await controller.revokeGrant(grantId);
-  }
-}
-
-class _GrantCard extends ConsumerWidget {
-  const _GrantCard({
-    required this.grant,
-    required this.standing,
-    required this.busy,
-    required this.onRevoke,
-  });
-
-  final ScreenTimeGrant grant;
-
-  /// Handed in, never computed here. The device clock has no vote on whether
-  /// a grant is live — see [ChildRewardsSnapshot.standingOf].
-  final GrantStanding standing;
-  final bool busy;
-  final VoidCallback onRevoke;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final t = ref.watch(localeControllerProvider.notifier).t;
-    final active = standing == GrantStanding.active;
-    return DsCard(
-      accent: active ? DsColor.stateSuccess : DsColor.stateMuted,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  t('childRewards.bonusMinutes', options: {'count': grant.minutes}),
-                  style: DsText.cardTitle(context),
-                ),
-              ),
-              // NO BADGE when the standing is unknown: the effective-policy
-              // call failed, and «فعّالة» or «منتهية» would both be a claim
-              // this screen cannot back.
-              if (standing != GrantStanding.unknown)
-                DsBadge(
-                  label: standing == GrantStanding.revoked
-                      ? t('childRewards.grantRevoked')
-                      : active
-                          ? t('childRewards.grantActive')
-                          : t('childRewards.grantExpired'),
-                  color: active ? DsColor.stateSuccess : DsColor.stateMuted,
-                ),
-            ],
-          ),
-          if (grant.expiresAt != null) ...[
-            DsSpace.gapXs,
-            Text(
-              t('childRewards.grantExpiresAt',
-                  options: {'date': grant.expiresAt!.toLocal().toString().substring(0, 16)}),
-              style: DsText.caption(context),
-            ),
-          ],
-          // Offered while the grant is live and while the standing is unknown
-          // — withdrawing is the parent's decision and a failed read of the
-          // effective policy must not take the control away.
-          if (standing == GrantStanding.active ||
-              standing == GrantStanding.unknown) ...[
-            DsSpace.gapMd,
-            DsSecondaryButton(
-              label: t('childRewards.revoke'),
-              icon: Icons.remove_circle_outline_rounded,
-              danger: true,
-              onPressed: busy ? null : onRevoke,
-            ),
-          ],
-        ],
-      ),
-    );
   }
 }

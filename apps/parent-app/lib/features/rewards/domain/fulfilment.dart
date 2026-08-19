@@ -1,5 +1,11 @@
-/// FULFILMENT and SCREEN-TIME GRANTS — the two things that turn a granted
-/// reward into something that happened in the real world.
+/// FULFILMENT — the half of a granted reward that has to happen in the real
+/// world.
+///
+/// SCREEN-TIME GRANTS USED TO LIVE HERE TOO, as a second class describing the
+/// same `screen_time_reward_grant` row that
+/// `screen_time/domain/screen_time_policy.dart` already described. One model
+/// now, in that file, because this app read one row through two routes and
+/// gave the two readings different answers about whether a grant was live.
 library;
 
 class FulfilmentStatuses {
@@ -74,56 +80,6 @@ class RewardFulfilment {
         decidedAt: _parseDate(json['decidedAt']),
         fulfilledAt: _parseDate(json['fulfilledAt']),
         createdAt: _parseDate(json['createdAt']),
-      );
-}
-
-/// Where one grant stands, as the SERVER sees it. Never computed from
-/// `DateTime.now()` on the handset: [ChildRewardsSnapshot.standingOf] reads
-/// `revokedAt` (a stored fact) and otherwise defers to the set of ids the
-/// effective-policy route says are live right now.
-///
-/// [unknown] is a real answer, not a default: it is what the screen has when
-/// the effective-policy call failed, and it renders as no badge at all rather
-/// than as a status the app cannot support.
-enum GrantStanding { active, ended, revoked, unknown }
-
-/// A bounded, expiring, revocable grant of extra screen-time minutes.
-/// Note what this is NOT: an edit to the child's screen-time policy. The
-/// base policy row is untouched and this expires on its own.
-class ScreenTimeGrant {
-  const ScreenTimeGrant({
-    required this.id,
-    required this.childId,
-    required this.minutes,
-    this.grantedAt,
-    this.expiresAt,
-    this.revokedAt,
-    this.achievementId,
-  });
-
-  final String id;
-  final String childId;
-  final int minutes;
-  final DateTime? grantedAt;
-  final DateTime? expiresAt;
-  final DateTime? revokedAt;
-  final String? achievementId;
-
-  /// A STORED SERVER FACT — a timestamp the server wrote — not a comparison
-  /// against this handset's clock. That is why it survives while
-  /// `isActiveAt(now)` and `isExpiredAt(now)` were deleted: those asked the
-  /// device to re-decide something the server had already decided, and the
-  /// answer differed from the server's whenever the two clocks did.
-  bool get isRevoked => revokedAt != null;
-
-  factory ScreenTimeGrant.fromJson(Map<String, dynamic> json) => ScreenTimeGrant(
-        id: json['id']?.toString() ?? '',
-        childId: json['childId']?.toString() ?? '',
-        minutes: (json['minutes'] as num?)?.toInt() ?? 0,
-        grantedAt: _parseDate(json['grantedAt']),
-        expiresAt: _parseDate(json['expiresAt']),
-        revokedAt: _parseDate(json['revokedAt']),
-        achievementId: json['achievementId']?.toString(),
       );
 }
 

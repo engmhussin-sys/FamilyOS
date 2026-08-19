@@ -7,6 +7,7 @@ import '../../../core/localization/locale_controller.dart';
 import '../application/screen_time_overview_controller.dart';
 import '../domain/screen_time_policy.dart';
 import 'blocked_apps_screen.dart';
+import 'screen_time_grant_row.dart';
 import 'screen_time_policy_editor_screen.dart';
 
 /// ONE CHILD'S SCREEN TIME — THE SCREEN THIS APP DID NOT HAVE.
@@ -200,7 +201,14 @@ class _OverviewBody extends ConsumerWidget {
             title: t('screenTime.grantsSection'),
             subtitle: t('screenTime.grantsHint'),
           ),
-          for (final grant in effective.bonusGrants) _GrantRow(grant: grant),
+          // THE SHARED ROW. Every grant in `bonusGrants` is one the SERVER
+          // counts right now — the route returns no revoked and no expired row
+          // — so the standing is not a guess this screen is making.
+          for (final grant in effective.bonusGrants)
+            ScreenTimeGrantRow(
+              grant: grant,
+              standing: GrantStanding.active,
+            ),
         ],
 
         // --- the configured policy in full ----------------------------------
@@ -295,57 +303,3 @@ class _OverviewBody extends ConsumerWidget {
     );
   }
 }
-
-/// One earned grant. It exists BECAUSE an achievement was verified, it expires
-/// on its own, and it never edited the base policy — which is why the caption
-/// says «تنتهي» and not «تم تعديل الحد».
-class _GrantRow extends ConsumerWidget {
-  const _GrantRow({required this.grant});
-
-  final ScreenTimeBonusGrant grant;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
-    return DsCard(
-      padding: const EdgeInsets.all(DsSpace.md),
-      accent: DsColor.stateSuccess,
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  t('screenTime.bonusMinutes', options: {'count': grant.minutes}),
-                  style: DsText.cardTitle(context),
-                ),
-                if (grant.expiresAt != null) ...[
-                  DsSpace.gapXs,
-                  Text(
-                    t('screenTime.grantExpiresAt', options: {
-                      'date': _shortStamp(grant.expiresAt!),
-                    }),
-                    style: DsText.caption(context),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          DsBadge(
-            label: t('screenTime.grantEarned'),
-            color: DsColor.stateSuccess,
-            icon: Icons.star_rounded,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// `yyyy-MM-dd HH:mm` in the phone's own timezone — the same 16-character cut
-/// `child_rewards_screen.dart` already uses for a grant expiry, so two screens
-/// showing the same grant show the same string. Not localised on purpose: a
-/// timestamp is a number, and this app ships no date formatter.
-String _shortStamp(DateTime value) => value.toLocal().toString().substring(0, 16);

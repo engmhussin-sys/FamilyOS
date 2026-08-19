@@ -234,8 +234,8 @@ ScreenTimeGrant testGrant({
 }) =>
     ScreenTimeGrant(
       id: id,
-      childId: 'child_1',
       minutes: minutes,
+      childId: 'child_1',
       grantedAt: DateTime.utc(2026, 1, 1, 9),
       expiresAt: expiresAt,
       revokedAt: revokedAt,
@@ -266,7 +266,7 @@ EffectiveScreenTimePolicy noBonus() => const EffectiveScreenTimePolicy(
       baseDailyLimitMinutes: 120,
       effectiveDailyLimitMinutes: 120,
       bonusMinutes: 0,
-      bonusGrants: <ScreenTimeBonusGrant>[],
+      bonusGrants: <ScreenTimeGrant>[],
     );
 
 /// The server's answer to «how many bonus minutes does this child hold right
@@ -283,7 +283,7 @@ EffectiveScreenTimePolicy serverBonus({
       bonusMinutes: bonusMinutes,
       bonusGrants: [
         for (final id in activeGrantIds)
-          ScreenTimeBonusGrant(id: id, minutes: bonusMinutes),
+          ScreenTimeGrant(id: id, minutes: bonusMinutes),
       ],
     );
 
