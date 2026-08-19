@@ -46,6 +46,8 @@
  * rule for an engine is how a family takes ownership of that engine's policy.
  */
 
+import { PLATFORM_BADGES } from './badge-catalogue';
+
 /**
  * The engines a rule may be attached to. These are the values already written
  * into `RewardRule.trigger_engine` by the existing producers
@@ -141,19 +143,60 @@ export const RULE_MAX_PER_WEEK_MAX = 200;
  * limit: it bounds the per-completion evaluation cost. */
 export const RULE_MAX_PER_FAMILY = 60;
 
-export interface RewardRuleDefault {
+interface RewardRuleDefaultBase {
   /** Stable, human-readable id — also the seed row's deterministic UUID input. */
   readonly key: string;
   readonly triggerEngine: RuleEngine;
   readonly eventType: RuleEventType;
   readonly triggerCondition: Readonly<Record<string, string | number | boolean>>;
-  readonly rewardType: 'XP' | 'COINS';
-  readonly amount: number;
   readonly maxPerDay: number | null;
   readonly maxPerWeek: number | null;
   /** FK into `reward_program_categories.code` — a TABLE, never an enum. */
   readonly category: string;
   readonly labelAr: string;
+}
+
+/** XP and COINS pay a NUMBER, and `reward_amount_or_badge_id` holds its decimal
+ * form. Bounded by `RULE_AMOUNT_MIN`/`MAX`. */
+export interface AmountRewardRuleDefault extends RewardRuleDefaultBase {
+  readonly rewardType: 'XP' | 'COINS';
+  readonly amount: number;
+  readonly badgeKey?: never;
+}
+
+/**
+ * BADGE pays an IDENTITY, not a number: `reward_amount_or_badge_id` holds a
+ * `badge_definitions.key`, which `findBadgeByKey` resolves before
+ * `awardBadgeIfNotAlready` can insert anything.
+ *
+ * A DISCRIMINATED UNION RATHER THAN AN OPTIONAL `amount`, because the two
+ * shapes are not interchangeable and the engine already proves it: the BADGE
+ * branch of `processTriggerEvent` never calls `Number(grant.amountOrBadgeId)`
+ * and the XP/COINS branch bails out on `!Number.isFinite(amount)`. A badge rule
+ * carrying an amount, or an XP rule carrying a badge key, is a mistake TypeScript
+ * can catch here instead of a rule that silently never pays in production.
+ *
+ * `maxPerDay`/`maxPerWeek` are ALWAYS null on a badge rule. The cap counts
+ * ledger rows per rule per business day, and a badge whose award is refused by
+ * `child_badge_awards (child_id, badge_id)` never reaches `applyEarn` at all —
+ * so a cap on a once-ever grant is a number that can never be read.
+ */
+export interface BadgeRewardRuleDefault extends RewardRuleDefaultBase {
+  readonly rewardType: 'BADGE';
+  readonly badgeKey: string;
+  readonly amount?: never;
+  readonly maxPerDay: null;
+  readonly maxPerWeek: null;
+}
+
+export type RewardRuleDefault = AmountRewardRuleDefault | BadgeRewardRuleDefault;
+
+/** What the rule's `reward_amount_or_badge_id` column holds — the one column
+ * that means two different things depending on `reward_type`. Callers that
+ * compare a seeded row against this catalogue must go through here rather than
+ * reading `.amount`, which does not exist on a badge rule. */
+export function ruleRewardValue(rule: RewardRuleDefault): string {
+  return rule.rewardType === 'BADGE' ? rule.badgeKey : String(rule.amount);
 }
 
 /**
@@ -371,7 +414,46 @@ export const PLATFORM_DEFAULT_REWARD_RULES: readonly RewardRuleDefault[] = [
     category: 'RELIGION',
     labelAr: 'سلسلة عبادة متصلة',
   },
+  // ---- Badges -------------------------------------------------------------
+  // Derived, never hand-written: see PLATFORM_DEFAULT_BADGE_RULES below.
+  ...PLATFORM_BADGES.map(
+    (badge): BadgeRewardRuleDefault => ({
+      key: `default:badge:${badge.key}`,
+      triggerEngine: badge.criteria.triggerEngine,
+      eventType: badge.criteria.eventType,
+      triggerCondition: badge.criteria.triggerCondition,
+      rewardType: 'BADGE',
+      badgeKey: badge.key,
+      maxPerDay: null,
+      maxPerWeek: null,
+      category: badge.category,
+      labelAr: badge.ruleLabelAr,
+    }),
+  ),
 ];
+
+/**
+ * THE BADGE HALF OF THE DEFAULTS, addressable on its own.
+ *
+ * These rows are DERIVED from `PLATFORM_BADGES`, one rule per badge, so the
+ * catalogue and its demand cannot drift: adding a badge adds its rule, and
+ * there is no way to write a rule pointing at a key that has no definition.
+ * They live in `PLATFORM_DEFAULT_REWARD_RULES` above like every other default
+ * — `/reward-rules/catalogue` shows a parent what their family inherits, and a
+ * badge they can earn belongs in that answer.
+ *
+ * THE SHADOWING CONSEQUENCE, stated because it is a real product edge and not
+ * an oversight: `selectApplicableRules` gives a family that owns ANY active
+ * rule for an engine full ownership of that engine, so a parent who writes one
+ * custom habit rule also stops inheriting the habit badges. That is the
+ * precedence rule B4 chose deliberately («coarse and explicable beats clever
+ * and surprising when the output is money-shaped»), and reproducing it for
+ * badges keeps one mechanism rather than two. It is not weakened here.
+ */
+export const PLATFORM_DEFAULT_BADGE_RULES: readonly BadgeRewardRuleDefault[] =
+  PLATFORM_DEFAULT_REWARD_RULES.filter(
+    (rule): rule is BadgeRewardRuleDefault => rule.rewardType === 'BADGE',
+  );
 
 /**
  * Deterministic UUIDs for the seeded platform rows, so the migration is
