@@ -1,11 +1,12 @@
 # ABNY SHIP BOARD
 
-Updated 2026-08-19 · branch `abny/sprint-f1-unblock` · **189 commits ahead of `main`** · tree clean
+Updated 2026-08-19 · branch `abny/sprint-f1-unblock` · **246 commits ahead of `main`** · tree clean
 
-Evidence: `RUNTIME VERIFIED` · `BUILD VERIFIED` · `STATIC VERIFIED` · `BLOCKED` · `NOT TESTED`
+Evidence: `RUNTIME VERIFIED` · `BUILD VERIFIED` · `STATIC VERIFIED` · `CODE REVIEWED` · `BLOCKED` · `DELEGATED` · `HUMAN DECISION` · `NOT TESTED`
 
-**Measured now, on a database migrated from empty (24 migrations → 101 tables), flushed Redis, real booted HTTP app:**
-`193 suites / 4569 tests / 0 failing` · `tsc` PASS · tenant-guard 0 · event-emission 0 · all 8 mobile checkers 0 problems · admin dashboard 168 tests + build.
+**Measured now, on a database built from empty by the 29 migrations (→ 101 tables), real Redis, real booted HTTP app:**
+`211 suites / 5048 tests / 0 failing` — and the **same 211 / 5048 on a second consecutive run against the reused database**, which is how this repo catches the suite that only passes on a clean one.
+`tsc` PASS · tenant-guard 0 · event-emission 0 · **9** mobile checkers 0 problems · admin dashboard 184 tests + `vite build` clean.
 
 ---
 
@@ -13,7 +14,7 @@ Evidence: `RUNTIME VERIFIED` · `BUILD VERIFIED` · `STATIC VERIFIED` · `BLOCKE
 
 | # | Item | Owner | Evidence | Next action |
 |---|---|---|---|---|
-| 1 | **189 commits unpushed** | **YOU** | Sandbox proxy refuses credentials for this repo. Not a code failure | `git push origin abny/sprint-f1-unblock` |
+| 1 | **246 commits unpushed** | **YOU** | Sandbox proxy refuses credentials for this repo. Not a code failure | `git push origin abny/sprint-f1-unblock` |
 | 2 | **Android APK/AAB** | **YOU (Windows)** | No Flutter/Dart/Android SDK; registries 403. **No `flutter` command has ever run** | `MOBILE_BUILD_HANDOFF.md` — pinned versions, exact commands |
 | 3 | **Firebase project + keystore** | **YOU** | Nothing fabricated. Two `applicationId`s, one project | `MOBILE_BUILD_HANDOFF.md` §2–3 |
 | 4 | **5 evidence packages unresolved** | ENVIRONMENT | `record`, `image_picker`, `file_picker`, `path_provider`, `http_parser` declared and wired; `pub.dev` 403 so never resolved, no `pubspec.lock` invented | Resolves on first `flutter pub get` |
@@ -60,19 +61,43 @@ Earlier this sprint: family country as a real FK · pairing activation, revocati
 
 ---
 
+## PHASE H — THE FEATURES THAT COULD NEVER FIRE
+
+The last sweep asked a different question from every sweep before it: not *is this code tested?* but **does anything actually run it?** A model with a reader and no writer, a limit nobody enforces, a lookup that always misses — all of these pass their tests and none of them work. That question found eight, and all eight are closed.
+
+| Severity | What it was |
+|---|---|
+| **SAFETY** | The `AiAlert` table had readers and **no writer anywhere**. `GrowthAlertsService.aiSafetyIncident` scanned a table nothing inserted into, so the Arabic distress classifier could detect self-harm and **no parent would ever be told**. `DistressEscalationService.checkin` now writes the alert, uniquely keyed per child per family-local day, and a parent route reads it. The alert deliberately carries no severity ladder: `(category, severity)` would have been a bijection onto the classification, letting a parent reverse-read what their child was flagged for |
+| **SAFETY** | Three fail-**open** holes in the child safety filter: an unresolvable age fell to the *loosest* band (a sentence correctly refused for a 6-year-old returned safe when age was unknown); an unrecognised band string threw a `TypeError` **from inside the filter**, producing no verdict at all; and the emptiness check used `trim()`, which cannot see zero-width joiners, soft hyphens or tatweel — text made entirely of them shipped to the child as a blank card. All three now fail closed |
+| **HIGH** | **No child could ever earn a badge.** `BadgeDefinition` had no seed, so `findBadgeByKey` always missed. Worse, no `reward_rules` row could even ask for one — `CreateRewardRuleDto` was `@IsIn(['XP','COINS'])`. Migration 0026 writes both halves from one catalogue: nine first-milestone badges with Arabic names a child would want to read |
+| **HIGH** | **A child's notification was scored against their parent's day.** The fatigue penalty counted the *parent's* rows for a *child's* message, in direct contradiction of the policy written in `notification-class.ts`: «a parent at their daily maximum must not be able to silence the child's own news about their own work.» Fixing it also revealed `DUPLICATE_PENALTY` had been dead for every child notification ever produced, and answered wrongly when switched on — two distinct causes read as one duplicate |
+| **HIGH** | **"Today" was a rolling 24 hours.** The daily notification budget slid with the clock instead of resetting at the family's local midnight, and the history window had no upper bound at `now`, so a row stamped in the future counted as "just now". A household told something at 20:00 Cairo was still refused at 07:00 the next morning |
+| **HIGH** | **The configured cooldown was inert.** `toFatiguePolicy` had **no call site in `src/`**, so a household's anti-spam settings — cooldown and hourly maximum both — were silently ignored. Measured: a second reward notification 20 minutes into a 30-minute cooldown was delivered |
+| **HIGH** | A second silent family ceiling, the sibling of the `LIMIT 200` rollover defect: `goal-nudge.service.ts` took 500 families **once, with no cursor loop**. Because a household refused for quiet hours stays a candidate, everything past the first 500 was not deferred — it was unreachable for that window. Now keyset-paginated, with a genuine ceiling reported as a FAILED job rather than passing quietly |
+| **HIGH** | `REWARD_GRANTED` and `BADGE_EARNED_PARENT` — the two most common parent notifications — both pointed at `abny://progress`, which the parent app answered `unavailable`. **Every "your child earned something" tap went nowhere.** Same for `abny://coach`. Both surfaces now exist and wire to the screens that already held the answer |
+
+**And a guard for the shape itself.** `dormant-schema.guard.spec.ts` classifies all 101 models LIVE or DORMANT by scanning for real usage, and requires every dormant one to carry an explicit reason from a closed vocabulary plus a justification naming the concrete blocker. It is a **ratchet**: when a model becomes live the entry goes red and must be deleted, which is exactly how `AiAlert` and `AppCatalogEntry` left it. A `WRITTEN_BY_MIGRATION_ONLY` claim is checked against the migrations, so the classification cannot rot.
+
+The producer-chain guard gained the same treatment: a notification key can no longer be added without a producer (or a declared non-producer reason), an audience, **a destination the app actually answers**, Arabic copy in every tone band it renders in, a quiet-hours class, a safety class and provenance. `dart_preflight` gained identifier scope resolution after a real undefined-identifier compile error was found sitting behind 300 green `t()` call sites — nine checkers reporting zero problems while the code could not compile.
+
+**Also built:** the parent Screen Time surface (the backend API was complete and had **no UI at all**); the app catalogue, so blocking an app means picking it from what is actually on the child's device instead of typing `com.example.thing` from memory; an operator view of the notification decision log — sent, deferred, suppressed, delivery errors, by audience, type, source, provenance and date; and `ai_allowed` / `ai_invoked` / `ai_safety_rejection` columns, because "the model rewrote nothing" and "the model was never asked" were previously indistinguishable.
+
+---
+
 ## P1 — OPEN
 
 | Item | Why it is not done |
 |---|---|
-| Paymob / Fawry HMAC field order | **HUMAN** — VERIFY BEFORE GO-LIVE; merchant onboarding is 4–8 calendar weeks. **The only pure wall-clock item. Start it today.** |
-| Staging deploy | **HUMAN** — no Railway project, no URL |
-| `progress` and `coach` deep links | Still fall back to the inbox: a link with no id names no child, and picking one would be client-side authority |
-| Six tables with no reader and no writer | `ai_risk_scores`, `app_catalog_entries`, `family_broadcast_messages`, `family_challenges`, `location_safe_zones`, `physical_measurement_logs` — migrated, indexed, backed up and permanently empty. `FeatureFlagService.isEnabled()` likewise gates no behaviour anywhere. Either build them or drop them; leaving them is the `PF-E-001` shape |
+| Paymob / Fawry HMAC field order | **HUMAN DECISION** — VERIFY BEFORE GO-LIVE; merchant onboarding is 4–8 calendar weeks. **The only pure wall-clock item. Start it today.** |
+| Staging deploy | **HUMAN DECISION** — no Railway project, no URL |
+| Channel is not recorded on a decision | **BLOCKED, and deliberately not faked.** `PushFanoutOutcome` is computed and discarded inside `PrismaRuntimeAlertRepository.createForFamilyOwner`, below the layer that writes the ledger. A column added today would be NULL forever and would read to an operator as "no push problems" — the exact defect the dormant-schema guard exists to prevent. Needs the push owner |
+| Assessment-based rewards | The strategy is now **refused at creation** with a specific Arabic sentence, because nothing writes `LearningAssessment` and the strategy would otherwise blame the child for a missing score three times before escalating. A ratchet test takes the refusal down automatically the day a writer appears |
+| Ten dormant tables | Down from a silent count nobody had, now each carrying a written reason: location wholesale (no ingest module exists), family challenges, per-child risk scores, physical measurements, and the reference tables written by migration. Declared, checked, and impossible to add to silently |
 | Admin panels still NOT MEASURED | Cohort retention, refunds, referral summary, AI sessions. They render the gap treatment naming the missing route — never a zero |
 
 ## P2 — LATER
 
-Child activity **content** (the session is a stopwatch; no endpoint serves lesson material) · parent screen-time **policy** UI (view-only today) · `GET /notifications?category=SAFETY` so the safety class is decided server-side · a parent-facing `AiAlert` route · iOS Parent · admin growth polish
+Child activity **content** (the session is a stopwatch; no endpoint serves lesson material) · `GET /notifications?category=SAFETY` so the safety class is decided server-side · a parent "mark reviewed" route for AI alerts (they stay `NEW` and re-raise once per family per business day until reviewed) · unreferenced-evidence cleanup beyond the retention sweep · iOS Parent · admin growth polish
 
 **iOS Child:** recorded product decision — `AccessibilityService`, `UsageStatsManager` and overlays have no iOS equivalent. Ships as *"supervision requires an Android device"* or not at all.
 
