@@ -316,6 +316,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'myGrowth.faith': 'Faith',
     'myGrowth.noHabitsYet': 'No habits yet — ask a grown-up to add one!',
     'myGrowth.noPracticesYet': 'No practices yet — ask a grown-up to add one!',
+    'myGrowth.noMessagesYet': 'No messages yet — this is where they land.',
     'myGrowth.done': 'Done!',
 
     'rewards.title': 'My Rewards',
@@ -740,6 +741,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'myGrowth.faith': 'الإيمان',
     'myGrowth.noHabitsYet': 'لسه مفيش عادات — اطلب من حد كبير يضيف واحدة!',
     'myGrowth.noPracticesYet': 'لسه مفيش ممارسات — اطلب من حد كبير يضيف واحدة!',
+    'myGrowth.noMessagesYet': 'لسه مفيش رسايل — هتوصلك هنا.',
     'myGrowth.done': 'تمام!',
 
     'rewards.title': 'جوايزي',

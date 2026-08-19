@@ -378,11 +378,24 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                                     )),
                             const SizedBox(height: KidSpace.lg),
                           ],
-                          if (_messages!.isNotEmpty) ...[
-                            _SectionHeader(icon: Icons.mail_rounded, title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
+                          // THE INBOX ALWAYS HAS A HEADER, AND THAT IS A FIX.
+                          //
+                          // This section used to render only when a message
+                          // existed, so an empty inbox was not an empty inbox —
+                          // it was NO inbox: no «رسايل» header, no line, nothing
+                          // on the screen at all. `ChildDeepLinkRouter` sends
+                          // every `notifications` deep link here precisely
+                          // BECAUSE this section is the child's inbox, so a tap
+                          // on a notification whose message had not landed yet
+                          // opened a screen with no trace of what was tapped.
+                          // Habits and faith below have always said «لسه مفيش»
+                          // when they are empty; the inbox now does too.
+                          _SectionHeader(icon: Icons.mail_rounded, title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
+                          if (_messages!.isEmpty)
+                            _EmptyHint(text: t('myGrowth.noMessagesYet'))
+                          else
                             ..._messages!.map((m) => _MessageCard(message: m as Map<String, dynamic>)),
-                            const SizedBox(height: KidSpace.xl),
-                          ],
+                          const SizedBox(height: KidSpace.xl),
                           // Sprint 16.4 — CLOSES A REAL GAP: Health had zero
                           // Child App representation before this sprint's new
                           // /self/health/progress endpoint. Best-effort — the

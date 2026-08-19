@@ -699,14 +699,30 @@ describeIfDb('THE 501st HOUSEHOLD — the goal-nudge fan-out is paged (real Post
       expect(new Set(badIds)).not.toEqual(new Set(cohortA));
     }, 300_000);
 
-    it('a `>=` seek: the boundary household is served again and the walk cannot advance', async () => {
-      const bad = await walk(INSTANT_A, 2, MUTATED_SEEK_INCLUSIVE, 12);
+    it('a `>=` seek: the boundary household is served on two pages and the walk crawls', async () => {
+      const PAGE_BOUND = 12;
+      const good = await walk(INSTANT_A, 2, SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES_PAGE, PAGE_BOUND);
+      const bad = await walk(INSTANT_A, 2, MUTATED_SEEK_INCLUSIVE, PAGE_BOUND);
       const badIds = mine(bad.ids, cohortA);
 
+      // The correct walk finishes inside the bound: seven households, four
+      // pages, every id once.
+      expect(good.pages).toBe(4);
+      expect(mine(good.ids, cohortA)).toHaveLength(COHORT_A_SIZE);
+      expect(new Set(good.ids).size).toBe(good.ids.length);
+
+      // The mutant does not. Every page re-serves the household the cursor
+      // stopped on, so the cursor advances by ONE row per page instead of by a
+      // page: seven pages instead of four, and thirteen visits (2×6 + a short
+      // final page) for seven households. Six of them were handed to the engine
+      // TWICE. `notification_decisions_cause_uniq` would absorb the second
+      // call, which is exactly why «no household twice» has to be asserted on
+      // the walk and not only on the table.
+      expect(bad.pages).toBe(COHORT_A_SIZE);
+      expect(bad.pages).toBeGreaterThan(good.pages);
+      expect(badIds).toHaveLength(2 * (COHORT_A_SIZE - 1) + 1);
       expect(new Set(badIds).size).toBeLessThan(badIds.length);
-      // It never reaches the end of the cohort within the bound, which is the
-      // «a household is unreachable» half of the defect restated.
-      expect(new Set(badIds)).not.toEqual(new Set(cohortA));
+      expect(badIds.length).toBeGreaterThan(COHORT_A_SIZE);
     }, 300_000);
   });
 });
