@@ -65,4 +65,22 @@ class AppRoutes {
   // resolves that from the family's own data rather than from a guess. See
   // that screen's header for the decision.
   static const screenTime = '/screen-time';
+
+  // --- the last two surfaces the parent app used to refuse ---
+  //
+  // `progress` is where `REWARD_GRANTED` and `BADGE_EARNED_PARENT` — the two
+  // most-sent parent notifications in this product — have always pointed, and
+  // until now `deep_link_router.dart` answered both with `unavailable()`. A
+  // parent told their child had earned something tapped the notification and
+  // got the inbox back.
+  //
+  // Both pass the same test `screenTime` above does, and for the same reason:
+  // `ProgressChildrenScreen` and `CoachChildrenScreen` are genuinely
+  // constructible with NO arguments. They are the ARGUMENT-FREE half of a pair
+  // whose other half (`ChildRewardsScreen`, `CoachingScreen`) requires a
+  // `childId` an id-less link cannot carry — the picker resolves which child
+  // from the family's own data, and only when the family itself makes the
+  // answer unambiguous. Nothing is smuggled through `settings.arguments`.
+  static const progress = '/progress';
+  static const coach = '/coach';
 }

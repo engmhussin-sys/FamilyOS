@@ -32,6 +32,8 @@ import 'features/rewards/presentation/pending_achievements_screen.dart';
 import 'features/rewards/presentation/programs_list_screen.dart';
 import 'features/safety/presentation/safety_screen.dart';
 import 'features/screen_time/presentation/screen_time_children_screen.dart';
+import 'features/life_intelligence/presentation/coach_children_screen.dart';
+import 'features/rewards/presentation/progress_children_screen.dart';
 
 void main() {
   // F2 (audit MA-004) — identical guard to the child app's main(), for the
@@ -148,6 +150,18 @@ class ParentApp extends ConsumerWidget {
         // this screen resolves «which child» from the family's own data
         // rather than taking an id it was never given. See its header.
         AppRoutes.screenTime: (_) => const ScreenTimeChildrenScreen(),
+        // WHERE `abny://progress` LANDS, and it is the repair of a dead tap on
+        // the two most-sent parent notifications — `REWARD_GRANTED` and
+        // `BADGE_EARNED_PARENT` both resolve to that link, and the router
+        // answered it with `unavailable()` until this screen existed.
+        // Argument-free for the same reason `screenTime` above is: the link
+        // names no child, and the screen asks the family's data instead of
+        // taking an id it was never given.
+        AppRoutes.progress: (_) => const ProgressChildrenScreen(),
+        // The same repair for the other refused surface. No key resolves to
+        // `abny://coach` today, but the surface is in the scheme and a surface
+        // the app cannot open is the defect, not the traffic on it.
+        AppRoutes.coach: (_) => const CoachChildrenScreen(),
       },
     );
   }

@@ -25,10 +25,12 @@ import 'deep_link.dart';
 /// them.
 ///
 /// ---------------------------------------------------------------------------
-/// THREE OF THE FIVE UNAVAILABLE SURFACES ARE NOW OPEN. This block used to
-/// read «five of the twelve surfaces have no screen»; `safety`, `child` and
-/// `screen-time` do now, and the two that remain do so for a reason that is a
-/// PRODUCT DECISION rather than a missing screen.
+/// ALL TWELVE SURFACES ARE NOW OPEN. This block has read «five have no screen»
+/// and then «two remain»; it now reads NONE. `safety`, `child` and
+/// `screen-time` were opened earlier, and `progress` and `coach` are opened
+/// here — see the last section for what changed in the argument, because the
+/// reason they were refused was written down carefully and deserves an equally
+/// explicit retraction.
 ///
 /// WHAT WAS BUILT, AND WHAT EACH ONE LANDS ON:
 ///
@@ -69,29 +71,47 @@ import 'deep_link.dart';
 ///     is — a tap that lands on screen time now lands on the surface where a
 ///     parent CHANGES something, rather than on the list of what happened.
 ///
-/// WHAT [DeepLinkRouteKind.unavailable] STILL MEANS, and it is now two
-/// surfaces rather than five:
+///   * `progress` → `ProgressChildrenScreen`, and `coach` →
+///     `CoachChildrenScreen`, both by name. THE DEAD TAP THIS PRODUCT'S TWO
+///     MOST-SENT PARENT NOTIFICATIONS ENDED IN: `REWARD_GRANTED` («حصل
+///     {childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.») and
+///     `BADGE_EARNED_PARENT` both resolve to `abny://progress`, both told the
+///     parent to open the app, and both landed them back in the inbox they
+///     were already in, under a snackbar.
 ///
-///   * `progress` and `coach` — the screens exist (`LearningProgressScreen`,
-///     `CoachingScreen`) and both require `childId` AND `childName`, which the
-///     link carries neither of. That is not an oversight in the link: the
-///     server pins `notifications.data` identifier-free on purpose (`e2e-13
-///     STEP 14` asserts the payload contains no `childId`), so no `abny://`
-///     link will ever carry a child.
+///     WHAT THIS BLOCK USED TO ARGUE, AND WHY IT WAS HALF RIGHT. It said the
+///     screens exist (`LearningProgressScreen`, `CoachingScreen`), that both
+///     require `childId` AND `childName`, that no `abny://` link carries
+///     either — the server pins `notifications.data` identifier-free on
+///     purpose, `e2e-13 STEP 14` — and that [resolve], being a pure function of
+///     the DESTINATION, must not pick a child the server declined to name.
+///     Every one of those statements is still true and none of them has been
+///     weakened here.
 ///
-///     `ChildDetailScreen` is now the natural HOST for both — it supplies
-///     `childId` and `childName` and puts each one tap away — but hosting them
-///     is not the same as opening them. [resolve] is a pure function of the
-///     DESTINATION, and a destination with no id names no child; picking one
-///     here would be this client deciding something the server declined to
-///     say. `coach` is additionally moot today: its only producer
-///     (`CHILD_WELLBEING_CHECKIN`) writes through `createForFamilyOwner`,
-///     which attaches no `deepLink` at all, so that tap reaches
-///     `parseDeepLink(null)` and the inbox regardless of this table.
+///     WHAT IT GOT WRONG was the conclusion. «This router must not pick a
+///     child» is not «this app cannot open the surface»: the same objection was
+///     already answered for `screen-time` by a screen that does not pick — it
+///     ASKS, from the family's own data, and resolves to one child only when
+///     the family itself makes the answer unambiguous. `ChildPicker` is that
+///     mechanism extracted, and these two now use it. The router still invents
+///     nothing.
 ///
-/// For those two the tap lands on the inbox — where the notification itself
-/// is — and says so out loud in a snackbar. Never a blank screen, never a
-/// crash, and never the silent no-op that this whole change exists to remove.
+///     `coach` is fixed in the same change rather than left behind. It is true
+///     that nothing resolves there today (`CHILD_WELLBEING_CHECKIN` was moved
+///     to `safetyDestination`), but a surface in the scheme that this app
+///     cannot open is the defect, and the traffic on it is not the measure.
+///
+/// WHAT [DeepLinkRouteKind.unavailable] STILL MEANS, now that no SURFACE
+/// returns it: an id-bearing destination BUILT BY HAND with no id —
+/// `DeepLinkDestination(DeepLinkSurface.goal)` — which `ProgramDetailScreen`,
+/// `AchievementReviewScreen` and `ChildDetailScreen` genuinely cannot be
+/// constructed from. `parseDeepLink` never produces one (a bare id-bearing
+/// surface is already the inbox there) and the server never emits one
+/// (`notification-destination.ts` degrades `goal` to `goals` itself), so it is
+/// unreachable from a real notification — and it stays implemented anyway,
+/// because the tap lands on the inbox and SAYS SO in a snackbar. Never a blank
+/// screen, never a crash, and never the silent no-op this whole file exists to
+/// remove.
 enum DeepLinkRouteKind {
   /// A registered name in `main.dart`'s `routes:` table.
   named,
@@ -208,10 +228,24 @@ class DeepLinkRouter {
             ? DeepLinkRoute.unavailable()
             : DeepLinkRoute.page((_) => ChildDetailScreen(childId: id));
 
-      // --- No screen this app can open from a link alone. See the header. ---
       case DeepLinkSurface.progress:
+        // THE DEAD TAP THIS FILE USED TO DOCUMENT, CLOSED. `REWARD_GRANTED` and
+        // `BADGE_EARNED_PARENT` — the two most-sent parent notifications — both
+        // resolve here, and both ended on `unavailable()`.
+        //
+        // A NAMED route, and it is `ProgressChildrenScreen` rather than
+        // `ChildRewardsScreen` itself for exactly the reason `screen-time`
+        // above is a picker: that surface's every backend route is
+        // `/…/:childId`, and an id-less link names no child. `resolve` stays a
+        // pure function of the DESTINATION; the screen the NAME resolves to
+        // answers «which child» from the FAMILY'S OWN DATA.
+        return DeepLinkRoute.named(AppRoutes.progress);
+
       case DeepLinkSurface.coach:
-        return DeepLinkRoute.unavailable();
+        // The same repair by the same mechanism — `CoachChildrenScreen`. See
+        // its header for why it is fixed in this change rather than left as the
+        // one remaining refusal.
+        return DeepLinkRoute.named(AppRoutes.coach);
     }
   }
 
