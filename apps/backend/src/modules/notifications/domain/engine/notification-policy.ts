@@ -91,6 +91,45 @@ export interface NotificationPolicy {
  *
  * The genuinely new numbers are `maxPerHour` (3) and `defaultCooldownMinutes`
  * (30), and both are argued for on their own keys below.
+ *
+ * ---------------------------------------------------------------------------
+ * SPRINT F1 — THOSE TWO NUMBERS WERE NEVER ENFORCED, AND THIS IS THE COMMIT
+ * THAT DECIDES TO KEEP THEM.
+ *
+ * `toFatiguePolicy` — the bridge this file's own docstring describes — had NO
+ * CALL SITE ANYWHERE IN `src/` until `SmartNotificationEngineService` gained
+ * one. `evaluateFatigue` was reached only through
+ * `SmartNotificationIntegrationService.evaluateAndDeliver`, which passes no
+ * policy, so the guard used `DEFAULT_FATIGUE_POLICY`, in which `hourlyMax` and
+ * `defaultCooldownMinutes` are BOTH `undefined`. Measured against a real
+ * PostgreSQL: two `REWARD_GRANTED` twenty minutes apart, both delivered, no
+ * `COOLDOWN` on either row.
+ *
+ * So neither number has ever been calibrated against a working implementation,
+ * and «the value the tests happen to pass with» is not an argument. Both are
+ * KEPT, and here is why each is right rather than merely incumbent:
+ *
+ *   `defaultCooldownMinutes = 30`, i.e. HALF THE ROLLING HOUR `maxPerHour`
+ *   governs. That is what makes the two rules one rule instead of two
+ *   competing ones: with a thirty-minute per-type cooldown, ONE type can
+ *   contribute at most 2 notifications to any rolling hour — which is exactly
+ *   `categoryMaxPerDay` (2), the per-type ceiling this product already chose
+ *   for a whole day. A shorter cooldown would let a single misbehaving producer
+ *   spend the household's hourly budget on its own; a longer one would start
+ *   deciding, silently and terminally, that a child's SECOND real achievement
+ *   of the afternoon is not worth mentioning. Thirty minutes is also longer
+ *   than any human retry loop and six times the duplicate window (5 min), so
+ *   the two rules answer visibly different questions: `DUPLICATE` means «this
+ *   is the same event twice», `COOLDOWN` means «this is a second real event too
+ *   soon after the first».
+ *
+ *   `maxPerHour = 3`, i.e. HALF `maxPerDay` (6). A household cannot spend its
+ *   entire daily budget in under two hours, which is the burst-then-blackout
+ *   shape the hourly rule exists to prevent, and it still permits three
+ *   different kinds of genuinely good news in one busy afternoon.
+ *
+ * BOTH REMAIN PER-FAMILY KNOBS with the bounds declared below. What changed is
+ * that setting one now does something.
  */
 export const DEFAULT_NOTIFICATION_POLICY: NotificationPolicy = Object.freeze({
   maxPerHour: 3,
@@ -331,6 +370,46 @@ export function resolveNotificationPolicy(
  * including `QuietHoursReleaseService`, which passes no policy at all — keeps
  * `DEFAULT_FATIGUE_POLICY`'s exact previous behaviour.
  */
+/**
+ * ============================================================================
+ * THE ONE TYPE WHOSE TWO OCCURRENCES ARE NEVER A REPEAT.
+ * ============================================================================
+ *
+ * SPRINT F1, written the moment `defaultCooldownMinutes` stopped being inert.
+ *
+ * `DAILY_GOAL_COMPLETED` is the only type in this product whose two occurrences
+ * are GUARANTEED to be two different facts. The product has exactly two daily
+ * goals — the hydration target and the activity target, both crossed and
+ * measured by `HealthEngineService`, both named in `notification-nouns.ts`,
+ * whose header carries the evidence that those two are the whole list. A child
+ * who drinks their water and then goes running has done TWO things, and a
+ * cooldown keyed on the TYPE could only ever silence the second of them.
+ * MEASURED: `test/notifications/daily-goal-completed.e2e.spec.ts §2.2` fires
+ * both crossings and demands both messages, and it is the test that made this
+ * decision necessary rather than theoretical.
+ *
+ * IT IS THE SAME PRINCIPLE `DUPLICATE_PENALTY` WAS FIXED ON — «THIS EXACT
+ * THING» IS A CAUSE, NOT A TYPE — applied to the one type where a type-keyed
+ * cooldown would have re-opened it. Stated per type rather than by weakening
+ * `defaultCooldownMinutes`, because for every OTHER type in this product a
+ * second occurrence inside thirty minutes really is a repeat.
+ *
+ * AND THE TYPE IS STILL BOUNDED WITHOUT IT: `categoryMaxPerDay` is 2, which is
+ * exactly the number of daily goals that exist, so this type cannot produce a
+ * third message in one day whatever this table says.
+ *
+ * WHY IT IS NOT IN `DEFAULT_NOTIFICATION_POLICY.cooldownMinutesByType`.
+ * `notification-policy.spec.ts` pins that map BYTE-FOR-BYTE to the pre-F6
+ * `DEFAULT_FATIGUE_POLICY`, and that invariant is about the BRIDGE: every
+ * caller reached through `toFatiguePolicy` must see exactly the numbers Sprint
+ * 16 shipped. This exemption belongs to the NEW gate that enforces the cooldown
+ * for the first time, so it is applied there — by name, once — and the bridge
+ * keeps its guarantee.
+ */
+export const COOLDOWN_EXEMPT_TYPES: Readonly<Record<string, number>> = Object.freeze({
+  DAILY_GOAL_COMPLETED: 0,
+});
+
 export function toFatiguePolicy(policy: NotificationPolicy): IFatiguePolicy {
   return {
     cooldownMinutesByType: policy.cooldownMinutesByType,

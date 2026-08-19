@@ -51,12 +51,17 @@
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { getBusinessDate } from '../../../../common/time/family-date';
+import { getBusinessDate, getStartOfBusinessDay } from '../../../../common/time/family-date';
+import {
+  evaluateFatigue,
+  type IFatigueDecision,
+} from '../../../life-intelligence/application/services/notification-fatigue-guard';
 import {
   SmartNotificationIntegrationService,
   type IDeliverableNotification,
   type INotificationOutcome,
 } from '../../../life-intelligence/application/services/smart-notification-integration.service';
+import { quietHoursClassOf } from '../../../../shared/notifications/notification-class';
 import {
   NOTIFICATION_DECISION_PROVIDER,
   type NotificationDecisionProvider,
@@ -66,6 +71,12 @@ import {
   type INotificationDecisionRepository,
 } from '../../../notifications/application/ports/notification-decision.repository.port';
 import type { NotificationDecision } from '../../../notifications/domain/engine/notification-decision.types';
+import type { NotificationContext } from '../../../notifications/domain/engine/notification-context';
+import {
+  COOLDOWN_EXEMPT_TYPES,
+  toFatiguePolicy,
+  type NotificationPolicy,
+} from '../../../notifications/domain/engine/notification-policy';
 import {
   NOTIFICATION_DEEP_LINK_DATA_KEY,
   resolveNotificationDestination,
@@ -201,6 +212,84 @@ export class SmartNotificationEngineService {
       preComposed: true,
     };
 
+    /**
+     * ========================================================================
+     * SPRINT F1 — THE HOUSEHOLD'S OWN POLICY, AT THE GATE THAT ENFORCES IT.
+     * ========================================================================
+     *
+     * WHAT WAS MEASURED, against a real PostgreSQL and read back from
+     * `notification_decisions`: a `REWARD_GRANTED` delivered at 12:04 and a
+     * second one at 12:24 — TWENTY MINUTES apart, inside the configured
+     * thirty-minute cooldown — BOTH produced a `notifications` row, and the
+     * second row's `outcome` was `SEND` with a NULL `outcome_reason`. The same
+     * run showed `notification.cap.maxPerHour` doing nothing at all.
+     *
+     * THE CAUSE. `SmartNotificationIntegrationService.evaluateAndDeliver` calls
+     * `evaluateFatigue(candidate, history, now, localTime, businessDayStart)`
+     * with NO sixth argument, so the guard falls back to
+     * `DEFAULT_FATIGUE_POLICY`, in which `hourlyMax`, `defaultCooldownMinutes`
+     * and `duplicateWindowMs` are all `undefined` — «this rule did not exist
+     * for you». `toFatiguePolicy`, the documented bridge that carries a
+     * household's `notification_policy_settings` into that argument, had no
+     * call site anywhere in `src/`. So every per-family cap an operator or a
+     * parent could set was validated, persisted, and inert.
+     *
+     * WHY THE CALL IS HERE AND NOT THERE. Two reasons, and the second is the
+     * stronger one:
+     *
+     *   1. `evaluateAndDeliver` is `life-intelligence`'s and is reached by
+     *      producers that have no policy — `processSignals`, the quiet-hours
+     *      release — so the policy has to arrive from a layer that resolved
+     *      one. This layer resolved one: `assemble()` returns it.
+     *   2. THE HISTORY. `evaluateAndDeliver` counts over
+     *      `SmartNotificationIntegrationService.fetchHistory`, which reads
+     *      `notifications` — THE PARENT'S INBOX — for a CHILD candidate too.
+     *      `NotificationContextAssembler.readHistory` already fixed exactly
+     *      that defect for the SCORER by reading `child_messages` for a CHILD
+     *      audience, and `context.recentNotifications` is that audience-scoped
+     *      stream. Enforcing the caps HERE means the cap and the penalty are
+     *      computed over the SAME rows; enforcing them one layer down would
+     *      have re-opened the defect `fb988c4` closed, one gate later.
+     *
+     * IT IS NOT A SECOND GUARD. `evaluateFatigue` is the same pure function,
+     * with the same vocabulary; what is new is that it is finally handed the
+     * policy the household configured. The pipeline still runs its own
+     * (weaker, default-policy) pass afterwards, so nothing this layer allows is
+     * thereby forced through.
+     *
+     * QUIET HOURS ARE DELIBERATELY NOT ACTED ON HERE. `evaluateFatigue` answers
+     * `QUIET_HOURS` before it reaches the cooldown, and acting on that answer
+     * would turn a DEFER into a SUPPRESS — `PC-D-005` exactly, the defect that
+     * silently deleted every earned reward for ten hours a day. The deferral
+     * belongs to `handleQuietHours` and stays there; this gate reports only the
+     * five refusals that are genuinely terminal.
+     */
+    const fatigue = this.fatigueRefusal(context, policy, decision, composed);
+    if (fatigue) {
+      const refused: INotificationOutcome = {
+        type: decision.notificationType,
+        targetAudience: decision.targetAudience,
+        decision: 'SUPPRESS',
+        reason: fatigue,
+      };
+      if (decisionId) {
+        await this.recordOutcome(input.familyId, decisionId, refused);
+      }
+      this.logger.log(
+        `notification.fatigue_refused type=${decision.notificationType} audience=${decision.targetAudience} ` +
+          `reason=${fatigue} provider=${decision.providerId}`,
+      );
+      return {
+        decision,
+        decisionId,
+        outcome: refused,
+        title: composed.title,
+        body: composed.body,
+        aiRewritten: composed.aiRewritten,
+        aiFailed: composed.aiFailed,
+      };
+    }
+
     let outcome: INotificationOutcome;
     try {
       outcome = await this.pipeline.notifyEvent(
@@ -254,6 +343,107 @@ export class SmartNotificationEngineService {
   }
 
   /**
+   * THE HOUSEHOLD'S CAPS, ASKED OF THE ONE FUNCTION THAT ANSWERS THEM.
+   *
+   * Returns the guard's own blocked reason when this candidate must not be
+   * delivered NOW, or `null` when the pipeline should proceed. The reason
+   * strings are `IFatigueDecision.blockedReason`'s, unchanged, so
+   * `notification_decisions.outcome_reason` keeps the vocabulary
+   * `SQL_DECISION_ANALYTICS` already counts `fatigue_blocked` over — the panel
+   * needed no change to start showing a number that was previously always zero
+   * for cooldowns.
+   *
+   * THE DELIVER CLASS IS CHECKED FIRST, mirroring `evaluateAndDeliver`'s own
+   * ordering (PHASE E, `PD-N-004`) and for the same reason: a household that has
+   * already had six notifications today must still be told that the entire
+   * enforcement surface was switched off. A cap is not allowed to silence a
+   * safety alert, and the check that guarantees it has to sit BEFORE the guard,
+   * not inside it.
+   */
+  private fatigueRefusal(
+    context: NotificationContext,
+    policy: NotificationPolicy,
+    decision: NotificationDecision,
+    composed: { title: string; body: string },
+  ): NonNullable<IFatigueDecision['blockedReason']> | null {
+    if (quietHoursClassOf(decision.notificationType, decision.priority) === 'DELIVER') {
+      return null;
+    }
+
+    const verdict = evaluateFatigue(
+      {
+        type: decision.notificationType,
+        priority: decision.priority,
+        title: composed.title,
+        body: composed.body,
+        targetAudience: decision.targetAudience,
+      },
+      // THE AUDIENCE'S OWN INBOX. `readHistory` chose the table; this passes it
+      // through with the three fields the guard reads and nothing else.
+      context.recentNotifications.map((n) => ({
+        type: n.type,
+        priority: n.priority,
+        createdAt: n.createdAt,
+      })),
+      context.now,
+      // The SAME local clock reading the scorer's quiet-hours term used, taken
+      // off the context rather than recomputed, so the two layers cannot
+      // disagree about what time it is for this household.
+      context.quietHours.localTimeHHMM,
+      getStartOfBusinessDay(context.now, context.timeZone),
+      /**
+       * ======================================================================
+       * THE DUPLICATE WINDOW IS TURNED OFF AT THIS GATE ONLY, DELIBERATELY.
+       * ======================================================================
+       *
+       * `evaluateFatigue`'s duplicate rule is `n.type === candidate.type` inside
+       * a sliding window — a TYPE used as a proxy for IDENTITY. `DUPLICATE_PENALTY`
+       * already measured what that proxy does the moment the history becomes the
+       * audience's own: a child who crossed their hydration goal and their
+       * activity goal in one afternoon produced two `DAILY_GOAL_COMPLETED`
+       * candidates with two DIFFERENT causes, and the second was declared a
+       * duplicate of the first. The scorer's answer was to compare the CAUSAL
+       * KEY instead, and its header states the principle in one line: «THIS
+       * EXACT THING» IS A CAUSE, NOT A TYPE.
+       *
+       * This gate exists to enforce the CAPS that were inert — the cooldown and
+       * the hourly ceiling — not to move the duplicate rule onto a stream it was
+       * never calibrated for. So it hands the guard a ZERO window, and duplicate
+       * suppression stays exactly where it already works, unchanged:
+       *
+       *   - `evaluateAndDeliver`'s own pass, over the PARENT's inbox, with the
+       *     five minutes it has always had;
+       *   - `notifications (family_id, source_event_id, user_id)` and
+       *     `child_messages (family_id, source_event_id)`, which never forget;
+       *   - `DUPLICATE_PENALTY`, which compares causes and is the term that
+       *     actually knows what «the same thing» means.
+       *
+       * ZERO RATHER THAN OMITTING THE FIELD: an ABSENT `duplicateWindowMs` means
+       * five minutes — the guard's documented pre-F6 default — which is the
+       * opposite of what this line intends.
+       */
+      {
+        ...toFatiguePolicy(policy),
+        duplicateWindowMs: 0,
+        // `COOLDOWN_EXEMPT_TYPES` carries the full argument: `DAILY_GOAL_COMPLETED`
+        // is the one type whose two occurrences are two different facts, and it
+        // is applied HERE rather than in the bridge so that
+        // `toFatiguePolicy(DEFAULT_NOTIFICATION_POLICY)` keeps reproducing
+        // Sprint 16's numbers exactly for every other caller.
+        cooldownMinutesByType: { ...policy.cooldownMinutesByType, ...COOLDOWN_EXEMPT_TYPES },
+      },
+    );
+
+    if (verdict.allowed) return null;
+    // See the call site: `QUIET_HOURS` is the pipeline's to act on, and turning
+    // it into a suppression here would delete a fact that survives the night.
+    if (verdict.blockedReason === undefined || verdict.blockedReason === 'QUIET_HOURS') {
+      return null;
+    }
+    return verdict.blockedReason;
+  }
+
+  /**
    * WRITTEN BEFORE DELIVERY IS ATTEMPTED, and that ordering is the point: a
    * process that dies between the decision and the delivery leaves the reasoning
    * recorded, which is the case a support engineer most needs and the case a
@@ -267,7 +457,14 @@ export class SmartNotificationEngineService {
     input: NotificationEventInput,
     context: { locale: string; countryCode: string | null; toneBand: string },
     decision: NotificationDecision,
-    composed: { resolvedCopyKey: string; aiRewritten: boolean; aiFailed: boolean },
+    composed: {
+      resolvedCopyKey: string;
+      aiRewritten: boolean;
+      aiFailed: boolean;
+      aiAllowed: boolean;
+      aiInvoked: boolean;
+      safetyRejection: string | null;
+    },
     businessDate: string,
   ): Promise<string | null> {
     try {
@@ -282,6 +479,16 @@ export class SmartNotificationEngineService {
         countryCode: context.countryCode,
         aiRewritten: composed.aiRewritten,
         aiFailed: composed.aiFailed,
+        /**
+         * SPRINT F1 — THE THREE VALUES THE COMPOSER ALREADY COMPUTED AND THIS
+         * METHOD USED TO DROP ON THE FLOOR. Nothing new is derived here: they
+         * are carried from `ComposedNotification` verbatim, which is the only
+         * place that knows whether the flag was on, whether the model was
+         * entered, and what the safety gate said.
+         */
+        aiAllowed: composed.aiAllowed,
+        aiInvoked: composed.aiInvoked,
+        aiSafetyRejection: composed.safetyRejection,
         copyKey: composed.resolvedCopyKey,
         businessDate,
       });
