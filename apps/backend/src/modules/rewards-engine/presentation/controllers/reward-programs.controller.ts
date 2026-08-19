@@ -26,7 +26,11 @@ import {
   type ProgramCategory,
 } from '../../../../shared/rewards/program-taxonomy';
 import { QURAN_SURAHS } from '../../../../shared/rewards/quran';
-import { VERIFICATION_MATRIX, VERIFICATION_METHODS } from '../../../../shared/rewards/verification';
+import {
+  VERIFICATION_MATRIX,
+  VERIFICATION_METHODS,
+  verificationMethodUnavailability,
+} from '../../../../shared/rewards/verification';
 import { PROGRAM_REWARD_TYPES } from '../../../../shared/rewards/reward-spec';
 import { AchievementService } from '../../application/services/achievement.service';
 import { AchievementEvidenceService } from '../../application/services/achievement-evidence.service';
@@ -85,6 +89,13 @@ export class RewardProgramsController {
           labelAr: PROGRAM_ACTIVITY_LABEL_AR[a],
         })),
       })),
+      // TWO ADDITIVE FIELDS, never a removal. `ASSESSMENT_SCORE` stays in the
+      // list: hiding it would make the create form silently disagree with the
+      // API, and a parent is entitled to see the method AND the reason it is
+      // refused rather than watch it vanish. Both fields read
+      // `UNAVAILABLE_VERIFICATION_METHODS` — the same data the create gate
+      // refuses on — so the form and the 400 cannot drift apart, and both come
+      // back on their own the day a score producer lands.
       verificationLevels: VERIFICATION_METHODS.map((m) => ({
         code: m,
         labelAr: VERIFICATION_MATRIX[m].labelAr,
@@ -92,6 +103,8 @@ export class RewardProgramsController {
         strength: VERIFICATION_MATRIX[m].strength,
         canAutoApprove: VERIFICATION_MATRIX[m].canAutoApprove,
         requiresExplicitChoice: VERIFICATION_MATRIX[m].requiresExplicitChoice,
+        available: verificationMethodUnavailability(m) === null,
+        unavailableReasonAr: verificationMethodUnavailability(m)?.messageAr ?? null,
       })),
       rewardTypes: PROGRAM_REWARD_TYPES,
     };

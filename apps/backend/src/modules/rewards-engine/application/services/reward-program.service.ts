@@ -17,6 +17,7 @@ import {
   SELF_CHECK_ALLOWED_CATEGORIES,
   VERIFICATION_MATRIX,
   isVerificationMethod,
+  verificationMethodUnavailability,
 } from '../../../../shared/rewards/verification';
 import { PrismaRewardProgramRepository } from '../../infrastructure/repositories/prisma-reward-program.repository';
 import type { CreateRewardProgramDto, UpdateRewardProgramDto } from '../dto/reward-program.dto';
@@ -97,6 +98,33 @@ export class RewardProgramService {
       });
     }
 
+    // THE «CAN THIS EVER PAY?» GATE, and it is a different question from the
+    // one above. The low-trust gate asks whether a method is STRONG ENOUGH for
+    // a category; this asks whether the input the method reads can exist at
+    // all. `ASSESSMENT_SCORE` reads `LearningAssessment`, which has no writer
+    // anywhere in `src/`, so a program built on it can never pay out. Until
+    // this gate existed the parent got a 201 and the CHILD paid for it: three
+    // FAILED submissions reading «لا يوجد تقييم مسجَّل لهذه المادة بعد», then
+    // escalation on exhaustion, zero ledger entries — measured, not assumed.
+    // A 400 to the person who can still choose a different method is the only
+    // honest place to spend that failure.
+    //
+    // Data-driven, like every other gate here: the entry is deleted by a
+    // failing build the day a `LearningAssessment` writer lands
+    // (`test/rewards/assessment-score-producer.guard.spec.ts`), and this gate
+    // stops firing by itself.
+    const unavailable = verificationMethodUnavailability(dto.verificationLevel);
+    if (unavailable) {
+      throw new BadRequestException({
+        code: unavailable.code,
+        messageAr: unavailable.messageAr,
+        details: {
+          verificationLevel: unavailable.method,
+          scoreSourceModel: unavailable.scoreSourceModel,
+        },
+      });
+    }
+
     const rewardSpec = dto.rewardSpec as unknown as RewardSpec;
     const ceilingBps = dto.streakMultiplierBps ?? 30000;
 
@@ -168,6 +196,27 @@ export class RewardProgramService {
 
   async update(programId: string, dto: UpdateRewardProgramDto): Promise<any> {
     const program = await this.get(programId);
+
+    // «CREATE OR ACTIVATE» — the create gate alone would leave a hole exactly
+    // the width of one PATCH. A program created before that gate existed can be
+    // PAUSED and then set back to ACTIVE, which is a parent putting a
+    // never-payable program back in front of their child; refuse that too, with
+    // the same message, for the same reason. PAUSED and ARCHIVED are always
+    // allowed: a parent must never be trapped with a program they cannot
+    // switch off.
+    if (dto.status === 'ACTIVE' && isVerificationMethod(String(program.verificationLevel))) {
+      const unavailable = verificationMethodUnavailability(String(program.verificationLevel) as any);
+      if (unavailable) {
+        throw new BadRequestException({
+          code: unavailable.code,
+          messageAr: unavailable.messageAr,
+          details: {
+            verificationLevel: unavailable.method,
+            scoreSourceModel: unavailable.scoreSourceModel,
+          },
+        });
+      }
+    }
 
     const data: Record<string, unknown> = {};
     if (dto.status !== undefined) data.status = dto.status;
