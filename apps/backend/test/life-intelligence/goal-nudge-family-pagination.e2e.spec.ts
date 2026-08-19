@@ -31,7 +31,7 @@
  *   2  THE MATRIX     every way a cohort can fall across pages: fewer than one
  *                     page, EXACTLY one page (the full-last-page trap), more
  *                     than one page, and a page size of one.
- *   3  BY IDENTITY    the real sweep, across three pages: the SET of family ids
+ *   3  BY IDENTITY    the real sweep, across four pages: the SET of family ids
  *                     that got a decision equals the SET that existed, and each
  *                     appears exactly once. Not a count — a count can be right
  *                     while one household was visited twice and another never.
