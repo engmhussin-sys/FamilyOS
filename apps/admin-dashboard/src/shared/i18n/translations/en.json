@@ -33,7 +33,56 @@
     "unreadCount_other": "{{count}} unread",
     "markAllRead": "Mark all as read",
     "markRead": "Mark as read",
-    "empty": "No notifications yet."
+    "empty": "No notifications yet.",
+    "decisions": {
+      "title": "Notification decision log",
+      "subtitle": "What the engine decided and what the pipeline actually did, platform-wide: counts only, with no family or child identifier and no message text.",
+      "aggregateOnly": "This is a platform-wide operations view. It shows no family, no child and no notification text — aggregate counts and type names only.",
+      "window": "Window as the server resolved it",
+      "source": "Source",
+      "emptyHint": "No notification decision was recorded in this window. This is not a zero.",
+      "sliceEmpty": "No rows in this slice for the current window and filter.",
+      "engineHint": "The engine's decision",
+      "pipelineHint": "What the pipeline did",
+      "unmeasured": "not measured",
+      "remainder": "remaining rows",
+      "remainderWhy": "The server returned the top {{limit}} rows only and never counted the tail, so there is no number for it. A zero here would be an invention.",
+      "filter": {
+        "audience": "Audience"
+      },
+      "audience": {
+        "ALL": "All",
+        "PARENT": "Parent",
+        "CHILD": "Child"
+      },
+      "column": {
+        "total": "Total",
+        "sent": "Sent",
+        "deferred": "Deferred",
+        "suppressed": "Suppressed",
+        "delivered": "Delivered",
+        "errors": "Delivery errors"
+      },
+      "byAudience": "By audience",
+      "byAudienceHint": "Parent vs child. One event may legitimately produce two independent decisions with two audiences.",
+      "bySource": "By source",
+      "bySourceHint": "What set the decision off: a domain event, a periodic scan, a streak watch, a safety signal…",
+      "sourceHeader": "Source (trigger)",
+      "byProvenance": "By decider",
+      "byProvenanceHint": "Which decision provider produced the verdict. One today; the column exists so the question still has an answer when a second one ships.",
+      "provenanceHeader": "Provider",
+      "byDate": "By day",
+      "byDateHint": "The household's own day, not UTC — a decision at midnight in Cairo is filed under the family's next day.",
+      "dateHeader": "Day",
+      "byType": "By notification type",
+      "byTypeHint": "Top {{limit}} types only: the type vocabulary is open and grows with the product, so the list is deliberately bounded.",
+      "typeHeader": "Type",
+      "topCauses": "Top causes",
+      "topCausesHint": "The event that actually happened — not the message type. Top {{limit}} causes only.",
+      "causeHeader": "Cause (event)",
+      "navSection": "Operations",
+      "nav": "Notification decisions"
+    }
   },
   "devices": {
     "title": "Children's Devices",

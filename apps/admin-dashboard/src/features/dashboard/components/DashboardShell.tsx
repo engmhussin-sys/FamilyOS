@@ -23,6 +23,16 @@ const GROWTH_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
   { to: '/growth/product', labelKey: 'growth.nav.product' },
 ];
 
+/**
+ * A SECOND section, not a ninth growth item. The growth rail answers
+ * commercial questions; this one answers «is the platform working». Both sit
+ * behind the same operator key, but filing «why did notifications stop» under
+ * «Growth & commerce» is how an operator fails to find it during an incident.
+ */
+const OPERATIONS_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
+  { to: '/notifications/decisions', labelKey: 'notifications.decisions.nav' },
+];
+
 export function DashboardShell({ children }: { children: ReactNode }) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -56,6 +66,22 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             {t('growth.nav.section')}
           </span>
           {GROWTH_ROUTES.map((route) => (
+            <Link
+              key={route.to}
+              to={route.to}
+              aria-current={pathname === route.to ? 'page' : undefined}
+              className={`rounded-card px-3 py-2 ${
+                pathname === route.to ? 'bg-guardian-700/60 font-medium' : 'hover:bg-guardian-700/40'
+              }`}
+            >
+              {t(route.labelKey)}
+            </Link>
+          ))}
+
+          <span className="mt-6 px-3 text-[11px] font-medium uppercase tracking-wide text-sand-200/50">
+            {t('notifications.decisions.navSection')}
+          </span>
+          {OPERATIONS_ROUTES.map((route) => (
             <Link
               key={route.to}
               to={route.to}

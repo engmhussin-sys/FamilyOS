@@ -16,6 +16,7 @@ import { UnitEconomicsPage } from '../features/growth/pages/UnitEconomicsPage';
 import { AcquisitionPage } from '../features/growth/pages/AcquisitionPage';
 import { ReferralPage } from '../features/growth/pages/ReferralPage';
 import { ProductAiPage } from '../features/growth/pages/ProductAiPage';
+import { NotificationDecisionsPage } from '../features/notifications/pages/NotificationDecisionsPage';
 import { ProtectedRoute } from './ProtectedRoute';
 import { NotFoundPage } from './NotFoundPage';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
@@ -124,6 +125,19 @@ export function App() {
             <Route
               path="/growth/product"
               element={<PlatformAdminScreen><ProductAiPage /></PlatformAdminScreen>}
+            />
+            {/* The operations surface. Same two gates as /growth/* and for
+                the same reason: the backend route behind it is
+                `InternalAdminGuard`-only and has no family-scoped variant —
+                «which audience is the suppression in» is not a question a
+                tenant may ask. */}
+            <Route
+              path="/notifications/decisions"
+              element={
+                <PlatformAdminScreen>
+                  <NotificationDecisionsPage />
+                </PlatformAdminScreen>
+              }
             />
             <Route
               path="/invitations/:invitationId/accept"
