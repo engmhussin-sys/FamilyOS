@@ -716,12 +716,14 @@ export const DORMANT_SCHEMA_DECLARATIONS: readonly DormantSchemaDeclaration[] = 
     justification:
       'Three readers and no writer: prisma-reward-program.repository.ts:257 latestAssessmentScore is documented as the ASSESSMENT reward strategy’s score source and returns null for every child, while prisma-learning.repository.ts only ever creates LearningSession rows.',
   },
-  {
-    model: 'AiAlert',
-    reason: 'DEFERRED_FEATURE',
-    justification:
-      'No ai-core service raises one: growth-alerts.service.ts:360 is the single mention in src/ and its aiSafetyIncident rule — commented «one is one too many» — scans a table nothing inserts into, so the rule can never fire.',
-  },
+  // `AiAlert` stood here, and its absence is the point of the ledger. It was
+  // declared DEFERRED_FEATURE because `growth-alerts.service.ts:360` was the
+  // only mention in `src/` and its `aiSafetyIncident` rule scanned a table
+  // nothing inserted into — the child-safety alert could never reach a parent.
+  // `PrismaAiAlertRepository` is now its writer, RULE D3 turned this entry red
+  // on the commit that landed it, and the entry was deleted rather than
+  // amended. The ledger records dormancy; it never grants permission to stay
+  // dormant.
   {
     model: 'AiRiskScore',
     reason: 'DEFERRED_FEATURE',
@@ -982,7 +984,7 @@ describe('ARCHITECTURE GUARD — no undeclared dormant table', () => {
       expect(kindsFor('PlanDefinition')).toContain('SEED_TS_WRITE');
       // …and the negative: a deferred feature has no seed writer anywhere, or
       // D7b below would be reporting it.
-      expect(seedWritersOf('AiAlert')).toEqual([]);
+      expect(seedWritersOf('AiRiskScore')).toEqual([]);
       expect(seedWritersOf('LocationEvent')).toEqual([]);
 
       // The badge catalogue's writer, by file, because the whole point of this
