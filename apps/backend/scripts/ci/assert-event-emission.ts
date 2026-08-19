@@ -102,6 +102,10 @@ const KNOWN_UNWIRED: ReadonlyMap<string, string> = new Map([
     'In-app habit completion (parent/child app tick, not the device agent). The DEVICE path emits HABIT_COMPLETED through EventIngestionService; this repository is the same table reached from the UI and still emits nothing.',
   ],
   [
+    'src/modules/life-intelligence/infrastructure/repositories/habit-completion.recorder.ts',
+    'THE ONE `habit_completions` UPSERT, extracted so both doors share it — the previous two copies had diverged (`update: {}` vs `update: { status }`), which left a rollover-written MISSED row unpromoted after an offline device synced the completion, so the reward was paid for a day the streak could not see. Emission belongs to the CALLERS and is split by design: EventIngestionService calls this INSIDE the same $transaction as its OutboxWriter.writeWithin, so the device door does emit HABIT_COMPLETED; PrismaHabitRepository (allowlisted directly above, same reason) calls it for the in-app tick and still emits nothing. A conditional OutboxWriter import here would emit the device path twice.',
+  ],
+  [
     'src/modules/life-intelligence/infrastructure/repositories/prisma-health.repository.ts',
     'Hydration and activity logs written from the Health UI. HYDRATION_GOAL_COMPLETED / ACTIVITY_GOAL_COMPLETED exist in the catalogue and are device-ingestible, but the in-app writer does not emit them.',
   ],

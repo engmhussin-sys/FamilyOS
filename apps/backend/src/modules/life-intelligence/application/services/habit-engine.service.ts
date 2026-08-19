@@ -10,6 +10,7 @@ import { IHabit, IHabitCompletion, IHabitScoreBreakdown, ICreateHabitInput } fro
 import { computeCurrentStreak } from './streak-calculator';
 import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
 import { isStreakMilestone } from '../../../../shared/rewards/streak-milestones';
+import { habitCompletionStatus } from '../../infrastructure/repositories/habit-completion.recorder';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessTimeHHMM, isBusinessDate } from '../../../../common/time/family-date';
 
@@ -143,10 +144,18 @@ export class HabitEngineService {
     // concept relative to a window that has already fully elapsed
     // either way) and only when the habit actually has a scheduled
     // end time (habits with no scheduled window are never "late").
-    const isToday = businessDate === todayStr;
-    const status = isToday && habit.scheduledEndTime && this.isPastScheduledEnd(habit.scheduledEndTime, now, timeZone)
-      ? 'COMPLETED_LATE' as const
-      : 'COMPLETED' as const;
+    // ONE ANSWER FOR BOTH DOORS. `habitCompletionStatus` was a private
+    // `isPastScheduledEnd` here, which is why `POST /events/batch` could not
+    // produce `COMPLETED_LATE` at all — it hardcoded `COMPLETED`, so the same
+    // habit finished at the same hour was on time or late depending on whether
+    // the child's phone was online.
+    const status = habitCompletionStatus({
+      scheduledEndTime: habit.scheduledEndTime ?? null,
+      businessDate,
+      todayBusinessDate: todayStr,
+      at: now,
+      timeZone,
+    });
 
     const completion = await this.habitRepository.recordCompletion(habitId, childId, date, status);
 
@@ -344,27 +353,6 @@ export class HabitEngineService {
       sharedTaskCompletionRate: totalSharedDays > 0 ? sharedCompletions / totalSharedDays : 0,
       streakDays,
     };
-  }
-
-  /**
-   * B2, SERVER-LOCAL CLASS. `"HH:MM"` against the FAMILY's wall clock.
-   *
-   * This used to be `new Date().setHours(h, m, 0, 0)` — which reads the
-   * CONTAINER's timezone. That is neither UTC nor the family's, it is unset in
-   * this image (so it silently equals UTC today), and it would change the
-   * meaning of every habit's scheduled window the first time the service was
-   * deployed to a host configured differently. A behaviour that depends on an
-   * undocumented, unpinned environment variable is not a behaviour, and the
-   * comment that called it "an honest approximation" was describing a bug.
-   *
-   * Both sides of the comparison are now plain `HH:MM` strings on the family's
-   * calendar, so there is no `Date` arithmetic left to be wrong.
-   */
-  private isPastScheduledEnd(scheduledEndTime: string, now: Date, timeZone: string): boolean {
-    const [hours, minutes] = scheduledEndTime.split(':').map(Number);
-    if (Number.isNaN(hours) || Number.isNaN(minutes)) return false;
-    const scheduledEnd = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-    return getBusinessTimeHHMM(now, timeZone) > scheduledEnd;
   }
 
   /**

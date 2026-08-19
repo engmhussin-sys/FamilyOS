@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IHabit, IHabitCompletion, ICreateHabitInput, HabitCompletionStatus } from '../../domain/habit.types';
 import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
+import { HabitCompletionClient, recordHabitCompletion } from './habit-completion.recorder';
 
 @Injectable()
 export class PrismaHabitRepository {
@@ -69,19 +70,20 @@ export class PrismaHabitRepository {
    * default, or COMPLETED_LATE when the caller determines the
    * scheduled window already passed). */
   async recordCompletion(habitId: string, childId: string, date: Date, status: HabitCompletionStatus = 'COMPLETED'): Promise<IHabitCompletion> {
-    const row = await this.prisma.habitCompletion.upsert({
-      where: { habitId_date: { habitId, date } },
-      create: { familyId: tenantIdForWrite(), habitId, childId, date, status },
-      update: { status },
+    // ONE WRITER. The statement lives in `habit-completion.recorder.ts` because
+    // `EventIngestionService` writes the same row inside a `$transaction` with
+    // the outbox message and therefore needs the TRANSACTION client, which a
+    // method bound to `this.prisma` cannot be handed. Its `update: {}` was the
+    // divergence: a rollover-written `MISSED` row survived the real completion
+    // that disproved it, so the reward was paid for a day the streak could not
+    // see.
+    return recordHabitCompletion(this.prisma as unknown as HabitCompletionClient, {
+      familyId: tenantIdForWrite(),
+      habitId,
+      childId,
+      date,
+      status,
     });
-    return {
-      id: row.id,
-      habitId: row.habitId,
-      childId: row.childId,
-      date: row.date,
-      completedAt: row.completedAt,
-      status: row.status as HabitCompletionStatus,
-    };
   }
 
   /** Sprint 16 — CLOSES A REAL GAP (Missed Habit tracking, explicitly

@@ -27,6 +27,11 @@ import {
   type DomainEventType,
 } from '../../../shared/events/event-types';
 import { composeIdempotencyKey } from '../../../shared/events/idempotency';
+import {
+  HabitCompletionClient,
+  habitCompletionStatus,
+  recordHabitCompletion,
+} from '../../life-intelligence/infrastructure/repositories/habit-completion.recorder';
 import { FamilyDateService } from '../../../common/time/family-date.service';
 import { getBusinessDate } from '../../../common/time/family-date';
 import { OutboxWriter, type PrismaLike } from './outbox.writer';
@@ -370,6 +375,8 @@ export class EventIngestionService {
             childId: ctx.childId,
             familyId: ctx.familyId,
             localDate,
+            timeZone: ctx.timeZone,
+            occurredAt,
           });
           if (!written) return { created: false, domainEventId: null, missingSource: true };
         }
@@ -435,36 +442,58 @@ export class EventIngestionService {
   }
 
   /**
-   * Writes the habit completion row. `upsert` on the existing
-   * `habit_completions (habit_id, date)` unique — so the SECOND arrival of the
-   * same completion touches no new row, exactly as `ON CONFLICT DO NOTHING`
-   * would. The habit's existence and ownership is checked FIRST, because a
-   * device that could complete an arbitrary habit id could complete another
-   * child's habits.
+   * Writes the habit completion row THROUGH THE ONE WRITER,
+   * `recordHabitCompletion`. The habit's existence and ownership is checked
+   * FIRST, because a device that could complete an arbitrary habit id could
+   * complete another child's habits.
+   *
+   * WHAT WAS HERE AND WHAT IT COST. This method had its own `upsert` beside the
+   * repository's, and the two had diverged by one line: `update: {}` against the
+   * repository's `update: { status }`, plus a hardcoded `COMPLETED` on create.
+   * `family-daily-rollover` writes yesterday's `MISSED` row for an untouched
+   * habit; an offline device syncing that completion the next morning (inside
+   * the 48h skew `validate()` accepts) landed HERE, and `update: {}` touched
+   * nothing. The row stayed `MISSED` — so `findDistinctCompletionDates`, which
+   * filters `status IN (COMPLETED, COMPLETED_LATE)`, could not see the day,
+   * while the domain event written in the same transaction went on to the
+   * Rewards Engine and PAID it. Measured, then closed:
+   * `test/life-intelligence/habit-completion-one-door.e2e.spec.ts`.
+   *
+   * The status is now decided by `habitCompletionStatus` — the same function the
+   * direct door uses — so this path can express `COMPLETED_LATE`, which it
+   * previously could not produce at all.
    */
   private async writeHabitCompletion(
     tx: PrismaLike,
-    params: { habitId: string; childId: string; familyId: string; localDate: string },
+    params: {
+      habitId: string;
+      childId: string;
+      familyId: string;
+      localDate: string;
+      timeZone: string;
+      occurredAt: Date;
+    },
   ): Promise<boolean> {
     /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
     const anyTx = tx as any;
     const habit = await anyTx.habit.findFirst({
       where: { id: params.habitId, childId: params.childId, isActive: true, deletedAt: null },
-      select: { id: true },
+      select: { id: true, scheduledEndTime: true },
     });
     if (!habit) return false;
 
-    const date = new Date(`${params.localDate}T00:00:00.000Z`);
-    await anyTx.habitCompletion.upsert({
-      where: { habitId_date: { habitId: params.habitId, date } },
-      create: {
-        familyId: params.familyId,
-        habitId: params.habitId,
-        childId: params.childId,
-        date,
-        status: 'COMPLETED',
-      },
-      update: {},
+    await recordHabitCompletion(anyTx as HabitCompletionClient, {
+      familyId: params.familyId,
+      habitId: params.habitId,
+      childId: params.childId,
+      date: new Date(`${params.localDate}T00:00:00.000Z`),
+      status: habitCompletionStatus({
+        scheduledEndTime: habit.scheduledEndTime ?? null,
+        businessDate: params.localDate,
+        todayBusinessDate: getBusinessDate(new Date(), params.timeZone),
+        at: params.occurredAt,
+        timeZone: params.timeZone,
+      }),
     });
     return true;
   }
