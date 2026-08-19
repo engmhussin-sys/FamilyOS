@@ -235,6 +235,65 @@ export const EMPTY_GOAL_NUDGE_TOTALS: GoalNudgeSweepTotals = Object.freeze({
 });
 
 /**
+ * WHAT THE KEYSET WALK ITSELF DID, as opposed to what the households in it did.
+ *
+ * Two fields, and both exist because the defect this producer shipped with was
+ * INVISIBLE: one un-looped `LIMIT 500` enumeration reported the same shape as a
+ * complete sweep. A count of households cannot distinguish «that is everyone»
+ * from «that is the first page», so the walk states its own arithmetic.
+ *
+ *   `pages`      how many times the enumeration was asked. `families / pages`
+ *                being exactly the page size on every page is what «this pass
+ *                stopped at a boundary» looks like from outside.
+ *   `truncated`  the walk hit `MAX_PAGES_PER_SWEEP` with the cursor still
+ *                pointing at unread households. It is NEVER a success:
+ *                `GoalNudgeService.sweep` turns it into a thrown
+ *                `GoalNudgeSweepTruncatedError` so the job runner writes a
+ *                FAILED run row with a stated reason. The scheduler's own
+ *                family sweep makes the same choice for the same reason — a
+ *                partial fan-out that reports green is the defect the flag
+ *                exists to make impossible.
+ */
+export interface GoalNudgeSweepPass extends GoalNudgeSweepTotals {
+  readonly pages: number;
+  readonly truncated: boolean;
+}
+
+export const EMPTY_GOAL_NUDGE_PASS: GoalNudgeSweepPass = Object.freeze({
+  ...EMPTY_GOAL_NUDGE_TOTALS,
+  pages: 0,
+  truncated: false,
+});
+
+/**
+ * THE CEILING, SAID OUT LOUD.
+ *
+ * Thrown by `GoalNudgeService.sweep` — and by nothing else — when the walk
+ * stopped at `MAX_PAGES_PER_SWEEP` before the enumeration was exhausted. The
+ * households already swept keep their decisions; what this error reports is
+ * that the pass was INCOMPLETE, which is a fact no field of
+ * `JobOutcome.details` can carry and which an operator must not have to infer
+ * from a number.
+ *
+ * The message names both halves of the arithmetic, because «truncated» alone
+ * does not tell an operator whether to raise the ceiling or to look for a
+ * household that is generating candidates without ever leaving the window.
+ */
+export class GoalNudgeSweepTruncatedError extends Error {
+  constructor(
+    readonly pages: number,
+    readonly families: number,
+  ) {
+    super(
+      `goal-nudge sweep TRUNCATED after ${pages} page(s) / ${families} households — ` +
+        `MAX_PAGES_PER_SWEEP reached and the enumeration was NOT exhausted; ` +
+        `households past the cursor were not swept on this tick`,
+    );
+    this.name = 'GoalNudgeSweepTruncatedError';
+  }
+}
+
+/**
  * AT MOST ONE NUDGE PER SWEEP, AND THE ORDER IS «WHAT BECOMES IMPOSSIBLE IF I
  * WAIT» rather than «what scores highest» — the same rule, for the same reason,
  * as `CHILD_SIGNAL_PRIORITY`.

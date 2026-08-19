@@ -31,10 +31,23 @@ class ApiClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
+          // WRAPPED, AND NOT DEFENSIVELY. An `onRequest` callback that throws
+          // never calls its handler, so the `RequestInterceptorHandler`'s future
+          // never completes and the caller's `await` hangs FOREVER — there is no
+          // exception to catch and no timeout to hit. `flutter_secure_storage`
+          // reads the Android Keystore and does throw `PlatformException` on a
+          // corrupted or migrated keystore, so this is a real device failure,
+          // not a hypothetical one. Sending the request WITHOUT the header is
+          // the honest degradation: the server answers 401 and the app takes
+          // its normal "session is dead" path instead of freezing mid-upload.
           if (options.extra['skipAuth'] != true) {
-            final token = await _tokenStorage.getAccessToken();
-            if (token != null) {
-              options.headers['Authorization'] = 'Bearer $token';
+            try {
+              final token = await _tokenStorage.getAccessToken();
+              if (token != null) {
+                options.headers['Authorization'] = 'Bearer $token';
+              }
+            } catch (_) {
+              // Intentionally unauthenticated. See above.
             }
           }
           handler.next(options);
@@ -45,40 +58,75 @@ class ApiClient {
           final skipAuth = error.requestOptions.extra['skipAuth'] == true;
 
           if (isUnauthorized && !alreadyRetried && !skipAuth) {
-            final newAccessToken = await _refreshAccessToken();
-            if (newAccessToken != null) {
-              final retryOptions = error.requestOptions
-                ..extra['retried'] = true
-                ..headers['Authorization'] = 'Bearer $newAccessToken';
-              // F1 — A MULTIPART BODY CANNOT BE REPLAYED, AND THIS IS WHERE
-              // THAT WOULD HAVE BITTEN.
-              //
-              // `FormData` is single-use: Dio finalises it into a stream on
-              // the first send and a second `fetch` of the same
-              // `RequestOptions` throws a StateError, which is NOT a
-              // DioException — so `_toApiException` never sees it and the
-              // caller gets a raw client-side crash. That is precisely the
-              // shape of the 401-then-retry path this interceptor exists for,
-              // and the 15 MiB evidence upload is the app's only multipart
-              // request, so the case is not hypothetical: a child whose
-              // access token expired mid-recitation-upload would have hit it
-              // every time. `clone()` rebuilds the parts (a `fromFile` part
-              // re-opens its path), which is Dio's own documented answer.
-              final body = retryOptions.data;
-              if (body is FormData) {
-                retryOptions.data = body.clone();
-              }
-              try {
+            // THE SAME "A THROWN INTERCEPTOR HANGS THE CALLER" RULE AS ABOVE,
+            // and this branch has four ways to throw something that is NOT a
+            // `DioException`: the Keystore reads and writes inside the refresh,
+            // the JSON shape of the refresh response, `FormData.clone()` (a
+            // `StateError` for a part that cannot be rebuilt), and the retry
+            // itself. Every one of them used to escape past `handler`, and the
+            // evidence upload is exactly where that is worst: the controller
+            // sits in `EvidencePhase.uploading` forever, the card's spinner
+            // never stops, and `clearEvidence()` refuses to act while
+            // `isUploading` is true — so the child is left on a frozen screen
+            // with no error, no retry and no way out.
+            //
+            // Anything unexpected therefore falls through to `handler.next` at
+            // the end of this callback with the ORIGINAL 401, which the caller
+            // already knows how to translate («سجّل دخولك تاني» via the B3
+            // envelope) — never swallowed, never silently succeeded.
+            try {
+              final newAccessToken = await _refreshAccessToken();
+              if (newAccessToken != null) {
+                final retryOptions = error.requestOptions
+                  ..extra['retried'] = true
+                  ..headers['Authorization'] = 'Bearer $newAccessToken';
+                // F1 — A MULTIPART BODY CANNOT BE REPLAYED, AND THIS IS WHERE
+                // THAT WOULD HAVE BITTEN.
+                //
+                // `FormData` is single-use: Dio finalises it into a stream on
+                // the first send and a second `fetch` of the same
+                // `RequestOptions` throws a StateError, which is NOT a
+                // DioException — so `_toApiException` never sees it and the
+                // caller gets a raw client-side crash. That is precisely the
+                // shape of the 401-then-retry path this interceptor exists for,
+                // and the 15 MiB evidence upload is the app's only multipart
+                // request, so the case is not hypothetical: a child whose
+                // access token expired mid-recitation-upload would have hit it
+                // every time. `clone()` rebuilds the parts, which is Dio's own
+                // documented answer.
+                //
+                // AND CLONING THE ENVELOPE IS ONLY HALF OF IT. A cloned
+                // `FormData` holding a part whose bytes were already consumed
+                // is just as exhausted as the original — `MultipartFile.clone()`
+                // copies the part's DATA SOURCE, not its data, so the retry is
+                // only re-readable if that source can be opened twice. It can:
+                // [postMultipart] builds its one part with
+                // `MultipartFile.fromFile(path)`, which dio backs with a
+                // `() => File(path).openRead()` builder, so the clone re-opens
+                // the file from disk. That is the invariant the whole retry
+                // rests on, it is not visible at this line, and
+                // `test/core/network/api_client_multipart_retry_test.dart`
+                // exists to fail the moment a stream-backed part is introduced
+                // here instead.
+                final body = retryOptions.data;
+                if (body is FormData) {
+                  retryOptions.data = body.clone();
+                }
                 final response = await _dio.fetch(retryOptions);
                 return handler.resolve(response);
-              } on DioException catch (retryError) {
-                return handler.next(retryError);
               }
+              // Refresh failed: the session is dead. Clear tokens (but keep
+              // deviceId — see SecureTokenStorage docstring) so the app can
+              // detect "needs re-pairing" state on next launch.
+              await _tokenStorage.clearSessionButKeepDeviceId();
+            } on DioException catch (retryError) {
+              return handler.next(retryError);
+            } catch (_) {
+              // A Keystore failure, an unexpected refresh body, a part that
+              // cannot be rebuilt. The 401 the server actually sent is the
+              // truthful thing to hand back.
+              return handler.next(error);
             }
-            // Refresh failed: the session is dead. Clear tokens (but keep
-            // deviceId — see SecureTokenStorage docstring) so the app can
-            // detect "needs re-pairing" state on next launch.
-            await _tokenStorage.clearSessionButKeepDeviceId();
           }
           handler.next(error);
         },
@@ -100,22 +148,43 @@ class ApiClient {
     });
   }
 
+  /// NEVER THROWS, AND THAT IS THE CONTRACT. Its only caller is inside an
+  /// error interceptor, where an escaping error is not an error the app can
+  /// report — it is a `Future` that never completes (see the `onError` note).
+  ///
+  /// `null` means «no new access token», which is the one answer the caller
+  /// knows how to act on. The three ways this used to throw instead:
+  ///   * `_tokenStorage` reads/writes — Android Keystore, `PlatformException`;
+  ///   * `response.data['accessToken'] as String` — a `TypeError` for ANY body
+  ///     that is not a Map with two string fields (a proxy's HTML error page,
+  ///     a 204, a shape change);
+  ///   * `response.data['...']` itself — `NoSuchMethodError` on a `List` body.
+  /// The checked reads below replace the casts: a body that does not carry
+  /// both tokens is a failed refresh, not a crash.
   Future<String?> _doRefresh() async {
-    final refreshToken = await _tokenStorage.getRefreshToken();
-    if (refreshToken == null) return null;
-
     try {
+      final refreshToken = await _tokenStorage.getRefreshToken();
+      if (refreshToken == null) return null;
+
       final response = await _dio.post(
         '/auth/refresh',
         data: {'refreshToken': refreshToken},
         options: Options(extra: {'skipAuth': true}),
       );
-      final newAccessToken = response.data['accessToken'] as String;
-      final newRefreshToken = response.data['refreshToken'] as String;
+      final data = response.data;
+      if (data is! Map) return null;
+      final newAccessToken = data['accessToken'];
+      final newRefreshToken = data['refreshToken'];
+      if (newAccessToken is! String ||
+          newAccessToken.isEmpty ||
+          newRefreshToken is! String ||
+          newRefreshToken.isEmpty) {
+        return null;
+      }
       await _tokenStorage.updateAccessToken(newAccessToken);
       await _tokenStorage.updateRefreshToken(newRefreshToken);
       return newAccessToken;
-    } on DioException {
+    } catch (_) {
       return null;
     }
   }

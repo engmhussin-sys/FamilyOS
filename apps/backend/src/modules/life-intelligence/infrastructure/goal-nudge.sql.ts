@@ -21,7 +21,8 @@
  */
 
 /**
- * WHICH HOUSEHOLDS ARE WORTH LOOKING AT, AND NOTHING ELSE ABOUT THEM.
+ * WHICH HOUSEHOLDS ARE WORTH LOOKING AT, AND NOTHING ELSE ABOUT THEM — ONE PAGE
+ * OF THEM, FROM A KEYSET CURSOR.
  *
  * A DELIBERATE SUPERSET. The exact conditions are family-LOCAL — «today» is a
  * different calendar day in Cairo and in Auckland at the same instant — and a
@@ -32,13 +33,46 @@
  * missed, and the per-family statements below then decide the truth on the
  * family's own calendar.
  *
- * `LIMIT` is the caller's, not a constant here, so an operator can bound one
- * sweep without a deploy — the same knob `SQL_LIST_FAMILIES_WITH_DUE_DELIVERIES`
- * exposes.
+ * WHAT THIS STATEMENT USED TO BE, AND WHY IT WAS A SILENT CEILING. It was the
+ * same query without `$3`, called ONCE by `GoalNudgeService.sweep` with a limit
+ * of 500 and no loop. That is the daily-rollover defect
+ * (`SQL_LIST_ACTIVE_FAMILIES`, `LIMIT 200 OFFSET 0`, called once) in a second
+ * place, and worse in one respect: the candidate set here is a ±1-day window on
+ * `achievement_requests` and a household refused for quiet hours STAYS a
+ * candidate for that window, so past the 500th candidate household in uuid
+ * order the tail was not deferred to the next tick — the next tick re-read the
+ * same first 500 — it was UNREACHABLE for the whole window. No error, no log,
+ * no metric.
  *
- * $1 now · $2 limit
+ * KEYSET, NOT `OFFSET`, and for the reasons `SQL_LIST_ACTIVE_FAMILIES_PAGE`
+ * states in full:
+ *
+ *   - `WHERE family_id > $3 ORDER BY family_id` names a POSITION, not a count.
+ *     `family_id` is totally ordered by PostgreSQL's `uuid` comparison, so
+ *     «everything after this id» means the same thing on every execution no
+ *     matter what was inserted or deleted between two pages. An `OFFSET` walk
+ *     over a table that is changing underneath it skips and repeats rows.
+ *   - it is index-friendly: each page is a range scan rather than a
+ *     scan-and-discard of `n` rows.
+ *
+ * THE `ORDER BY` IS LOAD-BEARING AND NOT COSMETIC. Without a total order the
+ * cursor names nothing: two pages may overlap (a household nudged twice, or
+ * rather one decision and one `ALREADY_DECIDED`) or leave a gap (a household
+ * never looked at). `goal-nudge-family-pagination.e2e.spec.ts` mutates this
+ * clause and fails, which is what makes it a tested property rather than a
+ * comment.
+ *
+ * `DISTINCT` AND THE CURSOR AGREE because the projection is the cursor column
+ * itself: one row per family, ordered by the column the next page seeks past,
+ * so a page boundary can never fall in the middle of a household's rows.
+ *
+ * `LIMIT` is still the caller's, so an operator can size a page without a
+ * deploy — the same knob `SQL_LIST_FAMILIES_WITH_DUE_DELIVERIES` exposes. What
+ * is no longer the caller's is whether the walk STOPS there.
+ *
+ * $1 now · $2 pageSize · $3 lastFamilyId (NULL = first page)
  */
-export const SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES = `
+export const SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES_PAGE = `
 SELECT DISTINCT ar."family_id" AS family_id
   FROM "achievement_requests" ar
   JOIN "reward_programs" rp
@@ -48,6 +82,7 @@ SELECT DISTINCT ar."family_id" AS family_id
    AND rp."archived_at" IS NULL
    AND ar."local_date" >= ((($1::timestamptz) AT TIME ZONE 'UTC')::date - 1)
    AND ar."local_date" <= ((($1::timestamptz) AT TIME ZONE 'UTC')::date + 1)
+   AND ($3::uuid IS NULL OR ar."family_id" > $3::uuid)
  ORDER BY family_id
  LIMIT $2`;
 

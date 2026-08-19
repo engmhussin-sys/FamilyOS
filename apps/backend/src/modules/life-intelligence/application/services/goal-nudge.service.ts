@@ -22,14 +22,16 @@ import {
   GOAL_DEADLINE_MAX_MINUTES,
   GOAL_DEADLINE_MIN_MINUTES,
   GOAL_NUDGE_PRIORITY,
+  GoalNudgeSweepTruncatedError,
   goalNudgeEntityId,
   type GoalNudgeCandidate,
+  type GoalNudgeSweepPass,
   type GoalNudgeSweepReport,
   type GoalNudgeSweepTotals,
 } from '../../domain/goal-nudge.types';
 import {
   SQL_LIST_ALMOST_DONE_GOALS,
-  SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES,
+  SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES_PAGE,
   SQL_LIST_GOAL_DEADLINES,
 } from '../../infrastructure/goal-nudge.sql';
 
@@ -99,20 +101,56 @@ import {
  * bucket is exactly this job's cadence, so every single tick would mint a new
  * string and the child would be told 288 times.
  *
- * IT NEVER THROWS. The standing rule on every notification path here: a
- * notification problem must never fail the thing that triggered it. One
- * household's malformed row must not stop the sweep that also watches every
- * other household's closing windows, so each family and each candidate is
+ * NO HOUSEHOLD'S FAILURE EVER THROWS. The standing rule on every notification
+ * path here: a notification problem must never fail the thing that triggered
+ * it. One household's malformed row must not stop the sweep that also watches
+ * every other household's closing windows, so each family and each candidate is
  * attempted independently and a failure is counted and logged rather than
  * propagated.
+ *
+ * THE ONE EXCEPTION IS THE CEILING, AND IT IS THE POINT. `sweep` throws
+ * `GoalNudgeSweepTruncatedError` when the keyset walk stopped at
+ * `MAX_PAGES_PER_SWEEP` with households still unread — not because a household
+ * failed, but because the PASS did not finish. That is the opposite of a
+ * per-household failure: it is the sweep reporting on itself, and it is thrown
+ * rather than counted because a truncation that returns a normal-looking totals
+ * object is precisely the silent ceiling this producer shipped with. See
+ * `MAX_PAGES_PER_SWEEP`.
  */
 @Injectable()
 export class GoalNudgeService {
   private readonly logger = new Logger(GoalNudgeService.name);
 
-  /** How many households one tick may look at. A bound on a sweep, not on a
-   * product rule — the same knob `RELEASE_DEFAULTS` gives the release sweep. */
-  static readonly MAX_FAMILIES_PER_SWEEP = 500;
+  /**
+   * HOW MANY HOUSEHOLDS ONE PAGE HOLDS — a window on the keyset walk, NOT a
+   * ceiling on the sweep. It used to be `MAX_FAMILIES_PER_SWEEP = 500`, fed to
+   * a single un-looped query, which made it a ceiling nobody could see: past
+   * the 500th candidate household in uuid order the sweep silently stopped, and
+   * because a household refused for quiet hours REMAINS a candidate for the
+   * whole ±1-day window, the tail was not deferred to the next tick — it was
+   * unreachable. `goal-nudge.sql.ts` carries the full argument.
+   */
+  static readonly FAMILIES_PER_PAGE = 500;
+
+  /**
+   * THE ONE REMAINING CEILING, AND IT IS LOUD.
+   *
+   * A loop with no bound is a tick that can run past its own 300-second cadence
+   * and overlap the next one. So the walk stops after this many pages —
+   * 25,000 candidate households — and when it does, `sweep` THROWS
+   * `GoalNudgeSweepTruncatedError` rather than returning totals. That is what
+   * turns it into a FAILED `job_runs` row with a stated reason instead of a
+   * green run that quietly did part of the work, which is exactly the
+   * distinction `JobRunner` draws with its own `truncated` flag: «a partial
+   * fan-out that reports green is the defect this field exists to make
+   * impossible». A ceiling that is reported is acceptable; a ceiling that is
+   * silent is the defect.
+   *
+   * The work already done is NOT rolled back and is not lost — every household
+   * up to the cursor has been swept and its decisions committed. The throw
+   * reports that the pass was incomplete; it does not undo it.
+   */
+  static readonly MAX_PAGES_PER_SWEEP = 50;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -129,48 +167,124 @@ export class GoalNudgeService {
    * `runWithTenant` — the same shape `QuietHoursReleaseService.sweep` uses, and
    * for the same reason: a cross-tenant statement that touched content would be
    * a tenancy hole no test could see afterwards.
+   *
+   * THROWS ON TRUNCATION, and only on truncation. `GoalNudgeSweepJob` has no
+   * field on `JobOutcome.details` that could carry «this pass was incomplete»,
+   * and a number in a details blob is not something an operator is paged on
+   * anyway. The runner turns a thrown error into a FAILED run row with the
+   * message on `scheduled_jobs.last_error`, which is the same treatment the
+   * scheduler's own family sweep gives its `truncated` flag. Every other
+   * failure — one household's malformed row, one engine call that threw — is
+   * still counted and logged rather than propagated; see `sweepPass`.
    */
   async sweep(now: Date = new Date()): Promise<GoalNudgeSweepTotals> {
-    const familyIds = await this.familiesWithCandidates(now);
-    if (familyIds.length === 0) return EMPTY_GOAL_NUDGE_TOTALS;
+    const pass = await this.sweepPass(now);
+    if (pass.truncated) {
+      throw new GoalNudgeSweepTruncatedError(pass.pages, pass.families);
+    }
+    return pass;
+  }
 
-    let totals: GoalNudgeSweepTotals = { ...EMPTY_GOAL_NUDGE_TOTALS, families: familyIds.length };
+  /**
+   * THE KEYSET WALK — the fix for the ceiling this method used to carry.
+   *
+   * It issued ONE `LIMIT 500` enumeration and stopped. This walks
+   * `WHERE family_id > $lastId ORDER BY family_id` until the statement is
+   * exhausted, exactly as `JobRunner.executeFamilies` walks
+   * `SQL_LIST_ACTIVE_FAMILIES_PAGE`, and for the same reasons:
+   *
+   *   A SHORT PAGE IS THE END. A page smaller than `pageSize` cannot be
+   *   followed by another row, so seeking again would buy a round trip to learn
+   *   what is already known. A FULL page is NOT the end — the loop re-seeks and
+   *   is entitled to get nothing back, and that empty second query is the only
+   *   thing from outside that distinguishes a correct loop from one that
+   *   mistakes a full last page for the last page. It is asserted.
+   *
+   *   MEMORY IS BOUNDED to one page however many households exist. Nothing
+   *   accumulates across pages except the cursor and seven integers; the ids
+   *   themselves are dropped as soon as their household has been swept.
+   *
+   *   THE CURSOR DOES NOT FIGHT IDEMPOTENCY. It decides WHICH households this
+   *   pass looks at; `notification_decisions_cause_uniq (family_id,
+   *   source_event_id, target_audience)` decides which of them still get a
+   *   decision. A pass that dies half-way and is re-run restarts the cursor at
+   *   the beginning, re-enumerates the households it already finished, and
+   *   every cause it already recorded is refused by that unique key and counted
+   *   as `alreadyDecided`. There is nothing to persist.
+   *
+   * Public because the pagination suite reads `pages` and `truncated`, which
+   * `sweep` deliberately converts into a thrown error.
+   */
+  async sweepPass(
+    now: Date = new Date(),
+    options: { pageSize?: number; maxPages?: number } = {},
+  ): Promise<GoalNudgeSweepPass> {
+    const pageSize = options.pageSize ?? GoalNudgeService.FAMILIES_PER_PAGE;
+    const maxPages = options.maxPages ?? GoalNudgeService.MAX_PAGES_PER_SWEEP;
 
-    for (const familyId of familyIds) {
-      try {
-        const one = await runWithTenant(
-          { familyId, actorType: 'SYSTEM', actorId: 'goal-nudge-sweep' },
-          () => this.sweepFamily({ familyId, now }),
-        );
-        totals = {
-          families: totals.families,
-          children: totals.children + one.children,
-          candidates: totals.candidates + one.candidates,
-          produced: totals.produced + one.produced,
-          alreadyDecided: totals.alreadyDecided + one.alreadyDecided,
-          refused: totals.refused + one.refused,
-        };
-      } catch (err) {
-        // One household's bad row must not stop every other household's sweep.
-        this.logger.warn(
-          `goal.nudge_family_failed family=${familyId.slice(0, 8)} ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+    let totals: GoalNudgeSweepTotals = { ...EMPTY_GOAL_NUDGE_TOTALS };
+    let pages = 0;
+    let truncated = false;
+    /** The keyset cursor — the id of the last family of the previous page. */
+    let lastFamilyId: string | null = null;
+
+    for (;;) {
+      const page = await this.familyPage(now, pageSize, lastFamilyId);
+      if (page.length === 0) break;
+      pages += 1;
+
+      for (const familyId of page) {
+        totals = { ...totals, families: totals.families + 1 };
+        try {
+          const one = await runWithTenant(
+            { familyId, actorType: 'SYSTEM', actorId: 'goal-nudge-sweep' },
+            () => this.sweepFamily({ familyId, now }),
+          );
+          totals = {
+            families: totals.families,
+            children: totals.children + one.children,
+            candidates: totals.candidates + one.candidates,
+            produced: totals.produced + one.produced,
+            alreadyDecided: totals.alreadyDecided + one.alreadyDecided,
+            refused: totals.refused + one.refused,
+          };
+        } catch (err) {
+          // One household's bad row must not stop every other household's sweep.
+          this.logger.warn(
+            `goal.nudge_family_failed family=${familyId.slice(0, 8)} ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+
+      // A SHORT PAGE IS THE END OF THE ENUMERATION.
+      if (page.length < pageSize) break;
+      lastFamilyId = page[page.length - 1];
+
+      if (pages >= maxPages) {
+        truncated = true;
+        break;
       }
     }
 
-    if (totals.produced > 0) {
-      // Counts only. No family id, no child id, no goal title — the same
-      // discipline `StalledGoalService` and the rollover both follow.
-      this.logger.log(
-        `goal.nudge_swept families=${totals.families} children=${totals.children} ` +
-          `candidates=${totals.candidates} produced=${totals.produced} ` +
-          `alreadyDecided=${totals.alreadyDecided} refused=${totals.refused}`,
+    // THE LINE THAT MAKES A TRUNCATION VISIBLE, and it states what was
+    // ENUMERATED rather than what was intended. Counts only — no family id, no
+    // child id, no goal title, the same discipline `StalledGoalService` and the
+    // rollover both follow.
+    const summary =
+      `goal.nudge_swept pages=${pages} families=${totals.families} children=${totals.children} ` +
+      `candidates=${totals.candidates} produced=${totals.produced} ` +
+      `alreadyDecided=${totals.alreadyDecided} refused=${totals.refused} truncated=${truncated}`;
+    if (truncated) {
+      this.logger.error(
+        `${summary} — STOPPED AT maxPages=${maxPages}; households past the cursor were NOT swept`,
       );
+    } else if (totals.produced > 0) {
+      this.logger.log(summary);
     }
 
-    return totals;
+    return { ...totals, pages, truncated };
   }
 
   /**
@@ -480,10 +594,19 @@ export class GoalNudgeService {
   }
 
   /**
-   * THE FAN-OUT. Tenant ids only, and the justification is the API's own
-   * argument for why that is allowed here.
+   * ONE PAGE OF THE FAN-OUT. Tenant ids only, and the justification is the
+   * API's own argument for why that is allowed here.
+   *
+   * `lastFamilyId` is the keyset cursor: `null` asks for the first page, and
+   * every later page asks for the households strictly after the last id the
+   * previous page returned. Nothing about the page is remembered between calls
+   * except that one string.
    */
-  private async familiesWithCandidates(now: Date): Promise<string[]> {
+  private async familyPage(
+    now: Date,
+    pageSize: number,
+    lastFamilyId: string | null,
+  ): Promise<string[]> {
     return runAsSystemAsync(
       // `SCHEDULED_JOB`, the reason that already exists for exactly this: «the
       // FAN-OUT ENUMERATION» of a job whose body then re-enters a tenant. A new
@@ -492,9 +615,10 @@ export class GoalNudgeService {
       'The goal-nudge sweep enumerates the households whose children have touched a live reward program near today; it reads TENANT IDS ONLY and then re-enters runWithTenant for each one before reading a single row of content.',
       async () => {
         const rows = await this.raw().$queryRawUnsafe<Array<{ family_id: string }>>(
-          SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES,
+          SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES_PAGE,
           now,
-          GoalNudgeService.MAX_FAMILIES_PER_SWEEP,
+          pageSize,
+          lastFamilyId,
         );
         return rows.map((r) => r.family_id);
       },
