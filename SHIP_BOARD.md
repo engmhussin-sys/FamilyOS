@@ -8,7 +8,7 @@ Evidence vocabulary, used strictly: `RUNTIME VERIFIED` · `BUILD VERIFIED` · `S
 
 | | |
 |---|---|
-| Backend | **221 suites · 5,339 tests · 0 failing** on a database built from empty by the 30 migrations (→ 101 tables), real Redis, real booted HTTP app — **and identical on a second consecutive run against the reused database** |
+| Backend | **223 suites · 5,383 tests · 0 failing** on a database built from empty by the 29 migrations (→ 101 tables), real Redis, real booted HTTP app — **and identical on a second consecutive run against the reused database** |
 | `tsc --noEmit` | PASS |
 | Tenant-scoping guard · event-emission guard | 0 violations · 0 violations |
 | Admin dashboard | 184 tests pass · `vite build` clean (`BUILD VERIFIED`) |
