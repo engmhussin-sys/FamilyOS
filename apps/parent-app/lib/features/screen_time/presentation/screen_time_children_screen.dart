@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/design_system/design_system.dart';
-import '../../../core/di/providers.dart';
-import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../family/presentation/child_picker.dart';
 import 'screen_time_overview_screen.dart';
 
 /// WHERE AN ID-LESS `abny://screen-time` LANDS.
@@ -26,9 +24,9 @@ import 'screen_time_overview_screen.dart';
 ///     on the parent's behalf would be this client inventing the thing the
 ///     server declined to say, which is the same objection `deep_link_router`
 ///     states about `progress` and `coach` — an objection that still stands,
-///     and that those two now answer the way this screen does: through
-///     `ChildPicker`, which is this screen's three-way resolution extracted so
-///     a third and fourth copy of it cannot drift.
+///     and that those two answer through `ChildPicker`, which is this screen's
+///     three-way resolution extracted so a third and fourth copy of it cannot
+///     drift.
 ///
 ///   * EXACTLY ONE CHILD → that child's overview, directly. This is NOT the
 ///     same act: with one child there is only one possible referent, so the
@@ -56,119 +54,34 @@ import 'screen_time_overview_screen.dart';
 /// it with the alert selected, `AppRoutes.safety` is still registered, and the
 /// dashboard still links to it. The four alerts arrive in the inbox regardless,
 /// which is where their own text is.
+///
+/// ---------------------------------------------------------------------------
+/// AND IT NO LONGER OWNS THAT RESOLUTION. `ChildPicker` was extracted FROM this
+/// screen for `progress` and `coach`, and this original caller was never
+/// migrated — so the three-way rule, the `GET /children` row parsing, the
+/// «drop a row with no id» guard and the error-state wording existed twice,
+/// byte for byte. The copy is gone. What is left below is the only part that
+/// was ever specific to screen time: its four sentences, its glyph, and the
+/// screen a chosen child leads to.
 class ScreenTimeChildrenScreen extends ConsumerWidget {
   const ScreenTimeChildrenScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(localeControllerProvider);
-    final locale = ref.watch(localeControllerProvider.notifier);
-    final t = locale.t;
-    final children = ref.watch(familyChildrenProvider);
+    final t = ref.watch(localeControllerProvider.notifier).t;
 
-    return children.when(
-      loading: () => Scaffold(
-        appBar: AppBar(title: Text(t('screenTime.pickChildTitle'))),
-        body: DsLoadingState(label: t('common.loading')),
+    return ChildPicker(
+      title: t('screenTime.pickChildTitle'),
+      hint: t('screenTime.pickChildHint'),
+      errorTitle: t('screenTime.pickChildErrorTitle'),
+      emptyTitle: t('screenTime.noChildrenTitle'),
+      emptyBody: t('screenTime.noChildrenBody'),
+      icon: Icons.phonelink_lock_outlined,
+      childScreenBuilder: (childId, childName) => ScreenTimeOverviewScreen(
+        childId: childId,
+        childName: childName,
       ),
-      error: (error, _) => Scaffold(
-        appBar: AppBar(title: Text(t('screenTime.pickChildTitle'))),
-        body: DsErrorState(
-          // `familyChildrenProvider` is a plain `FutureProvider` over the
-          // existing `DashboardApi`, so its error arrives as a raw `Object`
-          // rather than the `ApiFailure` a repository-backed controller
-          // produces. `ApiFailure.from` already knows how to read the B3
-          // envelope out of an `ApiException`, so `messageAr` survives the
-          // crossing — and a non-envelope error becomes the reviewed
-          // «تعذّر إتمام الطلب» sentence rather than transport text.
-          failure: ApiFailure.from(error),
-          title: t('screenTime.pickChildErrorTitle'),
-          retryLabel: t('common.retry'),
-          requestIdLabel: t('common.requestId'),
-          arabic: locale.isRtl,
-          onRetry: () => ref.invalidate(familyChildrenProvider),
-        ),
-      ),
-      data: (rows) {
-        final entries = rows
-            .whereType<Map<String, dynamic>>()
-            .map(_ChildEntry.fromRow)
-            .where((entry) => entry.id.isNotEmpty)
-            .toList();
-
-        if (entries.isEmpty) {
-          return Scaffold(
-            appBar: AppBar(title: Text(t('screenTime.pickChildTitle'))),
-            body: DsEmptyState(
-              title: t('screenTime.noChildrenTitle'),
-              body: t('screenTime.noChildrenBody'),
-              icon: Icons.family_restroom_outlined,
-            ),
-          );
-        }
-
-        // EXACTLY ONE CHILD — see the header. The overview IS this route.
-        if (entries.length == 1) {
-          return ScreenTimeOverviewScreen(
-            childId: entries.first.id,
-            childName: entries.first.name,
-          );
-        }
-
-        return Scaffold(
-          appBar: AppBar(title: Text(t('screenTime.pickChildTitle'))),
-          body: ListView(
-            padding: DsSpace.screen,
-            children: [
-              Text(t('screenTime.pickChildHint'), style: DsText.caption(context)),
-              DsSpace.gapMd,
-              for (final entry in entries)
-                DsCard(
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ScreenTimeOverviewScreen(
-                        childId: entry.id,
-                        childName: entry.name,
-                      ),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.phonelink_lock_outlined, color: DsColor.accent),
-                      DsSpace.hGapMd,
-                      Expanded(
-                        child: Text(
-                          entry.name.isEmpty ? t('childDetail.unnamed') : entry.name,
-                          style: DsText.cardTitle(context),
-                        ),
-                      ),
-                      DsIcons.disclosure(context),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// The two fields this screen needs off a `GET /children` row. Parsed rather
-/// than indexed at the call site, so a row missing `firstName` is a child with
-/// a blank name instead of a `TypeError` three widgets deep.
-class _ChildEntry {
-  const _ChildEntry({required this.id, required this.name});
-
-  final String id;
-  final String name;
-
-  static _ChildEntry fromRow(Map<String, dynamic> row) {
-    final first = row['firstName']?.toString() ?? '';
-    final last = row['lastName']?.toString() ?? '';
-    return _ChildEntry(
-      id: row['id']?.toString() ?? '',
-      name: '$first $last'.trim(),
     );
   }
 }

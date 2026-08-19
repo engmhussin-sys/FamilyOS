@@ -53,6 +53,7 @@ import '../../support/last_screens_test_harness.dart';
 import '../../support/life_intelligence_test_harness.dart'
     show FakeLifeIntelligenceRepository;
 import '../../support/reward_test_harness.dart' show FakeRewardProgramsRepository;
+import '../../support/screen_time_test_harness.dart' show FakeScreenTimeRepository;
 
 const String _muhammad = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
 const String _maryam = '5c1a2b3d-6e7f-4a8b-9c0d-1e2f3a4b5c6d';
@@ -84,6 +85,14 @@ Future<void> _pumpProgress(
         dashboardApiProvider.overrideWithValue(dashboard),
         rewardProgramsRepositoryProvider.overrideWithValue(
           FakeRewardProgramsRepository(onLoadAccount: () => pending()),
+        ),
+        // `ChildRewardsScreen` reads the SERVER's bonus-minutes total from the
+        // effective-policy route rather than re-summing the grant rows, so its
+        // controller needs this repository too. Stubbed to a read that never
+        // completes, like the one above: what is under test here is which
+        // screen was reached with which argument.
+        screenTimeRepositoryProvider.overrideWithValue(
+          FakeScreenTimeRepository(onGetEffectivePolicy: () => pending()),
         ),
       ],
     );

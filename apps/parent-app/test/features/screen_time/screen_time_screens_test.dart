@@ -42,7 +42,9 @@ import 'package:parent_app/core/localization/localization_engine.dart';
 import 'package:parent_app/features/screen_time/application/screen_time_policy_editor_controller.dart';
 import 'package:parent_app/features/screen_time/domain/app_block_rule.dart';
 import 'package:parent_app/features/screen_time/domain/screen_time_policy.dart';
+import 'package:parent_app/features/family/presentation/child_picker.dart';
 import 'package:parent_app/features/screen_time/presentation/blocked_apps_screen.dart';
+import 'package:parent_app/features/screen_time/presentation/screen_time_children_screen.dart';
 import 'package:parent_app/features/screen_time/presentation/screen_time_overview_screen.dart';
 import 'package:parent_app/features/screen_time/presentation/screen_time_policy_editor_screen.dart';
 
@@ -545,7 +547,114 @@ void main() {
       expect(repository.blockedPackages, <String>['com.example.game']);
     });
   });
+
+  // =========================================================================
+  // ONE «WHICH CHILD?» FLOW, NOT TWO.
+  //
+  // `ChildPicker` was extracted FROM this screen for `abny://progress` and
+  // `abny://coach`, and this original caller kept its own byte-identical copy
+  // of the three-way resolution — the same rule, the same row parsing, the
+  // same «drop a row with no id» guard, maintained twice. These tests assert
+  // the SHARED widget is what answers `abny://screen-time` now, and that the
+  // three outcomes a family can have still come out the same.
+  // =========================================================================
+  group('ScreenTimeChildrenScreen — where `abny://screen-time` lands', () {
+    testWidgets('it delegates to the shared picker rather than resolving on '
+        'its own', (tester) async {
+      await _pumpChildren(tester, onGetChildren: () => pending());
+
+      expect(find.byType(ChildPicker), findsOneWidget);
+    });
+
+    testWidgets('NO CHILDREN — an empty state that says so, not an error',
+        (tester) async {
+      await _pumpChildren(
+        tester,
+        onGetChildren: () async => const <dynamic>[],
+      );
+      await tester.pump();
+
+      expect(find.byType(DsEmptyState), findsOneWidget);
+      expect(find.text(ar('screenTime.noChildrenTitle')), findsOneWidget);
+      expect(find.text(ar('screenTime.noChildrenBody')), findsOneWidget);
+      expect(find.byType(DsErrorState), findsNothing);
+    });
+
+    testWidgets('EXACTLY ONE CHILD — that child\'s overview IS this route, '
+        'with no one-item list to tap through', (tester) async {
+      await _pumpChildren(
+        tester,
+        onGetChildren: () async => <dynamic>[
+          <String, dynamic>{'id': _childId, 'firstName': 'محمد'},
+        ],
+      );
+      await tester.pump();
+
+      final opened = tester.widget<ScreenTimeOverviewScreen>(
+          find.byType(ScreenTimeOverviewScreen));
+      expect(opened.childId, _childId);
+      expect(opened.childName, 'محمد');
+    });
+
+    testWidgets('SEVERAL CHILDREN — it ASKS, and names every one of them',
+        (tester) async {
+      await _pumpChildren(
+        tester,
+        onGetChildren: () async => <dynamic>[
+          <String, dynamic>{'id': _childId, 'firstName': 'محمد'},
+          <String, dynamic>{'id': 'child_2', 'firstName': 'مريم'},
+        ],
+      );
+      await tester.pump();
+
+      expect(find.text(ar('screenTime.pickChildHint')), findsOneWidget);
+      expect(find.text('محمد'), findsOneWidget);
+      expect(find.text('مريم'), findsOneWidget);
+      expect(find.byType(ScreenTimeOverviewScreen), findsNothing);
+    });
+
+    testWidgets("ERROR — the server's own Arabic sentence, never transport "
+        'text', (tester) async {
+      final failure = refusalFailure(
+        statusCode: 403,
+        messageAr: 'لا تملك صلاحية عرض هذه العائلة.',
+        code: 'FORBIDDEN',
+      );
+      await _pumpChildren(
+        tester,
+        onGetChildren: () => failingWith<List<dynamic>>(failure),
+      );
+      await tester.pump();
+
+      expect(find.text(ar('screenTime.pickChildErrorTitle')), findsOneWidget);
+      expect(find.text(failure.messageAr!), findsOneWidget);
+      expect(find.byType(DsEmptyState), findsNothing);
+    });
+  });
 }
+
+/// The picker's own screen. The overview it can reach is stalled on purpose:
+/// what is asserted here is WHICH screen was reached with WHICH argument, and
+/// a screen that also had to render data would make a failure ambiguous
+/// between the picker and it.
+Future<void> _pumpChildren(
+  WidgetTester tester, {
+  required Future<List<dynamic>> Function() onGetChildren,
+}) =>
+    pumpParentScreen(
+      tester,
+      const ScreenTimeChildrenScreen(),
+      overrides: [
+        dashboardApiProvider
+            .overrideWithValue(FakeDashboardApi(onGetChildren: onGetChildren)),
+        screenTimeRepositoryProvider.overrideWithValue(
+          FakeScreenTimeRepository(
+            onGetPolicy: () => stalled<ScreenTimePolicy?>(),
+            onGetEffectivePolicy: () => stalled<EffectiveScreenTimePolicy>(),
+          ),
+        ),
+      ],
+    );
 
 // ---------------------------------------------------------------------------
 // Pump helpers. All three reuse `pumpParentScreen`, so these screens are built

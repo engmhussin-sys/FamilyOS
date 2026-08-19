@@ -229,8 +229,8 @@ Future<void> _pumpInbox(
           AppRoutes.screenTime: (_) => const _StubScreen(AppRoutes.screenTime),
           // STUBS, by the same rule: the assertion is «the router pushed
           // AppRoutes.progress», and mounting the real `ProgressChildrenScreen`
-          // would drag in the whole `GET /children` stack plus
-          // `ChildRewardsScreen`'s four endpoints, making a failure ambiguous
+          // would drag in the whole `GET /children` stack plus every endpoint
+          // `ChildRewardsScreen` reads, making a failure ambiguous
           // between the router and those screens. What the real screens do with
           // a family of none, one and several children is asserted directly in
           // `test/features/family/child_picker_test.dart`.

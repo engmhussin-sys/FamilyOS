@@ -23,7 +23,9 @@ import '../../../core/localization/locale_controller.dart';
 /// `ScreenTimeChildrenScreen` answered that first, for `abny://screen-time`, by
 /// asking the FAMILY'S OWN DATA instead of guessing. This widget is that same
 /// answer extracted, so `progress` and `coach` get it without a third and
-/// fourth copy of the three-way resolution drifting apart:
+/// fourth copy of the three-way resolution drifting apart — and the screen it
+/// was extracted from now calls it too, rather than keeping the original
+/// beside it:
 ///
 ///   * MORE THAN ONE CHILD → the CHILD LIST. Picking one of several on the
 ///     parent's behalf would be this client inventing the thing the server
