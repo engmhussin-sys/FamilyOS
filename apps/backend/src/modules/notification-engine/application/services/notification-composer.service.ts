@@ -58,6 +58,35 @@ export interface ComposedNotification {
   readonly resolvedCopyKey: string;
   readonly aiRewritten: boolean;
   readonly aiFailed: boolean;
+  /**
+   * ==========================================================================
+   * SPRINT F1 — «WAS REPHRASING EVEN ALLOWED HERE?», AND IT IS NOT `aiRewritten`.
+   * ==========================================================================
+   *
+   * WHAT WAS MEASURED. `ai_rewritten = false, ai_failed = false` — the state of
+   * the overwhelming majority of rows in `notification_decisions` — carried
+   * FOUR mutually exclusive histories and could not tell them apart:
+   *
+   *   1. the feature was OFF (`NOTIFICATION_AI_REPHRASE_ENABLED` unset), or no
+   *      `AI_PROVIDER` was bound, so no model was ever called;
+   *   2. it was ON, the model WAS called, and its answer was REFUSED by the
+   *      safety gate;
+   *   3. it was ON, the model WAS called, and it returned the same sentence;
+   *   4. it was ON but the DETERMINISTIC TEMPLATE itself failed safety, so the
+   *      composer returned GENERIC before ever reaching the model.
+   *
+   * Proved rather than argued: `engine-quality.e2e.spec.ts §6.14` ran two
+   * households — one with the model provably called zero times, one with it
+   * provably called — and the two persisted rows were byte-identical on both
+   * AI columns.
+   *
+   * `aiAllowed` is the PERMISSION (flag on AND a provider bound); `aiInvoked` is
+   * whether `IAIProvider.complete` was actually entered. Neither is derivable
+   * from the other two: (allowed, not invoked) is case 4, (allowed, invoked,
+   * not rewritten) is cases 2 and 3, and `safetyRejection` separates those.
+   */
+  readonly aiAllowed: boolean;
+  readonly aiInvoked: boolean;
   /** Present when the safety layer rejected something. A closed reason, so a
    * dashboard can count rejections rather than grep for them. */
   readonly safetyRejection: string | null;
@@ -118,6 +147,18 @@ export class NotificationComposerService {
   async compose(request: ComposeRequest): Promise<ComposedNotification> {
     const { context } = request;
 
+    /**
+     * THE PERMISSION, READ ONCE AT THE TOP OF THE CALL.
+     *
+     * Once, so that every one of the seven return paths below reports the SAME
+     * answer — including the ones that return BEFORE the flag would otherwise
+     * have been consulted. A permission computed at the branch that uses it can
+     * only ever be recorded on that branch, which is precisely how «allowed but
+     * never invoked» became unobservable.
+     */
+    const aiAllowed = rephraseEnabled() && Boolean(this.ai);
+    let aiInvoked = false;
+
     // ---- 1. THE DETERMINISTIC TEXT. It always exists, and everything below
     //         can only replace it with something that has passed the same
     //         checks it has.
@@ -153,24 +194,38 @@ export class NotificationComposerService {
         resolvedCopyKey: generic.resolvedKey,
         aiRewritten: false,
         aiFailed: false,
+        // THE «ALLOWED BUT NOT INVOKED» CASE, and it is the only one: the
+        // template lost its own safety check, so the model was never offered a
+        // sentence to rephrase. Recording `aiAllowed` here rather than `false`
+        // is what makes this row distinguishable from a deployment with the
+        // feature switched off.
+        aiAllowed,
+        aiInvoked,
         safetyRejection: templateVerdict,
       };
     }
 
     // ---- 3. THE OPTIONAL REPHRASE.
-    if (!rephraseEnabled() || !this.ai) {
+    if (!aiAllowed || !this.ai) {
       return {
         title: rendered.title,
         body: rendered.body,
         resolvedCopyKey: rendered.resolvedKey,
         aiRewritten: false,
         aiFailed: false,
+        aiAllowed,
+        aiInvoked,
         safetyRejection: null,
       };
     }
 
     let candidate: string;
     try {
+      // SET BEFORE THE AWAIT, not after it. `complete` may throw or time out,
+      // and «the model was called and it failed» is exactly the history this
+      // field exists to record; a flag set on the success line would report
+      // «not invoked» for every failure.
+      aiInvoked = true;
       candidate = await this.ai.complete({
         systemPrompt: REPHRASE_SYSTEM_PROMPT,
         // The SENTENCE and the BAND. Nothing else. No name, no ids, no context.
@@ -196,6 +251,8 @@ export class NotificationComposerService {
         resolvedCopyKey: rendered.resolvedKey,
         aiRewritten: false,
         aiFailed: true,
+        aiAllowed,
+        aiInvoked,
         safetyRejection: null,
       };
     }
@@ -208,6 +265,8 @@ export class NotificationComposerService {
         resolvedCopyKey: rendered.resolvedKey,
         aiRewritten: false,
         aiFailed: false,
+        aiAllowed,
+        aiInvoked,
         safetyRejection: null,
       };
     }
@@ -226,6 +285,8 @@ export class NotificationComposerService {
         resolvedCopyKey: rendered.resolvedKey,
         aiRewritten: false,
         aiFailed: false,
+        aiAllowed,
+        aiInvoked,
         safetyRejection: candidateVerdict,
       };
     }
@@ -236,6 +297,8 @@ export class NotificationComposerService {
       resolvedCopyKey: rendered.resolvedKey,
       aiRewritten: true,
       aiFailed: false,
+      aiAllowed,
+      aiInvoked,
       safetyRejection: null,
     };
   }
