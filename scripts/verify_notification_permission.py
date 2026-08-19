@@ -68,6 +68,48 @@ ADDED AT SPRINT F1 — the same principle, applied to a second permission:
      declares neither — see the AndroidManifest comment. If a later sprint
      declares one, it belongs in this check rather than in a review comment.
 
+ADDED NOW — the same shape of defect, one layer out:
+  G. THE `abny://` DEEP-LINK SCHEME, END TO END.
+
+     THE DEFECT THIS CLOSES, MEASURED: the backend resolves an
+     `abny://<surface>[/<id>]` for EVERY notification, both Flutter apps have
+     routers that answer every surface, a backend guard proves there are no dead
+     destinations — and NEITHER MANIFEST DECLARED THE SCHEME. In-app taps worked
+     (the link travels on the FCM `data` payload and is parsed in Dart), so every
+     test in the repository stayed green while any `abny://` link arriving from
+     OUTSIDE the app resolved to no app at all. That is this file's own thesis —
+     "declared here, therefore reachable there" — applied to the scheme instead
+     of to a permission, and no other checker in this repository can see it:
+     `dart_preflight.py` does not read XML, `verify_l10n_parity.py` checks
+     strings, and a Kotlin compiler is content with an intent nobody reads.
+
+     WHY IT LIVES HERE AND NOT IN A NEW FILE: the claim is the same conjunction
+     across the same three languages (a manifest, Kotlin, Dart) that checks A–F
+     already make, and it is about the delivery of a NOTIFICATION. A tenth
+     checker would only duplicate this file's walk, its Report and its runner.
+
+     THE SCHEME STRING IS READ FROM THE BACKEND AT CHECK TIME
+     (`DEEP_LINK_SCHEME` in notifications/domain/engine/notification-destination.ts),
+     never typed here. The server is authoritative for the scheme; a rename
+     there must fail this check rather than pass it, which a hardcoded "abny"
+     could not do.
+
+     Per app, all of it required only when the registry's scheme is readable:
+       G1. some <intent-filter> declares <data android:scheme="<scheme>">.
+       G2. that same filter carries VIEW + DEFAULT + BROWSABLE. Any one of the
+           three missing and the OS will not resolve a link to the app, which is
+           indistinguishable from not declaring it at all.
+       G3. the MAIN/LAUNCHER filter still stands ALONE — no <data> element in
+           it. Folding the two together is the documented way to lose the
+           launcher icon.
+       G4. a COLD-START HANDLER exists in Dart: something calls
+           `DeepLinkChannel.consumeInitialLink()`, and the same app routes
+           through its EXISTING router (`*DeepLinkRouter.follow*`). A scheme the
+           OS resolves to an app that then drops the URI is the same dead tap
+           one layer down.
+       G5. the channel name is identical in Kotlin and Dart — same reason as
+           check C, and it is the exact failure C exists to catch.
+
 Exit code 0 when every check passes, 1 otherwise.
 
 Run:  python3 scripts/verify_notification_permission.py [--self-test]
@@ -108,6 +150,48 @@ DART_MIC_METHOD_DECL = re.compile(
     r"^\s*(?:Future<[^>]*>|void)\s+(\w*[Mm]icrophone[Pp]ermission\w*)\s*\(",
     re.M,
 )
+
+# --- G: the `abny://` deep-link scheme. ------------------------------------
+# The registry is the SERVER's, and it is read rather than mirrored: this
+# checker must fail when the scheme is renamed there, which is exactly what a
+# hardcoded "abny" here could never do.
+DEEP_LINK_REGISTRY = os.path.join(
+    "apps", "backend", "src", "modules", "notifications", "domain", "engine",
+    "notification-destination.ts",
+)
+# RFC 3986 scheme shape, lower-cased because Android matches `android:scheme`
+# case-sensitively against an already-lower-cased URI scheme.
+DEEP_LINK_SCHEME_DECL = re.compile(
+    r"export\s+const\s+DEEP_LINK_SCHEME\s*=\s*['\"]([a-z][a-z0-9+.\-]*)['\"]"
+)
+
+XML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+INTENT_FILTER = re.compile(r"<intent-filter\b.*?</intent-filter>", re.S)
+DATA_SCHEME = re.compile(r"<data\b[^>]*android:scheme\s*=\s*\"([^\"]*)\"")
+ACTION_VIEW = re.compile(r"<action\b[^>]*android:name\s*=\s*\"android\.intent\.action\.VIEW\"")
+ACTION_MAIN = re.compile(r"<action\b[^>]*android:name\s*=\s*\"android\.intent\.action\.MAIN\"")
+CATEGORY_LAUNCHER = re.compile(
+    r"<category\b[^>]*android:name\s*=\s*\"android\.intent\.category\.LAUNCHER\""
+)
+CATEGORY_DEFAULT = re.compile(
+    r"<category\b[^>]*android:name\s*=\s*\"android\.intent\.category\.DEFAULT\""
+)
+CATEGORY_BROWSABLE = re.compile(
+    r"<category\b[^>]*android:name\s*=\s*\"android\.intent\.category\.BROWSABLE\""
+)
+DATA_ELEMENT = re.compile(r"<data\b")
+
+# The Dart half of the cold-start path. A CALL, never the declaration: the
+# declaration is `static Future<String?> consumeInitialLink()`, which this
+# pattern cannot match.
+DART_CONSUME_INITIAL_LINK = re.compile(r"DeepLinkChannel\.consumeInitialLink\s*\(")
+# Whatever that app's own router is called — parent `DeepLinkRouter`, child
+# `ChildDeepLinkRouter`. Deliberately not a fixed name: the requirement is that
+# the cold-start path reaches the app's EXISTING router, not that some
+# particular class exists.
+DART_ROUTER_FOLLOW = re.compile(r"\b\w*DeepLinkRouter\.follow\w*\s*\(")
+KOTLIN_CHANNEL_NAME = re.compile(r"const\s+val\s+CHANNEL_NAME\s*=\s*\"([^\"]+)\"")
+DART_CHANNEL_NAME = re.compile(r"channelName\s*=\s*'([^']+)'")
 
 
 def walk(root: str, suffixes: tuple[str, ...]) -> list[str]:
@@ -312,6 +396,209 @@ def check_record_audio(app_root: str, app_name: str, rep: Report) -> None:
                 )
 
 
+def read_deep_link_scheme(registry_path: str) -> str | None:
+    """The scheme the SERVER emits, or None when it cannot be read.
+
+    None is never treated as "no scheme required": the caller reports it as a
+    failure, because a checker that silently passes when it cannot find its own
+    reference value is worse than no checker.
+    """
+    match = DEEP_LINK_SCHEME_DECL.search(read(registry_path))
+    return match.group(1) if match else None
+
+
+def check_deep_link_scheme(
+    app_roots: dict[str, str],
+    registry_path: str,
+    rep: Report,
+) -> None:
+    """Check G — the `abny://` scheme, from the server's registry to the OS.
+
+    Structurally the same claim as check A: a thing DECLARED in one language is
+    worthless unless the thing that consumes it exists in another. Here the
+    declaration is the server's `DEEP_LINK_SCHEME` and the consumers are the two
+    manifests and the two cold-start handlers.
+    """
+    scheme = read_deep_link_scheme(registry_path)
+    if scheme is None:
+        rep.fail(
+            "cannot read DEEP_LINK_SCHEME from "
+            f"{os.path.relpath(registry_path, ROOT) if registry_path.startswith(ROOT) else registry_path}. "
+            "The scheme both clients register with Android is READ from the "
+            "backend registry rather than typed here, so that a rename cannot "
+            "pass this check. Fix the path or the constant — do not hardcode "
+            "the scheme in this checker."
+        )
+        return
+
+    rep.ok(f"backend registry emits scheme '{scheme}://' (read, not hardcoded)")
+
+    for app_name, app_root in app_roots.items():
+        manifest_path = os.path.join(
+            app_root, "android", "app", "src", "main", "AndroidManifest.xml"
+        )
+        raw = read(manifest_path)
+        if not raw:
+            rep.fail(f"{app_name}: AndroidManifest.xml not found or unreadable at {manifest_path}")
+            continue
+
+        # Comments are stripped first: this file's own comments quote the
+        # elements they explain, and a checker satisfied by a comment is a
+        # checker satisfied by prose.
+        text = XML_COMMENT.sub("", raw)
+        filters = INTENT_FILTER.findall(text)
+
+        scheme_filters = [f for f in filters if scheme in DATA_SCHEME.findall(f)]
+        declared = sorted({s for f in filters for s in DATA_SCHEME.findall(f)})
+
+        # ---- G1 ----------------------------------------------------------
+        if not scheme_filters:
+            rep.fail(
+                f"{app_name}: no <intent-filter> declares "
+                f'<data android:scheme="{scheme}"> — schemes found in this '
+                f"manifest: {declared or ['none']}. The backend resolves an "
+                f"{scheme}://<surface> for EVERY notification and this app's "
+                "router answers every surface, but the OS has never been told "
+                "this package answers the scheme, so a link arriving from "
+                "outside the app (a browser, a message, `adb shell am start "
+                f"-a android.intent.action.VIEW -d {scheme}://notifications`) "
+                "resolves to nothing. Add a SECOND intent-filter to the "
+                "launcher activity in "
+                f"{os.path.relpath(manifest_path, ROOT) if manifest_path.startswith(ROOT) else manifest_path} "
+                "with VIEW + DEFAULT + BROWSABLE and that <data> element; do "
+                "not touch the MAIN/LAUNCHER filter."
+            )
+            continue
+
+        # ---- G2 ----------------------------------------------------------
+        complete = [
+            f for f in scheme_filters
+            if ACTION_VIEW.search(f)
+            and CATEGORY_DEFAULT.search(f)
+            and CATEGORY_BROWSABLE.search(f)
+        ]
+        if not complete:
+            missing_report = []
+            for f in scheme_filters:
+                missing = [
+                    name for name, pattern in (
+                        ("action VIEW", ACTION_VIEW),
+                        ("category DEFAULT", CATEGORY_DEFAULT),
+                        ("category BROWSABLE", CATEGORY_BROWSABLE),
+                    ) if not pattern.search(f)
+                ]
+                missing_report.append(", ".join(missing))
+            rep.fail(
+                f"{app_name}: the intent-filter carrying "
+                f'android:scheme="{scheme}" is missing {"; ".join(missing_report)}. '
+                "All three are required together: without VIEW nothing dispatches "
+                "to it, without DEFAULT an implicit intent never matches, and "
+                "without BROWSABLE a link tapped in a browser or a messaging app "
+                "— the whole point of registering the scheme — is refused."
+            )
+            continue
+
+        # ---- G3 ----------------------------------------------------------
+        launcher = [
+            f for f in filters if ACTION_MAIN.search(f) and CATEGORY_LAUNCHER.search(f)
+        ]
+        if not launcher:
+            rep.fail(
+                f"{app_name}: no MAIN/LAUNCHER intent-filter survives in the "
+                "manifest — this app has no launcher icon at all. The deep-link "
+                "filter must be a SECOND filter, never a replacement."
+            )
+            continue
+        polluted = [f for f in launcher if DATA_ELEMENT.search(f)]
+        if polluted:
+            rep.fail(
+                f"{app_name}: the MAIN/LAUNCHER intent-filter now contains a "
+                "<data> element. Android matches an intent against a filter AS A "
+                "WHOLE, so the launcher entry becomes conditional on that data "
+                "and the icon can disappear from the launcher. Keep the two "
+                "filters separate: MAIN/LAUNCHER alone, VIEW/DEFAULT/BROWSABLE "
+                "+ <data> in its own filter."
+            )
+            continue
+
+        rep.ok(
+            f"{app_name}: declares {scheme}:// in a VIEW/DEFAULT/BROWSABLE "
+            "intent-filter, and MAIN/LAUNCHER still stands alone"
+        )
+
+        # ---- G4: the cold-start handler ----------------------------------
+        dart_files = walk(os.path.join(app_root, "lib"), (".dart",))
+        consume_sites: list[str] = []
+        router_sites: list[str] = []
+        for path in dart_files:
+            body = read(path)
+            rel = os.path.relpath(path, ROOT) if path.startswith(ROOT) else path
+            if DART_CONSUME_INITIAL_LINK.search(body):
+                consume_sites.append(rel)
+            if DART_ROUTER_FOLLOW.search(body):
+                router_sites.append(rel)
+
+        if not consume_sites:
+            rep.fail(
+                f"{app_name}: the manifest declares {scheme}:// but NOTHING in "
+                "lib/ calls DeepLinkChannel.consumeInitialLink(). The OS then "
+                "launches this app for the link and the URI is dropped on the "
+                "floor — the app opens on its normal landing screen as if the "
+                "icon had been tapped, which is the same dead tap one layer "
+                "down. Wire the cold-start intent to the router this app "
+                "already has; do not write a second resolver."
+            )
+        elif not router_sites:
+            rep.fail(
+                f"{app_name}: DeepLinkChannel.consumeInitialLink() is called "
+                f"({', '.join(sorted(consume_sites))}) but nothing in lib/ calls "
+                "this app's own *DeepLinkRouter.follow*(). A link read and not "
+                "routed is a link dropped, and a cold-start path that resolves "
+                "destinations by itself is the second opinion deep_link.dart "
+                "exists to prevent."
+            )
+        else:
+            rep.ok(
+                f"{app_name}: cold-start link consumed in "
+                f"{', '.join(sorted(consume_sites))} and routed through the "
+                "app's own DeepLinkRouter"
+            )
+
+        # ---- G5: one channel name, two languages -------------------------
+        kotlin_names: set[str] = set()
+        for path in walk(os.path.join(app_root, "android"), (".kt",)):
+            if os.path.basename(path) != "DeepLinkChannel.kt":
+                continue
+            kotlin_names.update(KOTLIN_CHANNEL_NAME.findall(read(path)))
+        dart_names: set[str] = set()
+        for path in dart_files:
+            if os.path.basename(path) != "deep_link_channel.dart":
+                continue
+            dart_names.update(DART_CHANNEL_NAME.findall(read(path)))
+
+        if not kotlin_names or not dart_names:
+            rep.fail(
+                f"{app_name}: could not read the deep-link channel name on both "
+                f"sides (Kotlin: {sorted(kotlin_names) or 'none'}, Dart: "
+                f"{sorted(dart_names) or 'none'}). Both DeepLinkChannel.kt and "
+                "deep_link_channel.dart must declare it as a named constant — "
+                "an inline literal is a typo waiting to become a silent runtime "
+                "failure on a device."
+            )
+        elif kotlin_names != dart_names:
+            rep.fail(
+                f"{app_name}: the deep-link channel name differs across "
+                f"languages — Kotlin {sorted(kotlin_names)} vs Dart "
+                f"{sorted(dart_names)}. There is no compile-time link between "
+                "them: the link would reach the process and never reach Dart."
+            )
+        else:
+            rep.ok(
+                f"{app_name}: deep-link channel '{sorted(dart_names)[0]}' "
+                "matches in Kotlin and Dart"
+            )
+
+
 def check_child_channel(rep: Report) -> None:
     """Checks C, D and E — the child app's cross-language channel contract."""
     child = os.path.join(ROOT, "apps", "child-app")
@@ -381,17 +668,31 @@ def check_child_channel(rep: Report) -> None:
         rep.ok("child-app: the five outcome wire strings match in Kotlin and Dart")
 
 
-def run(app_roots: dict[str, str], check_channel: bool = True) -> int:
+def run(
+    app_roots: dict[str, str],
+    check_channel: bool = True,
+    check_scheme: bool = True,
+    registry_path: str = "",
+) -> int:
     rep = Report()
     print("=" * 72)
     print("verify_notification_permission.py — G18")
     print("A permission DECLARED but never REQUESTED is invisible on Android 13+.")
+    print("A scheme NEVER DECLARED is a notification link the OS cannot resolve.")
     print("=" * 72)
 
     for app_name, app_root in app_roots.items():
         print(f"\n=== apps/{app_name} ===")
         check_app(app_root, app_name, rep)
         check_record_audio(app_root, app_name, rep)
+
+    if check_scheme:
+        print("\n=== the abny:// deep-link scheme (check G) ===")
+        check_deep_link_scheme(
+            app_roots,
+            registry_path or os.path.join(ROOT, DEEP_LINK_REGISTRY),
+            rep,
+        )
 
     if check_channel:
         print("\n=== child-app cross-language channel contract ===")
@@ -448,9 +749,15 @@ class PermissionStatusService {
         print("NEGATIVE CONTROL — scanning a copy of the PRE-G18 child app")
         print("(POST_NOTIFICATIONS declared; the notifications arm is `break`)")
         print("=" * 72)
-        # check_channel=False: the synthetic tree has no native layer, and this
-        # control is about check A, which must fail on its own.
-        code = run({"child-app (synthetic, pre-G18)": app}, check_channel=False)
+        # check_channel/check_scheme=False: the synthetic tree has no native
+        # layer and no manifest intent-filter, and this control is about check
+        # A, which must fail on its own. Check G has its own negative controls
+        # in scripts/dart_preflight_selftest.py.
+        code = run(
+            {"child-app (synthetic, pre-G18)": app},
+            check_channel=False,
+            check_scheme=False,
+        )
         print(f"\nnegative control exit code: {code} (expected: 1)")
         return 0 if code == 1 else 1
 

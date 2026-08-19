@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-dart_preflight_selftest.py — NEGATIVE CONTROLS for scripts/dart_preflight.py.
+dart_preflight_selftest.py — NEGATIVE CONTROLS for scripts/dart_preflight.py,
+and (see SchemeControl, below) for CHECK G of
+scripts/verify_notification_permission.py — the `abny://` deep-link scheme.
 
 A static checker that has never been shown to fail on a real fault is a
 decoration. This harness proves each check works, by the only method that
@@ -565,6 +567,201 @@ void probeTwo() {
 ]
 
 
+class SchemeControl:
+    """A negative control for CHECK G in `verify_notification_permission.py` —
+    the `abny://` deep-link scheme, from the backend registry to the two
+    manifests to the Dart cold-start handler.
+
+    WHY IT LIVES IN THIS HARNESS RATHER THAN IN A NEW ONE. This file is where
+    this repository proves a checker can fail, and the proof method is the one
+    every `Control` above uses: seed the defect, require the detector to report
+    it, remove the defect, require the detector to go quiet again. A second
+    harness would be a second place to keep that method honest.
+
+    WHY IT IS A SEPARATE CLASS. `Control` mutates a Dart file and re-runs
+    `Preflight`, whose findings carry a check name, a file and a line. Check G
+    is not a Preflight check: it reads XML, Kotlin and Dart, and reports through
+    `verify_notification_permission.Report`, whose findings are strings. Forcing
+    it into `Control` would mean lying about one of the two.
+
+    EVERY CONTROL ASSERTS BOTH HALVES. The mutation must be REPORTED and the
+    revert must CLEAR the report — «adding it clears the report» is not a
+    separate control, it is the second half of each one, because a detector that
+    fires on everything is as useless as one that fires on nothing.
+    """
+
+    def __init__(self, check: str, rel_path: str, find: str, replace: str,
+                 why: str, expect_app: str, count: int = 1):
+        self.check = check
+        self.rel_path = rel_path
+        self.find = find
+        self.replace = replace
+        self.why = why
+        # The app the resulting problem must NAME. A control that asserted only
+        # "something was reported" would pass on an unrelated failure in the
+        # same run.
+        self.expect_app = expect_app
+        self.count = count
+
+
+SCHEME_CONTROLS: List[SchemeControl] = [
+    SchemeControl(
+        "SCHEME-MISSING",
+        "apps/parent-app/android/app/src/main/AndroidManifest.xml",
+        '                <data android:scheme="abny" />\n',
+        "",
+        "THE MEASURED GAP ITSELF: no <data android:scheme> in the manifest at "
+        "all, which is the state both apps shipped in — every notification tap "
+        "working in-app while any abny:// link from outside resolved to nothing",
+        expect_app="parent-app",
+    ),
+    SchemeControl(
+        "SCHEME-MISMATCH",
+        "apps/child-app/android/app/src/main/AndroidManifest.xml",
+        '<data android:scheme="abny" />',
+        '<data android:scheme="abny-links" />',
+        "a manifest scheme that does not match the one the BACKEND REGISTRY "
+        "emits — the rename half of the defect, and the reason check G reads "
+        "DEEP_LINK_SCHEME out of notification-destination.ts instead of "
+        "hardcoding 'abny'",
+        expect_app="child-app",
+    ),
+    SchemeControl(
+        "SCHEME-FILTER",
+        "apps/parent-app/android/app/src/main/AndroidManifest.xml",
+        '                <category android:name="android.intent.category.BROWSABLE" />\n',
+        "",
+        "the scheme declared in a filter with no BROWSABLE category — present "
+        "in the XML, invisible to a link tapped in a browser or a message, and "
+        "at runtime indistinguishable from not declaring it",
+        expect_app="parent-app",
+    ),
+    SchemeControl(
+        "SCHEME-LAUNCHER",
+        "apps/child-app/android/app/src/main/AndroidManifest.xml",
+        '                <category android:name="android.intent.category.LAUNCHER" />\n',
+        '                <category android:name="android.intent.category.LAUNCHER" />\n'
+        '                <data android:scheme="abny" />\n',
+        "the two filters folded into one — the <data> element moved INTO the "
+        "MAIN/LAUNCHER filter, which is the documented way to lose the launcher "
+        "icon while the scheme still appears to be declared",
+        expect_app="child-app",
+    ),
+    SchemeControl(
+        "SCHEME-COLDSTART",
+        "apps/parent-app/lib/core/routing/deep_link_host.dart",
+        "await DeepLinkChannel.consumeInitialLink()",
+        "null",
+        "a manifest that declares the scheme beside an app that never reads the "
+        "cold-start intent — the OS resolves the link, launches the app, and the "
+        "URI is dropped on the floor",
+        expect_app="parent-app",
+    ),
+    SchemeControl(
+        "SCHEME-CHANNEL",
+        "apps/child-app/lib/core/routing/deep_link_channel.dart",
+        "static const String channelName = 'com.aifamilycoach.child_app/deep_link';",
+        "static const String channelName = 'com.aifamilycoach.child_app/deeplink';",
+        "the channel name drifting between Kotlin and Dart — nothing links the "
+        "two at compile time, so the link reaches the process and never reaches "
+        "Dart",
+        expect_app="child-app",
+    ),
+]
+
+
+def _scheme_problems(root: str) -> List[str]:
+    """Run CHECK G against the scratch tree and return its problem strings.
+
+    THE REGISTRY IS READ FROM THE REAL REPOSITORY, deliberately: the scratch
+    tree holds only the two apps, and the entire point of the check is that the
+    scheme comes from the backend rather than from either client. Nothing here
+    writes outside the scratch tree.
+    """
+    import contextlib
+    import io
+
+    from verify_notification_permission import Report, check_deep_link_scheme
+
+    rep = Report()
+    app_roots = {
+        "parent-app": os.path.join(root, "apps", "parent-app"),
+        "child-app": os.path.join(root, "apps", "child-app"),
+    }
+    registry = os.path.join(
+        REPO, "apps", "backend", "src", "modules", "notifications", "domain",
+        "engine", "notification-destination.ts",
+    )
+    # Report prints as it goes; this harness prints its own verdict instead.
+    with contextlib.redirect_stdout(io.StringIO()):
+        check_deep_link_scheme(app_roots, registry, rep)
+    return rep.problems
+
+
+def run_scheme_controls(scratch: str, verbose: bool) -> List[str]:
+    """CHECK G's controls, under this file's own rules: a stale anchor is a
+    FAILURE, never a skip, and it must not cancel the controls that still
+    resolve."""
+    failures: List[str] = []
+
+    baseline = _scheme_problems(scratch)
+    if baseline:
+        failures.append(
+            f"SCHEME-BASELINE: check G already reports {len(baseline)} "
+            "problem(s) on the UNMUTATED tree, so no control below can prove "
+            f"anything: {baseline[0][:160]}"
+        )
+        print("  FAIL  SCHEME-BASELINE  — check G is not silent on a clean tree")
+        return failures
+    print(f"  PASS  {'SCHEME-BASELINE':<16} — check G is silent on the unmutated tree")
+
+    for c in SCHEME_CONTROLS:
+        path = os.path.join(scratch, c.rel_path)
+        try:
+            src = open(path, encoding="utf-8").read()
+        except OSError as e:
+            failures.append(f"{c.check}: stale anchor — {c.rel_path} is unreadable: {e}")
+            print(f"  FAIL  {c.check:<16} — file unreadable (reported, not skipped)")
+            continue
+        found = src.count(c.find)
+        if found != c.count:
+            failures.append(
+                f"{c.check}: stale anchor — {c.find!r} occurs {found}x in "
+                f"{c.rel_path}, expected {c.count}; fix the control, do not skip it"
+            )
+            print(f"  FAIL  {c.check:<16} — ANCHOR STALE (reported, not skipped)")
+            continue
+
+        open(path, "w", encoding="utf-8").write(src.replace(c.find, c.replace, c.count))
+        try:
+            problems = _scheme_problems(scratch)
+            hit = [p for p in problems if p.startswith(f"{c.expect_app}:")]
+            if hit:
+                print(f"  PASS  {c.check:<16} — {c.why}")
+                if verbose:
+                    print(f"          -> {hit[0][:160]}")
+            else:
+                failures.append(
+                    f"{c.check}: seeded «{c.why}» in {c.rel_path} and check G "
+                    f"stayed silent about {c.expect_app} (problems: "
+                    f"{[p[:40] for p in problems] or 'none'})"
+                )
+                print(f"  FAIL  {c.check:<16} — NOT DETECTED")
+        finally:
+            open(path, "w", encoding="utf-8").write(src)
+
+        cleared = _scheme_problems(scratch)
+        if cleared:
+            failures.append(
+                f"{c.check}: reverting did NOT clear the report ({len(cleared)} "
+                f"left: {cleared[0][:120]}) — the control proves nothing, because "
+                "the checker is firing on something else"
+            )
+            print(f"  FAIL  {c.check:<16} — revert did not clear the report")
+
+    return failures
+
+
 def _body_span(src: str, marker: str, c: Control) -> Tuple[int, int]:
     """Span of the brace-balanced body introduced by `marker` (which must end at
     that body's opening brace) — [start, end) exclusive of the braces."""
@@ -819,6 +1016,12 @@ def main() -> int:
         if os.path.isdir(probe_dir):
             shutil.rmtree(probe_dir, ignore_errors=True)
 
+        # CHECK G — verify_notification_permission.py's deep-link scheme rule.
+        # Same method, different detector: it reads XML and Kotlin as well as
+        # Dart, so it reports strings rather than Preflight findings. It runs
+        # BEFORE the residue check, so its reverts are proved by that check too.
+        failures.extend(run_scheme_controls(scratch, args.verbose))
+
         # Residue check: after every revert the tree must be byte-identical in
         # its findings to the baseline, or the controls above proved nothing.
         after = set(fingerprint(run(scratch)))
@@ -840,8 +1043,10 @@ def main() -> int:
         print(
             f"All {len(CONTROLS)} mutation controls and {len(PROBES)} probes "
             f"({sum(1 for p in PROBES if not p.expect)} of them asserting a "
-            f"deliberate SILENCE) passed, plus anchor resolution and the "
-            f"residue check."
+            f"deliberate SILENCE) passed, plus {len(SCHEME_CONTROLS)} check-G "
+            f"scheme controls (each asserting BOTH that the seeded defect is "
+            f"reported and that the revert clears the report), the baseline "
+            f"silence of check G, anchor resolution and the residue check."
         )
         return 0
     finally:

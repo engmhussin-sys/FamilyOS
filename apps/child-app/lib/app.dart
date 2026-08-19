@@ -5,6 +5,8 @@ import 'dart:async';
 
 import 'core/di/providers.dart';
 import 'core/localization/locale_controller.dart';
+import 'core/routing/child_deep_link_router.dart';
+import 'core/routing/deep_link_channel.dart';
 import 'core/theme/kid_theme.dart';
 import 'features/pairing/presentation/pairing_screen.dart';
 import 'features/goals/presentation/child_home_shell.dart';
@@ -84,6 +86,18 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
   bool? _hasAcknowledgedDisclosure;
   Timer? _wellbeingSafetyTimer;
 
+  /// AN `abny://` LINK THE OS DELIVERED BEFORE THERE WAS ANYWHERE TO PUT IT.
+  ///
+  /// Every cold start lands here: the link is read on the first frame, while
+  /// `_checkSession` is still asking whether this device is paired and whether
+  /// the disclosure has been acknowledged. Following it then would navigate on
+  /// top of the pairing screen — or, worse, past the disclosure gate, which
+  /// exists precisely so nothing happens before the family has been told what
+  /// leaves the device. So it waits here until [_isDeepLinkReady], and
+  /// [_drainPendingDeepLink] is called from every place that can make that
+  /// true.
+  String? _pendingDeepLink;
+
   // FIXES A REAL COST GAP (Sprint 14.2): threshold state, checked
   // locally (zero network cost) before deciding whether a real sync
   // (which uploads) is actually warranted.
@@ -101,14 +115,65 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Warm starts first: `onNewIntent` can fire from here on.
+    DeepLinkChannel.listen(_onPlatformDeepLink);
     _checkSession();
+    // The cold-start link, after the first frame — the shell this router pops
+    // back to does not exist until one has been built.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumeInitialDeepLink());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    DeepLinkChannel.stopListening();
     _wellbeingSafetyTimer?.cancel();
     super.dispose();
+  }
+
+  /// True once this child is past BOTH gates and `ChildHomeShell` is what the
+  /// build below returns. Anything earlier and there is no shell for
+  /// `ChildDeepLinkRouter` to select a tab on.
+  bool get _isDeepLinkReady =>
+      _isPaired == true && _hasAcknowledgedDisclosure == true;
+
+  Future<void> _consumeInitialDeepLink() async {
+    final link = await DeepLinkChannel.consumeInitialLink();
+    if (link == null) return;
+    if (!mounted) return;
+    _onPlatformDeepLink(link);
+  }
+
+  /// TOTAL: a link either moves the app now or waits for the gates. There is
+  /// no branch that drops one.
+  void _onPlatformDeepLink(String link) {
+    if (!_isDeepLinkReady) {
+      _pendingDeepLink = link;
+      return;
+    }
+    _followDeepLink(link);
+  }
+
+  void _drainPendingDeepLink() {
+    final link = _pendingDeepLink;
+    if (link == null || !_isDeepLinkReady) return;
+    // Cleared BEFORE following: a link is followed exactly once.
+    _pendingDeepLink = null;
+    _followDeepLink(link);
+  }
+
+  /// THE ONE RESOLVER, AND NOTHING ELSE. `ChildDeepLinkRouter.followLink` is
+  /// the same entry point the in-app message cards use — no second parser and
+  /// no second map, exactly as that router's header requires of any future
+  /// push handler.
+  ///
+  /// After a frame, because this runs from `initState`/`setState` paths where
+  /// the shell may be one build away from existing.
+  void _followDeepLink(String link) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ChildDeepLinkRouter.followLink(context, ref, link);
+    });
   }
 
   /// FIXES A REAL COST GAP (Sprint 14.2): the app backgrounding is a
@@ -148,6 +213,9 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
     if (hasSession && _hasAcknowledgedDisclosure == true) {
       await _startSessionServices();
     }
+    // Both gates have now been ANSWERED (whichever way), so a link that was
+    // waiting on them can go — or keep waiting, if the answer was «not yet».
+    if (mounted) _drainPendingDeepLink();
   }
 
   /// Everything that begins network activity for a paired device. Split
@@ -164,11 +232,14 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
     // An already-paired device that was waiting on the disclosure starts
     // its services now, not on the next cold start.
     if (_isPaired == true) _startSessionServices();
+    // Same moment, same reason: the gate that was holding a deep link is open.
+    _drainPendingDeepLink();
   }
 
   void _onPaired() {
     setState(() => _isPaired = true);
     _startSessionServices();
+    _drainPendingDeepLink();
   }
 
   /// FIXES A REAL COST GAP (Sprint 14.2 — previously found in Sprint

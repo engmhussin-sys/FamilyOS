@@ -5,6 +5,8 @@ import '../../../core/di/providers.dart';
 import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../core/routing/deep_link_host.dart';
+import '../../../core/routing/deep_link_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../family/presentation/child_detail_screen.dart';
 import '../../life_intelligence/presentation/digital_twin_screen.dart';
@@ -51,6 +53,29 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   void initState() {
     super.initState();
     _load();
+    // THE COLD-START DEEP LINK, FOLLOWED HERE AND NOWHERE ELSE.
+    //
+    // An `abny://` link that the OS delivered before this parent was known to
+    // be signed in was parked on `pendingDeepLinkProvider` by `DeepLinkHost`.
+    // This screen is the one place both authenticated paths pass through —
+    // splash → dashboard for a live session, login → dashboard for a fresh
+    // one — so draining it here needs no second site and no auth check of its
+    // own: being built IS the proof.
+    //
+    // After the first frame, because the route this screen is on must exist
+    // before anything is pushed on top of it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _followPendingDeepLink());
+  }
+
+  void _followPendingDeepLink() {
+    final link = ref.read(pendingDeepLinkProvider);
+    if (link == null) return;
+    // Cleared BEFORE following: a link is followed exactly once, and a failure
+    // to route must not leave it armed for the next time this screen is built.
+    ref.read(pendingDeepLinkProvider.notifier).state = null;
+    if (!mounted) return;
+    final t = ref.read(localeControllerProvider.notifier).t;
+    DeepLinkRouter.followLink(context, link, t: t);
   }
 
   Future<void> _load() async {

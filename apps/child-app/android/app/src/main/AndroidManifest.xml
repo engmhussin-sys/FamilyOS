@@ -155,6 +155,38 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- THE `abny://` SCHEME — IDENTICAL TO THE PARENT APP'S, AND THAT
+                 IS THE FINDING RATHER THAN AN OVERSIGHT.
+
+                 The two apps answer DIFFERENT surface sets in behaviour —
+                 `child_deep_link_router.dart` sends `approvals`, `approval`,
+                 `subscription`, `child` and `safety` to the child's own home
+                 because none of them is a child concept — but they answer the
+                 SAME SCHEME, and every surface resolves to a real screen in
+                 both. So there is nothing for a host/path filter to distinguish
+                 here: an `android:host` list would have to enumerate all twelve
+                 of `DEEP_LINK_SURFACES` in each app and be maintained in
+                 lockstep with the backend registry, and the failure mode of
+                 falling behind is a link the server emits and the OS silently
+                 drops. `parseDeepLink` is total on both sides, so an unknown
+                 surface already degrades to a real screen. One `scheme="abny"`
+                 entry, both apps.
+
+                 Why the launcher activity, why a separate <intent-filter>
+                 element, and why no android:autoVerify — see the parent app's
+                 manifest, which carries the full argument. The same three
+                 reasons apply verbatim: one Activity hosts the one Flutter
+                 engine, `launchMode="singleTop"` (already set above) delivers
+                 the cold-start intent and every later one to it, folding VIEW
+                 into the MAIN/LAUNCHER filter is how a launcher icon gets lost,
+                 and autoVerify governs https App Links, not custom schemes. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="abny" />
+            </intent-filter>
         </activity>
         <meta-data
             android:name="flutterEmbedding"

@@ -30,11 +30,49 @@
 #   --profile debug    judges readiness for `flutter build apk --debug` only,
 #                      where missing signing/Firebase is a WARN, not a block.
 #
-# STATUS OF THIS FILE: EXECUTED. Unlike the mobile artifacts it inspects,
-# this script has actually been run — in an environment with no Flutter, no
-# Dart, no Android SDK and a proxy that refuses pub.dev / dl.google.com — and
-# its BLOCKED output there is the proof it reports the truth rather than a
-# hopeful green. See docs/../PHASE-G-Ship-Report.md.
+# WHAT THIS FILE GOT WRONG UNTIL NOW, AND WHY EACH ONE MATTERED
+# `scripts/release-doctor.ps1` was corrected first and this file is now brought
+# back to parity with it, row for row. Three of the corrections are defects
+# this file carried, not cosmetics:
+#
+#   * SIGNING. It checked `android/key.properties` — Flutter's template name.
+#     Both apps' `android/app/build.gradle` read
+#     `rootProject.file("signing.properties")`, both `android/.gitignore`s
+#     ignore `signing.properties`, and `.github/workflows/build-apk.yml` writes
+#     `android/signing.properties`. So the doctor could PASS a machine whose
+#     release build then stops in the gradle task-graph guard with
+#     "signing.properties is MISSING" — a doctor passing something the build
+#     fails on, which is the one defect a doctor must not have. It also treated
+#     `key=` with an empty value as present, which the gradle does not.
+#   * FIREBASE. It demanded google-services.json from BOTH apps and BLOCKED a
+#     release on the child app's absent one. apps/child-app declares no
+#     firebase_core / firebase_messaging, its settings.gradle carries no
+#     google-services plugin and its app/build.gradle never applies one, so no
+#     child build has ever read that file. The requirement is now DERIVED per
+#     app from those three files, so the day child-app gains firebase_messaging
+#     it appears here with no edit to this script.
+#   * MISSING ROWS. The app VERSION (app/build.gradle refuses to package a
+#     release on a fallback versionCode, and pubspec.yaml is the single source
+#     of both halves) and the DEEP-LINK SCHEME (the one client/server contract
+#     no other row here sees) had no rows at all.
+#
+# WHY THERE IS NO `set -e`, DELIBERATELY. This script's whole job is to keep
+# probing a broken machine and report EVERY blocking row in one pass; `-e`
+# would make the first failing probe the last thing it ever said. What `-e`
+# would otherwise have caught is handled directly instead: `set -u` is on, every
+# environment variable is read through `${VAR:-}`, every option that takes a
+# value is checked BEFORE `shift 2` (a bare `--repo` used to `shift 2` past the
+# end, which fails, leaves `$#` unchanged and spins forever), and every command
+# substitution whose emptiness would poison a later `[ ... -eq ... ]` is
+# defaulted at the point of use.
+#
+# STATUS OF THIS FILE: EXECUTED, but not since these corrections — the rows
+# below are STATIC VERIFIED against the files they name (both app/build.gradle,
+# both signing.properties.example, both android/.gitignore, both pubspec.yaml,
+# both AndroidManifest.xml, the backend's notification-destination.ts and
+# .github/workflows/build-apk.yml) and `bash -n` clean. This environment has no
+# Flutter, no Dart, no Android SDK and no PowerShell, so no row that reports on
+# a toolchain has been observed reporting PASS.
 #
 # Usage:
 #   scripts/release-doctor.sh [--profile release|debug] [--repo <path>] [--quiet]
@@ -46,18 +84,31 @@ PROFILE="release"
 QUIET="no"
 REPO_ROOT=""
 
+# An option that takes a value must HAVE one. Without this, `--repo` with
+# nothing after it reached `shift 2` with one argument left; `shift` fails,
+# `$#` does not change, and the loop spins forever on the same argument.
+need_value() {
+  if [ "$#" -lt 2 ]; then
+    echo "release-doctor: $1 requires a value." >&2
+    exit 2
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)
-      PROFILE="${2:-}"
+      need_value "$@"
+      PROFILE="$2"
       case "$PROFILE" in
         release|debug) ;;
         *) echo "release-doctor: --profile must be 'release' or 'debug'." >&2; exit 2 ;;
       esac
       shift 2 ;;
-    --repo)   REPO_ROOT="${2:-}"; shift 2 ;;
+    --repo)   need_value "$@"; REPO_ROOT="$2"; shift 2 ;;
     --quiet)  QUIET="yes"; shift ;;
-    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    # 2,78p is this file's header block, which grew when the three corrections
+    # above were written down; a stale range silently truncates --help.
+    -h|--help) sed -n '2,78p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "release-doctor: unknown argument '$1'. Try --help." >&2; exit 2 ;;
   esac
 done
@@ -97,6 +148,12 @@ row() {
     PASS)    colour="$C_GRN"; label="  PASS "; N_PASS=$((N_PASS + 1)) ;;
     WARN)    colour="$C_YEL"; label="  WARN "; N_WARN=$((N_WARN + 1)) ;;
     BLOCKED) colour="$C_RED"; label="BLOCKED"; N_BLOCKED=$((N_BLOCKED + 1)) ;;
+    # A typo'd status left `colour` and `label` UNSET, and under `set -u` the
+    # printf below then killed the whole run — the doctor dying of its own
+    # formatting rather than reporting the machine. It is now a loud row that
+    # still counts as blocking, because a row nobody can grade is not a pass.
+    *)       colour="$C_RED"; label="BLOCKED"; N_BLOCKED=$((N_BLOCKED + 1))
+             measured="release-doctor BUG: unknown row status '$status' — $measured" ;;
   esac
   ROWS="${ROWS}${status}|${check}|${measured}
 "
@@ -133,6 +190,60 @@ ver_ge() {
   local highest
   highest="$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n 1)"
   [ "$highest" = "$a" ]
+}
+
+# Does this app ACTUALLY use Firebase? Derived from what the app declares, in
+# the same three files and the same order as `Test-AppUsesFirebase` in
+# release-doctor.ps1:
+#   pubspec.yaml               firebase_core / firebase_messaging
+#   android/settings.gradle    com.google.gms.google-services (plugins block)
+#   android/app/build.gradle   apply plugin: "com.google.gms.google-services"
+#
+# THE ROW THIS REPLACES DEMANDED google-services.json FROM BOTH APPS and
+# blocked a release on the child app's absent one. Nothing in the child build
+# has ever read that file: it declares no firebase dependency, no plugin and no
+# apply. Deriving it means the requirement appears by itself on the day an app
+# gains the dependency, and disappears by itself if one drops it — neither
+# answer is written down here.
+uses_firebase() {
+  local app="$1"
+  local pubspec="$REPO_ROOT/apps/$app/pubspec.yaml"
+  local settings="$REPO_ROOT/apps/$app/android/settings.gradle"
+  local appgr="$REPO_ROOT/apps/$app/android/app/build.gradle"
+  if [ -f "$pubspec" ] && grep -qE '^[[:space:]]*(firebase_core|firebase_messaging)[[:space:]]*:' "$pubspec"; then
+    return 0
+  fi
+  if [ -f "$settings" ] && grep -q 'com\.google\.gms\.google-services' "$settings"; then
+    return 0
+  fi
+  if [ -f "$appgr" ] && grep -qE '^[[:space:]]*apply[[:space:]]+plugin:[[:space:]]*"com\.google\.gms\.google-services"' "$appgr"; then
+    return 0
+  fi
+  return 1
+}
+
+# The keystore filename and alias for an app's ACTION LINES, taken from the
+# COMMITTED template (android/signing.properties.example) rather than invented
+# here, so this script never names key material it made up.
+#
+# The fallbacks cover both "the template is gone" and "the template is there
+# but its storeFile/keyAlias line was edited away": a keytool command with an
+# empty -keystore would be worse than no command at all.
+#
+# 4096-bit RSA and PKCS12 are the template's own terms — PKCS12 because JKS is
+# a proprietary format keytool itself warns about on every use, and 4096
+# because an upload key signs every future update of the app and cannot be
+# rotated without Google Play's key-reset process.
+keytool_command_for() {
+  local app="$1" short example keystore key_alias
+  short="${app%-app}"
+  example="$REPO_ROOT/apps/$app/android/signing.properties.example"
+  keystore="$(first_match "$example" '^[[:space:]]*storeFile[[:space:]]*=[[:space:]]*(.+)$')"
+  key_alias="$(first_match "$example" '^[[:space:]]*keyAlias[[:space:]]*=[[:space:]]*(.+)$')"
+  [ -n "$keystore" ] || keystore="abny-$short-upload.jks"
+  [ -n "$key_alias" ] || key_alias="abny-$short-upload"
+  printf 'keytool -genkeypair -v -keystore %s -alias %s -keyalg RSA -keysize 4096 -validity 10000 -storetype PKCS12' \
+    "$keystore" "$key_alias"
 }
 
 head_line 'ABNY / «ابني» — release doctor'
@@ -263,7 +374,10 @@ for app in $PIN_APPS; do
   [ -f "$REPO_ROOT/apps/$app/android/gradle/wrapper/gradle-wrapper.jar" ] || WRAPPER_OK="no"
 done
 
-GRADLE_DIST_CACHE="${GRADLE_USER_HOME:-$HOME/.gradle}/wrapper/dists"
+# `$HOME` is read through a default too: it is genuinely unset in some CI
+# containers, and under `set -u` a bare `$HOME` here killed the whole run four
+# rows before the ones an operator most needs to read.
+GRADLE_DIST_CACHE="${GRADLE_USER_HOME:-${HOME:-}/.gradle}/wrapper/dists"
 DIST_CACHED="no"
 if [ -d "$GRADLE_DIST_CACHE" ]; then
   if ls -d "$GRADLE_DIST_CACHE"/gradle-"$PIN_GRADLE"-* >/dev/null 2>&1; then DIST_CACHED="yes"; fi
@@ -291,7 +405,10 @@ fi
 # ===========================================================================
 if have git && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   BRANCH="$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null)"
+  # Defaulted at the point of use: a failed `git status` inside the pipeline
+  # yields an EMPTY string, and `[ "" -eq 0 ]` is a shell error, not a false.
   DIRTY_COUNT="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  DIRTY_COUNT="${DIRTY_COUNT:-0}"
   if [ "$DIRTY_COUNT" -eq 0 ]; then
     row PASS "git status" "clean on '$BRANCH'" ""
   else
@@ -320,12 +437,36 @@ done
 # ===========================================================================
 # 8. Firebase configuration
 # ===========================================================================
+# GRADED PER APP, FROM WHAT THE APP ACTUALLY DECLARES — see `uses_firebase`.
+# This row used to demand the file from BOTH apps and BLOCK a release on the
+# child app's absent one: a requirement the repository does not have, invented
+# by the one script whose job is to name the real ones.
 for app in $PIN_APPS; do
   GS="$REPO_ROOT/apps/$app/android/app/google-services.json"
+  # Initialised before the case, so an app added to PIN_APPS without a branch
+  # here cannot read an UNSET variable under `set -u` and take the whole run
+  # down with it. The empty value is then reported rather than compared.
+  EXPECT_ID=""
   case "$app" in
     parent-app) EXPECT_ID="$PIN_PARENT_APP_ID" ;;
     child-app)  EXPECT_ID="$PIN_CHILD_APP_ID" ;;
   esac
+  if [ -z "$EXPECT_ID" ]; then
+    row BLOCKED "Firebase config ($app)" "no applicationId known for this app" \
+      "scripts/lib/repo-pins.sh exports one PIN_*_APP_ID per app and this script maps them by name; '$app' has no branch. Add it there rather than comparing against an empty string."
+    continue
+  fi
+
+  if ! uses_firebase "$app"; then
+    if [ -f "$GS" ]; then
+      row WARN "Firebase config ($app)" "google-services.json present but NOTHING READS IT" \
+        "apps/$app declares no firebase_core/firebase_messaging in pubspec.yaml, its android/settings.gradle does not carry com.google.gms.google-services and app/build.gradle never applies it, so this file is inert. Either add the Firebase dependencies (this row will then require the file) or delete it, so it does not read as configured push."
+    else
+      row PASS "Firebase config ($app)" "not required — this app declares no Firebase dependency" ""
+    fi
+    continue
+  fi
+
   if [ -f "$GS" ]; then
     if grep -q "$EXPECT_ID" "$GS" 2>/dev/null; then
       row PASS "Firebase config ($app)" "google-services.json present for $EXPECT_ID" ""
@@ -335,7 +476,7 @@ for app in $PIN_APPS; do
     fi
   elif [ "$PROFILE" = "release" ]; then
     row BLOCKED "Firebase config ($app)" "google-services.json absent" \
-      "See docs/release/FIREBASE_SETUP.md: create the Firebase Android app for $EXPECT_ID and place google-services.json at apps/$app/android/app/. The build SUCCEEDS without it (abny.firebase=auto only warns) but the artifact has no push notifications at all — a store release in that state ships an invisible notification engine."
+      "OPERATOR MUST SUPPLY. Create the Firebase Android app for applicationId $EXPECT_ID, download google-services.json and place it at apps/$app/android/app/google-services.json (CI reads it from the GOOGLE_SERVICES_JSON secret instead). Nothing in this repository can generate it. The build SUCCEEDS without it — the default -Pabny.firebase=auto only warns — so a release in that state ships an artifact whose every push notification silently never arrives. See docs/release/FIREBASE_SETUP.md."
   else
     row WARN "Firebase config ($app)" "google-services.json absent (debug profile)" \
       "Debug builds proceed: abny.firebase=auto only warns, and PushRegistrationService catches the init failure. No push notification can be delivered by this artifact."
@@ -355,35 +496,153 @@ fi
 
 # ===========================================================================
 # 9. Signing configuration
+#
+# THE FILE THE GRADLE ACTUALLY READS IS `signing.properties`, NOT
+# `key.properties`. This section checked the latter — Flutter's template name —
+# while both apps' android/app/build.gradle read
+# `rootProject.file("signing.properties")`, both android/.gitignore files
+# ignore `signing.properties` (committing `signing.properties.example` by
+# negation), and .github/workflows/build-apk.yml writes
+# `android/signing.properties` before its release build. The doctor could
+# therefore PASS an operator who had created key.properties, and their release
+# build would stop in the task-graph guard with "signing.properties is
+# MISSING": the doctor passing something the build fails on.
+#
+# The four KEY NAMES are the same in both files, so the parsing is unchanged;
+# the filename, the action lines and the keytool invocation moved.
 # ===========================================================================
 for app in $PIN_APPS; do
-  KEYPROPS="$REPO_ROOT/apps/$app/android/key.properties"
-  if [ -f "$KEYPROPS" ]; then
+  ANDROID_DIR="$REPO_ROOT/apps/$app/android"
+  SIGNPROPS="$ANDROID_DIR/signing.properties"
+  SIGNEXAMPLE="$ANDROID_DIR/signing.properties.example"
+  KEYTOOL_CMD="$(keytool_command_for "$app")"
+
+  # The template is the operator's instructions and the source of the keystore
+  # name and alias above. Its absence does not block a build, but it is why the
+  # action lines can name a file instead of inventing one.
+  if [ ! -f "$SIGNEXAMPLE" ]; then
+    row WARN "Signing template ($app)" "android/signing.properties.example is missing" \
+      "It is the committed template and holds the full keytool invocation. Restore it: git checkout -- apps/$app/android/signing.properties.example"
+  fi
+
+  if [ -f "$SIGNPROPS" ]; then
     MISSING_KEYS=""
     for k in storeFile storePassword keyAlias keyPassword; do
-      grep -qE "^[[:space:]]*$k[[:space:]]*=" "$KEYPROPS" || MISSING_KEYS="$MISSING_KEYS $k"
+      # `=\s*\S` and not `=`: the gradle treats a present-but-EMPTY value as
+      # missing, so this must too, or the doctor passes a file the task-graph
+      # guard rejects — the same class of defect as the filename above.
+      grep -qE "^[[:space:]]*$k[[:space:]]*=[[:space:]]*[^[:space:]]" "$SIGNPROPS" \
+        || MISSING_KEYS="$MISSING_KEYS $k"
     done
     if [ -n "$MISSING_KEYS" ]; then
-      row BLOCKED "Signing ($app)" "key.properties present but missing:$MISSING_KEYS" \
-        "app/build.gradle fails the release build unless all four of storeFile, storePassword, keyAlias, keyPassword are set. Add them to apps/$app/android/key.properties."
+      row BLOCKED "Signing ($app)" "signing.properties present but missing/empty:$MISSING_KEYS" \
+        "apps/$app/android/app/build.gradle stops every release task unless all four of storeFile, storePassword, keyAlias, keyPassword are set AND non-empty. A partial signing config is not signed 'less', it is not signed. Fill them in apps/$app/android/signing.properties — see signing.properties.example."
     else
-      STORE_REL="$(sed -nE 's/^[[:space:]]*storeFile[[:space:]]*=[[:space:]]*(.+)$/\1/p' "$KEYPROPS" | head -n 1 | tr -d '\r')"
-      STORE_ABS="$REPO_ROOT/apps/$app/android/$STORE_REL"
-      if [ -f "$STORE_REL" ] || [ -f "$STORE_ABS" ]; then
-        row PASS "Signing ($app)" "key.properties complete, keystore found" ""
-      else
+      STORE_REL="$(sed -nE 's/^[[:space:]]*storeFile[[:space:]]*=[[:space:]]*(.+)$/\1/p' "$SIGNPROPS" | head -n 1 | tr -d '\r')"
+      STORE_ABS="$ANDROID_DIR/$STORE_REL"
+      RESOLVED=""
+      if [ -f "$STORE_ABS" ]; then RESOLVED="$STORE_ABS"; elif [ -f "$STORE_REL" ]; then RESOLVED="$STORE_REL"; fi
+      if [ -z "$RESOLVED" ]; then
         row BLOCKED "Signing ($app)" "keystore not found at '$STORE_REL'" \
-          "storeFile resolves relative to apps/$app/android/. Place the .jks there or correct the path; the release build refuses to fall back to the debug key (verified by scripts/verify_release_signing.py)."
+          "storeFile is resolved RELATIVE TO apps/$app/android/ by app/build.gradle. Place the .jks there, use an absolute path, or generate one: cd apps/$app/android && $KEYTOOL_CMD"
+      else
+        # L3, mirrored from app/build.gradle. The gradle refuses a release whose
+        # keystore looks like the debug one; a doctor that passed it would send
+        # the operator into a build that stops ten minutes later. THIS IS THE
+        # ROW THAT PROVES A RELEASE CANNOT FALL BACK TO A DEBUG KEY: the gradle
+        # refuses it, and this refuses it earlier and by name.
+        LEAF="$(basename "$RESOLVED" | tr '[:upper:]' '[:lower:]')"
+        NORM="$(printf '%s' "$RESOLVED" | tr '[:upper:]' '[:lower:]')"
+        case "$LEAF:$NORM" in
+          debug.keystore:*|debug.jks:*|*:*/.android/debug*)
+            row BLOCKED "Signing ($app)" "storeFile points at what looks like a DEBUG keystore: $RESOLVED" \
+              "app/build.gradle's L3 identity assertion fails this build by name. The debug key is a well-known machine-local throwaway; an artifact signed with it can never be uploaded to Play and never updated. Generate a real upload key: cd apps/$app/android && $KEYTOOL_CMD" ;;
+          *)
+            row PASS "Signing ($app)" "signing.properties complete, keystore $LEAF found" "" ;;
+        esac
       fi
     fi
   elif [ "$PROFILE" = "release" ]; then
-    row BLOCKED "Signing ($app)" "android/key.properties absent" \
-      "No release keystore = no store artifact. Create the keystore ('keytool -genkeypair -v -keystore abny-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias abny'), place it under apps/$app/android/, and write the four properties into apps/$app/android/key.properties (git-ignored). Debug builds are unaffected."
+    row BLOCKED "Signing ($app)" "android/signing.properties absent" \
+      "OPERATOR MUST SUPPLY. No release keystore = no store artifact, and app/build.gradle will NOT fall back to the debug key — it stops the release task with a named message. Do exactly this: cd apps/$app/android && $KEYTOOL_CMD && cp signing.properties.example signing.properties, then fill storeFile / storePassword / keyAlias / keyPassword. Both signing.properties and *.jks are gitignored (apps/$app/android/.gitignore) — never commit either. Debug builds are unaffected."
   else
-    row WARN "Signing ($app)" "android/key.properties absent (debug profile)" \
-      "Debug builds use the debug key and are unaffected. A release build will refuse."
+    row WARN "Signing ($app)" "android/signing.properties absent (debug profile)" \
+      "Debug builds use the debug key and are unaffected. A release build stops in the task-graph guard rather than falling back to it."
+  fi
+
+  # A signing file that is NOT ignored is key material one `git add` away from
+  # the history. The gitignore is committed, so this is checkable statically.
+  GITIGNORE="$ANDROID_DIR/.gitignore"
+  if [ -f "$GITIGNORE" ]; then
+    UNIGNORED=""
+    grep -qE '^[[:space:]]*signing\.properties[[:space:]]*$' "$GITIGNORE" || UNIGNORED="$UNIGNORED signing.properties"
+    grep -qE '^[[:space:]]*\*\.jks[[:space:]]*$' "$GITIGNORE" || UNIGNORED="$UNIGNORED *.jks"
+    if [ -n "$UNIGNORED" ]; then
+      row BLOCKED "Signing gitignore ($app)" "not ignored:$UNIGNORED" \
+        "apps/$app/android/.gitignore must ignore signing.properties and *.jks (and keep !signing.properties.example). Key material one 'git add' from the history is key material already lost."
+    else
+      row PASS "Signing gitignore ($app)" "signing.properties and *.jks are gitignored" ""
+    fi
+  else
+    row BLOCKED "Signing gitignore ($app)" "apps/$app/android/.gitignore is missing" \
+      "Without it the keystore and its three passwords are committable by accident. Restore it: git checkout -- apps/$app/android/.gitignore"
   fi
 done
+
+# ===========================================================================
+# 9b. The version the release AAB will carry
+#
+# app/build.gradle REFUSES to package a release on a fallback version, and the
+# single source of both halves is pubspec.yaml's `version: <name>+<code>` line
+# (flutter build copies it into android/local.properties). A pubspec with no
+# `+<code>` builds debug happily and stops the release — a build failure this
+# doctor can predict from a committed file, so it should.
+# ===========================================================================
+for app in $PIN_APPS; do
+  PUBSPEC="$REPO_ROOT/apps/$app/pubspec.yaml"
+  APP_VERSION="$(first_match "$PUBSPEC" '^version:[[:space:]]*([^[:space:]]+)[[:space:]]*$')"
+  if [ -z "$APP_VERSION" ]; then
+    row BLOCKED "App version ($app)" "pubspec.yaml declares no version:" \
+      "Add 'version: <name>+<code>' to apps/$app/pubspec.yaml. app/build.gradle stops any release task on a fallback version, because Play accepts versionCode 1 exactly once and then blocks every later upload."
+  elif ! printf '%s' "$APP_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$'; then
+    row BLOCKED "App version ($app)" "pubspec version '$APP_VERSION' has no +<versionCode>" \
+      "app/build.gradle's release guard refuses a FALLBACK versionCode. Write it as '<name>+<code>', e.g. '0.1.0+1'. CI overrides the CODE half per upload via ORG_GRADLE_PROJECT_abnyVersionCode."
+  else
+    row PASS "App version ($app)" "$APP_VERSION (versionName+versionCode, single source)" ""
+  fi
+done
+
+# ===========================================================================
+# 9c. The deep-link scheme, in both manifests
+#
+# The scheme is READ FROM THE SERVER'S REGISTRY, never typed here: the backend
+# is authoritative for `abny://<surface>` and both clients route on what it
+# emits. If the two ever disagree, every notification tap in the product lands
+# nowhere and no other row in this file would see it.
+# ===========================================================================
+DEST_REGISTRY="$REPO_ROOT/apps/backend/src/modules/notifications/domain/engine/notification-destination.ts"
+DEEP_LINK_SCHEME="$(first_match "$DEST_REGISTRY" "DEEP_LINK_SCHEME[[:space:]]*=[[:space:]]*'([a-z][a-z0-9+.-]*)'")"
+if [ -z "$DEEP_LINK_SCHEME" ]; then
+  row WARN "Deep-link scheme" "could not read DEEP_LINK_SCHEME from the notification registry" \
+    "Expected at apps/backend/src/modules/notifications/domain/engine/notification-destination.ts. Fix this check rather than guessing the scheme."
+else
+  for app in $PIN_APPS; do
+    MANIFEST="$REPO_ROOT/apps/$app/android/app/src/main/AndroidManifest.xml"
+    [ -f "$MANIFEST" ] || continue
+    if grep -qE "android:scheme[[:space:]]*=[[:space:]]*\"$DEEP_LINK_SCHEME\"" "$MANIFEST"; then
+      row PASS "Deep-link scheme ($app)" "$DEEP_LINK_SCHEME:// declared in an intent-filter" ""
+    else
+      # WARN and not BLOCKED, and the distinction is the whole point of the
+      # grading scale: nothing about the BUILD depends on this, and the in-app
+      # notification tap works without it (the link travels on the FCM data
+      # payload and is routed in Dart). What is missing is the OS-LEVEL
+      # registration — a link tapped in a browser, a message or an e-mail
+      # resolves to no app on the device.
+      row WARN "Deep-link scheme ($app)" "no <data android:scheme=\"$DEEP_LINK_SCHEME\"> intent-filter" \
+        "apps/$app/android/app/src/main/AndroidManifest.xml declares no intent-filter for $DEEP_LINK_SCHEME://, so the OS cannot resolve such a link to this app. In-app notification taps are UNAFFECTED, which is why this is WARN. Run 'python3 scripts/verify_notification_permission.py' for the full end-to-end check (filter categories, the launcher filter, and the Dart cold-start handler)."
+    fi
+  done
+fi
 
 # ===========================================================================
 # 10. Package IDs

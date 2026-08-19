@@ -5,6 +5,7 @@ import android.os.Build
 import com.aifamilycoach.child_app.core.AgentChannel
 import com.aifamilycoach.child_app.core.AntiTamperDetector
 import com.aifamilycoach.child_app.core.ChildGuardForegroundService
+import com.aifamilycoach.child_app.core.DeepLinkChannel
 import com.aifamilycoach.child_app.core.DeviceCapabilityEngine
 import com.aifamilycoach.child_app.core.DeviceIdentityKeyManager
 import com.aifamilycoach.child_app.core.NativePolicy
@@ -29,6 +30,26 @@ import io.flutter.plugin.common.MethodChannel
  * AgentCapabilityNotImplementedException — never a silent fake success.
  */
 class MainActivity : FlutterActivity() {
+
+    /**
+     * THE COLD-START HALF OF `abny://` — non-null between
+     * [configureFlutterEngine] and [cleanUpFlutterEngine].
+     *
+     * AndroidManifest.xml now declares `<data android:scheme="abny">`, so the OS
+     * resolves an external `abny://…` link to this app. Without this channel
+     * that resolution merely LAUNCHES the app and the link is dropped:
+     * `Intent.getData()` read by nobody, the child landing on their normal home
+     * screen as if the icon had been tapped.
+     *
+     * The URI is forwarded verbatim; `parseDeepLink` in
+     * `lib/core/routing/deep_link.dart` is the one parser and it is total. Every
+     * detail of the two arrival paths is argued in the parent app's
+     * MainActivity, which is the same thirty lines for the same reason.
+     */
+    private var deepLinkChannel: MethodChannel? = null
+
+    /** The cold-start URI, held until Dart pulls it exactly once. */
+    private var pendingLink: String? = null
 
     /**
      * G18. Android delivers the POST_NOTIFICATIONS answer here, not to the
@@ -65,8 +86,77 @@ class MainActivity : FlutterActivity() {
         super.onDestroy()
     }
 
+    /**
+     * A WARM-START `abny://` LINK. `launchMode="singleTop"` (AndroidManifest.xml)
+     * delivers it to THIS instance instead of creating a second one, so it
+     * arrives here rather than through `getIntent()`.
+     *
+     * `super` is called first and unconditionally: Flutter's own plugin
+     * machinery dispatches new intents through this override too, exactly as it
+     * does for permission results above.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        val link = linkFrom(intent) ?: return
+        val channel = deepLinkChannel
+        if (channel == null) {
+            // The engine is not configured yet (a re-delivery during a
+            // configuration change). Park it; the pull below still finds it.
+            pendingLink = link
+            return
+        }
+        channel.invokeMethod(DeepLinkChannel.METHOD_ON_DEEP_LINK, link)
+    }
+
+    /**
+     * A reply into a dead engine is a crash, and a retained handler leaks this
+     * Activity across a configuration change — the same rule [onDestroy] above
+     * applies to the permission requester.
+     */
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        deepLinkChannel?.setMethodCallHandler(null)
+        deepLinkChannel = null
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    /**
+     * The URI of a VIEW intent, or null for every other way this Activity is
+     * started — the launcher icon above all, which carries ACTION_MAIN and no
+     * data and must never be mistaken for a deep link.
+     */
+    private fun linkFrom(intent: Intent?): String? {
+        if (intent == null || intent.action != Intent.ACTION_VIEW) return null
+        return intent.data?.toString()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // --- `abny://` cold start. Registered FIRST, before the agent channel,
+        // because it is the one channel Dart calls during its own startup.
+        if (pendingLink == null) {
+            pendingLink = linkFrom(intent)
+        }
+        val deepLink = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DeepLinkChannel.CHANNEL_NAME,
+        )
+        deepLink.setMethodCallHandler { call, result ->
+            when (call.method) {
+                DeepLinkChannel.METHOD_CONSUME_INITIAL_LINK -> {
+                    // CONSUMED, not merely read: a hot restart must not
+                    // re-navigate to a link the child already followed.
+                    val link = pendingLink
+                    pendingLink = null
+                    result.success(link)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+        deepLinkChannel = deepLink
 
         val permissionManager = PermissionManager(applicationContext)
         val capabilityEngine = DeviceCapabilityEngine(applicationContext)

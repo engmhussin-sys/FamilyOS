@@ -9,6 +9,7 @@ import 'core/di/providers.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/offline/offline_banner.dart';
 import 'core/routing/app_routes.dart';
+import 'core/routing/deep_link_host.dart';
 import 'core/theme/app_theme.dart';
 import 'features/authentication/presentation/login_screen.dart';
 import 'features/authentication/presentation/register_screen.dart';
@@ -114,9 +115,20 @@ class ParentApp extends ConsumerWidget {
       // below for the same reason — both of these remain correct and
       // unchanged; flutter_localizations above is additive, for
       // native widgets only.
+      // `DeepLinkHost` is here rather than on a screen because an OS-delivered
+      // `abny://` link can arrive at ANY moment, including before the first
+      // screen exists (a cold start FOR the link) and while any screen is on
+      // top (a warm start). `builder` runs above the Navigator and for the
+      // whole life of the app, which is exactly the scope that listener needs;
+      // it is handed `_navigatorKey` for the same reason — from up here
+      // `Navigator.of(context)` would find nothing. It renders `child`
+      // untouched and decides only WHEN a link is followed.
       builder: (context, child) => Directionality(
         textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-        child: OfflineBanner(child: child!),
+        child: DeepLinkHost(
+          navigatorKey: _navigatorKey,
+          child: OfflineBanner(child: child!),
+        ),
       ),
       initialRoute: AppRoutes.splash,
       routes: {
