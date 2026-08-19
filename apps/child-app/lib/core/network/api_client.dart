@@ -27,14 +27,15 @@ class ApiClient {
   /// the kind of untestable design this project avoids elsewhere (see
   /// every backend service's repository-port pattern).
   ApiClient(this._tokenStorage, {Dio? dio})
-      : _dio = dio ?? Dio(BaseOptions(baseUrl: AppConfig.apiBaseUrl)) {
+      : _dio = dio ?? Dio(defaultOptions()) {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           // WRAPPED, AND NOT DEFENSIVELY. An `onRequest` callback that throws
           // never calls its handler, so the `RequestInterceptorHandler`'s future
           // never completes and the caller's `await` hangs FOREVER — there is no
-          // exception to catch and no timeout to hit. `flutter_secure_storage`
+          // exception to catch, and no timeout applies because the request was
+          // never sent. `flutter_secure_storage`
           // reads the Android Keystore and does throw `PlatformException` on a
           // corrupted or migrated keystore, so this is a real device failure,
           // not a hypothetical one. Sending the request WITHOUT the header is
@@ -133,6 +134,48 @@ class ApiClient {
       ),
     );
   }
+
+  /// THE TRANSPORT'S OWN SETTINGS, in a named place so a test can read them
+  /// without opening a socket. They are not decoration: every one of them is
+  /// the difference between an error a child can act on and a screen that
+  /// waits forever.
+  static BaseOptions defaultOptions() => BaseOptions(
+        baseUrl: AppConfig.apiBaseUrl,
+        // THIS CLIENT HAD NO TIMEOUT AT ALL, while the parent app has
+        // carried these lines since its own review. Dio's defaults are
+        // «wait forever», so a half-open socket — a phone that walked
+        // out of Wi-Fi range mid-upload, a middlebox that stops
+        // answering without closing — left the request hanging with no
+        // exception ever raised. `_toApiException` already knew how to
+        // word all three timeouts in Egyptian Arabic; nothing could
+        // produce one.
+        //
+        // The evidence upload is where that is worst: the controller
+        // sits in `EvidencePhase.uploading`, the spinner never stops and
+        // `clearEvidence()` refuses to act while `isUploading` is true —
+        // a child on a frozen screen with no error and no way out, which
+        // is the same failure the `onRequest`/`onError` notes above were
+        // written to prevent by another route.
+        //
+        // 15s connect / 20s receive are the parent app's numbers, chosen
+        // there to clear the backend's own 20s Anthropic provider
+        // timeout. Copied rather than re-picked, so the two apps give up
+        // at the same point.
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 20),
+        // SEND is its own case here because this app streams a file of
+        // up to 15 MiB off a child's phone. Dio applies `sendTimeout`
+        // BETWEEN chunks of the request stream rather than to the whole
+        // body, so this is a stall detector, not a ceiling on how long a
+        // slow upload may take: 30 seconds with the socket accepting
+        // nothing is a dead connection on any network this product ships
+        // to.
+        //
+        // NOT VERIFIED AT RUNTIME: there is no Dart SDK in this
+        // environment, so the between-chunks semantics were read from
+        // dio's documented behaviour, not observed.
+        sendTimeout: const Duration(seconds: 30),
+      );
 
   final Dio _dio;
   final SecureTokenStorage _tokenStorage;
@@ -414,6 +457,7 @@ class ApiClient {
       code: data['code']?.toString(),
       messageAr: data['messageAr']?.toString(),
       requestId: data['requestId']?.toString() ?? data['correlationId']?.toString(),
+      correlationId: data['correlationId']?.toString(),
       details: rawDetails is Map ? Map<String, dynamic>.from(rawDetails) : null,
     );
   }

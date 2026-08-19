@@ -21,6 +21,7 @@ class ApiException implements Exception {
     this.messageAr,
     this.details,
     this.requestId,
+    this.correlationId,
   });
 
   final String message;
@@ -41,6 +42,15 @@ class ApiException implements Exception {
   /// B3 `requestId` — same value as `correlationId`; the id a support
   /// ticket quotes.
   final String? requestId;
+
+  /// The `GlobalExceptionFilter`'s original field name, carried since Sprint 9
+  /// and still the ONLY id some routes emit. This class did not have it while
+  /// the parent app's twin did, so the two error models described the same
+  /// envelope differently — and any construction site other than
+  /// `ApiClient._toApiException` (which already falls back) would hand a child
+  /// a blank ticket number. `ApiFailure.from` reads `requestId ?? correlationId`
+  /// in BOTH apps now.
+  final String? correlationId;
 
   @override
   String toString() => 'ApiException($statusCode): $message';

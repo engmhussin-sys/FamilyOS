@@ -89,6 +89,39 @@ void main() {
       expect(failure.requestId, 'req_proxy_9');
     });
 
+    // THE SUPPORT LINE IS READ THE SAME WAY IN BOTH APPS.
+    //
+    // The backend's `GlobalExceptionFilter` has emitted `correlationId` since
+    // Sprint 9 and `requestId` since B3, and they carry the same value — but
+    // not every route emits both. The parent app read
+    // `requestId ?? correlationId`; this one read `requestId` alone, and its
+    // `ApiException` had no `correlationId` field to fall back to, so the two
+    // error models described one envelope differently.
+    test('falls back to correlationId when only that id was sent', () {
+      final failure = ApiFailure.from(ApiException(
+        'Conflict.',
+        409,
+        code: 'MAX_PER_DAY_REACHED',
+        messageAr: 'خلصت النهارده — نشوفك بكرة!',
+        correlationId: 'corr_only_1',
+      ));
+
+      expect(failure.requestId, 'corr_only_1');
+    });
+
+    test('prefers requestId when both ids were sent', () {
+      final failure = ApiFailure.from(ApiException(
+        'Conflict.',
+        409,
+        code: 'MAX_PER_DAY_REACHED',
+        messageAr: 'خلصت النهارده — نشوفك بكرة!',
+        requestId: 'req_1',
+        correlationId: 'corr_1',
+      ));
+
+      expect(failure.requestId, 'req_1');
+    });
+
     test('an error that is not an ApiException at all — a shape change '
         'inside a cast — is handled the same way', () {
       final failure = ApiFailure.from(const FormatException('Unexpected end of input'));

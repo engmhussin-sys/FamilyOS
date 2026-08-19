@@ -206,7 +206,12 @@ class ApiFailure {
         messageAr: hasArabic ? error.messageAr : unexpected.messageAr,
         code: fromEnvelope ? error.code : _unexpectedCode,
         statusCode: error.statusCode,
-        requestId: error.requestId,
+        // `requestId ?? correlationId`, which is what the parent app already
+        // read. `ApiClient._toApiException` falls back the same way, so this
+        // only matters for an `ApiException` built anywhere else — but a
+        // support line that is blank for one app and filled for the other is
+        // the divergence, not the symptom.
+        requestId: error.requestId ?? error.correlationId,
         fieldErrors: _fieldErrorsFrom(error.details),
         // ALWAYS the untouched original, even when it is also the displayed
         // sentence — a log reader should not have to work out which branch
