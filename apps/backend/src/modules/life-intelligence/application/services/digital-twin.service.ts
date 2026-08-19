@@ -150,10 +150,20 @@ export class DigitalTwinService {
     // today's insight may not exist yet (e.g. the device hasn't
     // synced today), in which case this stays undefined rather than
     // failing the whole Digital Twin refresh over one optional field.
+    //
+    // F1 — AND `todaysPatterns` MEANS THE FAMILY'S TODAY. This was the second
+    // surviving site of the UTC class (`new Date().toISOString().split('T')[0]`),
+    // and the `catch` above is what hid it: for a Cairo family between local
+    // midnight and 03:00, UTC still reads yesterday, `getWellbeingInsight`
+    // answers `null` for a day whose row exists, and the field simply does not
+    // appear in the Digital Twin — indistinguishable from "the device has not
+    // synced yet". A silently absent field is worse than a wrong one, because
+    // nothing looks broken. The family's calendar decides the day, exactly as
+    // `digital-wellbeing-engine.service.ts:todayColumn(familyId)` already does.
     let todaysPatterns: string[] | undefined;
     let baselineDeviationPercent: number | null | undefined;
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = await this.familyDate.getBusinessDate(familyId);
       const insight = await this.digitalWellbeing.getWellbeingInsight(childId, familyId, today);
       if (insight) {
         todaysPatterns = insight.patterns.map((p) => p.code);

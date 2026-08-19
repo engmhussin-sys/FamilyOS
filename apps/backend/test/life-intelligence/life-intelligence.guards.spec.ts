@@ -43,8 +43,9 @@ import { FamilyInsightService } from '../../src/modules/life-intelligence/applic
 import { DigitalWellbeingEngineService } from '../../src/modules/life-intelligence/application/services/digital-wellbeing-engine.service';
 import { PairingOrchestratorService } from '../../src/modules/pairing/application/services/pairing-orchestrator.service';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
+import { FamilyDateService } from '../../src/common/time/family-date.service';
 
-const ACCESS_SECRET = 'test-access-secret-at-least-32-characters-long';
+const ACCESS_SECRET ='test-access-secret-at-least-32-characters-long';
 
 const parentToken = jwt.sign(
   { sub: 'user-1', actorType: 'USER', tokenKind: 'access', familyId: 'fam-1', jti: 'jti-parent' },
@@ -108,6 +109,14 @@ describe('LifeIntelligenceController guard composition (SA-001)', () => {
         { provide: FamilyInsightService, useValue: noop() },
         { provide: DigitalWellbeingEngineService, useValue: noop() },
         { provide: ChildrenService, useValue: noop() },
+        // F1: `getWellbeingInsight` now defaults `?date=` on the FAMILY's
+        // calendar instead of UTC, so the controller holds the one service that
+        // reads `Family.timezone`. This suite decides guard composition and
+        // nothing else, so the stub answers a fixed business date.
+        {
+          provide: FamilyDateService,
+          useValue: { getBusinessDate: jest.fn().mockResolvedValue('2026-01-15') },
+        },
       ],
     }).compile();
 

@@ -25,6 +25,7 @@ import { DigitalWellbeingEngineService } from '../../application/services/digita
 import { PairingOrchestratorService } from '../../../pairing/application/services/pairing-orchestrator.service';
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { ChildSurface, ParentSurface } from '../../../../common/authz/roles.decorator';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
 
 @Controller('life-intelligence')
 export class LifeIntelligenceController {
@@ -43,6 +44,8 @@ export class LifeIntelligenceController {
     private readonly pairingOrchestrator: PairingOrchestratorService,
     private readonly childrenService: ChildrenService,
     private readonly digitalWellbeing: DigitalWellbeingEngineService,
+    /** From the `@Global` TimeModule — the ONE reader of `Family.timezone`. */
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   // ---- Habit Builder ----
@@ -731,17 +734,35 @@ export class LifeIntelligenceController {
     return this.digitalWellbeing.getTopAppsToday(childId, user.familyId!, deviceId);
   }
 
-  /** Sprint 14 (Behavioral Intelligence Engine) — Parent Insights.
-   * `date` defaults to today if omitted. */
+  /**
+   * Sprint 14 (Behavioral Intelligence Engine) — Parent Insights.
+   * `date` defaults to today if omitted — TODAY ON THE FAMILY'S CALENDAR.
+   *
+   * F1 — THE UTC DEFAULT THIS LINE USED TO BE, AND WHAT IT COST A PARENT.
+   * `new Date().toISOString().split('T')[0]` is the UTC class
+   * `common/time/family-date.ts` says was replaced "and by nothing else". It
+   * survived here because the wrong answer is silent: for a Cairo family
+   * between 00:00 and 03:00 local (02:00 in winter), UTC is still on
+   * YESTERDAY, so a parent opening «رؤى» at 01:00 was served yesterday's
+   * insight — or `null`, where today's row already existed. Three hours of
+   * every night, in both launch markets, on the screen whose whole promise is
+   * "what happened today".
+   *
+   * `DailyBehavioralSnapshot.usageDate` is a `@db.Date` holding a business
+   * date, which is exactly what `FamilyDateService.getBusinessDate` returns —
+   * the same `todayColumn(familyId)` convention `digital-wellbeing-engine`
+   * already uses one layer down. An EXPLICIT `?date=` is untouched: a parent
+   * asking for a specific day gets that day.
+   */
   @Get('wellbeing/:childId/insights')
   @ParentSurface()
   @UseGuards(JwtAuthGuard)
-  getWellbeingInsight(
+  async getWellbeingInsight(
     @Param('childId') childId: string,
     @Query('date') date: string | undefined,
     @CurrentUser() user: IJwtPayload,
   ) {
-    const targetDate = date ?? new Date().toISOString().split('T')[0];
+    const targetDate = date ?? (await this.familyDate.getBusinessDate(user.familyId!));
     return this.digitalWellbeing.getWellbeingInsight(childId, user.familyId!, targetDate);
   }
 
