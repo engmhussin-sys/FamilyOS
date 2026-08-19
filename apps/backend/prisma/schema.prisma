@@ -656,6 +656,21 @@ model Device {
   pairingEvents    DevicePairingEvent[]
   riskAssessments  DeviceRiskAssessment[]
 
+  /// `last_seen_at` IS INDEXED, AND THE INDEX IS NOT DECLARED HERE.
+  ///
+  /// Migration 0025 adds `devices_last_seen_at_active_idx` — a PARTIAL index
+  /// `("last_seen_at") WHERE "deleted_at" IS NULL` — which Prisma's schema
+  /// language cannot express (no `WHERE` on `@@index`), exactly like migration
+  /// 0009's one-live-OWNER unique index on `family_members` and migration
+  /// 0022's `families_country_code_idx`. It lives in SQL only.
+  ///
+  /// It is the access path for EVERY "active" number this product prints —
+  /// active devices, active families, ACTIVE_PARENTS, ACTIVE_CHILDREN, DAU /
+  /// WAU / MAU and every retention cohort all filter this column together with
+  /// `deleted_at IS NULL`. Read 0025's header before adding a second index on
+  /// `last_seen_at`: that column is written by every heartbeat from every
+  /// paired device, and the header records which composite was measured and
+  /// why it was deliberately not shipped.
   @@index([familyId])
   @@index([userId])
   @@index([childId])

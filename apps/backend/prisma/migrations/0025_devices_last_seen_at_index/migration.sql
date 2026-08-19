@@ -1,0 +1,72 @@
+-- ============================================================================
+-- THE COLUMN EVERY "ACTIVE" NUMBER IN THIS PRODUCT READS, AND THE ONLY ONE
+-- `devices` HAD NO INDEX ON.
+--
+-- WHAT WAS BROKEN. `devices` carried exactly three indexes — `family_id`,
+-- `user_id`, `child_id` — all of them owner lookups. Meanwhile the word
+-- "active" is defined ONCE in this codebase, in
+-- `DashboardMetricsService`'s own docstring, as «a `Device.lastSeenAt`
+-- heartbeat inside the window», and every surface that prints an active
+-- number filters on that column and nothing else:
+--
+--   dashboard-metrics.service.ts  activeDevices        devices active (7d)
+--   dashboard-metrics.service.ts  activeFamilyCount    families active (7d)
+--   kpi.service.ts                activeFamilies()     DAU / WAU / MAU
+--   kpi.service.ts                activeParents()      ACTIVE_PARENTS
+--   kpi.service.ts                activeChildren()     ACTIVE_CHILDREN
+--   kpi.service.ts                retentionCohort()    D1 / D7 / D30
+--
+-- The admin dashboard's home page issues three of them on every load and the
+-- growth surface issues six more, and each one was a SEQUENTIAL SCAN of the
+-- whole `devices` table — a table that grows with every device ever paired,
+-- while the answer is only ever about the last 7 to 30 days of it.
+--
+-- MEASURED, NOT ASSUMED. 40,000 families / 140,000 devices, PostgreSQL 16,
+-- built from this directory:
+--
+--   active device count (7d)   41.3 ms  ->   2.7 ms   (Seq Scan -> Index Only Scan)
+--   active family count (7d)   61.3 ms  ->  22.0 ms
+--
+-- The index is 2,664 kB against a 15 MB table.
+--
+-- PARTIAL ON `deleted_at IS NULL`, WHICH IS NOT DECORATION. All six queries
+-- above carry `deletedAt: null` — a soft-deleted device is not a heartbeat —
+-- so the partial predicate is TOTAL over the rows they can ever match. It buys
+-- two things a plain `(last_seen_at)` index does not: the planner drops the
+-- recheck `Filter: (deleted_at IS NULL)` (measured 9.3 ms vs 7.3 ms on the
+-- same data before VACUUM raised both to an index-only scan), and a
+-- soft-deleted row leaves the index instead of sitting in it forever being
+-- read and discarded. It is also the shape migration 0022 already chose for
+-- `families_country_code_idx`, for the same reason.
+--
+-- `AND last_seen_at IS NOT NULL` WAS CONSIDERED AND REJECTED. Never-paired
+-- devices hold NULL there and no `>=` predicate can match them, so the clause
+-- is provably safe. It measured 2,528 kB vs 2,664 kB and 0.0 ms — a 5% size
+-- saving for zero time — while making the index unusable for any future
+-- «devices that have never checked in» query. Not worth the coupling.
+--
+-- A COMPOSITE `(family_id, last_seen_at)` WAS ALSO BUILT AND MEASURED, AND IS
+-- DELIBERATELY NOT SHIPPED. It does turn `retentionCohort`'s correlated
+-- subquery into an index-only scan, but total execution moved 10.4 ms -> 11.4 ms
+-- — that query's cost is the `families.created_at` cohort scan, not the device
+-- lookup, and `devices_family_id_idx` already answers the correlation. It would
+-- have cost 4,552 kB and, far more importantly, a SECOND index maintenance
+-- write on `last_seen_at`. That column is written by every heartbeat from every
+-- paired device in the fleet; it is the hottest UPDATE path in this schema.
+-- One index there is a considered price. Two, for no measured read gain, is not.
+--
+-- PLAIN `CREATE INDEX`, NOT `CONCURRENTLY`. Every migration in this directory
+-- is applied by `psql -v ON_ERROR_STOP=1 -f` inside a transaction, and
+-- `CREATE INDEX CONCURRENTLY` cannot run in one. On a table of this size the
+-- lock is brief; if `devices` ever grows to where that stops being true, the
+-- concurrent build belongs in a separate operational runbook step, not in a
+-- file that must stay re-appliable from an empty database.
+--
+-- ROLLBACK IS `DROP INDEX "devices_last_seen_at_active_idx"`, and it is safe:
+-- no constraint, no foreign key and no application code names this index. The
+-- queries above go back to being correct and slow.
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS "devices_last_seen_at_active_idx"
+  ON "devices" ("last_seen_at")
+  WHERE "deleted_at" IS NULL;
