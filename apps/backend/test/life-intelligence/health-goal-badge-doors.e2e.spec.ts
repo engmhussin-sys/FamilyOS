@@ -76,6 +76,11 @@ import { EVENT_PUBLISHER } from '../../src/modules/events/domain/event-bus.port'
 import { PrismaRewardsRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-rewards.repository';
 import { ENVELOPE_VERSION } from '../../src/shared/events/event-envelope';
 import { composeIdempotencyKey } from '../../src/shared/events/idempotency';
+import {
+  PLATFORM_DEFAULT_REWARD_RULES,
+  RETIRED_PLATFORM_RULES,
+  ruleRewardValue,
+} from '../../src/shared/rewards/reward-rule-catalogue';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 import { freezeGoldenClock, GOLDEN_NOON } from '../golden/golden-world';
 
@@ -417,46 +422,6 @@ describeIfDb('HEALTH GOAL BADGES — the app button and the device event are one
      * That shared prefix is the whole reason §2 can hold, and it carries the
      * FAMILY's business date rather than UTC's.
      */
-    /**
-     * =====================================================================
-     * A CONSEQUENCE OF THIS FIX, MEASURED AND PINNED RATHER THAN LEFT SILENT.
-     * =====================================================================
-     *
-     * The platform seeds TWO XP rules for the SAME hydration crossing, one per
-     * event name — `default:health:daily-goal-hydration`
-     * (`DAILY_GOAL_COMPLETED {metric: hydration}`, 15 XP) and
-     * `default:hydration:goal` (`HYDRATION_GOAL_COMPLETED`, 15 XP). Their
-     * `labelAr` is BYTE-IDENTICAL («هدف شرب الماء اليومي»), as are their
-     * amount, caps and category: they are one reward written twice, once for
-     * each door, because until now each door produced only one of the names.
-     *
-     * Firing the contract name from THIS door — which is what makes the badge
-     * reachable at all — therefore matches BOTH rules, and the app door now
-     * pays 15 + 15 where it used to pay 15. The two rules have different ids,
-     * so `source` differs, so the ledger keys differ, so the DATABASE cannot
-     * and should not collapse them: they are, as far as the rules table is
-     * concerned, two distinct rewards.
-     *
-     * THIS IS NOT SOMETHING THIS TEST APPROVES OF. `reward-rule-catalogue.ts`
-     * states the invariant it breaks in its own header — «the same real-world
-     * completion can no longer be paid twice». Collapsing the duplicate pair is
-     * a change to `src/shared/rewards/reward-rule-catalogue.ts` and to the
-     * migration that seeded it, NEITHER OF WHICH THIS AGENT OWNS, so the number
-     * is pinned here instead of being quietly doubled: whoever owns the
-     * catalogue will see this assertion fail the moment they fix it, and the
-     * failure will tell them exactly what the new number should be.
-     */
-    it('MEASURED CONSEQUENCE: two seeded XP rules now match one crossing, so the app door pays twice', async () => {
-      const xp = (await ledger(APP_FIRST)).filter((e: any) => e.rewardType === 'XP');
-      expect(xp).toHaveLength(2);
-      // Two DIFFERENT platform rules, not one rule paid twice — the ledger's
-      // unique constraint would have refused that.
-      expect(new Set(xp.map((e: any) => e.source)).size).toBe(2);
-      expect(xp.every((e: any) => String(e.source).startsWith('reward_rule:'))).toBe(true);
-      // 15 (DAILY_GOAL_COMPLETED{hydration}) + 15 (HYDRATION_GOAL_COMPLETED).
-      expect(xp.reduce((sum: number, e: any) => sum + Number(e.amount), 0)).toBe(30);
-    });
-
     it('the BADGE ledger row is keyed on the SHARED, server-composed contract key', async () => {
       const shared = composeIdempotencyKey('HYDRATION_GOAL_COMPLETED', {
         childId: APP_FIRST.childId,
@@ -467,6 +432,77 @@ describeIfDb('HEALTH GOAL BADGES — the app button and the device event are one
       // The family's own day, spelled out — not `new Date().toISOString()`.
       expect(shared).toContain(`:hydration:${businessDay}`);
       expect(dayOf(badgeRow.businessDate)).toBe(businessDay);
+    });
+
+    /**
+     * =====================================================================
+     * ONE CROSSING, ONE PAYMENT — WHAT THIS ASSERTION USED TO RECORD, AND
+     * WHAT IT RECORDS NOW.
+     * =====================================================================
+     *
+     * THIS TEST WAS BORN RED ON PURPOSE. Firing the contract name from this
+     * door is what made the badge reachable at all, but the platform had
+     * seeded TWO XP rules for the SAME crossing — one per event name —
+     * `default:health:daily-goal-hydration` (`DAILY_GOAL_COMPLETED {metric:
+     * hydration}`) and `default:hydration:goal` (`HYDRATION_GOAL_COMPLETED`),
+     * with identical amount, caps, category and BYTE-IDENTICAL `labelAr`. So
+     * the app door paid 15 + 15 for one glass of water. The two rules have
+     * different ids, so `source` differs, so the ledger keys differ, and
+     * `rewards_ledger_entries (child_id, idempotency_key)` — a real unique
+     * constraint doing its job — could not collapse them. A duplicate that
+     * survives a unique index is not one the database can win; it has to stop
+     * being seeded.
+     *
+     * MIGRATION `0030` STOPPED SEEDING IT. The retired pair is set
+     * `is_active = false` rather than DELETEd, so a household that already
+     * banked 30 XP keeps it and `source = 'reward_rule:<id>'` stays resolvable
+     * on every row it ever paid. `evaluateRewardRules` skips an inactive rule
+     * on its first line, so the next crossing pays once.
+     *
+     * SO THIS NOW ASSERTS THE FIX RATHER THAN THE DEFECT, and it is deliberately
+     * still HERE rather than deleted: «one crossing, one payment» is the
+     * property the whole file is about, and the cheapest way for it to regress
+     * is for someone to re-activate a retired rule or seed a third name for the
+     * same crossing.
+     *
+     * THE AMOUNT IS DERIVED FROM THE CATALOGUE, NOT TYPED. Reading it out of
+     * `PLATFORM_DEFAULT_REWARD_RULES` means a parent-facing change to the XP
+     * value moves this assertion with it, while a change to the NUMBER OF RULES
+     * that can pay one crossing still fails — which is the thing under test.
+     *
+     * THE PERMANENT GUARD IS `test/rewards/reward-rule-collision.spec.ts`:
+     * `PRODUCER_CROSSINGS` + `crossingCollisions()` fail when two rules of one
+     * currency, or two rules awarding one badge, can pay a single crossing, and
+     * it proves it bites by re-adding the retired rule as a mutation. That is a
+     * catalogue-level invariant with no database; this is the same claim read
+     * off persisted rows.
+     */
+    it('ONE CROSSING, ONE PAYMENT: exactly one XP row, from the one surviving rule', async () => {
+      const rule = PLATFORM_DEFAULT_REWARD_RULES.find(
+        (r) =>
+          r.triggerEngine === 'health' &&
+          r.eventType === 'HYDRATION_GOAL_COMPLETED' &&
+          r.rewardType === 'XP',
+      )!;
+      expect(rule).toBeDefined();
+
+      const xp = (await ledger(APP_FIRST)).filter((e: any) => e.rewardType === 'XP');
+      expect(xp).toHaveLength(1);
+      expect(new Set(xp.map((e: any) => e.source)).size).toBe(1);
+      expect(String(xp[0].source).startsWith('reward_rule:')).toBe(true);
+      expect(xp[0].amount).toBe(Number(ruleRewardValue(rule)));
+      // Stated as a total too, so a second rule reappearing fails on the number
+      // a parent would actually see rather than only on the row count.
+      expect(xp.reduce((sum: number, e: any) => sum + Number(e.amount), 0)).toBe(
+        Number(ruleRewardValue(rule)),
+      );
+
+      // AND THE RETIRED RULE PAID NOTHING — named by the id migration 0030
+      // switched off, so this fails loudly if it is ever re-activated.
+      const retired = RETIRED_PLATFORM_RULES.find(
+        (r) => r.key === 'default:health:daily-goal-hydration',
+      )!;
+      expect(xp.some((e: any) => String(e.source).includes(retired.id))).toBe(false);
     });
   });
 
@@ -561,6 +597,38 @@ describeIfDb('HEALTH GOAL BADGES — the app button and the device event are one
       const badgeRow = (await badgeLedger(ACTIVITY))[0];
       expect(badgeRow.idempotencyKey.startsWith(`${shared}:BADGE:`)).toBe(true);
       expect(dayOf(badgeRow.businessDate)).toBe(businessDay);
+    });
+
+    /**
+     * THE SAME «ONE CROSSING, ONE PAYMENT» CLAIM AS §1, ON THE OTHER DOOR —
+     * AND IT IS NOT A COPY, BECAUSE THE AMOUNT IS DIFFERENT. Activity pays 20
+     * where hydration pays 15, so a single shared helper asserting «15» would
+     * have passed hydration and quietly stopped testing activity. Migration
+     * `0030` retired `default:health:daily-goal-activity` (which paid a second
+     * 20) alongside its hydration twin; both halves of that migration need a
+     * row-level witness, so both have one.
+     */
+    it('ONE CROSSING, ONE PAYMENT: activity pays its own single amount, not a doubled one', async () => {
+      const rule = PLATFORM_DEFAULT_REWARD_RULES.find(
+        (r) =>
+          r.triggerEngine === 'health' &&
+          r.eventType === 'ACTIVITY_GOAL_COMPLETED' &&
+          r.rewardType === 'XP',
+      )!;
+      expect(rule).toBeDefined();
+      // The two crossings genuinely differ — if this ever became true the test
+      // above and this one would stop being independent evidence.
+      expect(Number(ruleRewardValue(rule))).not.toBe(15);
+
+      const xp = (await ledger(ACTIVITY)).filter((e: any) => e.rewardType === 'XP');
+      expect(xp).toHaveLength(1);
+      expect(new Set(xp.map((e: any) => e.source)).size).toBe(1);
+      expect(xp[0].amount).toBe(Number(ruleRewardValue(rule)));
+
+      const retired = RETIRED_PLATFORM_RULES.find(
+        (r) => r.key === 'default:health:daily-goal-activity',
+      )!;
+      expect(xp.some((e: any) => String(e.source).includes(retired.id))).toBe(false);
     });
   });
 
