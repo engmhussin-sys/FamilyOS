@@ -805,9 +805,17 @@ class _MessageCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // `t` IS RESOLVED HERE, and it was not resolved anywhere before this line.
+    // The «جديد» badge below called `t('myGrowth.newLabel')` in a class that
+    // has no `t` in scope and no enclosing one to inherit — a bare undefined
+    // identifier, which is a COMPILE error, not a runtime one: this file could
+    // not be built, and neither could the app. `verify_l10n_parity` reported
+    // the key as resolving because the key does exist in both locales; what it
+    // does not do, and does not claim to do, is type-check the call site.
+    ref.watch(localeControllerProvider);
+    final t = ref.watch(localeControllerProvider.notifier).t;
     final isNew = message['acknowledgedAt'] == null;
     final link = deepLinkFromNotification(message);
-    final isRtl = Directionality.of(context) == TextDirection.rtl;
 
     return Container(
       margin: const EdgeInsets.only(bottom: KidSpace.md),
