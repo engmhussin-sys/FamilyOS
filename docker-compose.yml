@@ -45,8 +45,12 @@ services:
   backend:
     profiles: ["full"]
     build:
-      context: ./apps/backend
-      dockerfile: Dockerfile
+      # The build context is the REPOSITORY ROOT, matching
+      # apps/backend/Dockerfile's header, `.github/workflows/ci.yml` and the
+      # two deployment configs. One context everywhere: an image that builds
+      # here and an image that builds on the host are then the same image.
+      context: .
+      dockerfile: apps/backend/Dockerfile
     container_name: afdc-backend
     restart: unless-stopped
     depends_on:

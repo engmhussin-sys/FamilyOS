@@ -1,0 +1,200 @@
+name: Deploy — staging
+
+# =============================================================================
+# ONE WAY TO PUT CODE ON STAGING, AND IT RUNS THE GATES FIRST.
+#
+# THE RULE THIS FILE ENFORCES: nothing reaches staging that has not just passed
+# the entire CI pipeline — backend suites, the tenant-isolation and
+# event-emission guards, the admin dashboard, both Flutter apps, and the
+# production Docker image. It does that by CALLING `ci.yml`, not by copying it.
+# A second copy of the gates would drift from the first, and the copy that
+# drifts is always the one guarding the deploy.
+#
+# `deploy` needs `ci`, and additionally requires the literal result `success`.
+# A skipped or cancelled gate is a pipeline that answered nothing, and a
+# pipeline that answered nothing must not deploy — the same rule ci.yml's own
+# `ci-gate` job states.
+#
+# MANUAL ON PURPOSE. A push does not deploy. Staging is where a human decides
+# to look at something, and an automatic deploy on every merge would make the
+# thing you are looking at change while you look at it.
+#
+# SECRETS ARE NAMED, NEVER VALUED. Every name used here is documented in
+# `.env.staging.example` §7, and the `contract` job below fails the run if that
+# stops being true.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "staging" to confirm you intend to deploy.'
+        required: true
+        default: ''
+
+concurrency:
+  # One staging deploy at a time. Two overlapping `prisma migrate deploy` runs
+  # are serialised by Postgres advisory locks rather than corrupted, but two
+  # overlapping DEPLOYS still race over which image ends up live.
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  confirm:
+    name: Confirm intent
+    runs-on: ubuntu-latest
+    steps:
+      - name: The input must literally say "staging"
+        run: |
+          if [ "${{ inputs.confirm }}" != "staging" ]; then
+            echo "::error::Refusing: the confirmation input must be the literal word 'staging'."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  contract:
+    name: Deploy contract (names documented, no secret literals)
+    needs: confirm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every secret and variable this workflow uses is documented
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/deploy-staging.yml
+          example=.env.staging.example
+          missing=0
+          names=$(grep -oE '(secrets|vars)\.[A-Z_0-9]+' "$workflow" | cut -d. -f2 | sort -u)
+          for name in $names; do
+            # GITHUB_TOKEN is provided by Actions itself and is not ours to document.
+            [ "$name" = "GITHUB_TOKEN" ] && continue
+            if ! grep -qE "^# ?${name}\b|^${name}=" "$example"; then
+              echo "::error::'$name' is used by $workflow but is not documented in $example."
+              missing=1
+            fi
+          done
+          echo "Checked: $(echo "$names" | tr '\n' ' ')"
+          exit $missing
+
+      - name: The deployment configuration parses and points at files that exist
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in apps/backend/Dockerfile railway.json render.yaml .env.staging.example .dockerignore DEPLOY_STAGING.md; do
+            [ -f "$f" ] || { echo "::error::missing $f"; fail=1; }
+          done
+          python3 - <<'PY'
+          import json, os, sys
+          import yaml  # PyYAML ships on ubuntu-latest runners
+
+          problems = []
+
+          railway = json.load(open('railway.json'))
+          dockerfile = railway['build']['dockerfilePath']
+          if not os.path.isfile(dockerfile):
+              problems.append(f'railway.json dockerfilePath does not exist: {dockerfile}')
+          if railway['deploy']['healthcheckPath'] not in ('/health/live', '/health/ready'):
+              problems.append('railway.json healthcheckPath is not one of the two prefix-excluded health routes')
+
+          render = yaml.safe_load(open('render.yaml'))
+          web = [s for s in render['services'] if s.get('type') == 'web'][0]
+          if not os.path.isfile(web['dockerfilePath'].lstrip('./')):
+              problems.append(f"render.yaml dockerfilePath does not exist: {web['dockerfilePath']}")
+          if 'prisma migrate deploy' not in web.get('preDeployCommand', ''):
+              problems.append('render.yaml no longer runs the migration before traffic')
+
+          for p in problems:
+              print(f'::error::{p}')
+          sys.exit(1 if problems else 0)
+          PY
+          exit $fail
+
+  # ---------------------------------------------------------------------------
+  # THE GATES. The real ones, called — not re-declared.
+  # ---------------------------------------------------------------------------
+  ci:
+    name: CI
+    needs: contract
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Railway (staging)
+    needs: [ci]
+    # `always()` is deliberately NOT used here: if `ci` did not conclude
+    # `success`, this job must not run at all.
+    if: ${{ needs.ci.result == 'success' }}
+    runs-on: ubuntu-latest
+    # Configure required reviewers on this environment in GitHub if a human
+    # approval should stand between a green pipeline and staging.
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Refuse to deploy without the credentials this needs
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME }}
+        run: |
+          missing=0
+          [ -n "$RAILWAY_TOKEN" ] || { echo "::error::Secret RAILWAY_TOKEN is not set. See .env.staging.example §7."; missing=1; }
+          [ -n "$RAILWAY_SERVICE_NAME" ] || { echo "::error::Variable RAILWAY_SERVICE_NAME is not set. See .env.staging.example §7."; missing=1; }
+          exit $missing
+
+      - name: Deploy the repository root as the build context
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          # `railway up` uploads this checkout and builds it with the
+          # Dockerfile named in railway.json, from the repository root — the
+          # same context CI's docker job builds. The build, the migration
+          # (railway.json's preDeployCommand) and the health check all happen
+          # on Railway; `--detach` returns once the deployment is accepted,
+          # which is why the verification step below is not optional.
+          npx -y @railway/cli@latest up --service "${{ vars.RAILWAY_SERVICE_NAME }}" --detach
+
+      - name: Wait for staging to answer its own liveness probe
+        env:
+          HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+        run: |
+          set -uo pipefail
+          if [ -z "${HEALTH_URL}" ]; then
+            echo "::error::Variable STAGING_HEALTH_URL is not set — this run cannot prove anything about the deployment it just made."
+            exit 1
+          fi
+          # Up to ten minutes: a first deploy builds the image, runs the
+          # migration and only then starts serving.
+          for attempt in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$HEALTH_URL" || echo 000)
+            echo "attempt $attempt: $code"
+            if [ "$code" = "200" ]; then
+              echo "Staging answered 200 on its liveness probe." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Staging never answered 200 at STAGING_HEALTH_URL. The deployment may have failed, or the migration step may have failed — check the Railway deploy log before retrying."
+          exit 1
+
+      - name: What this run did and did not prove
+        if: always()
+        run: |
+          {
+            echo "## Staging deploy"
+            echo ""
+            echo "PROVEN by this run: every CI gate passed; the image built on Railway;"
+            echo "the pre-deploy migration exited zero; and the deployment answered 200 on"
+            echo "\`/health/live\`."
+            echo ""
+            echo "NOT PROVEN by this run: that a login works, that the admin dashboard can"
+            echo "reach the API, that Redis-backed throttling behaves under load, or that"
+            echo "push delivery works. Those are DEPLOY_STAGING.md §9's checks and a human"
+            echo "runs them."
+          } >> "$GITHUB_STEP_SUMMARY"

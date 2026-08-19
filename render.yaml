@@ -1,0 +1,117 @@
+# =============================================================================
+# ABNY — STAGING ON RENDER. THE ALTERNATIVE, NOT THE PRIMARY.
+#
+# The primary host is Railway (`railway.json`); the argument for it, and the
+# argument for keeping this file, are both in DEPLOY_STAGING.md §2. In short:
+# this file exists so that "we are on Railway" is a choice with a stated exit,
+# not a lock-in. Everything ABNY needs from a host — a managed PostgreSQL, a
+# managed Redis-compatible store, a Docker build, a release step that runs
+# BEFORE traffic, and an HTTP health probe — Render also has, under different
+# names.
+#
+# NOT DEPLOYED, NOT PARSED BY RENDER. This file is STATIC VERIFIED: valid
+# YAML, every referenced path exists, every service cross-reference resolves
+# inside this file. No Render account exists to validate it against, so treat
+# the first `render.yaml` sync as the moment this is proven — see
+# DEPLOY_STAGING.md §11 for the list of what stays unverified until then.
+#
+# TWO THINGS TO CHECK BEFORE YOUR FIRST SYNC:
+#   1. `type: keyvalue` is Render's CURRENT name for its Redis-compatible
+#      service. Older blueprints spell it `type: redis`. If your account's
+#      parser rejects one, the other is the same service — that is the only
+#      line to change, in both places it appears.
+#   2. `preDeployCommand` requires a paid instance type. On a free instance
+#      Render ignores it, and migrations would then never run — which is the
+#      one failure this whole file is arranged to prevent. Pick a paid
+#      instance type in the dashboard, or run the migration manually as
+#      DEPLOY_STAGING.md §5 describes, and never let it run "sometimes".
+#
+# NO PLAN IS NAMED ANYWHERE IN THIS FILE. Plan names and prices change; a plan
+# written from memory is an invented fact. Choose them in the dashboard
+# against Render's current pricing page.
+# =============================================================================
+
+databases:
+  - name: abny-postgres-staging
+    databaseName: abny_staging
+    user: abny_staging
+    region: frankfurt
+    postgresMajorVersion: "15"
+    ipAllowList: [] # no public access; only Render services reach it
+
+services:
+  # ---------------------------------------------------------------------------
+  # Redis. Used by: the throttler store (`RedisThrottlerStorage`), the
+  # scheduler's job leases, and the readiness probe. The app FAILS READINESS
+  # without it — it is not optional infrastructure.
+  # ---------------------------------------------------------------------------
+  - type: keyvalue
+    name: abny-redis-staging
+    region: frankfurt
+    ipAllowList: []
+    maxmemoryPolicy: noeviction # throttler counters and job leases are state, not cache
+
+  # ---------------------------------------------------------------------------
+  # The API.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: abny-backend-staging
+    runtime: docker
+    region: frankfurt
+    dockerfilePath: ./apps/backend/Dockerfile
+    # The build context is the repository root, matching the Dockerfile's
+    # header, docker-compose.yml and CI.
+    dockerContext: .
+    # /health/ready checks PostgreSQL and Redis and answers 503 when either is
+    # down, so a container that cannot serve is never given traffic. It is
+    # excluded from the `api/v1` prefix in the application itself, so this path
+    # does not move when the API version does.
+    healthCheckPath: /health/ready
+    # MIGRATIONS RUN HERE, AND ONLY HERE. Render runs this to completion, from
+    # this same image, before the new version receives any traffic; a non-zero
+    # exit fails the deploy and leaves the previous version serving. See
+    # DEPLOY_STAGING.md §5 for why this is not in the container's CMD.
+    preDeployCommand: npx prisma migrate deploy
+    # Deploys are triggered deliberately (by the GitHub workflow, after the
+    # test gates), never by a push landing on a branch.
+    autoDeploy: false
+    envVars:
+      # ---- wired by Render from the resources above -------------------------
+      - key: DATABASE_URL
+        fromDatabase:
+          name: abny-postgres-staging
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: abny-redis-staging
+          type: keyvalue
+          property: connectionString
+
+      # ---- safe defaults ----------------------------------------------------
+      - key: NODE_ENV
+        value: production
+      # PORT is injected by Render; main.ts falls back to 3000.
+
+      # ---- OPERATOR MUST SUPPLY (sync: false = "ask me in the dashboard") ---
+      # Every one of these is a named placeholder. Nothing is generated,
+      # guessed or defaulted here. The generation commands and the meaning of
+      # each are in `.env.staging.example`.
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: LOCATION_ENCRYPTION_KEY
+        sync: false
+      - key: INTERNAL_ADMIN_API_KEY
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      # Optional integrations. Left as prompts rather than removed, so that
+      # "not configured" is a visible decision instead of a forgotten one —
+      # each degrades to a documented safe no-op when empty.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false

@@ -118,8 +118,12 @@ npm install
 Create `apps/admin-dashboard/.env.local` containing one line:
 
 ```ini
-VITE_API_BASE_URL=http://localhost:3000
+VITE_API_BASE_URL=http://localhost:3000/api/v1
 ```
+
+**The `/api/v1` suffix is not optional.** Every backend route except the two
+health probes is served under that prefix; without it the dashboard's first
+call 404s and every panel reports an error.
 
 Then, leaving this terminal running:
 
@@ -261,7 +265,7 @@ demonstrates nothing — but no row is findable without also finding the word
 | --- | --- |
 | Backend exits with `Missing required environment variable(s)` | Step 2 — a value in `apps/backend/.env` is still empty. |
 | Backend exits mentioning `JWT_ACCESS_SECRET` | The two JWT secrets must be different and at least 32 characters each. |
-| Dashboard loads, but every panel errors | The backend is not running, or `VITE_API_BASE_URL` is wrong. Restart `npm run dev` after editing `.env.local` — Vite only reads it at startup. |
+| Dashboard loads, but every panel errors | The backend is not running, or `VITE_API_BASE_URL` is wrong — the most common form of wrong is a missing `/api/v1` suffix. Restart `npm run dev` after editing `.env.local` — Vite only reads it at startup. |
 | The unlock screen keeps coming back | The key does not match `INTERNAL_ADMIN_API_KEY`. Restart the backend after editing `.env`. |
 | `docker compose` says port 5432 is in use | Another Postgres is already running locally. Stop it, or change the host port in `docker-compose.yml`. |
 | Login fails right after registering | The database has no tables — step 3 was skipped or failed. |

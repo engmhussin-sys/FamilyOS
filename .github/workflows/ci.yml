@@ -10,6 +10,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Callable, so the staging deploy runs THESE gates rather than a second copy
+  # of them. `.github/workflows/deploy-staging.yml` calls this workflow and
+  # deploys only if `ci-gate` below reports success. Adding this trigger
+  # changes nothing about how the workflow runs on push or on a pull request.
+  workflow_call:
 
 jobs:
   backend:
@@ -160,7 +165,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build production image
-        run: docker build -t afdc-backend:ci apps/backend
+        # Context is the repository ROOT — see apps/backend/Dockerfile's
+        # header for why. The deploy hosts build it exactly this way, so a
+        # green job here is evidence about the image staging will run.
+        run: docker build -f apps/backend/Dockerfile -t afdc-backend:ci .
       # Not pushed anywhere from CI — this job's only job is to catch a
       # broken Dockerfile before it reaches a deploy step, per Sprint 9's
       # "Docker Production Readiness" requirement.
