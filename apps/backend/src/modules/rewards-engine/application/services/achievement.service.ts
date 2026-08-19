@@ -18,6 +18,7 @@ import {
 } from '../../../../shared/rewards/program-taxonomy';
 import {
   MAX_VERIFICATION_ATTEMPTS,
+  isVerificationMethodAvailable,
   type VerificationInput,
   type VerificationMethod,
   type VerificationOutcome,
@@ -300,6 +301,16 @@ export class AchievementService {
         method === 'ASSESSMENT_SCORE'
           ? await this.repo.latestAssessmentScore(childId, String(config.subject ?? program.category))
           : null,
+      /**
+       * READ FROM DATA, NEVER HARD-CODED HERE. `UNAVAILABLE_VERIFICATION_METHODS`
+       * lists `ASSESSMENT_SCORE` because nothing in `src/` writes a
+       * `LearningAssessment`, so the read above can only ever return `null`.
+       * `test/rewards/assessment-score-producer.guard.spec.ts` deletes that
+       * entry by failing the build the day a writer lands, and this expression
+       * then becomes `true` with no edit here — which is the whole point of it
+       * being an expression instead of a boolean someone has to remember.
+       */
+      assessmentSourceAvailable: isVerificationMethodAvailable('ASSESSMENT_SCORE'),
       requiresParentApproval: program.requiresParentApproval === true,
     };
 

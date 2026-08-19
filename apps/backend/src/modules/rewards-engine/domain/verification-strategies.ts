@@ -21,6 +21,7 @@ import {
   DEFAULT_PASS_SCORE_PERCENT,
   FOREGROUND_TOLERANCE_MINUTES,
   VERIFICATION_MATRIX,
+  verificationMethodUnavailability,
   type VerificationInput,
   type VerificationMethod,
   type VerificationOutcome,
@@ -153,8 +154,40 @@ export const COMPLETION_ARTIFACT: VerificationStrategy = (input) =>
 /**
  * REUSE: the score comes from the existing `LearningAssessment` model, read by
  * the engine before the strategy runs. No new score table was created for this.
+ *
+ * WHY THE FIRST BRANCH ESCALATES INSTEAD OF FAILING, AND WHY IT IS NOT A ZERO.
+ *
+ * `LearningAssessment` has no writer anywhere in `src/`, so `latestAssessment
+ * Score` returns `null` for every child, forever. Before this branch existed
+ * that `null` fell through to `ASSESSMENT_NOT_FOUND` — a FAILED verdict reading
+ * «لا يوجد تقييم مسجَّل لهذه المادة بعد», observed three times in a row against
+ * a real database, burning the child's three attempts on a condition no code
+ * path in this product can satisfy. That is a punitive answer to a defect the
+ * child had no part in (CONTEXT §3 principle 7), and a parent whose program was
+ * created before the create-time guard landed still owns one.
+ *
+ * Three candidates: FAIL (what it did — blames the child), score it zero or
+ * from a proxy (a reward the child did not earn, explicitly refused), or hand
+ * it to the only party who can actually judge the work. ESCALATED is the third,
+ * and it is what this file already does wherever the server cannot produce the
+ * input it would need — `CODE_CHALLENGE` since B5, `RECITATION_SUBMISSION` from
+ * the start. No grant, no crash, no invented score, and the child's effort is
+ * not thrown away.
+ *
+ * `assessmentSourceAvailable` is the ratchet. It is read from
+ * `UNAVAILABLE_VERIFICATION_METHODS`, whose `ASSESSMENT_SCORE` entry a build
+ * failure deletes the day a writer lands; this branch then stops being
+ * reachable and `ASSESSMENT_NOT_FOUND` below — the honest answer for a child
+ * who simply has not sat the assessment — becomes live again by itself.
  */
 export const ASSESSMENT_SCORE: VerificationStrategy = (input) => {
+  if (!input.assessmentSourceAvailable) {
+    return escalate(
+      'ASSESSMENT_SOURCE_UNAVAILABLE',
+      verificationMethodUnavailability('ASSESSMENT_SCORE')?.childMessageAr ??
+        'هذه المهمة مربوطة بدرجة تقييم دراسي غير متاحة بعد. أرسلنا محاولتك إلى ولي الأمر.',
+    );
+  }
   if (input.assessmentScorePercent === null) {
     return fail('ASSESSMENT_NOT_FOUND', 'لا يوجد تقييم مسجَّل لهذه المادة بعد.');
   }

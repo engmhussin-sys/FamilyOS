@@ -10,6 +10,7 @@ import {
   DEFAULT_PASS_SCORE_PERCENT,
   MAX_VERIFICATION_ATTEMPTS,
   SELF_CHECK_ALLOWED_CATEGORIES,
+  UNAVAILABLE_VERIFICATION_METHODS,
   VERIFICATION_MATRIX,
   VERIFICATION_METHODS,
   canAutoApprove,
@@ -27,6 +28,14 @@ const base = (over: Partial<VerificationInput> = {}): VerificationInput => ({
   foregroundMinutes: 21,
   submission: {},
   assessmentScorePercent: null,
+  // The builder's default is the POST-RATCHET world — an assessment score
+  // source that exists — so the threshold blocks below keep testing the
+  // arithmetic they were written for. Production passes `false` today, because
+  // nothing writes `LearningAssessment`; that wiring is asserted separately in
+  // `assessment-score-producer.guard.spec.ts` and end to end in
+  // `assessment-strategy.e2e.spec.ts`, and the `false` branch has its own test
+  // below rather than being the default nobody looks at.
+  assessmentSourceAvailable: true,
   requiresParentApproval: false,
   ...over,
 });
@@ -159,6 +168,47 @@ describe('QUIZ / ASSESSMENT_SCORE — the threshold', () => {
     expect(verify(base({ method: 'ASSESSMENT_SCORE', assessmentScorePercent: null })).reasonCode).toBe(
       'ASSESSMENT_NOT_FOUND',
     );
+  });
+
+  /**
+   * THE TWO MEANINGS OF `null`, WHICH USED TO BE ONE.
+   *
+   * «this child has not sat the assessment» and «this product cannot produce an
+   * assessment score at all» both arrive as `assessmentScorePercent === null`,
+   * and the strategy answered both with FAILED — telling a child they failed
+   * for a condition no code path could satisfy, three times, until their
+   * attempts ran out. The second meaning is now carried by
+   * `assessmentSourceAvailable` and answered by escalating to the only party
+   * who can judge the work.
+   */
+  it('an ASSESSMENT program whose score source has NO producer escalates — it never fails the child', () => {
+    const out = verify(
+      base({ method: 'ASSESSMENT_SCORE', assessmentScorePercent: null, assessmentSourceAvailable: false }),
+    );
+    expect(out.result).toBe('ESCALATED');
+    expect(out.reasonCode).toBe('ASSESSMENT_SOURCE_UNAVAILABLE');
+    // NOT A ZERO AND NOT A PROXY. A score the child did not earn is worse than
+    // no score, so there is no number here at all.
+    expect(out.scorePercent).toBeNull();
+    expect(out.messageAr).toBe(UNAVAILABLE_VERIFICATION_METHODS.ASSESSMENT_SCORE!.childMessageAr);
+    // Arabic, and non-punitive: it does not say the child failed.
+    expect(out.messageAr).toMatch(/[؀-ۿ]/);
+    expect(out.messageAr).not.toMatch(/فشل|رسبت/);
+  });
+
+  it('the unavailable branch cannot be reached by a real score — a real score is still judged', () => {
+    // Belt and braces on the ORDER of the two branches: if availability were
+    // checked after the score, a landed producer would be ignored.
+    const out = verify(
+      base({
+        method: 'ASSESSMENT_SCORE',
+        assessmentScorePercent: 90,
+        passScorePercent: 70,
+        assessmentSourceAvailable: true,
+      }),
+    );
+    expect(out.result).toBe('PASSED');
+    expect(out.scorePercent).toBe(90);
   });
 });
 

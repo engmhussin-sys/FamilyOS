@@ -199,6 +199,76 @@ export function canAutoApprove(method: VerificationMethod): boolean {
 }
 
 /**
+ * ============================================================================
+ * METHODS WHOSE SCORE SOURCE HAS NO PRODUCER — a method that cannot pay out.
+ * ============================================================================
+ *
+ * `canAutoApprove` answers «may the server decide this alone?». It cannot
+ * answer the prior question: «can the input this method reads ever exist?».
+ * `ASSESSMENT_SCORE` is the case that proved the difference. Its score comes
+ * from `LearningAssessment` (`latestAssessmentScore`), and NOTHING in `src/`
+ * writes a `LearningAssessment` row — `prisma-learning.repository.ts` creates
+ * `LearningSession` and stops there. The table is declared dormant in
+ * `test/architecture/dormant-schema.guard.spec.ts` for exactly this reason.
+ *
+ * MEASURED, NOT REASONED. A parent could create such a program and got 201;
+ * the child then submitted and was told, three times, «لا يوجد تقييم مسجَّل
+ * لهذه المادة بعد» — a FAILED verdict for a condition no code path in this
+ * product can satisfy — before attempt exhaustion escalated it. Zero ledger
+ * entries, and nothing anywhere said the strategy was unavailable.
+ *
+ * SO IT IS DATA, AND THE DATA IS A RATCHET. `test/rewards/assessment-score-
+ * producer.guard.spec.ts` scans `src/` for a writer of the score source named
+ * below and FAILS THE BUILD demanding this entry be deleted the day one lands.
+ * The guard comes down by itself; nobody has to remember it.
+ *
+ * WHAT THIS IS NOT: it is not a proxy score. No session count, no time spent,
+ * no streak is substituted for an assessment a child never took — a score the
+ * child did not earn is worse than no score.
+ */
+export interface UnavailableMethodSpec {
+  readonly method: VerificationMethod;
+  /** The Prisma model the method's input is read from. The guard scans `src/`
+   * for a WRITER of this model; a reader is not a writer. */
+  readonly scoreSourceModel: string;
+  /** The reader that goes on returning nothing until a writer exists. */
+  readonly readerReference: string;
+  readonly code: string;
+  /** What a PARENT is told when they try to configure it. */
+  readonly messageAr: string;
+  /** What a CHILD is told when a program configured BEFORE this guard is
+   * evaluated. Non-punitive: it never says the child failed. */
+  readonly childMessageAr: string;
+}
+
+export const UNAVAILABLE_VERIFICATION_METHODS: Readonly<
+  Partial<Record<VerificationMethod, UnavailableMethodSpec>>
+> = {
+  ASSESSMENT_SCORE: {
+    method: 'ASSESSMENT_SCORE',
+    scoreSourceModel: 'LearningAssessment',
+    readerReference:
+      'prisma-reward-program.repository.ts latestAssessmentScore(childId, subject)',
+    code: 'VERIFICATION_METHOD_UNAVAILABLE',
+    messageAr:
+      'طريقة «درجة تقييم دراسي» غير متاحة حاليًا: لا يوجد في التطبيق أي شاشة أو خدمة تسجّل درجة تقييم دراسي، فلن تصل أي نتيجة ولن يحصل الطفل على المكافأة أبدًا. اختر «اختبار قصير» أو «تأكيد ولي الأمر» بدلًا منها.',
+    childMessageAr:
+      'هذه المهمة مربوطة بدرجة تقييم دراسي، وهي ميزة غير متاحة بعد — والخطأ ليس منك. أرسلنا محاولتك إلى ولي الأمر ليقرّر بنفسه.',
+  },
+};
+
+/** The spec explaining why a method cannot be used, or `null` when it can. */
+export function verificationMethodUnavailability(
+  method: VerificationMethod,
+): UnavailableMethodSpec | null {
+  return UNAVAILABLE_VERIFICATION_METHODS[method] ?? null;
+}
+
+export function isVerificationMethodAvailable(method: VerificationMethod): boolean {
+  return verificationMethodUnavailability(method) === null;
+}
+
+/**
  * The categories on which `SELF_CHECK` is acceptable — "low-trust activities
  * only", as data. Everything else (Quran, Hadith, Fiqh, every academic
  * category) needs real evidence, and asking for it is not punitive: it is what
@@ -247,6 +317,19 @@ export interface VerificationInput {
   /** Reused `LearningAssessment.scorePercent`, when the method is
    * ASSESSMENT_SCORE. */
   readonly assessmentScorePercent: number | null;
+  /**
+   * REQUIRED, not optional-with-a-default, and deliberately so: an optional
+   * flag would mean an un-updated caller silently gets the pre-guard behaviour,
+   * which is how a control stops being one (the same argument
+   * `foregroundMinutes` makes about falling back to wall clock).
+   *
+   * `false` distinguishes «this product cannot produce an assessment score at
+   * all» from «this child has not taken one yet» — two states that both arrive
+   * as `assessmentScorePercent === null` and deserve opposite answers. The
+   * caller reads it from `UNAVAILABLE_VERIFICATION_METHODS`, so it flips to
+   * `true` on its own the day a `LearningAssessment` writer lands.
+   */
+  readonly assessmentSourceAvailable: boolean;
   /** Program-level override — a parent can force a human decision on anything. */
   readonly requiresParentApproval: boolean;
 }
