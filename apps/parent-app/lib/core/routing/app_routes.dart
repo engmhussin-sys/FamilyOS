@@ -54,4 +54,15 @@ class AppRoutes {
   // constructor argument. Both forms live in `deep_link_router.dart`, and why
   // one screen has two kinds is argued there.
   static const safety = '/safety';
+
+  // --- the parent's screen-time surface ---
+  //
+  // A NAMED route, and it passes the same test `safety` above does:
+  // `ScreenTimeChildrenScreen` is genuinely constructible with NO arguments.
+  // That is the whole reason it exists as a separate screen from
+  // `ScreenTimeOverviewScreen`, whose `childId` is required — an id-less
+  // `abny://screen-time` names no child, and the landing screen is what
+  // resolves that from the family's own data rather than from a guess. See
+  // that screen's header for the decision.
+  static const screenTime = '/screen-time';
 }

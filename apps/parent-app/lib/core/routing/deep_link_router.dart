@@ -40,17 +40,34 @@ import 'deep_link.dart';
 ///     have somewhere to go.
 ///   * `child/<childId>` → `ChildDetailScreen(childId: …)`, reading
 ///     `GET /children/:childId`.
-///   * `screen-time` → the SAME `SafetyScreen`, by name, and this is the one
-///     that needs arguing rather than asserting. It is NOT this client
-///     reinterpreting a surface: `safetyDestination` in
+///   * `screen-time` → `ScreenTimeChildrenScreen`, by name. THIS ONE WAS
+///     RETARGETED, and the change is worth stating rather than burying.
+///
+///     It used to resolve to the SAME `SafetyScreen`, and the argument for
+///     that was sound at the time: `safetyDestination` in
 ///     `notification-destination.ts` IS `idLink('safety', alertId,
-///     surfaceLink('screen-time'))` — the server itself defines
-///     `abny://screen-time` as THE ID-LESS FORM OF `safety`, and its own
-///     comment calls it «the screen-time & protection surface, which is where
-///     a parent actually acts on every one of these four alerts». Since no
-///     producer carries an `alertId` today, `screen-time` is in fact the ONLY
-///     form any of the four device alerts is ever emitted as. Routing it
-///     anywhere else would leave the gap exactly where it was.
+///     surfaceLink('screen-time'))`, so the server does treat
+///     `abny://screen-time` as the id-less form of `safety` — and since no
+///     producer carries an `alertId` today, that is the only form the four
+///     device alerts are ever emitted as. But the reason it landed there was
+///     that THE PARENT APP HAD NO SCREEN-TIME SCREEN AT ALL: no
+///     `features/screen_time/` directory existed, while the backend had been
+///     serving a complete Screen Time API for several sprints. Sending a link
+///     named `screen-time` to a safety feed was the best available answer to a
+///     missing screen, not a statement about what the link means.
+///
+///     The screen exists now, so the surface the link is NAMED for is the
+///     truthful landing — and it is also where `DAILY_GOAL_COMPLETED` and
+///     `HYDRATION_REMINDER`, which name `screen-time` directly and have
+///     nothing to do with safety, were always trying to go.
+///
+///     WHAT THE SAFETY FEED LOSES: nothing that was reachable stops being
+///     reachable. `abny://safety/<alertId>` still opens `SafetyScreen` with the
+///     alert selected, `AppRoutes.safety` is still registered in `main.dart`,
+///     and `dashboard_home_screen.dart` still links to it. The four device
+///     alerts also still arrive in the inbox, which is where their own text
+///     is — a tap that lands on screen time now lands on the surface where a
+///     parent CHANGES something, rather than on the list of what happened.
 ///
 /// WHAT [DeepLinkRouteKind.unavailable] STILL MEANS, and it is now two
 /// surfaces rather than five:
@@ -171,10 +188,20 @@ class DeepLinkRouter {
             : DeepLinkRoute.page((_) => SafetyScreen(alertId: id));
 
       case DeepLinkSurface.screenTime:
-        // THE ID-LESS FORM OF `safety`, by the server's own definition — see
-        // the header. This is the form all four device alerts are actually
-        // emitted as today.
-        return DeepLinkRoute.named(AppRoutes.safety);
+        // RETARGETED. It used to land on `SafetyScreen`, because the parent app
+        // had no screen-time screen at all — see the header for what changed
+        // and why the safety feed did not lose anything by it.
+        //
+        // A NAMED route, and it is `ScreenTimeChildrenScreen` rather than the
+        // overview itself for a reason that is the same one `progress` and
+        // `coach` are still `unavailable` for: this surface's every backend
+        // route is `/children/:childId/…`, and an id-less link names no child.
+        // `resolve` stays a pure function of the DESTINATION; the screen the
+        // NAME resolves to (`ScreenTimeChildrenScreen`, registered in
+        // `main.dart`) is the one that answers «which child» from the
+        // FAMILY'S OWN DATA — the list when there are several, that child's overview when
+        // there is exactly one, and an honest empty state when there are none.
+        return DeepLinkRoute.named(AppRoutes.screenTime);
 
       case DeepLinkSurface.child:
         return id == null

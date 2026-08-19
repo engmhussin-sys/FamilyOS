@@ -8,7 +8,18 @@ import '../../family/presentation/child_detail_screen.dart';
 import '../domain/safety_event.dart';
 
 /// THE PARENT'S SAFETY & PROTECTION SURFACE — the screen `abny://safety/<id>`
-/// and `abny://screen-time` have been pointing at.
+/// points at.
+///
+/// IT IS NO LONGER THE DESTINATION OF `abny://screen-time`, and this comment
+/// used to say it was. That was true only because the parent app had no
+/// screen-time screen at all: `features/screen_time/` did not exist, while the
+/// backend had been serving a complete Screen Time API for several sprints, so
+/// a link named `screen-time` landed here as the best available answer to a
+/// missing screen. It now resolves to `ScreenTimeChildrenScreen` — see
+/// `deep_link_router.dart`'s header for the full argument, including what this
+/// screen does NOT lose by it (`abny://safety/<alertId>` still opens it with
+/// the alert selected, `AppRoutes.safety` is still registered, and the
+/// dashboard still links here).
 ///
 /// WHAT WAS MISSING, MEASURED. Four notification types reach a parent today —
 /// `PROTECTION_BYPASS_ATTEMPT`, `ACCESSIBILITY_DISABLED`, `POLICY_VIOLATION`
@@ -38,7 +49,11 @@ import '../domain/safety_event.dart';
 /// CODE on the server and is NOT EMITTED TODAY: `safetyDestination` in
 /// `notification-destination.ts` interpolates `facts.alertId`, and no producer
 /// carries one, so every one of the four alerts currently degrades to the
-/// id-less `abny://screen-time`. When an id does start arriving, the only alert
+/// id-less `abny://screen-time` — which, since that link was retargeted, no
+/// longer lands here. Those four taps reach the inbox (where the alert's own
+/// text is) or the screen-time surface (where a parent can act); this screen is
+/// reached from the dashboard and from an id-bearing link. When an id does
+/// start arriving, the only alert
 /// row a parent can read is the notification itself, so [alertId] is matched
 /// against `notifications.id`. If it matches nothing — an old alert that has
 /// scrolled past the server's 100-row window, or an id from a different

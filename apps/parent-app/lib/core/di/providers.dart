@@ -38,6 +38,12 @@ import '../../features/rewards/application/program_draft_controller.dart';
 import '../../features/rewards/application/programs_controller.dart';
 import '../../features/rewards/application/suggestions_controller.dart';
 import '../../features/rewards/data/reward_programs_repository.dart';
+import '../../features/screen_time/api/screen_time_api.dart';
+import '../../features/screen_time/application/app_block_rules_controller.dart';
+import '../../features/screen_time/application/screen_time_overview_controller.dart';
+import '../../features/screen_time/application/screen_time_policy_editor_controller.dart';
+import '../../features/screen_time/data/screen_time_repository.dart';
+import '../../features/screen_time/domain/app_block_rule.dart';
 import '../../features/rewards/domain/program_catalogue.dart';
 import '../../features/rewards/domain/reward_program.dart';
 import '../state/ui_state.dart';
@@ -255,6 +261,59 @@ final childRewardsControllerProvider = StateNotifierProvider.autoDispose
 final suggestionsControllerProvider = StateNotifierProvider.autoDispose
     .family<SuggestionsController, SuggestionsState, String>(
   (ref, childId) => SuggestionsController(ref.watch(rewardProgramsRepositoryProvider), childId),
+);
+
+// ---------------------------------------------------------------------------
+// THE PARENT'S SCREEN-TIME SURFACE.
+//
+// Wired into the EXISTING container, on the EXISTING `apiClientProvider`, for
+// the same reason the F4 block above is: no second HTTP client, no second auth
+// path, no second refresh loop. The backend has served these seven routes for
+// several sprints and this app had no consumer for any of them — no
+// `features/screen_time/` directory existed at all, so `abny://screen-time`
+// fell through to the safety feed and a headline feature was unreachable.
+// ---------------------------------------------------------------------------
+
+final screenTimeApiProvider = Provider<ScreenTimeApi>(
+  (ref) => ScreenTimeApi(ref.watch(apiClientProvider)),
+);
+
+final screenTimeRepositoryProvider = Provider<ScreenTimeRepository>(
+  (ref) => ScreenTimeRepository(ref.watch(screenTimeApiProvider)),
+);
+
+/// `family` on the childId and `autoDispose`, for the same reason every other
+/// id-scoped controller in this file is — and one more that is specific to
+/// this surface: the EFFECTIVE allowance is computed at request time from
+/// grants that expire on their own, so a cached answer from an hour ago is a
+/// different number from the truth. Nothing here may outlive the screen.
+final screenTimeOverviewControllerProvider = StateNotifierProvider.autoDispose
+    .family<ScreenTimeOverviewController, UiState<ScreenTimeOverview>, String>(
+  (ref, childId) =>
+      ScreenTimeOverviewController(ref.watch(screenTimeRepositoryProvider), childId),
+);
+
+final screenTimePolicyEditorControllerProvider = StateNotifierProvider.autoDispose
+    .family<ScreenTimePolicyEditorController, PolicyEditorState, String>(
+  (ref, childId) => ScreenTimePolicyEditorController(
+    ref.watch(screenTimeRepositoryProvider),
+    childId,
+  ),
+);
+
+final appBlockRulesControllerProvider = StateNotifierProvider.autoDispose
+    .family<AppBlockRulesController, AppBlockRulesState, String>(
+  (ref, childId) =>
+      AppBlockRulesController(ref.watch(screenTimeRepositoryProvider), childId),
+);
+
+/// The picker's catalogue. `autoDispose` because the answer is «what this
+/// device reported», which a sync can change between two openings of the same
+/// sheet — and because an empty answer must be RE-ASKED rather than remembered.
+final childAppCatalogueControllerProvider = StateNotifierProvider.autoDispose
+    .family<ChildAppCatalogueController, UiState<List<AppCatalogEntry>>, String>(
+  (ref, childId) =>
+      ChildAppCatalogueController(ref.watch(screenTimeRepositoryProvider), childId),
 );
 
 /// The family's children, for the wizard's first step and every

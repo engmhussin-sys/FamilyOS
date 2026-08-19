@@ -7,6 +7,7 @@ import '../../../core/localization/locale_controller.dart';
 import '../../life_intelligence/presentation/coaching_screen.dart';
 import '../../life_intelligence/presentation/learning_progress_screen.dart';
 import '../../life_intelligence/presentation/wellbeing_screen.dart';
+import '../../screen_time/presentation/screen_time_overview_screen.dart';
 import '../data/child_profile_repository.dart';
 
 /// ONE CHILD — THE SCREEN `abny://child/<childId>` HAS BEEN POINTING AT.
@@ -18,24 +19,33 @@ import '../data/child_profile_repository.dart';
 /// look at». A link to a child therefore fell back to the inbox.
 ///
 /// ---------------------------------------------------------------------------
-/// WHY IT HOSTS EXACTLY THREE ONWARD SCREENS, AND WHAT THAT DOES NOT FIX.
+/// WHY IT HOSTS FOUR ONWARD SCREENS, AND WHAT THAT DOES NOT FIX.
 ///
-/// `progress`, `coach` and `screen-time` are the three surfaces whose screens
-/// EXIST (`LearningProgressScreen`, `CoachingScreen`, `WellbeingScreen`) and
-/// which cannot be opened from a link because every one of them requires
-/// `childId` AND `childName`, and no `abny://` link carries either — the server
-/// pins `notifications.data` identifier-free on purpose. This screen is the
-/// host that supplies both: once a parent is on a child, all three are one tap
-/// away with real arguments.
+/// `progress`, `coach` and `screen-time` are surfaces whose screens EXIST
+/// (`LearningProgressScreen`, `CoachingScreen`, `WellbeingScreen`, and now
+/// `ScreenTimeOverviewScreen`) and which cannot be opened from a link because
+/// every one of them requires `childId` AND `childName`, and no `abny://` link
+/// carries either — the server pins `notifications.data` identifier-free on
+/// purpose. This screen is the host that supplies both: once a parent is on a
+/// child, all four are one tap away with real arguments.
 ///
 /// IT DOES NOT, HOWEVER, MAKE `abny://progress` OR `abny://coach` OPENABLE, and
 /// pretending otherwise would be the client inventing a child the server did
 /// not name. `DeepLinkRouter.resolve` is a pure function of the DESTINATION, and
 /// a destination with no id names no child. The two remain `unavailable` and
-/// land on the inbox, honestly. (`abny://screen-time` is a different case and
-/// IS wired — see the router's header: the server emits it as the ID-LESS FORM
-/// OF `safety` itself, so it means «the protection surface», not «this child's
-/// wellbeing page».)
+/// land on the inbox, honestly.
+///
+/// `abny://screen-time` is the one case that IS wired, and it is wired without
+/// breaking that rule: it lands on `ScreenTimeChildrenScreen`, which resolves
+/// «which child» from the FAMILY'S OWN DATA — the list when there are several,
+/// that child's overview when there is exactly one. The router still invents
+/// nothing; the screen asks. (Until this feature existed the same link went to
+/// `SafetyScreen`, because there was no screen-time screen to send it to.)
+///
+/// THE TWO SCREEN-TIME TILES ARE NOT THE SAME THING, and both belong here.
+/// `WellbeingScreen` READS — how the device has been used. The screen-time tile
+/// below WRITES — the daily limit, bedtime and blocked apps the device
+/// enforces. A parent who has just read the first usually wants the second.
 ///
 /// ---------------------------------------------------------------------------
 /// WHAT IT SHOWS, AND WHAT IT REFUSES TO. `GET /children/:childId` returns the
@@ -162,12 +172,28 @@ class _ChildBody extends ConsumerWidget {
           ),
         ),
         _OnwardTile(
-          icon: Icons.phonelink_lock_outlined,
+          icon: Icons.insights_outlined,
           title: t('wellbeing.title'),
-          body: t('childDetail.screenTimeHint'),
+          body: t('childDetail.wellbeingHint'),
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute<void>(
               builder: (_) => WellbeingScreen(
+                childId: profile.id,
+                childName: name,
+              ),
+            ),
+          ),
+        ),
+        // THE ENTRY POINT THIS FEATURE DID NOT HAVE. The backend's Screen Time
+        // API had no parent screen at all until now; this tile and
+        // `abny://screen-time` are the two ways into it.
+        _OnwardTile(
+          icon: Icons.phonelink_lock_outlined,
+          title: t('screenTime.title'),
+          body: t('childDetail.screenTimeHint'),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => ScreenTimeOverviewScreen(
                 childId: profile.id,
                 childName: name,
               ),

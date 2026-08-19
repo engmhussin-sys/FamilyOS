@@ -31,6 +31,7 @@ import 'features/rewards/presentation/fulfilments_screen.dart';
 import 'features/rewards/presentation/pending_achievements_screen.dart';
 import 'features/rewards/presentation/programs_list_screen.dart';
 import 'features/safety/presentation/safety_screen.dart';
+import 'features/screen_time/presentation/screen_time_children_screen.dart';
 
 void main() {
   // F2 (audit MA-004) — identical guard to the child app's main(), for the
@@ -142,6 +143,11 @@ class ParentApp extends ConsumerWidget {
         // what qualifies it for this table; `abny://safety/<alertId>` is
         // pushed as a page instead. See `deep_link_router.dart`.
         AppRoutes.safety: (_) => const SafetyScreen(),
+        // The parent's screen-time surface, and where `abny://screen-time`
+        // now lands. Argument-free by design: the link names no child, so
+        // this screen resolves «which child» from the family's own data
+        // rather than taking an id it was never given. See its header.
+        AppRoutes.screenTime: (_) => const ScreenTimeChildrenScreen(),
       },
     );
   }
