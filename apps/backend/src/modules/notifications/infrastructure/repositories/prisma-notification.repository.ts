@@ -44,7 +44,10 @@ export class PrismaNotificationRepository implements INotificationRepository {
     return this.prisma.notification.count({ where: { userId, readAt: null } });
   }
 
-  async findRecentForChild(childId: string, since: Date): Promise<Array<{ type: string; priority: string; createdAt: Date }>> {
+  async findRecentForChild(
+    childId: string,
+    since: Date,
+  ): Promise<Array<{ type: string; priority: string; createdAt: Date; sourceEventId: string }>> {
     /**
      * SPRINT F1 (BILLING) — «NO CHILD» IS AN ANSWER, NOT A QUERY.
      *
@@ -68,7 +71,10 @@ export class PrismaNotificationRepository implements INotificationRepository {
 
     const rows = await this.prisma.notification.findMany({
       where: { childId, createdAt: { gte: since } },
-      select: { type: true, priority: true, createdAt: true },
+      // `source_event_id` is the CAUSAL KEY — see the port. Four columns, still
+      // no title and no body: the scorer needs to know THAT a notification
+      // happened, of what kind, when and FOR WHICH CAUSE, never what it said.
+      select: { type: true, priority: true, createdAt: true, sourceEventId: true },
       orderBy: { createdAt: 'desc' },
     });
     return rows;

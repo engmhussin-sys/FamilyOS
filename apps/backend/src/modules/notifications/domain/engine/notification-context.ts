@@ -35,7 +35,7 @@ import type { NotificationTrigger } from './notification-decision.types';
  * `NotificationLocale` from this file, so a VALUE import in either direction
  * would be a real module cycle. Both sides are erased at compile time. */
 import type { GoalUnitKind } from './notification-nouns';
-import type { ToneBand } from './notification-tone';
+import type { ToneAudience, ToneBand } from './notification-tone';
 
 /**
  * The two locales this product ships. Arabic FIRST — CONTEXT §1: «اللغة الأولى:
@@ -126,6 +126,26 @@ export interface RecentNotificationFact {
   readonly category: NotificationCategory;
   readonly priority: 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
   readonly createdAt: Date;
+  /**
+   * WHY: «have we said this recently» is a question about a CAUSE, and this
+   * codebase already has one name for a cause — `notification-source-key.ts`'s
+   * key, the same string the two unique indexes that make a redelivery a no-op
+   * are built on. Type alone cannot answer it: `DAILY_GOAL_COMPLETED` is the
+   * type of BOTH «you drank your water» and «you did your exercise», and a
+   * child who did both in one afternoon did two things, not one thing twice.
+   *
+   * IT IS THE KEY AS PERSISTED, in this audience's own key space — bare on
+   * `notifications`, `:child`-faceted on `child_messages` — so a comparison
+   * against `forAudience(context.event.sourceEventId, context.targetAudience)`
+   * is a comparison of two strings that were composed by the same function.
+   *
+   * OPTIONAL because a history fact assembled without it is a fact whose
+   * identity is simply unknown, and the honest reading of «unknown» is to fall
+   * back to the type proxy this term used before the field existed rather than
+   * to declare every unknown row a non-duplicate.
+   * NOT: a row id, a user id, a child id. The key is a cause, not a subject.
+   */
+  readonly sourceEventId?: string | null;
 }
 
 /**
@@ -265,6 +285,23 @@ export interface NotificationContext {
   /** WHY: routing (child messages vs parent notifications), history lookup and
    * the per-child caps. `null` for a family-level notification with no child. */
   readonly childId: string | null;
+  /**
+   * WHY: WHO THIS CANDIDATE IS ADDRESSED TO, resolved ONCE, by
+   * `resolveTargetAudience`, before anything reads a history row.
+   *
+   * It was a private method on the decision provider, computed AFTER the
+   * context was assembled — and the cost of that ordering was measured: the
+   * assembler, having no audience to scope by, filled `recentNotifications`
+   * from the PARENT's inbox for every candidate including the child's own, so
+   * a `REWARD_GRANTED_CHILD` scored 21 against a floor of 25 on a
+   * FATIGUE_PENALTY counted over `today=2/6` rows the child never saw. The
+   * audience is an INPUT to the history read, not an output of the decision.
+   *
+   * A `BOTH` type in `notification-class.ts` never arrives here as `BOTH`: the
+   * producer composes two candidates with two faceted keys, and each carries
+   * its own single-audience type.
+   */
+  readonly targetAudience: ToneAudience;
   /**
    * WHY: the tone band and the safety ceiling. An INTEGER YEAR, computed by
    * `businessAgeInYears` on the family's calendar.

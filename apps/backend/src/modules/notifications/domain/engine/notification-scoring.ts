@@ -34,7 +34,8 @@
  */
 
 import { quietHoursClassOf } from '../../../../shared/notifications/notification-class';
-import type { NotificationContext } from './notification-context';
+import { forAudience } from '../../../../shared/notifications/notification-source-key';
+import type { NotificationContext, RecentNotificationFact } from './notification-context';
 import type { NotificationPolicy, NotificationScoringConfig } from './notification-policy';
 import {
   NOTIFICATION_PENALTY_COMPONENTS,
@@ -382,19 +383,65 @@ function fatigue(
 function duplicate(context: NotificationContext, policy: NotificationPolicy): NotificationScoreComponent {
   const windowMs = policy.duplicateWindowMinutes * 60_000;
   const type = context.event.eventType;
+
+  /**
+   * ==========================================================================
+   * «THIS EXACT THING» IS A CAUSE, NOT A TYPE — and the difference became
+   * measurable the moment the history stopped being the wrong audience's.
+   * ==========================================================================
+   *
+   * This function's own paragraph above already names what makes a
+   * notification the same notification: `source_event_id`, the key the two
+   * unique indexes are built on. The implementation used the TYPE as a proxy
+   * for it, which was harmless only for as long as a CHILD candidate was being
+   * compared against the PARENT's inbox — where a child type never appears, so
+   * this term read zero for every child notification the product has ever
+   * produced.
+   *
+   * With the history audience-scoped, the proxy started answering. And it
+   * answered wrongly, measured against real PostgreSQL: a child who crossed
+   * their hydration goal and their activity goal in one afternoon produced two
+   * `DAILY_GOAL_COMPLETED` candidates with two different causes, and the
+   * second took −40 for being «the same type within 5m» — «أكملت هدف شرب
+   * الماء» and «أكملت هدف النشاط البدني» declared duplicates of each other,
+   * scored 0, and the child was told about one of the two things they did.
+   *
+   * THE COMPARISON IS THEREFORE ON IDENTITY, in the audience's own key space:
+   * `forAudience` composes the candidate's key exactly as `deliverNow`
+   * composed the stored one, facet and clamp included, so the two strings are
+   * the output of one function rather than of two conventions.
+   *
+   * A HISTORY ROW WITH NO KEY FALLS BACK TO THE TYPE PROXY. «Unknown identity»
+   * is not «different cause», and a fact assembled without a key must not be
+   * able to turn a genuine redelivery into a free notification.
+   *
+   * VOLUME IS NOT THIS TERM'S QUESTION. A type that legitimately repeats — a
+   * second reward on a busy afternoon — is ranked down by FATIGUE_PENALTY,
+   * which counts exactly that and counts it on three axes. Charging the same
+   * repetition twice, once as fatigue and once as duplication, is how a
+   * correct second notification comes to score below a floor.
+   */
+  const candidateKey = forAudience(context.event.sourceEventId, context.targetAudience);
+  const isSameCause = (fact: RecentNotificationFact): boolean =>
+    fact.type === type &&
+    (fact.sourceEventId === undefined || fact.sourceEventId === null
+      ? true
+      : fact.sourceEventId === candidateKey);
+
   const recentSame = context.recentNotifications.filter(
-    (n) => n.type === type && context.now.getTime() - n.createdAt.getTime() < windowMs,
+    (n) => isSameCause(n) && context.now.getTime() - n.createdAt.getTime() < windowMs,
   );
   if (recentSame.length > 0) {
     return component('DUPLICATE_PENALTY', 1, policy.scoring.penaltyDuplicate, `same type within ${policy.duplicateWindowMinutes}m`);
   }
-  // Outside the hard window but inside the cooldown: a softer penalty, so a
-  // type that repeats legitimately (a second reward on a busy afternoon) is
-  // ranked below a first one without being refused.
+  // Outside the hard window but inside the cooldown: a softer penalty, so the
+  // SAME cause reaching the door twice in half an hour — a retried outbox
+  // message, a producer firing on both a scan and an event — is ranked below a
+  // first one without being refused.
   const cooldownMinutes = policy.cooldownMinutesByType[type] ?? policy.defaultCooldownMinutes;
   const cooldownMs = cooldownMinutes * 60_000;
   const inCooldown = context.recentNotifications.some(
-    (n) => n.type === type && context.now.getTime() - n.createdAt.getTime() < cooldownMs,
+    (n) => isSameCause(n) && context.now.getTime() - n.createdAt.getTime() < cooldownMs,
   );
   return component(
     'DUPLICATE_PENALTY',

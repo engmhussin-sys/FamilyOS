@@ -47,6 +47,7 @@ import {
 import { COPY_CATALOGUE } from '../../src/modules/notifications/domain/engine/notification-copy';
 import { resolveNotificationPolicy } from '../../src/modules/notifications/domain/engine/notification-policy';
 import type { NotificationContext } from '../../src/modules/notifications/domain/engine/notification-context';
+import { resolveTargetAudience } from '../../src/modules/notifications/domain/engine/notification-copy';
 import { notificationCategoryOf } from '../../src/shared/notifications/notification-class';
 
 const SRC = path.resolve(__dirname, '../../src');
@@ -199,6 +200,10 @@ function bareContext(eventType: string): NotificationContext {
   return {
     familyId: '00000000-0000-0000-0000-000000000001',
     childId: '00000000-0000-0000-0000-000000000002',
+    /** The audience the assembler resolves for THIS type — the same function,
+     * so the sweep scores each type as the audience it is actually addressed
+     * to rather than as a single hard-coded one. */
+    targetAudience: resolveTargetAudience(eventType, true),
     childAgeYears: 10,
     toneBand: '8-10',
     safetyBand: '9-11',

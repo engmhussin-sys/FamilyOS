@@ -343,13 +343,21 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
    * source key, exactly as `deliverNow` already composes `:child`.
    */
   private audienceFor(type: string, context: NotificationContext): 'PARENT' | 'CHILD' {
-    // DELEGATED, NOT DUPLICATED. `NotificationContextAssembler` needs the same
-    // answer one step earlier — the audience chooses which inbox the fatigue
-    // history is read from — so the rule moved to `resolveTargetAudience` and
-    // this method is the provider's call site for it. Two derivations of «who
-    // is this for» is how the child's message came to be scored against the
-    // parent's day.
-    return resolveTargetAudience(type, context.childId !== null);
+    // READ OFF THE CONTEXT, NOT RE-DERIVED. `NotificationContextAssembler`
+    // needs the same answer one step earlier — the audience chooses which inbox
+    // `recentNotifications` is read from — so it resolves it with
+    // `resolveTargetAudience` and carries it on `context.targetAudience`. Two
+    // derivations of «who is this for» is how the child's own message came to
+    // be scored against the parent's day; this is the one that survived.
+    //
+    // `type` is still the parameter this method is called with, and it must
+    // agree with the context the audience was resolved from. Asserting that
+    // agreement rather than trusting it costs one comparison and turns a
+    // producer that hands the provider a mismatched pair into a visible wrong
+    // answer instead of a silent one.
+    return type === context.event.eventType
+      ? context.targetAudience
+      : resolveTargetAudience(type, context.childId !== null);
   }
 
   private configuredRefusal(

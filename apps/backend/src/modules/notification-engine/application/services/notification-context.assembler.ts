@@ -150,6 +150,7 @@ export class NotificationContextAssembler {
     const context: NotificationContext = {
       familyId: input.familyId,
       childId: input.childId,
+      targetAudience: audience,
       childAgeYears,
       toneBand,
       safetyBand: childAgeYears === null ? safetyBandFor(null, toneBand) : ageBandFor(childAgeYears),
@@ -380,6 +381,7 @@ export class NotificationContextAssembler {
         | 'NORMAL'
         | 'LOW',
       createdAt: n.createdAt,
+      sourceEventId: n.sourceEventId ?? null,
     }));
   }
 
@@ -413,14 +415,20 @@ export class NotificationContextAssembler {
   private async readChildInbox(childId: string, since: Date): Promise<RecentNotificationFact[]> {
     const rows = await (this.prisma as any).childMessage.findMany({
       where: { childId, createdAt: { gte: since }, sourceEventId: { not: null } },
-      select: { category: true, createdAt: true },
+      select: { category: true, createdAt: true, sourceEventId: true },
       orderBy: { createdAt: 'desc' },
     });
-    return (rows as Array<{ category: string; createdAt: Date }>).map((m) => ({
+    return (rows as Array<{ category: string; createdAt: Date; sourceEventId: string | null }>).map((m) => ({
       type: m.category,
       category: notificationCategoryOf(m.category),
       priority: 'NORMAL' as const,
       createdAt: m.createdAt,
+      // THE KEY AS PERSISTED, `:child`-faceted, and deliberately NOT un-faceted
+      // here: `forAudience` composes the candidate's key with the same function
+      // and the same clamp `deliverNow` used to write this one, so the two
+      // strings are comparable by construction. An inverse would have to guess
+      // what a 200-character clamp did to the facet.
+      sourceEventId: m.sourceEventId,
     }));
   }
 }

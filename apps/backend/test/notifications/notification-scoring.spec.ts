@@ -31,6 +31,7 @@ import {
   resolveNotificationPolicy,
 } from '../../src/modules/notifications/domain/engine/notification-policy';
 import type { NotificationContext } from '../../src/modules/notifications/domain/engine/notification-context';
+import { resolveTargetAudience } from '../../src/modules/notifications/domain/engine/notification-copy';
 
 const NOW = new Date('2026-03-10T14:00:00.000Z');
 
@@ -38,6 +39,15 @@ function ctx(overrides: Partial<NotificationContext> = {}): NotificationContext 
   const base: NotificationContext = {
     familyId: '11111111-1111-1111-1111-111111111111',
     childId: '22222222-2222-2222-2222-222222222222',
+    /**
+     * STATED, NOT ASSUMED. `targetAudience` is what decides WHICH INBOX the
+     * assembler fills `recentNotifications` from, so a fixture that left it
+     * implicit would be a fixture that does not say which of the two streams
+     * it is scoring. Derived from the event type below by the SAME function the
+     * assembler and the provider use, and overridable, so a case that overrides
+     * `event.eventType` gets that type's real audience rather than this one's.
+     */
+    targetAudience: 'PARENT',
     childAgeYears: 12,
     toneBand: '11-13',
     safetyBand: '12-14',
@@ -62,7 +72,12 @@ function ctx(overrides: Partial<NotificationContext> = {}): NotificationContext 
     now: NOW,
     childDisplayName: 'محمد',
   };
-  return { ...base, ...overrides };
+  const merged = { ...base, ...overrides };
+  return {
+    ...merged,
+    targetAudience:
+      overrides.targetAudience ?? resolveTargetAudience(merged.event.eventType, merged.childId !== null),
+  };
 }
 
 const policy = DEFAULT_NOTIFICATION_POLICY;
