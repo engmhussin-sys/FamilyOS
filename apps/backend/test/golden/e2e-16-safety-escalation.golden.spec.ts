@@ -73,6 +73,13 @@ import {
   isValidDeepLink,
   resolveNotificationDestination,
 } from '../../src/modules/notifications/domain/engine/notification-destination';
+import {
+  ENGINE_BYPASS_PROVENANCE,
+  ENGINE_BYPASS_REASON,
+  engineBypassDecision,
+  engineBypassQuietHoursClass,
+  isEngineBypassProvenance,
+} from '../../src/modules/notifications/domain/engine/notification-bypass';
 import { quietHoursClassOf } from '../../src/shared/notifications/notification-class';
 import {
   DEFAULT_FATIGUE_POLICY,
@@ -547,33 +554,148 @@ describeGolden('E2E-16 — the safety escalation path, end to end', () => {
   // ACT IV — THE DECISION LEDGER, MEASURED
   // =======================================================================
   /**
-   * WHAT IS ACTUALLY TRUE HERE, AND IT IS NOT WHAT A READER WOULD ASSUME.
+   * WHAT THIS ACT USED TO SAY, AND WHY THE CHANGE IS THE POINT.
    *
    * `notification_decisions` gains a row for every notification the SMART
-   * NOTIFICATION ENGINE decides — and this path deliberately does not go
-   * through the engine. `DistressEscalationService` is one of the two SYSTEM
-   * entries on `ENGINE_BYPASS_ALLOWLIST`
-   * (`test/architecture/notification-engine-bypass.guard.spec.ts`), for the
-   * reason its own line states: «safety-critical, and deliberately not subject
-   * to scoring or quiet hours». A fatigue cap must never be able to silence a
-   * child-safety alert, and the cheapest way to guarantee that is to not enter
-   * the machinery that has caps in it.
+   * NOTIFICATION ENGINE decides — and this path deliberately does not enter it.
+   * `DistressEscalationService` is one of the two SYSTEM entries on
+   * `ENGINE_BYPASS_ALLOWLIST`, for the reason its own line states:
+   * «safety-critical, and deliberately not subject to scoring or quiet hours».
+   * A fatigue cap must never be able to silence a child-safety alert, and the
+   * way to guarantee that is to not enter the machinery that has the caps in it.
    *
-   * THE PRICE IS PAID IN OBSERVABILITY, AND IT IS MEASURED HERE RATHER THAN
-   * ASSUMED: the escalation is invisible to `GET /system/notifications/
-   * analytics` and to `GET /notifications/decisions`. That is a real gap — an
-   * operator cannot count safety escalations off the decision ledger — and it
-   * is NOT this module's to close: the ledger is written by
-   * `SmartNotificationEngineService.recordDecision`
-   * (`src/modules/notification-engine/application/services/smart-notification-engine.service.ts`),
-   * which this module does not own. This test pins the CURRENT truth so the day
-   * somebody closes it, this expectation is what tells them the chain changed.
+   * So this act measured a ZERO and named the price: the most important
+   * notification this product sends was invisible to
+   * `/system/notifications/analytics` and to `/notifications/decisions`, and
+   * closing that belonged to a module this suite does not own. It has been
+   * closed (`EngineBypassDecisionRecorder`, `notification-bypass.ts`), and the
+   * expectation going red is what a pinned gap is FOR — it announced the change
+   * instead of silently continuing to describe last week.
+   *
+   * THE BYPASS IS STILL THE BYPASS, and that is now the load-bearing claim of
+   * this act. `explanation = []` is the evidence: an empty component list is
+   * what «nothing was weighed» looks like on a row, and a scored decision
+   * cannot produce one by coincidentally totalling 100. Every value below is
+   * DERIVED from `engineBypassDecision`, the production function, rather than
+   * transcribed — literals here would keep passing on the day the recorder
+   * started writing something else.
    */
 
-  it('there is no notification_decisions row for a safety escalation — the SYSTEM bypass, measured', async () => {
-    expect(await decisionsOf(ESC)).toHaveLength(0);
-    // And the notification exists anyway, which is the point of the bypass.
-    expect(await notificationsOf(ESC)).toHaveLength(1);
+  it('ACT IV: the bypass now leaves a RECEIPT — exactly one decision row, with bypass provenance', async () => {
+    const rows = await decisionsOf(ESC);
+    // ONE, after four identical check-ins (ACT III replayed the input three
+    // times). The key is `(family_id, source_event_id, target_audience)` and
+    // nothing in the recorder counts — the same discipline as `ai_alerts`.
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+
+    const expected = engineBypassDecision({ notificationType: TYPE, priority: 'CRITICAL' });
+
+    // PROVENANCE — the operator's at-a-glance discriminator between a bypass
+    // and a scored SEND, asked through the production predicate.
+    expect(isEngineBypassProvenance(row.providerId)).toBe(true);
+    expect(row.providerId).toBe(expected.providerId);
+    expect(row.providerId).toBe(ENGINE_BYPASS_PROVENANCE);
+
+    // NOTHING WAS ROUTED THROUGH SCORING, and this is the line that says so.
+    expect(row.explanation).toEqual([]);
+    expect(expected.components).toEqual([]);
+
+    // THE VERDICT AND ITS REASON — «delivered, by bypass, because the producer
+    // classified it safety-critical».
+    expect(row.decision).toBe('SEND');
+    expect(row.reason).toBe(expected.reason);
+    expect(row.reason).toBe(ENGINE_BYPASS_REASON);
+    expect(row.trigger).toBe(expected.trigger);
+    expect(row.score).toBe(expected.score);
+    expect(row.priorityBand).toBe(expected.band);
+    expect(row.category).toBe(expected.category);
+    expect(row.category).toBe('SAFETY');
+    expect(row.targetAudience).toBe('PARENT');
+    expect(row.notificationType).toBe(TYPE);
+    expect(row.eventType).toBe(TYPE);
+    expect(row.copyKey).toBe(TYPE);
+    expect(row.locale).toBe('ar');
+
+    // WHAT THE PIPELINE DID, as opposed to what was decided — they agree here,
+    // and there is no refusal to record.
+    expect(row.outcome).toBe('SEND');
+    expect(row.outcomeReason).toBeNull();
+
+    // NO MODEL WAS PERMITTED AND NONE WAS CALLED. On this path that is a
+    // property of the product (§11.4), not of a feature flag.
+    expect(row.aiAllowed).toBe(false);
+    expect(row.aiInvoked).toBe(false);
+    expect(row.aiRewritten).toBe(false);
+    expect(row.aiSafetyRejection).toBeNull();
+  });
+
+  it('ACT IV: the receipt JOINS to the notification it is a receipt for', async () => {
+    const [decision] = await decisionsOf(ESC);
+    const [notification] = await notificationsOf(ESC);
+    // The causal key is the join, and it is the SAME key on both rows — a
+    // receipt that could not be joined to its notification would be a count
+    // and not a ledger.
+    expect(decision.sourceEventId).toBe(notification.sourceEventId);
+    expect(decision.childId).toBe(ESC.childId);
+    expect(decision.familyId).toBe(ESC.familyId);
+    // A BAND, never an age and never a date of birth (the column's own rule).
+    expect(decision.ageBand === null || /^\d+-\d+$/.test(decision.ageBand)).toBe(true);
+    expect(String(decision.ageBand ?? '')).not.toContain(ESC.childDateOfBirth);
+  });
+
+  it('ACT IV: THE LEDGER IS NOT A BACK DOOR TO WHAT THE CHILD WROTE', async () => {
+    /**
+     * The subject of this whole suite: parents see alerts, never raw monitored
+     * content — and a new table on the path is a new place for that rule to
+     * fail. Asserted on the PERSISTED VALUES, read back out of PostgreSQL as
+     * text, so no Prisma projection can hide a column from the check.
+     */
+    const raw: any[] = await world.raw(
+      `SELECT row_to_json(nd)::text AS row FROM notification_decisions nd WHERE nd.family_id = $1`,
+      ESC.familyId,
+    );
+    expect(raw).toHaveLength(1);
+    const serialised = String(raw[0].row);
+
+    // 1. NOT THE TEXT, and not any fragment of it.
+    expect(serialised).not.toContain(CHILD_WORDS);
+    for (const fragment of CHILD_FRAGMENTS) expect(serialised).not.toContain(fragment);
+    // 2. NOT THE CLASSIFICATION. The code stays inside `checkin`: it is not on
+    //    the alert, not on the notification, and not here either.
+    for (const code of CODES) expect(serialised).not.toContain(code);
+    // 3. NOT THE PARENT'S SENTENCE EITHER. This table holds decisions, not
+    //    copy: `copy_key` NAMES the sentence and `notifications` holds it. A
+    //    body copied here would be a second, unguarded copy of a message about
+    //    a child, and the child's own name with it.
+    const [notification] = await notificationsOf(ESC);
+    expect(serialised).not.toContain(notification.body);
+    expect(serialised).not.toContain(ESC.childName);
+  });
+
+  it('ACT IV: the operator can now COUNT it, and the roll-up names it as never-suppressible', async () => {
+    // The reason the receipt exists at all. Cross-tenant and behind the
+    // operator key, so the assertion is «at least ours», never an exact
+    // platform number.
+    const res = await request(world.http)
+      .get(`${P}/system/notifications/analytics`)
+      .set({ 'x-internal-admin-key': process.env.INTERNAL_ADMIN_API_KEY as string });
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBeGreaterThanOrEqual(1);
+    // INCLUDED in the aggregate — hiding it would re-open the same invisibility
+    // one layer up...
+    expect(res.body.bypassed).toBeGreaterThanOrEqual(1);
+    // ...and NAMED, so a `suppressionRate` whose denominator holds traffic that
+    // was never eligible for suppression is a stated fact rather than a silent
+    // one.
+    expect(res.body.bypassed).toBeLessThanOrEqual(res.body.total);
+
+    // And the platform roll-up is still counts and names only.
+    const serialised = JSON.stringify(res.body);
+    expect(serialised).not.toContain(ESC.familyId);
+    expect(serialised).not.toContain(ESC.childId);
+    for (const fragment of CHILD_FRAGMENTS) expect(serialised).not.toContain(fragment);
   });
 
   // =======================================================================
@@ -657,6 +779,62 @@ describeGolden('E2E-16 — the safety escalation path, end to end', () => {
     const [day] = await notificationsOf(ESC);
     expect(rows[0].title).toBe(day.title);
     expect(rows[0].body).toBe(day.body.replace(ESC.childName, NIGHT.childName));
+  });
+
+  it('AT 22:00 LOCAL the ledger records ONE row, and the row says WHY it was not deferred', async () => {
+    /**
+     * The receipt has to survive the hour that would have silenced anything
+     * else, and it has to be READABLE as a non-deferral: an operator asking
+     * «what happened to the safety alerts last night» needs the answer on the
+     * row rather than in a log line that has rotated.
+     *
+     * There is deliberately NO quiet-hours column — `notification-bypass.ts`
+     * refuses to invent one — so `decision = SEND` plus
+     * `reason = SAFETY_CRITICAL_OVERRIDE` is the stored form of that sentence,
+     * and the premise it stands on (`DELIVER` for this type) is asserted from
+     * the production function rather than restated.
+     */
+    const rows = await decisionsOf(NIGHT);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+
+    expect(engineBypassQuietHoursClass({ notificationType: TYPE, priority: 'CRITICAL' })).toBe('DELIVER');
+
+    // NOT DEFERRED, and the row says so in the two columns that carry it.
+    expect(row.decision).toBe('SEND');
+    expect(row.reason).toBe(ENGINE_BYPASS_REASON);
+    expect(row.outcome).toBe('SEND');
+    // Not a deferral by another name either: nothing was enqueued for release.
+    expect(await deferralsOf(NIGHT)).toHaveLength(0);
+
+    // The night's receipt is byte-identical to the day's on every decision
+    // column — the hour changed nothing about how this was decided.
+    const [day] = await decisionsOf(ESC);
+    for (const column of [
+      'trigger',
+      'eventType',
+      'notificationType',
+      'category',
+      'targetAudience',
+      'decision',
+      'priorityBand',
+      'score',
+      'reason',
+      'providerId',
+      'copyKey',
+      'outcome',
+      'locale',
+    ] as const) {
+      expect({ column, value: row[column] }).toEqual({ column, value: day[column] });
+    }
+    expect(row.explanation).toEqual([]);
+    expect(isEngineBypassProvenance(row.providerId)).toBe(true);
+
+    // And the night's receipt carries no more of the child than the day's did.
+    const serialised = JSON.stringify(row);
+    for (const fragment of CHILD_FRAGMENTS) expect(serialised).not.toContain(fragment);
+    for (const code of CODES) expect(serialised).not.toContain(code);
+    expect(serialised).not.toContain(NIGHT.childName);
   });
 
   it('and the destination survives the night too — a night-time tap lands where a daytime one does', async () => {
