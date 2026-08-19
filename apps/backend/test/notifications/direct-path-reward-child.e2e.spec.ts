@@ -74,6 +74,7 @@ import {
   renderNotificationCopy,
 } from '../../src/modules/notifications/domain/engine/notification-copy';
 import { getBusinessTimeHHMM } from '../../src/common/time/family-date';
+import { PLATFORM_BADGES } from '../../src/shared/rewards/badge-catalogue';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 import { freezeGoldenClock } from '../golden/golden-world';
 
@@ -269,6 +270,38 @@ describeIfDb('F1 DECISION 1 — the DIRECT reward path tells the child too (real
       prisma.child.create({
         data: { familyId: family.id, firstName: 'محمد', dateOfBirth: new Date('2014-01-01T00:00:00.000Z') },
         select: { id: true },
+      }),
+    );
+
+    /**
+     * ===================================================================
+     * THE CHILD IS PAST THEIR FIRST-TIME MILESTONES — the same reasoning as
+     * `aCompletableGoal` below, applied to a cause that did not exist when
+     * that comment was written.
+     * ===================================================================
+     *
+     * Migration 0026 seeded the badge catalogue and the platform BADGE rules
+     * that ask for it, so a child's FIRST study session or learning goal now
+     * awards a once-ever badge ALONGSIDE the XP or coins — a second CAUSE,
+     * with `BADGE_EARNED` for the child and `BADGE_EARNED_PARENT` for the
+     * parent, announced in the same instant. `NotificationFatigueGuard`
+     * correctly delivers ONE child-facing ACHIEVEMENT message rather than
+     * two, and on a brand-new child that one is the badge.
+     *
+     * THIS FILE IS ABOUT THE REWARD SENTENCE, not about which of two
+     * simultaneous achievements wins the fatigue window, so the household
+     * starts holding its badges and every assertion below is the one this
+     * suite always made, unchanged. `child_badge_awards (child_id, badge_id)`
+     * is UNIQUE and the engine only pays a badge when that insert succeeded,
+     * so this is the row the engine itself would have written, written first.
+     */
+    const badges = await sys('badge catalogue', () =>
+      prisma.badgeDefinition.findMany({ where: { key: { in: PLATFORM_BADGES.map((b) => b.key) } } }),
+    );
+    expect(badges).toHaveLength(PLATFORM_BADGES.length);
+    await sys('pre-award badges', () =>
+      prisma.childBadgeAward.createMany({
+        data: badges.map((b: any) => ({ familyId: family.id, childId: child.id, badgeId: b.id })),
       }),
     );
 
