@@ -454,14 +454,27 @@ describe('OrganizationService (Sprint B1)', () => {
       status: 'PENDING', expiresAt: new Date(Date.now() + 100_000), invitedByUserId: 'inviter-1',
     };
 
+    /** The person the invitation was actually addressed to. */
+    const theRecipient = { id: 'user-1', email: 'invited@example.com' };
+
     it('throws NotFoundException for a nonexistent invitation', async () => {
       repositoryMock.findInvitationById.mockResolvedValue(null);
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-missing', 'user-1')).rejects.toBeInstanceOf(NotFoundException);
     });
 
+    /**
+     * F1 — THE STATUS AND EXPIRY SENTENCES ARE FOR THE RECIPIENT, so these
+     * three now say who is asking. They used to leave `findById` unstubbed,
+     * which meant they were asserting that a caller who had proved NOTHING
+     * could read an invitation's status — the defect, pinned as the expected
+     * behaviour. The rule they encode is unchanged and still asserted: the
+     * person the invitation was sent to is told exactly why it will not work.
+     */
     it('throws BadRequestException when the invitation is already ACCEPTED — cannot accept twice', async () => {
       repositoryMock.findInvitationById.mockResolvedValue({ ...validInvitation, status: 'ACCEPTED' });
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
 
@@ -470,23 +483,35 @@ describe('OrganizationService (Sprint B1)', () => {
 
     it('throws BadRequestException when the invitation was REVOKED', async () => {
       repositoryMock.findInvitationById.mockResolvedValue({ ...validInvitation, status: 'REVOKED' });
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('throws BadRequestException when the invitation has expired, even if still marked PENDING', async () => {
       repositoryMock.findInvitationById.mockResolvedValue({ ...validInvitation, expiresAt: new Date(Date.now() - 100_000) });
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
 
       expect(repositoryMock.acceptInvitation).not.toHaveBeenCalled();
     });
 
-    it('CRITICAL: throws ForbiddenException when the accepting user\'s email does NOT match the invited email — prevents accepting someone else\'s invitation', async () => {
+    /**
+     * F1 — THIS USED TO BE A 403, WHICH IS WHAT MADE THE ROUTE AN ORACLE.
+     *
+     * A 403 here means «this id is real, and it is not yours» — and combined
+     * with the 404 for an unknown id and the 400s above, it let any
+     * authenticated user enumerate invitation ids platform-wide and read back
+     * their status. The control itself (a stranger cannot accept) is unchanged
+     * and still asserted; what changed is that the refusal no longer answers a
+     * question the caller was not entitled to ask.
+     */
+    it('CRITICAL: a user the invitation was NOT sent to is answered exactly as for an id that does not exist', async () => {
       repositoryMock.findInvitationById.mockResolvedValue(validInvitation);
       userRepositoryMock.findById.mockResolvedValue({ id: 'user-1', email: 'someone-else@example.com' });
 
-      await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(NotFoundException);
 
       expect(repositoryMock.acceptInvitation).not.toHaveBeenCalled();
     });

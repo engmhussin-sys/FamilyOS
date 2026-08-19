@@ -170,29 +170,85 @@ export class OrganizationService {
     return invitation;
   }
 
+  /**
+   * THE ONE «no» FOR AN INVITATION THE CALLER MAY NOT ACT ON.
+   *
+   * Built in one place, from constants only, so the two paths that throw it
+   * cannot drift into two different sentences — which is all an oracle needs
+   * to come back. Nothing about the request is interpolated: the old message
+   * carried `invitationId`, and a body that varies with the id is not a body
+   * a probe can compare byte for byte.
+   *
+   * `{ code, messageAr }` is the B3 contract (`common/errors/error-response.ts`).
+   * The Arabic is the sentence a parent actually reads, and it is the same
+   * whether the id was never real or simply was not theirs.
+   */
+  private static invitationNotFound(): NotFoundException {
+    return new NotFoundException({
+      code: 'INVITATION_NOT_FOUND',
+      message: 'This invitation is not available.',
+      messageAr: 'هذه الدعوة غير متاحة. اطلب من الجهة التي دعتك إرسال دعوة جديدة إلى بريدك.',
+    });
+  }
+
   /** CLOSES A CRITICAL GAP found in a final review: invitations could
    * be created, but nothing let anyone actually accept one — the
-   * feature was unusable end-to-end. Verifies, in order: the
-   * invitation exists, it's still PENDING (not already accepted,
-   * expired, or revoked), it hasn't passed its expiresAt, and —
-   * critically — the ACCEPTING user's own email matches the invited
-   * email, so one user can never accept an invitation meant for
-   * someone else just by knowing its id. */
+   * feature was unusable end-to-end.
+   *
+   * =====================================================================
+   * F1 — THE EXISTENCE ORACLE THIS ROUTE USED TO BE, AND THE ORDER THAT
+   * REMOVES IT.
+   * =====================================================================
+   *
+   * The checks were right; the ORDER was the defect. The old sequence asked
+   * "does this row exist?" (404), then "what is its status?" (400), then
+   * "has it expired?" (400), and only THEN "is the caller the person it was
+   * sent to?" (403). Every answer before the last one was given to a caller
+   * who had proved nothing at all — so any authenticated parent could walk
+   * invitation ids and read back, for EVERY organization on the platform,
+   * whether an id existed and whether it was pending, accepted, revoked or
+   * expired. The email check that was supposed to be the whole control was
+   * the last gate, behind three disclosures.
+   *
+   * THE RULE NOW: an invitation the caller may not act on is answered
+   * EXACTLY as one that does not exist — same status (404), same body
+   * (`INVITATION_NOT_FOUND`, no id interpolated, so the sentence is
+   * byte-identical for a real id and an unknown one), and the same amount
+   * of work (both lookups are issued unconditionally, in one `Promise.all`,
+   * so the two paths are the same timing class rather than one DB round
+   * trip apart).
+   *
+   * WHAT IS STILL SAID, AND WHY IT DISCLOSES NOTHING. Past the recipient
+   * check, «already accepted» / «expired» / «the inviter can no longer
+   * grant that role» remain distinct, real sentences. Their audience is the
+   * person the invitation was addressed to, who received the id by email
+   * and therefore already knows it exists; telling them nothing but 404
+   * would trade a leak for an unusable feature. The oracle was never the
+   * messages — it was giving them to strangers.
+   */
   async acceptInvitation(invitationId: string, acceptingUserId: string): Promise<IOrganizationMember> {
-    const invitation = await this.repository.findInvitationById(invitationId);
-    if (!invitation) {
-      throw new NotFoundException(`Invitation "${invitationId}" not found.`);
+    // BOTH READS, ALWAYS, CONCURRENTLY. Short-circuiting on a missing
+    // invitation is what made "unknown id" one query and "not yours" two —
+    // a difference a caller can measure even when the bodies match.
+    const [invitation, acceptingUser] = await Promise.all([
+      this.repository.findInvitationById(invitationId),
+      this.userRepository.findById(acceptingUserId),
+    ]);
+
+    // THE SINGLE ANSWER for "no such invitation" and "not addressed to you".
+    if (
+      !invitation ||
+      !acceptingUser ||
+      acceptingUser.email.toLowerCase() !== invitation.email.toLowerCase()
+    ) {
+      throw OrganizationService.invitationNotFound();
     }
+
     if (invitation.status !== 'PENDING') {
       throw new BadRequestException(`This invitation is ${invitation.status.toLowerCase()} and can no longer be accepted.`);
     }
     if (invitation.expiresAt < new Date()) {
       throw new BadRequestException('This invitation has expired.');
-    }
-
-    const acceptingUser = await this.userRepository.findById(acceptingUserId);
-    if (!acceptingUser || acceptingUser.email.toLowerCase() !== invitation.email.toLowerCase()) {
-      throw new ForbiddenException('This invitation was sent to a different email address.');
     }
 
     // PHASE E (`PC-S-007`) — THE SAME RULE, RE-CHECKED AT CONFERRAL.
