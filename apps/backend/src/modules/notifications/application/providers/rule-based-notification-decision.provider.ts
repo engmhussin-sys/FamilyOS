@@ -60,7 +60,12 @@ import {
   type NotificationScore,
 } from '../../domain/engine/notification-decision.types';
 import type { NotificationPolicy } from '../../domain/engine/notification-policy';
-import { COPY_CATALOGUE, GENERIC_COPY_KEY, ordinal } from '../../domain/engine/notification-copy';
+import {
+  COPY_CATALOGUE,
+  GENERIC_COPY_KEY,
+  ordinal,
+  resolveTargetAudience,
+} from '../../domain/engine/notification-copy';
 import { dailyGoalName, goalUnitNoun } from '../../domain/engine/notification-nouns';
 import { bandForScore, scoreNotification } from '../../domain/engine/notification-scoring';
 
@@ -338,9 +343,13 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
    * source key, exactly as `deliverNow` already composes `:child`.
    */
   private audienceFor(type: string, context: NotificationContext): 'PARENT' | 'CHILD' {
-    const declared = COPY_CATALOGUE[type]?.audience;
-    if (declared) return declared;
-    return context.childId ? 'CHILD' : 'PARENT';
+    // DELEGATED, NOT DUPLICATED. `NotificationContextAssembler` needs the same
+    // answer one step earlier — the audience chooses which inbox the fatigue
+    // history is read from — so the rule moved to `resolveTargetAudience` and
+    // this method is the provider's call site for it. Two derivations of «who
+    // is this for» is how the child's message came to be scored against the
+    // parent's day.
+    return resolveTargetAudience(type, context.childId !== null);
   }
 
   private configuredRefusal(

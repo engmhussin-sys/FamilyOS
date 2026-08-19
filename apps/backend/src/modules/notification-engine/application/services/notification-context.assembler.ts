@@ -17,8 +17,11 @@
  *                           birth is CONSUMED IMMEDIATELY into an integer age
  *                           and then dropped. It never reaches the context.
  *   `notifications`         type + priority + created_at for the last 24h, via
- *                           the existing `findRecentForChild`. No titles, no
- *                           bodies.
+ *   OR `child_messages`     the existing `findRecentForChild` — but ONLY when
+ *                           the candidate is addressed to the PARENT. A
+ *                           CHILD-audience candidate reads the CHILD's inbox
+ *                           (`child_messages`) instead. See `readHistory`.
+ *                           No titles, no bodies from either.
  *   `subscriptions`         plan and status only.
  *   `notification_policy_settings`  the household's own caps.
  *
@@ -54,9 +57,11 @@ import {
   type GoalFacts,
   type NotificationContext,
   type RecentActivityFacts,
+  type RecentNotificationFact,
   type RewardFacts,
   type StreakFacts,
 } from '../../../notifications/domain/engine/notification-context';
+import { resolveTargetAudience } from '../../../notifications/domain/engine/notification-copy';
 import {
   resolveNotificationPolicy,
   type NotificationPolicy,
@@ -125,8 +130,21 @@ export class NotificationContextAssembler {
     const localTimeHHMM = getBusinessTimeHHMM(now, timeZone);
     const quietHoursActive = isWithinWindow(localTimeHHMM, policy.quietHoursStart, policy.quietHoursEnd);
 
+    /**
+     * ======================================================================
+     * THE HISTORY IS THE AUDIENCE'S OWN, AND THE AUDIENCE IS RESOLVED HERE.
+     * ======================================================================
+     *
+     * `resolveTargetAudience` is the SAME function `RuleBasedNotificationDecisionProvider`
+     * calls to fill `decision.target_audience`, so the stream that is counted
+     * and the stream that is written can never be two different streams.
+     * Calling it here rather than after `decide()` is forced by the ordering:
+     * the provider scores the context, so the context must already hold the
+     * right history.
+     */
+    const audience = resolveTargetAudience(input.eventType, input.childId !== null);
     const recentNotifications = input.childId
-      ? await this.readHistory(input.childId, now)
+      ? await this.readHistory(input.childId, now, audience)
       : [];
 
     const context: NotificationContext = {
@@ -271,6 +289,37 @@ export class NotificationContextAssembler {
   }
 
   /**
+   * ==========================================================================
+   * THE FATIGUE HISTORY, SCOPED TO THE AUDIENCE THE NOTIFICATION IS FOR.
+   * ==========================================================================
+   *
+   * THE DEFECT THIS METHOD EXISTS IN THIS SHAPE FOR — measured, against a real
+   * PostgreSQL, on a child's first-ever learning-goal completion:
+   *
+   *     REWARD_GRANTED_CHILD  aud=CHILD  copy=LEARNING_GOAL_ACHIEVED
+   *       decision=SUPPRESS reason=SCORE_BELOW_FLOOR score=21 (floor 25)
+   *       FATIGUE_PENALTY=-16.67  note="today=2/6 hour=2/3 category=1/2"
+   *
+   * That `2` was `notifications` — the PARENT'S inbox (`BADGE_EARNED_PARENT`,
+   * `REWARD_GRANTED`). The child's own inbox held ONE row. So the child was
+   * told about the badge and never told they had earned points, because their
+   * parent had had a busy sixty seconds. It was not a first-completion bug: it
+   * penalised EVERY child-audience notification in proportion to how loud the
+   * parent's day had been.
+   *
+   * `notification-class.ts` already forbade this in words, on
+   * `REWARD_GRANTED_CHILD`'s own `why`: «the two audiences must be capped and
+   * scored independently: a parent at their daily maximum must not be able to
+   * silence the child's own news about their own work.» This method is that
+   * sentence as a query.
+   *
+   * THE TWO INBOXES ARE TWO TABLES, and that is `deliverNow`'s routing, not an
+   * invention here: a PARENT candidate becomes a `notifications` row through
+   * `createForFamilyOwner`; a CHILD candidate becomes a `child_messages` row
+   * through the approval-gated `draftAiMessageIfAbsent`. Reading `notifications`
+   * for a CHILD candidate was therefore never «the child's history read
+   * loosely» — it was a different audience's history entirely.
+   *
    * THE SAME 24-HOUR WINDOW `SmartNotificationIntegrationService.fetchHistory`
    * uses, anchored to the `now` being evaluated rather than to the wall clock —
    * `PD-N-003`'s point, and the reason a replayed instant produces the same
@@ -279,21 +328,30 @@ export class NotificationContextAssembler {
    * The category is derived here rather than stored, because
    * `notification-class.ts` is the one owner of that mapping and the history rows
    * predate the column.
+   *
+   * NO CAP CONSTANT MOVED WITH THIS FIX, and that is a decision rather than an
+   * omission. `notification.cap.maxPerDay` (6) and `notification.cap.categoryMaxPerDay`
+   * (2) are byte-for-byte Sprint 16's `DEFAULT_FATIGUE_POLICY`, and Sprint 16
+   * counted them over `findRecentForChild` — i.e. over the PARENT'S rows about
+   * one child, which is exactly what the PARENT branch below still reads. So
+   * neither number was ever calibrated against a merged two-audience stream and
+   * neither is invalidated by separating them; the parent's budget is
+   * unchanged, and the child now has a budget of their own that is the same
+   * size. Six child-facing notifications a day is the number this product
+   * already decided a single stream should carry, and the child's stream is not
+   * a lesser stream — see the `why` quoted above. Changing it to make an
+   * arithmetic come out is how a cap stops meaning anything.
    */
-  private async readHistory(childId: string, now: Date) {
+  private async readHistory(
+    childId: string,
+    now: Date,
+    audience: 'PARENT' | 'CHILD',
+  ): Promise<RecentNotificationFact[]> {
     const since = new Date(now.getTime() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000);
     try {
-      const raw = await this.notifications.findRecentForChild(childId, since);
-      return raw.map((n) => ({
-        type: n.type,
-        category: notificationCategoryOf(n.type),
-        priority: (KNOWN_PRIORITIES.has(n.priority) ? n.priority : 'NORMAL') as
-          | 'CRITICAL'
-          | 'HIGH'
-          | 'NORMAL'
-          | 'LOW',
-        createdAt: n.createdAt,
-      }));
+      return audience === 'CHILD'
+        ? await this.readChildInbox(childId, since)
+        : await this.readParentInbox(childId, since);
     } catch (err) {
       // An empty history is the CONSERVATIVE failure here in one direction and
       // the permissive one in the other: the fatigue penalty reads zero and a
@@ -301,12 +359,69 @@ export class NotificationContextAssembler {
       // trade — the alternative is refusing every notification whenever a read
       // fails, which turns a transient database blip into total silence.
       this.logger.warn(
-        `notification.history_read_failed child=${childId.slice(0, 8)} — scoring with empty history. ${
+        `notification.history_read_failed child=${childId.slice(0, 8)} audience=${audience} — scoring with empty history. ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
       return [];
     }
+  }
+
+  /** The PARENT's inbox, unchanged: `notifications` rows about this child, read
+   * through the port that has always read them. */
+  private async readParentInbox(childId: string, since: Date): Promise<RecentNotificationFact[]> {
+    const raw = await this.notifications.findRecentForChild(childId, since);
+    return raw.map((n) => ({
+      type: n.type,
+      category: notificationCategoryOf(n.type),
+      priority: (KNOWN_PRIORITIES.has(n.priority) ? n.priority : 'NORMAL') as
+        | 'CRITICAL'
+        | 'HIGH'
+        | 'NORMAL'
+        | 'LOW',
+      createdAt: n.createdAt,
+    }));
+  }
+
+  /**
+   * The CHILD's inbox: the `child_messages` rows the child's own app renders.
+   *
+   * THREE COLUMNS, and the same data-minimisation discipline as every other read
+   * in this file — no `title`, no `body`, no `data`. A scoring term needs to
+   * know that a message happened, what kind it was and when; it has never needed
+   * to know what it said.
+   *
+   * `sourceEventId != null` IS THE «IS THIS A NOTIFICATION?» TEST, and it is the
+   * table's own: `child_messages.source_event_id` is documented NULLABLE
+   * precisely because this table ALSO holds PARENT-AUTHORED messages, and NULL
+   * there means «a human wrote this». A parent typing «أحسنت» to their child is
+   * a conversation, not a notification, and counting it towards a notification
+   * fatigue cap would let a warm parent mute the product's own feedback loop —
+   * the same class of mistake, one table over, as the one this method fixes.
+   *
+   * `category` HOLDS THE NOTIFICATION TYPE on this path — `deliverNow` passes
+   * `candidate.type` into `draftAiMessageIfAbsent`'s `category` parameter — so
+   * it is mapped through `notificationCategoryOf` exactly like the parent
+   * branch's `type`, and both branches hand the scorer the same vocabulary.
+   *
+   * PRIORITY IS `NORMAL` FOR EVERY ROW, stated rather than guessed: this table
+   * has no priority column, because a child's message surface has never had a
+   * loudness axis. Nothing in `scoreNotification` reads `priority` off a history
+   * row — it counts them and buckets them by category — so this is an honest
+   * filler for a required field and not a value any decision turns on.
+   */
+  private async readChildInbox(childId: string, since: Date): Promise<RecentNotificationFact[]> {
+    const rows = await (this.prisma as any).childMessage.findMany({
+      where: { childId, createdAt: { gte: since }, sourceEventId: { not: null } },
+      select: { category: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return (rows as Array<{ category: string; createdAt: Date }>).map((m) => ({
+      type: m.category,
+      category: notificationCategoryOf(m.category),
+      priority: 'NORMAL' as const,
+      createdAt: m.createdAt,
+    }));
   }
 }
 

@@ -756,6 +756,35 @@ export const COPY_CATALOGUE: Readonly<Record<string, CopyEntry>> = Object.freeze
 
 export const GENERIC_COPY_KEY = 'GENERIC';
 
+/**
+ * ============================================================================
+ * WHO IS THIS NOTIFICATION ADDRESSED TO — ONE ANSWER, FOR EVERY ASKER.
+ * ============================================================================
+ *
+ * `RuleBasedNotificationDecisionProvider.audienceFor` was the only place this
+ * question was answered, which was fine for exactly as long as the provider was
+ * the only thing that needed the answer. It is not: `NotificationContextAssembler`
+ * has to know the audience BEFORE the provider runs, because the audience
+ * decides WHICH INBOX the fatigue history is read from — and an assembler that
+ * re-derived the rule beside the provider would be two rules that agree until
+ * one of them is edited.
+ *
+ * THE RULE, unchanged from the provider's own: the catalogue entry states it;
+ * a type with no entry belongs to the child when there is a child in the
+ * context and to the parent otherwise. A `BOTH` type in
+ * `notification-class.ts` is not resolved here at all — `BOTH` means the
+ * PRODUCER composes two candidates with two `sourceEventId` facets, and each
+ * one arrives at this function carrying its own single-audience type
+ * (`REWARD_GRANTED` / `REWARD_GRANTED_CHILD`, `BADGE_EARNED_PARENT` /
+ * `BADGE_EARNED`). That is why the catalogue and not the class matrix is the
+ * source read here.
+ */
+export function resolveTargetAudience(eventType: string, hasChild: boolean): ToneAudience {
+  const declared = COPY_CATALOGUE[eventType]?.audience;
+  if (declared) return declared;
+  return hasChild ? 'CHILD' : 'PARENT';
+}
+
 /** Arabic-Indic digits. The samples in the brief are written «٥ دقائق», not «5
  * دقائق», and a product that writes Arabic prose with Latin numerals reads as a
  * translation — which CONTEXT §1 explicitly rejects. */
