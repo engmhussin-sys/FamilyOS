@@ -253,7 +253,24 @@ const DESTINATION_RULES: Readonly<Record<string, DestinationRule>> = Object.free
   /** The goal itself is the point of the sentence. */
   GOAL_DEADLINE_NEAR: goalDestination,
   GOAL_ALMOST_DONE: goalDestination,
-  DAILY_GOAL_COMPLETED: goalDestination,
+  /**
+   * SPRINT F1 — THE ONE ROW THAT MOVED, AND IT MOVED BECAUSE THE KEY GAINED A
+   * PRODUCER AND THE PRODUCER SAID WHAT THE SENTENCE IS ABOUT.
+   *
+   * `goalDestination` was the honest guess while nothing produced this key. It
+   * is wrong now that something does: `HealthEngineService` produces it for the
+   * two daily goals this product actually has — the hydration target and the
+   * activity target — and NEITHER is on the child's goals surface.
+   * `abny://goals` resolves to the child's TODAY tab, which lists
+   * `reward_programs`, so a child tapping «أنهيت هدف شرب الماء اليوم» would have
+   * landed on a screen with no water on it.
+   *
+   * `screen-time` is where the fact lives: `child_deep_link_router.dart` maps it
+   * to `MyGrowthScreen`, and its own header says so — «this app's hydration log,
+   * activity minutes and health progress all live on that screen». It is the
+   * same destination `HYDRATION_REMINDER` already uses, for the same reason.
+   */
+  DAILY_GOAL_COMPLETED: () => surfaceLink('screen-time'),
   LEARNING_GOAL_ACHIEVED: goalDestination,
   STUDY_REMINDER: goalDestination,
   /** «راجع {goalTitle} مع أهلك» — the review happens ON the goal. */

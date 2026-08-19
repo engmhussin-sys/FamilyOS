@@ -16,6 +16,9 @@ import {
   INutritionLog,
   ISleepLog,
 } from '../../domain/health.types';
+import { forEntity } from '../../../../shared/notifications/notification-source-key';
+import { SmartNotificationEngineService } from '../../../notification-engine/application/services/smart-notification-engine.service';
+import type { DailyGoalCause } from '../../../notifications/domain/engine/notification-nouns';
 import { computeHydrationTargetMl } from './health-rules';
 import { computeCurrentStreak } from './streak-calculator';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
@@ -62,6 +65,14 @@ export class HealthEngineService {
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
     @Inject(REWARD_TRIGGER_WRITER) private readonly rewardTrigger: IRewardTriggerWriter,
     private readonly familyDate: FamilyDateService,
+    /**
+     * SPRINT F1 — THE ONLY DOOR, and the reason this class is now a producer.
+     * See `announceDailyGoal`. It decides nothing: scoring, the quiet-hours
+     * class, the copy, the safety band, the deep link and the delivery are the
+     * engine's, unchanged, and this file must never appear on
+     * `notification-engine-bypass.guard.spec.ts`'s allow-list.
+     */
+    private readonly notifications: SmartNotificationEngineService,
   ) {}
 
   async logNutrition(childId: string, familyId: string, input: Omit<ICreateNutritionLogInput, 'childId'>): Promise<INutritionLog> {
@@ -135,6 +146,10 @@ export class HealthEngineService {
           payload: { metric: 'hydration', targetMl: target, totalMl: totalToday, verifiedBy: 'SELF' },
           idempotencyKey: `daily-goal:hydration:${childId}:${todayStr}`,
         });
+
+        // SPRINT F1 — AND THE CHILD IS TOLD. Same crossing, same day, same
+        // server-decided target; see `announceDailyGoal`.
+        await this.announceDailyGoal(childId, familyId, 'HYDRATION_GOAL_COMPLETED', todayStr);
 
         // Streak milestone — only fires a SEPARATE event on real
         // milestone streak lengths (not every single day), matching
@@ -278,6 +293,9 @@ export class HealthEngineService {
           payload: { metric: 'activity', targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes, verifiedBy: 'SELF' },
           idempotencyKey: `daily-goal:activity:${childId}:${todayStr}`,
         });
+
+        // SPRINT F1 — AND THE CHILD IS TOLD. See `announceDailyGoal`.
+        await this.announceDailyGoal(childId, familyId, 'ACTIVITY_GOAL_COMPLETED', todayStr);
 
         const since = this.daysAgo(30, timeZone);
         const dailyTotals = await this.repository.getDailyActivityTotals(childId, since);
@@ -452,5 +470,92 @@ export class HealthEngineService {
   private ageYears(dateOfBirth: Date | string): number {
     const diffMs = Date.now() - new Date(dateOfBirth).getTime();
     return Math.floor(diffMs / (365.25 * 24 * 3600 * 1000));
+  }
+
+  /**
+   * ==========================================================================
+   * SPRINT F1 — THE MISSING PRODUCER OF `DAILY_GOAL_COMPLETED`.
+   * ==========================================================================
+   *
+   * WHAT WAS MEASURED. `DAILY_GOAL_COMPLETED` had four tone bands of Arabic and
+   * English, a quiet-hours class (`DEFER` — «the completion row exists and a
+   * receipt is still a receipt in the morning»), two scoring rows and a
+   * deep-link destination, and NOTHING IN `src/` produced it. It sat on
+   * `PRODUCERLESS_DEFECT_LEDGER` for «no server-owned Arabic name for a daily
+   * goal exists»: `TYPE_SPECS.DAILY_GOAL_COMPLETED.aggregateType = 'DailyGoal'`
+   * names a model with no table, and the only candidate text was device-supplied
+   * `metadata` — client prose, which must never be rendered as if the server
+   * wrote it.
+   *
+   * WHAT A DAILY GOAL ACTUALLY IS IN THIS PRODUCT, and the evidence is these two
+   * call sites. `HealthEngineService` is the ONLY thing in this codebase that
+   * emits the name `DAILY_GOAL_COMPLETED` server-side, and it emits exactly two:
+   * the hydration target in `logHydration` and the 60-minute activity target in
+   * `logActivity`. Both TARGETS are the server's — one derived from the child's
+   * age by `computeHydrationTargetMl`, one the same constant `getDailyProgress`
+   * and `computeAndStoreHealthScore` already use — and both CROSSINGS are summed
+   * from stored rows on the family's business day. Neither takes a title, a
+   * label or any other string from a device.
+   *
+   * IT IS NOT THE HABIT ENGINE, which was the other candidate: `habit-engine.service.ts`
+   * mentions the name in a comment and fires `HABIT_COMPLETED`, never this one.
+   * A habit is a different fact with a different Arabic word and a different
+   * screen, and calling one the other would have been the producer firing on a
+   * hunch.
+   *
+   * SO THE NAME IS THE SERVER'S TO WRITE, and it is written in
+   * `notification-nouns.ts`, beside the copy, in both languages, keyed on the
+   * ORIGINATING DOMAIN EVENT TYPE (`HYDRATION_GOAL_COMPLETED` /
+   * `ACTIVITY_GOAL_COMPLETED`, both already in `DOMAIN_EVENT_TYPES`) — never a
+   * new vocabulary invented at the notification layer. `cause` is the field
+   * `NotificationEventFacts` documents for exactly this, and the decision
+   * provider turns it into `{goalTitle}` in the household's own language.
+   *
+   * THE CONDITION IS THE CROSSING, NOT THE LOG. Both call sites are already
+   * inside «today's total reached the target AND had not before THIS log», which
+   * is why a child who drinks a tenth glass is not congratulated ten times.
+   *
+   * IDEMPOTENT AT THE DATABASE, NOT BY AN `if`. `forEntity('signal', childId,
+   * 'daily-goal:<cause>', businessDate)` — THIS child, THIS goal, THIS
+   * family-local day — is refused by
+   * `notification_decisions_cause_uniq (family_id, source_event_id,
+   * target_audience)` on the second attempt, and by
+   * `child_messages (family_id, source_event_id)` on a redelivery that somehow
+   * got past it. The crossing test above is a `if`, and it is deliberately NOT
+   * the guarantee: a back-dated parent log, a retried request or a second replica
+   * can all re-enter this method, and only the constraint stops the second row.
+   * The key mirrors the reward trigger's own `daily-goal:{metric}:{child}:{day}`
+   * so the grant and the message are deduplicated on the same fact.
+   *
+   * IT NEVER THROWS, and it is called from inside the same best-effort
+   * `try`/`catch` the reward trigger already sits in: a notification problem must
+   * never fail the hydration log that caused it.
+   */
+  private async announceDailyGoal(
+    childId: string,
+    familyId: string,
+    cause: DailyGoalCause,
+    businessDate: string,
+  ): Promise<void> {
+    await this.notifications.handleEvent({
+      familyId,
+      childId,
+      eventType: 'DAILY_GOAL_COMPLETED',
+      cause,
+      sourceEventId: forEntity('signal', childId, `daily-goal:${cause}`, businessDate),
+      /**
+       * `DOMAIN_EVENT` and not `PERIODIC_SIGNAL`: unlike the two goal-nudge
+       * producers, this one is standing at the moment the fact happened. The
+       * crossing IS the event, and `NOTIFICATION_TRIGGERS` documents this member
+       * as «a domain event arrived».
+       */
+      trigger: 'DOMAIN_EVENT',
+      /**
+       * «The child was talking to this server at `now`» — and here, uniquely
+       * among this sprint's producers, that is an observation rather than an
+       * assumption: this method is reached from the child's own log request.
+       */
+      activity: { isEngagedNow: true },
+    });
   }
 }

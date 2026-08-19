@@ -61,6 +61,7 @@ import {
 } from '../../domain/engine/notification-decision.types';
 import type { NotificationPolicy } from '../../domain/engine/notification-policy';
 import { COPY_CATALOGUE, GENERIC_COPY_KEY, ordinal } from '../../domain/engine/notification-copy';
+import { dailyGoalName, goalUnitNoun } from '../../domain/engine/notification-nouns';
 import { bandForScore, scoreNotification } from '../../domain/engine/notification-scoring';
 
 /**
@@ -470,6 +471,43 @@ export class RuleBasedNotificationDecisionProvider implements NotificationDecisi
       variables.done = context.goal.completedUnits;
       variables.total = context.goal.totalUnits;
       if (context.goal.minutesRemaining !== null) variables.minutes = context.goal.minutesRemaining;
+      /**
+       * SPRINT F1 — `{unitNoun}`, DERIVED HERE FOR THE SAME REASON `weekCount`
+       * IS ORDINALISED HERE.
+       *
+       * «أنجزت ٤ من ٥ آيات» needs a noun that agrees with BOTH the household's
+       * language and the number in front of it, and Arabic inflects the counted
+       * noun by that number (١ آية · آيتان · ٥ آيات · ١١ آية). The producer knows
+       * the count but not the locale — `NotificationContextAssembler` resolves
+       * that — so the producer states the KIND and this layer says the word.
+       *
+       * `goalUnitNoun` returns `null` for a count it cannot say correctly (the
+       * dual, which Arabic does not write after a numeral), and the variable is
+       * then left ABSENT rather than filled with a wrong plural. An absent
+       * variable makes the template leak and the render degrade to `GENERIC`,
+       * which is why the producer asks `canNameUnits` BEFORE it states the fact
+       * at all — this branch is the second line of that defence, not the first.
+       */
+      const unitNoun = goalUnitNoun(context.goal.unitKind, context.goal.totalUnits, context.locale);
+      if (unitNoun) variables.unitNoun = unitNoun;
+    }
+    /**
+     * SPRINT F1 — THE NAME OF A DAILY GOAL, WHICH IS THE SERVER'S TO WRITE.
+     *
+     * `COPY_CATALOGUE.DAILY_GOAL_COMPLETED` takes a `{goalTitle}` and the two
+     * daily goals this product actually has — the hydration target and the
+     * activity target, both crossed and measured by `HealthEngineService` — have
+     * no title column anywhere, because neither is a row a human named. Their
+     * names live beside the copy, in the household's language, keyed on the
+     * originating domain event type. `notification-nouns.ts` carries the
+     * evidence for why those two are the whole list.
+     *
+     * IT NEVER OVERWRITES A TITLE A PRODUCER SUPPLIED: a producer that already
+     * named the goal knows more than this table does.
+     */
+    if (!usable(variables.goalTitle)) {
+      const dailyGoal = dailyGoalName(context.event.cause, context.locale);
+      if (dailyGoal) variables.goalTitle = dailyGoal;
     }
     if (context.streak) variables.days = context.streak.days;
     if (typeof variables.weekCount === 'number') {

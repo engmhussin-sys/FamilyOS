@@ -31,6 +31,10 @@
 
 import type { AgeBand } from '../../../ai-core/domain/age-band';
 import type { NotificationTrigger } from './notification-decision.types';
+/** TYPE-ONLY, and it must stay that way: `notification-nouns.ts` reads
+ * `NotificationLocale` from this file, so a VALUE import in either direction
+ * would be a real module cycle. Both sides are erased at compile time. */
+import type { GoalUnitKind } from './notification-nouns';
 import type { ToneBand } from './notification-tone';
 
 /**
@@ -156,6 +160,26 @@ export interface GoalFacts {
   /** WHY: DEADLINE_PROXIMITY. `null` for a goal with no deadline — the
    * component then contributes zero rather than a guessed urgency. */
   readonly minutesRemaining: number | null;
+  /**
+   * SPRINT F1 — WHAT `completedUnits` AND `totalUnits` ARE COUNTING.
+   *
+   * WHY: `COPY_CATALOGUE.GOAL_ALMOST_DONE` interpolates `{unitNoun}` in three of
+   * its four tone bands («أنجزت ٤ من ٥ آيات»), and without it the renderer
+   * treats the template as leaking and degrades the whole sentence to `GENERIC`.
+   * The noun cannot come from the producer, because it has to agree with the
+   * household's LOCALE and with the COUNT — `notification-nouns.ts` carries the
+   * Arabic rule and the whole argument. So the producer states the KIND and the
+   * copy layer says the word.
+   *
+   * NOT: the activity code, the target spec, the program row. One token from a
+   * closed union, never rendered — `hasEnumOrPlaceholderLeak` would refuse it if
+   * a template ever named it.
+   *
+   * Absent (or `null`) is the honest answer for a producer whose units have no
+   * noun: `StalledGoalService` passes a target's ayah count for the SCORER and
+   * says nothing about it to anybody, so it supplies none.
+   */
+  readonly unitKind?: GoalUnitKind | null;
 }
 
 /**

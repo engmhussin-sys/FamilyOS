@@ -17,6 +17,7 @@ import { NotificationDeliverySweepJob } from './application/jobs/notification-de
 import { RetentionSweepJob } from './application/jobs/retention-sweep.job';
 import { GrowthDailyAggregationJob } from './application/jobs/growth-daily-aggregation.job';
 import { GrowthAlertScanJob } from './application/jobs/growth-alert-scan.job';
+import { GoalNudgeSweepJob } from './application/jobs/goal-nudge-sweep.job';
 import { SchedulerOperationsController } from './presentation/controllers/scheduler-operations.controller';
 
 /**
@@ -60,6 +61,7 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
     NotificationDeliverySweepJob,
     GrowthDailyAggregationJob,
     GrowthAlertScanJob,
+    GoalNudgeSweepJob,
     JobRegistry,
     JobRunner,
     JobObservability,
