@@ -5,6 +5,7 @@ import { PrismaHealthRepository } from '../../src/modules/life-intelligence/infr
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
+import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
 import { computeHydrationTargetMl } from '../../src/modules/life-intelligence/application/services/health-rules';
 import { familyDateProvider } from '../common/family-date.testing';
 
@@ -44,6 +45,21 @@ describe('HealthEngineService', () => {
   };
   const timelineMock = { record: jest.fn() };
   const rewardTriggerMock = { trigger: jest.fn() };
+  /**
+   * SPRINT F1 — THE NOTIFICATION DOOR, STUBBED AT ITS OWN BOUNDARY.
+   *
+   * `HealthEngineService` gained one collaborator when it became the producer of
+   * `DAILY_GOAL_COMPLETED`. This is a UNIT spec — the timeline writer and the
+   * reward trigger beside it are stubs for the same reason — so the door is
+   * stubbed and the assertions below check only WHAT THIS CLASS DECIDES: that it
+   * knocks on the crossing and stays silent otherwise, with the server-owned
+   * cause and a family-local dedup key. Everything past the door — scoring, the
+   * quiet-hours class, the SAFETY ENGINE, the Arabic bytes, the deep link — is
+   * asserted against a real engine and a real database in
+   * `test/notifications/daily-goal-completed.e2e.spec.ts`, never here and never
+   * with a mocked Safety Engine.
+   */
+  const notificationsMock = { handleEvent: jest.fn() };
 
   let service: HealthEngineService;
   const childId = 'child-1';
@@ -59,6 +75,7 @@ describe('HealthEngineService', () => {
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        { provide: SmartNotificationEngineService, useValue: notificationsMock },
         // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
         familyDateProvider()
       ],
@@ -205,6 +222,20 @@ describe('HealthEngineService', () => {
         childId, familyId,
         expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'hydration' }) }),
       );
+      // SPRINT F1 — AND THE CHILD IS TOLD, on the same crossing, through the
+      // engine door and nothing else. The cause is the SERVER-OWNED domain event
+      // name that `notification-nouns.ts` keys the Arabic noun on — never the
+      // device-supplied `metadata` the ledger entry refused.
+      expect(notificationsMock.handleEvent).toHaveBeenCalledTimes(1);
+      expect(notificationsMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          familyId,
+          childId,
+          eventType: 'DAILY_GOAL_COMPLETED',
+          cause: 'HYDRATION_GOAL_COMPLETED',
+          sourceEventId: expect.any(String),
+        }),
+      );
     });
 
     it('additionally fires STREAK_ACHIEVED at a real milestone', async () => {
@@ -232,6 +263,9 @@ describe('HealthEngineService', () => {
       await service.logHydration(childId, familyId, { amountMl: 100 });
 
       expect(rewardTriggerMock.trigger).not.toHaveBeenCalled();
+      // THE NEGATIVE CASE FOR THE PRODUCER: a child still short of the target is
+      // told nothing. The crossing is the condition, not the log.
+      expect(notificationsMock.handleEvent).not.toHaveBeenCalled();
     });
 
     it('a Reward Rules failure never blocks the hydration log itself from succeeding', async () => {
@@ -257,6 +291,16 @@ describe('HealthEngineService', () => {
         childId, familyId,
         expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'activity' }) }),
       );
+      // The OTHER of the two crossings that have ever emitted this name, and it
+      // carries the OTHER server-owned cause — so the child reads «هدف الحركة»
+      // and not the hydration sentence.
+      expect(notificationsMock.handleEvent).toHaveBeenCalledTimes(1);
+      expect(notificationsMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'DAILY_GOAL_COMPLETED',
+          cause: 'ACTIVITY_GOAL_COMPLETED',
+        }),
+      );
     });
 
     it('does NOT trigger Reward Rules when the daily target is not crossed by this log', async () => {
@@ -267,6 +311,7 @@ describe('HealthEngineService', () => {
       await service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 10, socialContext: 'SOLO' });
 
       expect(rewardTriggerMock.trigger).not.toHaveBeenCalled();
+      expect(notificationsMock.handleEvent).not.toHaveBeenCalled();
     });
 
     it('additionally fires STREAK_ACHIEVED for activity at a real milestone', async () => {

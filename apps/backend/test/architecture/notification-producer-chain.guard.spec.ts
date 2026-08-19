@@ -758,22 +758,43 @@ interface LedgerEntry {
 }
 
 const PRODUCERLESS_DEFECT_LEDGER: readonly LedgerEntry[] = Object.freeze([
-  {
-    copyKey: 'GOAL_DEADLINE_NEAR',
-    evidence: 'src/modules/notifications/application/providers/rule-based-notification-decision.provider.ts:115',
-    detail:
-      'WITHHELD ON PURPOSE, and the reason is about this ledger rather than about the trigger. The condition IS deterministic (an open attempt plus `reward_programs.expires_at` inside the rule band) and was built. But GOAL_DEADLINE_NEAR and GOAL_ALMOST_DONE read the SAME fact slot, so any CHILD site passing `goal:` marks BOTH producible — and GOAL_ALMOST_DONE genuinely cannot be produced. Shipping this one alone would erase a real defect entry, which is exactly the scoreboard behaviour this file exists to prevent. Ships when the entry below does.',
-  },
-  {
-    copyKey: 'GOAL_ALMOST_DONE',
-    evidence: 'src/modules/notifications/application/providers/rule-based-notification-decision.provider.ts:123',
-    detail: 'MISSING DATA, named exactly: there is no partial-progress column for any goal — `achievement_requests` records stages, never `completed_units` — so «one step left» cannot be computed from anything that exists. Three of its four bands also need a `unitNoun` with no server-side source; without one the sentence degrades to GENERIC. Needs `reward_programs.unit_noun_ar` (or per-activity nouns) plus a progress column.',
-  },
-  {
-    copyKey: 'DAILY_GOAL_COMPLETED',
-    evidence: 'src/modules/life-intelligence/application/services/health-engine.service.ts:128',
-    detail: 'MISSING DATA: no server-owned Arabic name for a daily goal exists. `TYPE_SPECS.aggregateType = \'DailyGoal\'` names a model with no table behind it, and the only candidate text is device-supplied `metadata` — client prose, which must never be rendered as if the server wrote it. Needs a server-owned daily-goal title before the sentence can name anything.',
-  },
+  /**
+   * ==========================================================================
+   * EMPTY, AND THAT IS THE POINT OF KEEPING THE LIST.
+   * ==========================================================================
+   *
+   * Fourteen keys have been closed through this ledger. The last three went in
+   * SPRINT F1 and are recorded here because a ledger that forgets what it held
+   * is a ledger nobody can audit:
+   *
+   *   `GOAL_DEADLINE_NEAR`   `GoalNudgeService` — an OPEN `achievement_requests`
+   *   `GOAL_ALMOST_DONE`     attempt on a program whose `expires_at` is 3..10
+   *                          whole minutes away, and a day whose `max_per_day`
+   *                          plan is one VERIFIED attempt short. They shipped
+   *                          TOGETHER, which is what the first entry's own
+   *                          «ships when the entry below does» demanded: they
+   *                          share the `c.goal` fact slot, so closing one alone
+   *                          would have erased the other's evidence.
+   *                          NO MIGRATION ADDED A PROGRESS COLUMN, because the
+   *                          progress was never missing — it is a COUNT of
+   *                          `VERIFIED` rows, not a column. `goal-nudge.types.ts`
+   *                          carries the three rejected alternatives and why each
+   *                          one is dead.
+   *   `DAILY_GOAL_COMPLETED` `HealthEngineService` — the hydration and activity
+   *                          target crossings, which are the only two things in
+   *                          `src/` that have ever emitted that name. The Arabic
+   *                          name the entry said did not exist is server-owned
+   *                          and lives in `notification-nouns.ts`, keyed on the
+   *                          originating domain event type; the device-supplied
+   *                          `metadata` the entry rightly refused is still
+   *                          refused.
+   *
+   * ADDING AN ENTRY HERE IS ALWAYS ALLOWED AND ALWAYS VISIBLE. RULE P1 fails by
+   * name for a key that is neither producible nor classified, and the `it.failing`
+   * block below turns every entry into a line in every run's report. What is not
+   * allowed is deleting an entry without either a producer or a reasoned
+   * classification standing where it stood.
+   */
 ]);
 
 // ===========================================================================
@@ -983,12 +1004,36 @@ describe('ARCHITECTURE GUARD — no producerless production notification', () =>
      * gap breaks the build until the entry above is deleted.
      */
     describe('the defect ledger — these keys have copy, scoring and a destination, and NO producer', () => {
-      it.failing.each(PRODUCERLESS_DEFECT_LEDGER.map((e) => [e.copyKey, e.detail]))(
-        '%s is produced by something in src/',
-        (copyKey) => {
-          expect(producibleKeys).toContain(copyKey);
-        },
-      );
+      /**
+       * SPRINT F1 — THE BRANCH, AND WHY IT IS NOT A WEAKENING.
+       *
+       * `it.failing.each([])` is not «no tests»: `jest-each` REFUSES an empty
+       * table and fails with «called with an empty Array of table data». So an
+       * empty ledger — the state this whole mechanism exists to reach — would be
+       * indistinguishable from a broken one, and the obvious fix (deleting the
+       * block) would have deleted the ratchet with it.
+       *
+       * BOTH BRANCHES ASSERT. The EMPTY branch states that the ledger is empty
+       * AND that the three keys the last entries held are producible, so it goes
+       * red if somebody empties the ledger without producing them; the NON-EMPTY
+       * branch is the original ratchet, unchanged, and re-registers itself for
+       * every entry that is ever added back.
+       */
+      if (PRODUCERLESS_DEFECT_LEDGER.length === 0) {
+        it('is EMPTY — every key in the catalogue is produced or classified with a reason', () => {
+          expect(PRODUCERLESS_DEFECT_LEDGER).toEqual([]);
+          for (const closed of ['GOAL_DEADLINE_NEAR', 'GOAL_ALMOST_DONE', 'DAILY_GOAL_COMPLETED']) {
+            expect(producibleKeys).toContain(closed);
+          }
+        });
+      } else {
+        it.failing.each(PRODUCERLESS_DEFECT_LEDGER.map((e) => [e.copyKey, e.detail]))(
+          '%s is produced by something in src/',
+          (copyKey) => {
+            expect(producibleKeys).toContain(copyKey);
+          },
+        );
+      }
     });
   });
 

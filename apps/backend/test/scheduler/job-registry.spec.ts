@@ -28,6 +28,7 @@ import { NotificationDeliverySweepJob } from '../../src/modules/scheduler/applic
 import { RetentionSweepJob } from '../../src/modules/scheduler/application/jobs/retention-sweep.job';
 import { GrowthDailyAggregationJob } from '../../src/modules/scheduler/application/jobs/growth-daily-aggregation.job';
 import { GrowthAlertScanJob } from '../../src/modules/scheduler/application/jobs/growth-alert-scan.job';
+import { GoalNudgeSweepJob } from '../../src/modules/scheduler/application/jobs/goal-nudge-sweep.job';
 import { JobRegistry } from '../../src/modules/scheduler/application/job-registry.service';
 
 /**
@@ -88,6 +89,7 @@ function registry(): JobRegistry {
     new NotificationDeliverySweepJob(stub()),
     new GrowthDailyAggregationJob(stub(), stub()),
     new GrowthAlertScanJob(stub()),
+    new GoalNudgeSweepJob(stub()),
   );
 }
 
@@ -103,6 +105,11 @@ describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => 
       'data-retention-sweep',
       'expired-token-sweep',
       'family-daily-rollover',
+      // SPRINT F1: the child's goal watch, seeded by migration 0024. PLATFORM
+      // and 300s, because the deadline band it has to see is eight real minutes
+      // wide and a cadence larger than that would step over it — the argument is
+      // in `goal-nudge.types.ts` and in the migration's own header.
+      'goal-nudge-sweep',
       // PHASE D (GROWTH): the hourly alert scan, seeded by migration 0015.
       'growth-alert-scan',
       // PHASE D (GROWTH): the daily aggregate + referral qualification sweep,
@@ -162,6 +169,7 @@ describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => 
           new NotificationDeliverySweepJob(stub()),
           new GrowthDailyAggregationJob(stub(), stub()),
           new GrowthAlertScanJob(stub()),
+          new GoalNudgeSweepJob(stub()),
         ),
     ).toThrow(/Duplicate scheduled job name/);
   });
