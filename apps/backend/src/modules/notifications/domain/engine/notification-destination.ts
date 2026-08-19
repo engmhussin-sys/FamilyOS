@@ -311,6 +311,36 @@ const DESTINATION_RULES: Readonly<Record<string, DestinationRule>> = Object.free
    * cause was a habit tick or a streak and no goal is known. Sending a parent to
    * the reward catalogue, which is a configuration screen in their app, would
    * answer a question they did not ask.
+   *
+   * -------------------------------------------------------------------------
+   * SPRINT F1 — THESE TWO ROWS DID NOT MOVE, AND THAT IS THE ENTRY WORTH
+   * WRITING DOWN.
+   *
+   * `REWARD_GRANTED` and `BADGE_EARNED_PARENT` are the two most-sent parent
+   * notifications in this product, and until now BOTH ENDED IN A DEAD TAP:
+   * `deep_link_router.dart` answered `abny://progress` with
+   * `DeepLinkRoute.unavailable()`, so a parent told their child had earned
+   * something — by a sentence that says «افتح التطبيق» in as many words — was
+   * returned to the inbox they were already in, under a snackbar.
+   *
+   * THE REPAIR WAS IN THE CLIENT, NOT HERE, and the alternative was considered
+   * and rejected on this file's own rules. Re-pointing the two keys at a
+   * surface that carries an id is not available: rule 4 forbids manufacturing
+   * one, `NotificationRewardConsumer` carries none, and rule 5 plus `e2e-13
+   * STEP 14` keep every identifier off this payload — so `abny://child/<id>`
+   * is a link this product has DECIDED not to emit, not one it forgot to.
+   * And the other id-less surfaces answer a different question: `rewards` is
+   * the parent's FULFILMENT queue, which a badge can never appear in, and
+   * `goals` is the list this very key exists to avoid claiming
+   * (`REWARD_GRANTED_WITH_GOAL` is the one that names a goal).
+   *
+   * `progress` was the right destination and the parent app was missing its
+   * entry screen. It has one now — `ProgressChildrenScreen`, which resolves
+   * «which child» from the FAMILY'S OWN DATA and hands off to the existing
+   * `ChildRewardsScreen` (points, level, streaks, verified achievements). This
+   * table is unchanged, which is the point: the destination was right, and a
+   * rule edited to route around a missing screen would have been this layer
+   * absorbing a client's gap.
    */
   REWARD_GRANTED_WITH_GOAL: goalDestination,
   REWARD_GRANTED: () => surfaceLink('progress'),
@@ -330,11 +360,21 @@ const DESTINATION_RULES: Readonly<Record<string, DestinationRule>> = Object.free
    *
    * IT USED TO RESOLVE TO `abny://coach`, on the argument that the next step is
    * a CONVERSATION rather than a setting. The argument was right about the
-   * product and wrong about the tap: `coach` is `unavailable` in the parent app
+   * product and wrong about the tap: `coach` WAS `unavailable` in the parent app
    * (`deep_link_router.dart`), because `CoachingScreen` needs a `childId` AND a
-   * `childName` and this payload is pinned identifier-free — so a link there is
-   * a link the recipient cannot open, which rule 4's own words call worse than
-   * a link to a list. `screen-time`/`safety` IS openable, and `SafetyScreen`
+   * `childName` and this payload is pinned identifier-free — so a link there was
+   * a link the recipient could not open, which rule 4's own words call worse than
+   * a link to a list.
+   *
+   * `coach` IS OPENABLE AGAIN as of the sprint that opened `progress`
+   * (`CoachChildrenScreen` asks the family's own data which child is meant), so
+   * the ORIGINAL objection has expired — and this row still does not move. The
+   * reason it stays is now purely the product one, which is the stronger of the
+   * two anyway: this is the distress-escalation alert, `notification-class.ts`
+   * classifies it SAFETY, and a parent reading it needs it beside the other
+   * things they have been told about this child's safety and beside the
+   * controls they can act with. A coaching recommendation list is not that.
+   * `screen-time`/`safety` IS openable, and `SafetyScreen`
    * was built listing exactly the notifications the server classifies SAFETY —
    * `notification-class.ts` classifies this key SAFETY, alongside the four
    * device alerts that already resolve here.

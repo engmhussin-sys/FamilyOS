@@ -1324,6 +1324,24 @@ const PRODUCERLESS_DEFECT_LEDGER: readonly LedgerEntry[] = Object.freeze([
  * change and a Flutter change respectively. So this ledger reports rather than
  * repairs, and the `it.failing` below turns the day either lands into a red
  * build that forces the entry out.
+ *
+ * ---------------------------------------------------------------------------
+ * IT IS EMPTY, AND IT WAS EMPTIED THE WAY IT WAS BUILT TO BE.
+ *
+ * It carried `REWARD_GRANTED` and `BADGE_EARNED_PARENT` — both `abny://progress`,
+ * both `unavailable()` in `deep_link_router.dart`, and together the two
+ * most-sent parent notifications this product has. The SECOND of the two
+ * candidate repairs landed: `progress` now resolves to `ProgressChildrenScreen`
+ * (and `coach` to `CoachChildrenScreen`), each an argument-free screen that
+ * asks the family's own data which child a link that names none is about. The
+ * `it.failing` entries went red on the day of the fix, exactly as designed, and
+ * the entries came out with them rather than being re-worded.
+ *
+ * THE EMPTY BRANCH BELOW IS NOT A NO-OP. `jest-each` refuses an empty table, so
+ * «no dead taps» has to be a STATED outcome; it asserts both halves — that no
+ * producible key resolves anywhere its own app refuses, AND that the parent app
+ * refuses no surface at all. The second is what stops the next dead tap from
+ * being introduced silently and then written down here as a row.
  */
 interface DeadDestinationEntry {
   readonly copyKey: string;
@@ -1332,20 +1350,7 @@ interface DeadDestinationEntry {
   readonly detail: string;
 }
 
-const DEAD_DESTINATION_LEDGER: readonly DeadDestinationEntry[] = Object.freeze([
-  {
-    copyKey: 'REWARD_GRANTED',
-    evidence: 'apps/parent-app/lib/core/routing/deep_link_router.dart:212',
-    detail:
-      'The most-sent parent sentence in this product — «حصل {childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.» — resolves to `abny://progress`, and `DeepLinkRouter.resolve` answers `progress` with `DeepLinkRoute.unavailable()` because `LearningProgressScreen` needs a `childId` AND a `childName` that the identifier-free payload will never carry (`e2e-13 STEP 14`). The sentence tells a parent to open the app and the tap lands them back on the inbox with a snackbar.',
-  },
-  {
-    copyKey: 'BADGE_EARNED_PARENT',
-    evidence: 'apps/parent-app/lib/core/routing/deep_link_router.dart:212',
-    detail:
-      'The same dead surface, one key over: «حصل {childName} على وسام {badgeTitle}. التفاصيل داخل التطبيق.» resolves to `abny://progress` and the parent app cannot open it. It is listed separately rather than folded into the entry above because the two keys are repaired independently — the badge sentence has a defensible landing the reward sentence does not, and one being fixed must not silence the other.',
-  },
-]);
+const DEAD_DESTINATION_LEDGER: readonly DeadDestinationEntry[] = Object.freeze([]);
 
 // ===========================================================================
 // 6. THE CLIENT HALF — read from the Flutter apps, never edited
@@ -1870,12 +1875,24 @@ describe('ARCHITECTURE GUARD — no producerless production notification', () =>
         );
       }
 
-      it('the two surfaces the parent app refuses are READ from its router, not assumed', () => {
-        // Named, because the ledger above stands on them: if `progress` gains a
-        // screen this goes red beside the `it.failing`, and the two together say
-        // what happened rather than leaving one silent.
-        expect(parentRouting.unansweredSurfaces).toEqual(['coach', 'progress']);
+      it('NEITHER app refuses a surface any more, and that is READ from the two routers rather than assumed', () => {
+        // This assertion used to read `['coach', 'progress']` and it was the
+        // measurement the ledger stood on. Both are answered now —
+        // `ProgressChildrenScreen` and `CoachChildrenScreen` — so it reads
+        // empty, and it is left here in its positive form on purpose: it is
+        // what makes «a surface stopped being openable» a red test the day it
+        // happens, rather than a row somebody has to notice and write down.
+        //
+        // It is not redundant with the empty-ledger branch above. That branch
+        // is conditional on the ledger; this one is unconditional, so it holds
+        // even on a build where somebody has just added a ledger entry.
+        expect(parentRouting.unansweredSurfaces).toEqual([]);
         expect(childRouting.unansweredSurfaces).toEqual([]);
+        // ANTI-VACUITY: an empty `unansweredSurfaces` would also be the answer
+        // if the scan had read nothing at all. It read a router with every one
+        // of the scheme's surfaces in it.
+        expect([...parentRouting.routedSurfaces].sort()).toEqual([...DEEP_LINK_SURFACES].sort());
+        expect(parentRouting.answeredSurfaces.length).toBe(DEEP_LINK_SURFACES.length);
         // And ANSWERED + UNANSWERED partition the routed set: a surface the
         // scan failed to attribute would otherwise vanish from both.
         expect([...parentRouting.answeredSurfaces, ...parentRouting.unansweredSurfaces].sort()).toEqual(
