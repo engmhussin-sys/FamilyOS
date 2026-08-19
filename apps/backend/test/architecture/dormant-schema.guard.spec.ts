@@ -19,9 +19,12 @@
  *                           strategy's only score source, and it returns `null`
  *                           for every child in production because no writer
  *                           exists.
- *   `badge_definitions`     `awardBadgeIfNotAlready` needs a badge id that
- *                           `findBadgeByKey` looks up in a catalogue nothing
- *                           seeds.
+ *   `badge_definitions`     REFERENCE DATA since migration 0026 — `src/` still
+ *                           cannot originate a row and never should, and the
+ *                           catalogue it looks up is now inserted by the
+ *                           migration. See the blind spot below: this entry
+ *                           said `DEFERRED_FEATURE` for a whole sprint AFTER
+ *                           0026 landed, and nothing in this file could tell.
  *   `ai_alerts`             `GrowthAlertsService.aiSafetyIncident` is documented
  *                           as «one is one too many» and can never fire.
  *
@@ -51,6 +54,42 @@
  * RULE D3 is the whole point. A ledger that can be satisfied by ignoring it is
  * a scoreboard; this one fails the build when reality improves, so the entry
  * cannot outlive the condition that justified it.
+ *
+ * ---------------------------------------------------------------------------
+ * THE BLIND SPOT THAT LET AN ENTRY ROT, AND WHY RULE D7 EXISTS.
+ *
+ * RULE D3 fails when a declared model gains a writer IN `src/`. That covers
+ * `DEFERRED_FEATURE` -> LIVE, and it covered nothing else, because the scanner
+ * READ `src/` AND ONLY `src/`. So the OTHER way a declaration can stop being
+ * true — the rows start arriving from a MIGRATION — was invisible here by
+ * construction, and the ledger recorded the wrong reason with no test able to
+ * notice.
+ *
+ * MEASURED, NOT IMAGINED. `BadgeDefinition` was declared `DEFERRED_FEATURE`
+ * because «nothing seeds the badge catalogue — no migration INSERT and no admin
+ * CRUD». Migration `0026_badge_catalogue` then inserted nine definitions and the
+ * nine `reward_rules` that demand them; `findBadgeByKey` started resolving,
+ * `awardBadgeIfNotAlready` started awarding, and `test/rewards/badge-catalogue.e2e.spec.ts`
+ * proved all of it against a real database. Every rule in this file stayed
+ * green: the model still had no `src/` writer, so D2 and D3 were both satisfied
+ * by a justification whose first clause was now false.
+ *
+ * `WRITTEN_BY_MIGRATION_ONLY` was the reason most exposed to this, because it
+ * is the one reason whose evidence has NEVER lived in `src/`. Its docstring
+ * demanded a file name «so the claim can be checked in one grep», and then
+ * nobody ran the grep — for eight entries, on every run, for as long as the
+ * ledger existed. RULE D7 runs it, in both directions:
+ *
+ *   D7a  a `WRITTEN_BY_MIGRATION_ONLY` claim with NO migration or seed writing
+ *        that table is a claim about nothing, and fails.
+ *   D7b  any OTHER reason on a model a migration or seed DOES write is a stale
+ *        classification, and fails naming the file that writes it. This is the
+ *        assertion that would have turned red on the day 0026 landed.
+ *
+ * THE SEED AXIS IS SEPARATE FROM `status`, DELIBERATELY. A migration INSERT does
+ * NOT make a model LIVE: «live» means a REQUEST can originate a row, and the
+ * whole point of reference data is that none can. Folding the two together would
+ * make D3 demand the deletion of exactly the entries that are most correct.
  *
  * ---------------------------------------------------------------------------
  * WHAT «LIVE» MEANS HERE, AND WHY IT IS NARROWER THAN «MENTIONED».
@@ -95,6 +134,11 @@
  *       dormant model IS reported by name; adding a usage clears it; a usage
  *       that appears only in a COMMENT does not count; a declared model that
  *       has gone live IS reported.
+ *   D7  THE MIGRATION AXIS, both directions. `WRITTEN_BY_MIGRATION_ONLY` is
+ *       CHECKED against `prisma/migrations/**\/*.sql` and `prisma/seed*.{ts,sql}`,
+ *       and every OTHER reason is checked against the same scan for staleness.
+ *       The justification must name a file the scan actually found, so «one
+ *       grep» is a machine-checked claim rather than a promise.
  *
  * ---------------------------------------------------------------------------
  * COMMENTS ARE STRIPPED, STRINGS AND TEMPLATE LITERALS ARE NOT.
@@ -404,6 +448,179 @@ export function scanUsage(models: readonly SchemaModel[], files: readonly Source
 }
 
 // ===========================================================================
+// 2b. THE SECOND SCANNER — WHAT A MIGRATION OR A SEED PUTS IN A TABLE
+// ===========================================================================
+
+/**
+ * WHY THIS IS A SECOND SCAN AND NOT A WIDER `files` ARGUMENT TO THE FIRST.
+ *
+ * `scanUsage` answers «can a REQUEST originate a row?», and its answer is what
+ * `status` means everywhere else in this file. A migration INSERT is the exact
+ * OPPOSITE claim — «rows exist and no request may make them» — so feeding
+ * migration SQL into the same scan would flip `Country`, `QuranSurah` and every
+ * other reference table to LIVE and make RULE D3 demand the deletion of the
+ * eight entries that are most correct. Two questions, two scans, one ledger
+ * that has to answer both.
+ */
+export type SeedEvidence = 'MIGRATION_INSERT' | 'SEED_SQL_INSERT' | 'SEED_TS_WRITE';
+
+export interface SeedSite {
+  /** Repo-relative from `apps/backend`, POSIX separators. */
+  readonly file: string;
+  readonly line: number;
+  readonly evidence: SeedEvidence;
+  readonly how: string;
+}
+
+/**
+ * SQL's comment syntax, not TypeScript's. `--` to end of line, `/* … *\/`, and
+ * single-quoted literals in which `''` is an escaped quote rather than a close.
+ *
+ * IT IS NOT OPTIONAL. Every migration in this repository opens with a `--`
+ * banner naming the tables it is about (`-- badge_definitions: the catalogue…`),
+ * and `0011_scheduler_and_retention` discusses `INSERT INTO "scheduled_jobs"` in
+ * prose above the statement that does it. A scan that counted those would report
+ * a writer for any table a migration MENTIONS, which is most of them.
+ *
+ * STRING BODIES ARE BLANKED, WHICH IS THE OPPOSITE OF WHAT `stripComments`
+ * DOES TO TYPESCRIPT — and the reason is that the two languages put the SQL in
+ * opposite places. In `*.sql.ts` the statement IS the template literal, so
+ * keeping it is the only way to see it; in a `.sql` file the statement is the
+ * code and a quoted literal is DATA. `0011_scheduler_and_retention` inserts a
+ * `scheduled_jobs` row whose description is prose about what the job does to
+ * other tables, and that prose must not read as a writer for them.
+ */
+export function stripSqlComments(source: string): string {
+  let out = '';
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    const d = source[i + 1];
+    if (c === '-' && d === '-') {
+      while (i < n && source[i] !== '\n') {
+        out += ' ';
+        i += 1;
+      }
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) {
+        out += source[i] === '\n' ? '\n' : ' ';
+        i += 1;
+      }
+      out += '  ';
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      out += c;
+      i += 1;
+      while (i < n) {
+        if (source[i] === "'" && source[i + 1] === "'") {
+          out += '  ';
+          i += 2;
+          continue;
+        }
+        if (source[i] === "'") break;
+        out += source[i] === '\n' ? '\n' : ' ';
+        i += 1;
+      }
+      if (i < n) {
+        out += "'";
+        i += 1;
+      }
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * EVERY MIGRATION OR SEED THAT ORIGINATES A ROW, PER MODEL.
+ *
+ * `sql` is `prisma/migrations/**\/*.sql` plus `prisma/seed*.sql`; `ts` is
+ * `prisma/seed*.ts`. The TypeScript half REUSES `scanUsage` rather than
+ * reimplementing «what originates a row» in a second place — a seed that upserts
+ * through the Prisma client and a repository that does are the same operation,
+ * and `ORIGINATING` is already the one definition of it.
+ *
+ * A SELECT, an UPDATE or a DELETE in a migration is NOT a writer, for the same
+ * reason a reader is not a writer in `src/`: `0019_default_locale_arabic`
+ * UPDATEs rows it did not create, and counting that would report a seed for
+ * every table any backfill has ever touched.
+ *
+ * Pure in all three arguments, so RULE D6 can hand it a repository that does not
+ * exist.
+ */
+export function scanSeedWriters(
+  models: readonly SchemaModel[],
+  sql: readonly SourceFile[],
+  ts: readonly SourceFile[],
+): Map<string, SeedSite[]> {
+  const stripped = sql.map((f) => ({ file: f.file, code: stripSqlComments(f.content) }));
+  const fromTs = scanUsage(models, ts);
+  const out = new Map<string, SeedSite[]>();
+
+  for (const model of models) {
+    const sites: SeedSite[] = [];
+
+    // `INSERT INTO "badge_definitions"` and `COPY "countries" (…) FROM stdin`,
+    // which is how a `pg_dump`-shaped seed states the same thing.
+    const t = tableRef(model.table);
+    const insert = new RegExp(`(?:INSERT\\s+INTO|COPY)\\s+${t}`, 'gi');
+    for (const { file, code } of stripped) {
+      let m: RegExpExecArray | null;
+      while ((m = insert.exec(code)) !== null) {
+        sites.push({
+          file,
+          line: lineOf(code, m.index),
+          evidence: file.startsWith('prisma/migrations/') ? 'MIGRATION_INSERT' : 'SEED_SQL_INSERT',
+          how: m[0].replace(/\s+/g, ' '),
+        });
+      }
+    }
+
+    const tsUsage = fromTs.find((u) => u.model.model === model.model);
+    for (const site of tsUsage?.sites ?? []) {
+      if (!ORIGINATING.includes(site.evidence)) continue;
+      sites.push({ file: site.file, line: site.line, evidence: 'SEED_TS_WRITE', how: site.how });
+    }
+
+    out.set(model.model, sites);
+  }
+
+  return out;
+}
+
+/**
+ * THE FILE TOKENS A JUSTIFICATION NAMES — a migration number (`0026`) or a seed
+ * file (`seed-demo.ts`, `seed-phase-d-prices.example.sql`).
+ *
+ * The eight entries that predate RULE D7 name their evidence in three different
+ * shapes — a full path, a bare four-digit number, a list of numbers — because
+ * they were written for a human reader. Extracting the TOKEN rather than
+ * demanding a canonical path is what lets the promise be machine-checked without
+ * rewriting eight sentences into a format nobody reads.
+ *
+ * `\b` IS THE WRONG BOUNDARY HERE, and it was measured: a migration directory is
+ * `0014_commercial_subscription_payments`, `_` is a word character, so `\b\d{4}\b`
+ * matches nothing in the very path the justification quotes and every entry
+ * reported as unnamed. The boundary that is meant is «not part of a longer
+ * number», which is what the lookarounds below say.
+ */
+export function seedFileTokens(justification: string): string[] {
+  return [
+    ...new Set([
+      ...[...justification.matchAll(/(?<![\w])(\d{4})(?!\d)/g)].map((m) => m[1]),
+      ...[...justification.matchAll(/\b(seed[A-Za-z0-9._-]*\.(?:ts|sql))/g)].map((m) => m[1]),
+    ]),
+  ];
+}
+
+// ===========================================================================
 // 3. THE LEDGER — AND IT IS THE AUDIT TRAIL, NOT A MUTE BUTTON
 // ===========================================================================
 
@@ -421,7 +638,10 @@ export function scanUsage(models: readonly SchemaModel[], files: readonly Source
  * `WRITTEN_BY_MIGRATION_ONLY` reference data. Rows come from a migration's SQL
  *                             or a `prisma/seed*.ts`, never from a request. The
  *                             justification must name the file that inserts
- *                             them, so the claim can be checked in one `grep`.
+ *                             them — and since RULE D7 that `grep` is RUN: the
+ *                             named file must be one the scan actually found
+ *                             writing the table, and no OTHER reason may be used
+ *                             for a table a migration writes.
  * `READ_BY_TOOLING_ONLY`      only `scripts/` or `prisma/` touch it at all;
  *                             `src/` neither reads nor writes it.
  * `SUPERSEDED`                a LIVE model already carries this concern. The
@@ -509,12 +729,6 @@ export const DORMANT_SCHEMA_DECLARATIONS: readonly DormantSchemaDeclaration[] = 
       'The per-child daily safety score has no producer anywhere in ai-core or analytics; DeviceRiskAssessment is written by prisma-device-risk.repository.ts:17 but scores a DEVICE pairing, not a child’s day, so it does not supersede this table.',
   },
   {
-    model: 'BadgeDefinition',
-    reason: 'DEFERRED_FEATURE',
-    justification:
-      'Nothing seeds the badge catalogue — no migration INSERT and no admin CRUD — so findBadgeByKey at prisma-rewards.repository.ts:328 always misses and the live awardBadgeIfNotAlready two lines below it can never be reached with a real badge id.',
-  },
-  {
     model: 'FamilyChallenge',
     reason: 'DEFERRED_FEATURE',
     justification:
@@ -545,6 +759,30 @@ export const DORMANT_SCHEMA_DECLARATIONS: readonly DormantSchemaDeclaration[] = 
     reason: 'WRITTEN_BY_MIGRATION_ONLY',
     justification:
       'Platform configuration inserted by migrations 0011, 0015, 0016 and 0024; scheduler.sql.ts only ever SELECTs and UPDATEs the lease columns, and a job the app could invent at runtime is exactly what the migration-owned registry exists to prevent.',
+  },
+  /**
+   * THE ENTRY THAT PROVED THE BLIND SPOT, AND THE SHAPE OF ITS CORRECTION.
+   *
+   * It read `DEFERRED_FEATURE` — «nothing seeds the badge catalogue: no
+   * migration INSERT and no admin CRUD» — and that sentence was true until
+   * `0026_badge_catalogue` inserted the nine definitions and the nine
+   * `reward_rules` that ask for them. `Country` is the precedent this now
+   * matches exactly: deployment-level reference data with no `family_id`, one
+   * row shared by every household, and a stable identity that a request must not
+   * be able to mint. `child_badge_awards (child_id, badge_id)` is UNIQUE, so the
+   * identity of a badge has to outlive every award that points at it.
+   *
+   * THE DORMANCY IS UNCHANGED AND INTENDED. `src/` still cannot originate a row:
+   * `prisma-rewards.repository.ts` only ever calls `findBadgeByKey`, and an
+   * admin CRUD that could add a tenth badge would be the defect, not the fix.
+   * What changed is the REASON, and RULE D7b is the assertion that would have
+   * demanded this edit on the day 0026 landed instead of a sprint later.
+   */
+  {
+    model: 'BadgeDefinition',
+    reason: 'WRITTEN_BY_MIGRATION_ONLY',
+    justification:
+      'The nine platform badges are inserted by prisma/migrations/0026_badge_catalogue/migration.sql from src/shared/rewards/badge-catalogue.ts; src/ only reads them — findBadgeByKey at prisma-rewards.repository.ts:328 resolves every key and awardBadgeIfNotAlready awards against it — and a badge id a request could mint would orphan the awards that point at it.',
   },
   {
     model: 'Country',
@@ -609,10 +847,50 @@ function readSourceFiles(dir: string = SRC): SourceFile[] {
   return out;
 }
 
+/**
+ * `prisma/migrations/**\/*.sql` plus `prisma/seed*.sql`, and `prisma/seed*.ts`.
+ *
+ * `prisma/migrations-scripts/` is deliberately NOT read: it holds the operator
+ * runbooks for applying migrations, not the statements themselves, and a
+ * runbook that quotes an INSERT is prose about a writer rather than one.
+ */
+function readSeedSources(): { sql: SourceFile[]; ts: SourceFile[] } {
+  const dir = path.join(BACKEND_ROOT, 'prisma');
+  const sql: SourceFile[] = [];
+  const ts: SourceFile[] = [];
+  const rel = (abs: string): string => path.relative(BACKEND_ROOT, abs).split(path.sep).join('/');
+
+  const migrations = path.join(dir, 'migrations');
+  if (fs.existsSync(migrations)) {
+    for (const entry of fs.readdirSync(migrations, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const inner = path.join(migrations, entry.name);
+      for (const f of fs.readdirSync(inner)) {
+        if (!f.endsWith('.sql')) continue;
+        const abs = path.join(inner, f);
+        sql.push({ file: rel(abs), content: fs.readFileSync(abs, 'utf8') });
+      }
+    }
+  }
+
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.startsWith('seed')) continue;
+    const abs = path.join(dir, entry.name);
+    const source = { file: rel(abs), content: fs.readFileSync(abs, 'utf8') };
+    if (entry.name.endsWith('.sql')) sql.push(source);
+    else if (entry.name.endsWith('.ts')) ts.push(source);
+  }
+
+  return { sql, ts };
+}
+
 const schemaText = fs.readFileSync(SCHEMA, 'utf8');
 const schemaModels = parseSchemaModels(schemaText);
 const files = readSourceFiles();
 const usage = scanUsage(schemaModels, files);
+const seedSources = readSeedSources();
+const seedWriters = scanSeedWriters(schemaModels, seedSources.sql, seedSources.ts);
+const seedWritersOf = (model: string): readonly SeedSite[] => seedWriters.get(model) ?? [];
 
 const dormant = usage.filter((u) => u.status === 'DORMANT').map((u) => u.model.model);
 const live = usage.filter((u) => u.status === 'LIVE').map((u) => u.model.model);
@@ -685,6 +963,33 @@ describe('ARCHITECTURE GUARD — no undeclared dormant table', () => {
       ] as const) {
         expect(`${kind}:${seen.has(kind)}`).toBe(`${kind}:true`);
       }
+    });
+
+    it('reads the real migrations and seeds, and finds the reference data they demonstrably insert', () => {
+      // RULE D7 is only as good as this scan. A seed scan that found NOTHING
+      // would make D7a fail loudly and D7b pass vacuously — the more dangerous
+      // half — so both file sets and both evidence kinds are named here.
+      expect(seedSources.sql.length).toBeGreaterThanOrEqual(20);
+      expect(seedSources.ts.length).toBeGreaterThanOrEqual(1);
+
+      const kindsFor = (model: string): string[] =>
+        [...new Set(seedWritersOf(model).map((s) => s.evidence))].sort();
+
+      // A migration INSERT, a seed `.sql` INSERT and a seed `.ts` upsert — one
+      // named model per evidence kind, so an unused kind is an untested one.
+      expect(kindsFor('BadgeDefinition')).toEqual(['MIGRATION_INSERT']);
+      expect(kindsFor('SubscriptionPrice')).toContain('SEED_SQL_INSERT');
+      expect(kindsFor('PlanDefinition')).toContain('SEED_TS_WRITE');
+      // …and the negative: a deferred feature has no seed writer anywhere, or
+      // D7b below would be reporting it.
+      expect(seedWritersOf('AiAlert')).toEqual([]);
+      expect(seedWritersOf('LocationEvent')).toEqual([]);
+
+      // The badge catalogue's writer, by file, because the whole point of this
+      // rule is that the justification's file name is the checkable claim.
+      expect(seedWritersOf('BadgeDefinition').map((s) => s.file)).toEqual([
+        'prisma/migrations/0026_badge_catalogue/migration.sql',
+      ]);
     });
 
     it('a READER is not a WRITER — the distinction this guard turns on', () => {
@@ -781,6 +1086,87 @@ describe('ARCHITECTURE GUARD — no undeclared dormant table', () => {
     const known = new Set(schemaModels.map((m) => m.model));
     expect(declared.filter((model) => !known.has(model))).toEqual([]);
     expect(declared).toHaveLength(new Set(declared).size);
+  });
+
+  // =========================================================================
+  // RULE D7 — THE MIGRATION AXIS. The blind spot, closed in both directions.
+  // =========================================================================
+  describe('RULE D7 — a migration claim is checked against the migrations', () => {
+    /**
+     * D7a. «Rows come from a migration» is a statement about a file. If no file
+     * in `prisma/` puts a row in that table, the entry is describing something
+     * that does not happen, and the model is dormant for a DIFFERENT reason that
+     * the ledger is now hiding.
+     */
+    it('every WRITTEN_BY_MIGRATION_ONLY model really is written by a migration or a seed', () => {
+      const unbacked = DORMANT_SCHEMA_DECLARATIONS.filter(
+        (d) => d.reason === 'WRITTEN_BY_MIGRATION_ONLY' && seedWritersOf(d.model).length === 0,
+      ).map((d) => {
+        const table = schemaModels.find((m) => m.model === d.model)?.table ?? d.model;
+        return `${d.model} (${table}) claims WRITTEN_BY_MIGRATION_ONLY, but no INSERT/COPY in prisma/migrations/**/*.sql and no write in prisma/seed* touches it — either name the real writer or change the reason`;
+      });
+      expect(unbacked).toEqual([]);
+    });
+
+    /**
+     * D7a, second half — THE «ONE GREP» PROMISE, RUN.
+     *
+     * The vocabulary has always demanded the file name «so the claim can be
+     * checked in one grep». Until this assertion the grep was never run, which
+     * is how `Country`'s justification and `BadgeDefinition`'s could sit four
+     * lines apart with one of them true.
+     */
+    it('every WRITTEN_BY_MIGRATION_ONLY justification names a file the scan actually found', () => {
+      const unnamed = DORMANT_SCHEMA_DECLARATIONS.filter(
+        (d) => d.reason === 'WRITTEN_BY_MIGRATION_ONLY',
+      )
+        .filter((d) => {
+          const sites = seedWritersOf(d.model);
+          if (sites.length === 0) return false; // already reported by D7a
+          const tokens = seedFileTokens(d.justification);
+          return !sites.some((s) => tokens.some((token) => s.file.includes(token)));
+        })
+        .map(
+          (d) =>
+            `${d.model}'s justification names none of the files that actually write it [${seedWritersOf(
+              d.model,
+            )
+              .map((s) => `${s.file}:${s.line}`)
+              .join('; ')}]`,
+        );
+      expect(unnamed).toEqual([]);
+    });
+
+    /**
+     * D7b. THE RATCHET FOR THE OTHER AXIS, and the one that would have caught
+     * `BadgeDefinition` on the day `0026_badge_catalogue` landed. A model whose
+     * rows now arrive from a migration is not a `DEFERRED_FEATURE`, is not
+     * `SUPERSEDED`, and is not `READ_BY_TOOLING_ONLY` — whatever the entry says,
+     * the schema stopped being empty and the ledger has to say so.
+     */
+    it('no OTHER reason survives a migration or seed that writes the table', () => {
+      const stale = DORMANT_SCHEMA_DECLARATIONS.filter(
+        (d) => d.reason !== 'WRITTEN_BY_MIGRATION_ONLY' && seedWritersOf(d.model).length > 0,
+      ).map(
+        (d) =>
+          `${d.model} is declared ${d.reason}, but its rows are inserted by [${seedWritersOf(d.model)
+            .map((s) => `${s.file}:${s.line} ${s.evidence}`)
+            .join(
+              '; ',
+            )}] — reclassify it WRITTEN_BY_MIGRATION_ONLY and rewrite the justification around that file`,
+      );
+      expect(stale).toEqual([]);
+    });
+
+    // One case per migration-backed entry, so every such claim is named in the
+    // report of every run — the same discipline RULE D3 applies to dormancy.
+    it.each(
+      DORMANT_SCHEMA_DECLARATIONS.filter((d) => d.reason === 'WRITTEN_BY_MIGRATION_ONLY').map(
+        (d) => [d.model] as const,
+      ),
+    )('%s — its rows come from a file this scan can point at', (model) => {
+      expect(seedWritersOf(model).length).toBeGreaterThan(0);
+    });
   });
 
   // =========================================================================
@@ -964,6 +1350,201 @@ model Family {
       ]);
       const revived = ledger.filter((d) => status.get(d.model) === 'LIVE').map((d) => d.model);
       expect(revived).toEqual(['GadgetLog']);
+    });
+
+    // -----------------------------------------------------------------------
+    // THE SECOND SCANNER, ON THE SAME SYNTHETIC SCHEMA
+    // -----------------------------------------------------------------------
+    const seedStatusOf = (sql: SourceFile[], ts: SourceFile[] = []): Map<string, SeedEvidence[]> =>
+      new Map(
+        [...scanSeedWriters(fixtureModels, sql, ts).entries()].map(([model, sites]) => [
+          model,
+          sites.map((s) => s.evidence),
+        ]),
+      );
+
+    it('a real INSERT in a migration IS a seed writer, and a SELECT in one is not', () => {
+      const status = seedStatusOf([
+        {
+          file: 'prisma/migrations/0001_init/migration.sql',
+          content: `INSERT INTO "gadget_logs" ("id") VALUES ('a');
+                    SELECT * FROM "widget_logs";
+                    UPDATE "families" SET "id" = 'b';
+                    DELETE FROM "widget_logs";`,
+        },
+      ]);
+      expect(status.get('GadgetLog')).toEqual(['MIGRATION_INSERT']);
+      // A read, an update and a delete are not origination — the same rule the
+      // `src/` scanner turns on, applied to SQL.
+      expect(status.get('WidgetLog')).toEqual([]);
+      expect(status.get('Family')).toEqual([]);
+    });
+
+    it('a table named only in a SQL COMMENT is not a seed writer', () => {
+      const status = seedStatusOf([
+        {
+          file: 'prisma/migrations/0002_notes/migration.sql',
+          content: [
+            '-- We used to INSERT INTO "gadget_logs" here and it was wrong.',
+            '/* INSERT INTO "widget_logs" ("id") VALUES (1) — removed in review */',
+            'CREATE TABLE "families" ("id" TEXT);',
+          ].join('\n'),
+        },
+      ]);
+      expect(status.get('GadgetLog')).toEqual([]);
+      expect(status.get('WidgetLog')).toEqual([]);
+    });
+
+    it('a table name inside a SQL STRING LITERAL is not a statement about it', () => {
+      // `INSERT INTO "scheduled_jobs" (…) VALUES ('…', 'purge widget_logs …')`
+      // is the real shape: a job DESCRIPTION naming another table.
+      const status = seedStatusOf([
+        {
+          file: 'prisma/migrations/0003_jobs/migration.sql',
+          content: `INSERT INTO "gadget_logs" ("id", "note") VALUES ('a', 'INSERT INTO widget_logs nightly');`,
+        },
+      ]);
+      expect(status.get('GadgetLog')).toEqual(['MIGRATION_INSERT']);
+      expect(status.get('WidgetLog')).toEqual([]);
+    });
+
+    it('a longer table name does not satisfy a shorter one, in SQL either', () => {
+      const status = seedStatusOf([
+        {
+          file: 'prisma/migrations/0004_archive/migration.sql',
+          content: `INSERT INTO "gadget_logs_archive" ("id") VALUES ('a');`,
+        },
+      ]);
+      expect(status.get('GadgetLog')).toEqual([]);
+    });
+
+    it('a seed .ts that upserts through the client counts, and one that only reads does not', () => {
+      const status = seedStatusOf(
+        [],
+        [
+          {
+            file: 'prisma/seed-fixture.ts',
+            content: `await prisma.gadgetLog.upsert({ where: { id }, create: {}, update: {} });
+                      await prisma.widgetLog.findMany({});`,
+          },
+        ],
+      );
+      expect(status.get('GadgetLog')).toEqual(['SEED_TS_WRITE']);
+      expect(status.get('WidgetLog')).toEqual([]);
+    });
+
+    it('a seed .sql is distinguished from a migration, because the two claims read differently', () => {
+      const status = seedStatusOf([
+        {
+          file: 'prisma/seed-prices.example.sql',
+          content: `INSERT INTO "gadget_logs" ("id") VALUES ('a');`,
+        },
+      ]);
+      expect(status.get('GadgetLog')).toEqual(['SEED_SQL_INSERT']);
+    });
+
+    it('RULE D7a fires: a WRITTEN_BY_MIGRATION_ONLY claim nothing backs IS reported', () => {
+      const ledger: readonly DormantSchemaDeclaration[] = [
+        {
+          model: 'GadgetLog',
+          reason: 'WRITTEN_BY_MIGRATION_ONLY',
+          justification:
+            'A justification long enough to pass the length assertion, naming prisma/migrations/0001_init/migration.sql as the file that inserts these rows.',
+        },
+      ];
+      const writers = scanSeedWriters(fixtureModels, [], []);
+      const unbacked = ledger
+        .filter((d) => d.reason === 'WRITTEN_BY_MIGRATION_ONLY' && (writers.get(d.model) ?? []).length === 0)
+        .map((d) => d.model);
+      expect(unbacked).toEqual(['GadgetLog']);
+
+      // …and it CLEARS the moment the migration exists, which is what makes it
+      // a discriminating check rather than a blanket refusal.
+      const backed = scanSeedWriters(
+        fixtureModels,
+        [
+          {
+            file: 'prisma/migrations/0001_init/migration.sql',
+            content: `INSERT INTO "gadget_logs" ("id") VALUES ('a');`,
+          },
+        ],
+        [],
+      );
+      expect(
+        ledger.filter((d) => (backed.get(d.model) ?? []).length === 0).map((d) => d.model),
+      ).toEqual([]);
+    });
+
+    it('RULE D7a names-the-file fires: a justification pointing at the wrong migration IS reported', () => {
+      const writers = scanSeedWriters(
+        fixtureModels,
+        [
+          {
+            file: 'prisma/migrations/0026_gadgets/migration.sql',
+            content: `INSERT INTO "gadget_logs" ("id") VALUES ('a');`,
+          },
+        ],
+        [],
+      );
+      const wrong = {
+        model: 'GadgetLog',
+        reason: 'WRITTEN_BY_MIGRATION_ONLY' as const,
+        justification:
+          'A justification long enough to pass the length assertion, claiming the rows come from prisma/migrations/0014_something_else/migration.sql, which is not where they come from.',
+      };
+      const sites = writers.get(wrong.model) ?? [];
+      const tokens = seedFileTokens(wrong.justification);
+      expect(tokens).toContain('0014');
+      expect(sites.some((s) => tokens.some((t) => s.file.includes(t)))).toBe(false);
+
+      // The corrected sentence passes the same computation.
+      const right = seedFileTokens(
+        'The nine rows are inserted by prisma/migrations/0026_gadgets/migration.sql and nothing else writes them.',
+      );
+      expect(sites.some((s) => right.some((t) => s.file.includes(t)))).toBe(true);
+    });
+
+    it('RULE D7b fires: the EXACT staleness that let BadgeDefinition rot', () => {
+      // A model declared DEFERRED_FEATURE — «nothing seeds it» — on the day a
+      // migration starts seeding it. `src/` is unchanged, so RULE D3 stays
+      // green and this is the only assertion that can notice.
+      const ledger: readonly DormantSchemaDeclaration[] = [
+        {
+          model: 'GadgetLog',
+          reason: 'DEFERRED_FEATURE',
+          justification:
+            'A justification long enough to pass the length assertion, stating that nothing seeds this catalogue and no admin CRUD exists to fill it.',
+        },
+      ];
+      const writers = scanSeedWriters(
+        fixtureModels,
+        [
+          {
+            file: 'prisma/migrations/0026_gadget_catalogue/migration.sql',
+            content: `INSERT INTO "gadget_logs" ("id") VALUES ('a');`,
+          },
+        ],
+        [],
+      );
+      const stale = ledger
+        .filter((d) => d.reason !== 'WRITTEN_BY_MIGRATION_ONLY' && (writers.get(d.model) ?? []).length > 0)
+        .map((d) => d.model);
+      expect(stale).toEqual(['GadgetLog']);
+
+      // Correcting the REASON clears it — and note that the model is still
+      // DORMANT throughout, because a migration does not make `src/` able to
+      // originate a row. That separation is the point.
+      const corrected = ledger.map((d) => ({ ...d, reason: 'WRITTEN_BY_MIGRATION_ONLY' as const }));
+      expect(
+        corrected
+          .filter((d) => d.reason !== 'WRITTEN_BY_MIGRATION_ONLY' && (writers.get(d.model) ?? []).length > 0)
+          .map((d) => d.model),
+      ).toEqual([]);
+      expect(
+        scanUsage(fixtureModels, [
+          { file: 'src/modules/x/read.repository.ts', content: 'await this.prisma.gadgetLog.findMany({});' },
+        ]).find((u) => u.model.model === 'GadgetLog')?.status,
+      ).toBe('DORMANT');
     });
 
     it('an unjustified declaration is rejected by the same assertions the real ledger faces', () => {
