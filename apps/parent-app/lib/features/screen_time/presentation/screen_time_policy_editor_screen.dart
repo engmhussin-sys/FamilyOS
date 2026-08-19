@@ -49,6 +49,27 @@ class ScreenTimePolicyEditorScreen extends ConsumerWidget {
     final controller =
         ref.read(screenTimePolicyEditorControllerProvider(childId).notifier);
 
+    // THE SAVE SUCCEEDED — pop with `true` so the overview re-reads BOTH of its
+    // routes (the policy row was replaced, so the effective allowance moved
+    // with it). `ref.listen` and not a check inside `build`, which is the
+    // pattern `program_detail_screen.dart` already uses for its own
+    // archive-then-leave: it fires exactly once, on the TRANSITION, and it sits
+    // above `DsStateView` so it cannot be skipped by whichever branch is
+    // rendering.
+    ref.listen<PolicyEditorState>(
+      screenTimePolicyEditorControllerProvider(childId),
+      (previous, next) {
+        if (!next.saved || previous?.saved == true) return;
+        final navigator = Navigator.of(context);
+        // `canPop` guard: in the app this screen is always PUSHED, so it is
+        // always true. It is false only when the screen is the root route,
+        // which is how a widget test builds it — and popping the last route
+        // would leave a navigator with nothing in it rather than returning a
+        // result to anyone.
+        if (navigator.canPop()) navigator.pop(true);
+      },
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: Text(childName == null || childName!.isEmpty
@@ -98,17 +119,6 @@ class _EditorForm extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     ref.watch(localeControllerProvider);
     final t = ref.watch(localeControllerProvider.notifier).t;
-
-    // THE SAVE SUCCEEDED — pop with `true` so the overview re-reads BOTH of its
-    // routes. Done in a post-frame callback because a `Navigator.pop` during
-    // `build` is a framework error, and the state flag is what makes it happen
-    // exactly once.
-    if (state.saved) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final navigator = Navigator.of(context);
-        if (navigator.canPop()) navigator.pop(true);
-      });
-    }
 
     return ListView(
       padding: DsSpace.screen,
