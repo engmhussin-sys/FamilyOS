@@ -117,6 +117,79 @@ export interface DecisionAnalyticsReport {
   readonly topTypes: readonly { readonly type: string; readonly total: number; readonly suppressed: number }[];
 }
 
+/**
+ * ONE BUCKET OF A BREAKDOWN — a named slice of the ledger and its six counts.
+ *
+ * `bucket` is the VALUE of the dimension being grouped on: `'PARENT'`,
+ * `'DOMAIN_EVENT'`, `'rule-based-v1'`, `'2026-01-15'`, `'REWARD_GRANTED'`. It
+ * is a column this codebase writes, never anything a user typed and never an
+ * identifier — which is what makes a platform-wide table of these safe to show.
+ *
+ * BOTH SIDES OF THE DISAGREEMENT ARE ON EVERY ROW. `decidedSend/Defer/Suppress`
+ * is what the ENGINE concluded; `delivered` and `deliveryErrors` are what the
+ * PIPELINE then did. «SOURCE = SAFETY_SIGNAL, decided 400 sends, delivered 12»
+ * is the row an operator is looking for, and it is legible only because the two
+ * sit side by side.
+ */
+export interface DecisionBreakdownBucket {
+  readonly bucket: string;
+  readonly total: number;
+  readonly decidedSend: number;
+  readonly decidedDefer: number;
+  readonly decidedSuppress: number;
+  readonly delivered: number;
+  readonly deliveryErrors: number;
+}
+
+/**
+ * THE OPERATIONAL VIEW OF THE DECISION LOG — counts only, no identity.
+ *
+ * DELIBERATELY NOT A SUPERSET OF `DecisionAnalyticsReport`. That report answers
+ * «what is the platform's suppression rate»; this one answers «WHERE is the
+ * suppression». It carries no rates at all: a rate per bucket invites division
+ * by a bucket total of 3, and the roll-up already owns the one denominator this
+ * product has agreed on.
+ *
+ * `totals` comes from the SAME grouping-set scan as the dimensions, so the sum
+ * of any dimension's buckets equals `totals` by construction rather than by
+ * hope. The two TOP-N lists are the exception and they say so: `byNotificationType`
+ * and `topCauses` are TRUNCATED, therefore do NOT sum to `totals`, and
+ * `limits.*Truncated` is what lets the dashboard say that out loud instead of
+ * letting an operator subtract and find a hole.
+ */
+export interface DecisionBreakdownReport {
+  /** Echoed back RESOLVED, not as the caller sent them — the caller may have
+   * sent nothing at all and defaults applied. A page that prints the window it
+   * is actually showing cannot mislabel its own numbers. */
+  readonly fromBusinessDate: string;
+  readonly toBusinessDate: string;
+  readonly totals: DecisionBreakdownBucket;
+  readonly byAudience: readonly DecisionBreakdownBucket[];
+  readonly byNotificationType: readonly DecisionBreakdownBucket[];
+  readonly bySource: readonly DecisionBreakdownBucket[];
+  readonly byProvenance: readonly DecisionBreakdownBucket[];
+  readonly byDate: readonly DecisionBreakdownBucket[];
+  readonly topCauses: readonly DecisionBreakdownBucket[];
+  /** The caps that produced this response, and whether either top-N list hit
+   * one. Reported rather than assumed, because «is this the whole list» is the
+   * first question a truncated list raises, and the dashboard must be able to
+   * answer it without hard-coding the constant a second time. */
+  readonly limits: {
+    readonly topLimit: number;
+    readonly maxRangeDays: number;
+    readonly typesTruncated: boolean;
+    readonly causesTruncated: boolean;
+  };
+}
+
+/** The caps, passed IN rather than read from a constant in the repository, so
+ * the ROUTE owns its own bounds and no caller can reach this query without
+ * having stated one. */
+export interface DecisionBreakdownCaps {
+  readonly topLimit: number;
+  readonly maxRangeDays: number;
+}
+
 export interface INotificationDecisionRepository {
   /** `null` when `(family_id, source_event_id, target_audience)` already had a
    * row — a redelivered cause, correctly ignored, exactly as
@@ -136,6 +209,14 @@ export interface INotificationDecisionRepository {
 
   /** The platform roll-up. CROSS-TENANT by design, counts only. */
   analytics(filter: DecisionAnalyticsFilter, topTypesLimit: number): Promise<DecisionAnalyticsReport>;
+
+  /** The platform breakdown behind it: the same population, sliced by audience,
+   * type, source, provenance, date and cause. CROSS-TENANT by design, counts
+   * only, and bounded by `caps` in both directions. */
+  breakdown(
+    filter: DecisionAnalyticsFilter,
+    caps: DecisionBreakdownCaps,
+  ): Promise<DecisionBreakdownReport>;
 }
 
 export const NOTIFICATION_POLICY_REPOSITORY = Symbol('NOTIFICATION_POLICY_REPOSITORY');

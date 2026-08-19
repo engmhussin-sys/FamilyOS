@@ -8,12 +8,13 @@
  * TENANCY (CI RULE 2). Every statement names `family_id` explicitly. The
  * per-family writes run inside `runWithTenant` and STILL name the column,
  * because a statement that relies on ambient context to be correct is a
- * statement that is wrong the first time it is copied. The two ANALYTICS
- * statements are CROSS-TENANT by design — a platform suppression rate is a
- * platform-level number — and they run under `runAsSystemAsync` behind
+ * statement that is wrong the first time it is copied. The FIVE ANALYTICS
+ * statements — two for the roll-up, three for the operator breakdown — are
+ * CROSS-TENANT by design, because a platform suppression rate is a
+ * platform-level number. They run under `runAsSystemAsync` behind
  * `InternalAdminGuard` + `@SystemRoute`, exactly as `SQL_DELIVERY_BACKLOG` does,
  * and they return COUNTS ONLY. No title, no body, no child id, no family id
- * leaves those two queries.
+ * leaves any of them.
  */
 
 /**
@@ -166,6 +167,182 @@ SELECT d."notification_type" AS type,
    AND ($6::text IS NULL OR d."category" = $6::text)
  GROUP BY d."notification_type"
  ORDER BY COUNT(*) DESC
+ LIMIT $7::int`;
+
+/* ==========================================================================
+ * THE OPERATOR BREAKDOWN (`GET /system/notifications/decision-breakdown`).
+ *
+ * WHY IT IS NOT `SQL_DECISION_ANALYTICS`. That statement answers «what is the
+ * platform's suppression rate»: ONE row, nine numerators, rates included. The
+ * question an operator has at 02:00 is a different one — «WHICH audience /
+ * type / source / provenance / day is the suppression in» — and a single row
+ * of grand totals cannot answer it. The two surfaces stay separate statements
+ * rather than one growing statement, because a rate and a breakdown have
+ * different natural shapes and merging them would give the grand total a
+ * `GROUP BY` it does not want.
+ *
+ * THE FOUR WORDS, PINNED TO COLUMNS ONCE, HERE, so the API, the SQL and the
+ * dashboard cannot drift into three vocabularies:
+ *
+ *   AUDIENCE    `target_audience`   PARENT | CHILD — who the decision was for.
+ *   SOURCE      `trigger`           what SET IT OFF (`NOTIFICATION_TRIGGERS`:
+ *                                   DOMAIN_EVENT, PERIODIC_SIGNAL, …). The
+ *                                   producer-side origin.
+ *   PROVENANCE  `provider_id`       WHICH DECISION PROVIDER produced the
+ *                                   verdict (`rule-based-v1` today, an AI
+ *                                   provider tomorrow). The provider
+ *                                   abstraction exists precisely so that
+ *                                   «which one decided this» is askable.
+ *   DATE        `business_date`     the HOUSEHOLD's day, not a UTC one.
+ *   CAUSE       `event_type`        the producer's own event — what actually
+ *                                   happened (`REWARD_GRANTED`,
+ *                                   `GOAL_COMPLETED`, …). «Top causes» is a
+ *                                   GROUP BY this column, and it is a
+ *                                   different question from «top TYPES»: one
+ *                                   type carries several causes (see
+ *                                   `INotificationRepository`'s docstring on
+ *                                   `REWARD_GRANTED_CHILD` and its three).
+ *
+ * STILL NOTHING IDENTIFYING. No `family_id`, no `child_id`, no
+ * `source_event_id`, no `explanation`, and the table holds no title or body at
+ * all. Every column grouped on above is a closed-ish enum written by this
+ * codebase, never by a user.
+ * ========================================================================== */
+
+/**
+ * THE DELIVERY-ERROR REASON SET, WRITTEN ONCE.
+ *
+ * `SQL_DECISION_ANALYTICS` counts `delivery_failures` over exactly these two
+ * reasons. The breakdown must count the SAME ones or an operator comparing the
+ * two panels sees two different "delivery errors" numbers on one screen and
+ * trusts neither. Interpolated rather than duplicated, and
+ * `decision-analytics-sql.spec.ts` asserts the older statement still
+ * contains this literal — so widening the set here cannot silently leave that
+ * one behind.
+ */
+export const SQL_DELIVERY_ERROR_REASONS = `('DELIVERY_ERROR', 'DEFER_ENQUEUE_FAILED')`;
+
+/** The six counts every breakdown row carries, so a bucket read on the
+ * AUDIENCE table and the same bucket read on the DATE table cannot be computed
+ * two different ways. `decided_*` is what the ENGINE concluded; `delivered` and
+ * `delivery_errors` are what the PIPELINE then did — the two disagreeing is the
+ * most useful row in this table, and it stays legible only while both are on
+ * every row. */
+const BREAKDOWN_COUNTS = `
+  COUNT(*)::int                                                            AS total,
+  COUNT(*) FILTER (WHERE d."decision" = 'SEND')::int                       AS decided_send,
+  COUNT(*) FILTER (WHERE d."decision" = 'DEFER')::int                      AS decided_defer,
+  COUNT(*) FILTER (WHERE d."decision" = 'SUPPRESS')::int                   AS decided_suppress,
+  COUNT(*) FILTER (WHERE d."outcome" = 'SEND')::int                        AS delivered,
+  COUNT(*) FILTER (WHERE d."outcome_reason" IN ${SQL_DELIVERY_ERROR_REASONS})::int
+                                                                           AS delivery_errors`;
+
+/** The filter, identical in text to the one `SQL_DECISION_ANALYTICS` carries,
+ * so the breakdown and the roll-up are always over the SAME population. */
+const BREAKDOWN_WHERE = `
+ WHERE d."business_date" >= $1::date
+   AND d."business_date" <= $2::date
+   AND ($3::text IS NULL OR d."country_code" = $3::text)
+   AND ($4::text IS NULL OR d."age_band" = $4::text)
+   AND ($5::text IS NULL OR d."target_audience" = $5::text)
+   AND ($6::text IS NULL OR d."category" = $6::text)`;
+
+/**
+ * THE FOUR CLOSED DIMENSIONS PLUS THE GRAND TOTAL, IN ONE SCAN.
+ *
+ * `GROUPING SETS` rather than four queries UNION ALLed, for the reason
+ * `SQL_DECISION_ANALYTICS` gives for its nine `FILTER`s: every bucket must be
+ * computed over ONE filtered population. Four separate statements would each
+ * re-run the `WHERE`, and the first time someone edits one of them and not the
+ * others the audience column and the date column stop adding up to the same
+ * total — a discrepancy nobody notices until an incident.
+ *
+ * The grand-total grouping set `()` is in the SAME query for the same reason:
+ * the denominator every percentage on the page is taken against must come from
+ * the same scan as its numerators, not from a second round trip that might have
+ * seen a different row.
+ *
+ * NO `LIMIT` HERE, AND IT NEEDS NONE. Every grouping set is bounded by a closed
+ * vocabulary this codebase writes: audience is 2 (CHECK-constrained), source is
+ * the 8 members of `NOTIFICATION_TRIGGERS`, provenance is the registered
+ * decision providers, and date is bounded by the route's own 92-day cap. The
+ * output cannot exceed roughly 105 rows however large the table gets. The two
+ * OPEN vocabularies — notification type and cause — are deliberately NOT in
+ * this statement; they get their own bounded top-N queries below.
+ *
+ * $1 fromDate · $2 toDate · $3 countryCode|NULL · $4 ageBand|NULL ·
+ * $5 audience|NULL · $6 category|NULL
+ */
+export const SQL_DECISION_BREAKDOWN_DIMENSIONS = `
+SELECT
+  CASE
+    WHEN GROUPING(d."target_audience") = 0 THEN 'AUDIENCE'
+    WHEN GROUPING(d."trigger") = 0         THEN 'SOURCE'
+    WHEN GROUPING(d."provider_id") = 0     THEN 'PROVENANCE'
+    WHEN GROUPING(d."business_date") = 0   THEN 'DATE'
+    ELSE 'TOTAL'
+  END AS dimension,
+  CASE
+    WHEN GROUPING(d."target_audience") = 0 THEN d."target_audience"
+    WHEN GROUPING(d."trigger") = 0         THEN d."trigger"
+    WHEN GROUPING(d."provider_id") = 0     THEN d."provider_id"
+    WHEN GROUPING(d."business_date") = 0   THEN to_char(d."business_date", 'YYYY-MM-DD')
+    ELSE 'ALL'
+  END AS bucket,
+${BREAKDOWN_COUNTS}
+  FROM "notification_decisions" d
+${BREAKDOWN_WHERE}
+ GROUP BY GROUPING SETS (
+   (d."target_audience"),
+   (d."trigger"),
+   (d."provider_id"),
+   (d."business_date"),
+   ()
+ )
+ ORDER BY 1, 2`;
+
+/**
+ * TOP NOTIFICATION TYPES, with the full six counts.
+ *
+ * Separate from `SQL_DECISION_TOP_TYPES` rather than replacing it: that
+ * statement is executed verbatim by the existing analytics suite and feeds the
+ * existing growth panel, and widening its result set to serve a second caller
+ * is how a shared query ends up with columns nobody reads. This one is the
+ * operator's, and it carries what the operator's table shows.
+ *
+ * BOUNDED, and the bound is the caller's `$7`. `notification_type` is written
+ * by producers rather than by a CHECK constraint, so its cardinality is not
+ * closed the way `target_audience` is — an unbounded `GROUP BY` on it is a
+ * response whose size is a function of how many producers exist.
+ *
+ * $1..$6 as `SQL_DECISION_BREAKDOWN_DIMENSIONS` · $7 limit
+ */
+export const SQL_DECISION_BREAKDOWN_TOP_TYPES = `
+SELECT d."notification_type" AS bucket,
+${BREAKDOWN_COUNTS}
+  FROM "notification_decisions" d
+${BREAKDOWN_WHERE}
+ GROUP BY d."notification_type"
+ ORDER BY COUNT(*) DESC, d."notification_type" ASC
+ LIMIT $7::int`;
+
+/**
+ * TOP CAUSES — `event_type`, the thing that actually happened.
+ *
+ * The tie-break on the name is not cosmetic: without it two causes with equal
+ * counts swap places between two loads of the same page, and an operator
+ * reading a list that reorders itself concludes the data is moving when only
+ * the sort is.
+ *
+ * $1..$6 as `SQL_DECISION_BREAKDOWN_DIMENSIONS` · $7 limit
+ */
+export const SQL_DECISION_TOP_CAUSES = `
+SELECT d."event_type" AS bucket,
+${BREAKDOWN_COUNTS}
+  FROM "notification_decisions" d
+${BREAKDOWN_WHERE}
+ GROUP BY d."event_type"
+ ORDER BY COUNT(*) DESC, d."event_type" ASC
  LIMIT $7::int`;
 
 /**

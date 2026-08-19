@@ -11,6 +11,9 @@ import type { NotificationDecisionVerdict } from '../../domain/engine/notificati
 import type {
   DecisionAnalyticsFilter,
   DecisionAnalyticsReport,
+  DecisionBreakdownBucket,
+  DecisionBreakdownCaps,
+  DecisionBreakdownReport,
   DecisionLedgerRow,
   INotificationDecisionRepository,
   INotificationPolicyRepository,
@@ -18,6 +21,9 @@ import type {
 } from '../../application/ports/notification-decision.repository.port';
 import {
   SQL_DECISION_ANALYTICS,
+  SQL_DECISION_BREAKDOWN_DIMENSIONS,
+  SQL_DECISION_BREAKDOWN_TOP_TYPES,
+  SQL_DECISION_TOP_CAUSES,
   SQL_DECISION_TOP_TYPES,
   SQL_LIST_DECISIONS_FOR_FAMILY,
   SQL_READ_POLICY_SETTINGS,
@@ -201,6 +207,96 @@ export class PrismaNotificationDecisionRepository implements INotificationDecisi
     );
   }
 
+  /**
+   * THE OPERATOR BREAKDOWN. Three statements, one filtered population.
+   *
+   * WHY THE CAPS ARE ARGUMENTS AND NOT CONSTANTS HERE. `maxRangeDays` is
+   * RE-CHECKED in this method even though the controller already checked it,
+   * and that is not belt-and-braces for its own sake: this is the only place a
+   * future second caller (a scheduled report, a CLI) could reach the ledger
+   * cross-tenant, and a scan bound that lives only in an HTTP layer is a bound
+   * that the first non-HTTP caller silently does not have. The controller's
+   * check produces a 400 with a readable message; this one produces a throw,
+   * because reaching it means a caller skipped the surface that explains why.
+   *
+   * WHY IT RUNS `runAsSystemAsync`, same as `analytics`: these statements name
+   * no `family_id` at all, deliberately, and a cross-tenant read in this
+   * codebase must say so with a written justification rather than simply
+   * omitting the clause.
+   */
+  async breakdown(
+    filter: DecisionAnalyticsFilter,
+    caps: DecisionBreakdownCaps,
+  ): Promise<DecisionBreakdownReport> {
+    const spanDays = dayDistance(filter.fromBusinessDate, filter.toBusinessDate);
+    if (spanDays < 0) {
+      throw new Error('Decision breakdown: `fromBusinessDate` is after `toBusinessDate`.');
+    }
+    if (spanDays > caps.maxRangeDays) {
+      throw new Error(
+        `Decision breakdown: refusing a ${spanDays}-day scan; the cap is ${caps.maxRangeDays} days.`,
+      );
+    }
+    if (!Number.isInteger(caps.topLimit) || caps.topLimit < 1) {
+      throw new Error('Decision breakdown: `topLimit` must be a positive integer.');
+    }
+
+    return runAsSystemAsync(
+      'ADMIN_CONSOLE',
+      'Notification decision breakdown: a CROSS-TENANT slice of notification_decisions by audience, notification type, source (trigger), provenance (decision provider), business date and cause (event type). It returns COUNTS and those closed vocabulary names only — never a title, a body, a child id or a family id — behind InternalAdminGuard, because «which audience is the suppression in» is a platform-level question and a notification body is not.',
+      async () => {
+        const params = [
+          filter.fromBusinessDate,
+          filter.toBusinessDate,
+          filter.countryCode,
+          filter.ageBand,
+          filter.audience,
+          filter.category,
+        ];
+
+        const [dimensions, types, causes] = await Promise.all([
+          this.raw().$queryRawUnsafe<any[]>(SQL_DECISION_BREAKDOWN_DIMENSIONS, ...params),
+          this.raw().$queryRawUnsafe<any[]>(
+            SQL_DECISION_BREAKDOWN_TOP_TYPES,
+            ...params,
+            caps.topLimit,
+          ),
+          this.raw().$queryRawUnsafe<any[]>(SQL_DECISION_TOP_CAUSES, ...params, caps.topLimit),
+        ]);
+
+        const of = (dimension: string): DecisionBreakdownBucket[] =>
+          dimensions.filter((r) => r.dimension === dimension).map(toBucket);
+
+        // The `()` grouping set ALWAYS returns exactly one row, including over
+        // an empty range — that is what makes the zero-row case a row of
+        // honest zeros rather than an absent object the dashboard has to
+        // invent a shape for.
+        const totals = of('TOTAL')[0] ?? emptyBucket('ALL');
+
+        return {
+          fromBusinessDate: filter.fromBusinessDate,
+          toBusinessDate: filter.toBusinessDate,
+          totals,
+          byAudience: of('AUDIENCE'),
+          bySource: of('SOURCE'),
+          byProvenance: of('PROVENANCE'),
+          byDate: of('DATE'),
+          byNotificationType: types.map(toBucket),
+          topCauses: causes.map(toBucket),
+          limits: {
+            topLimit: caps.topLimit,
+            maxRangeDays: caps.maxRangeDays,
+            // `=== topLimit` and not `>=`: the LIMIT makes more impossible.
+            // Reported as "there may be more", which is the honest reading of
+            // a list that filled its cap exactly.
+            typesTruncated: types.length === caps.topLimit,
+            causesTruncated: causes.length === caps.topLimit,
+          },
+        };
+      },
+    );
+  }
+
   /* eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types */
   private raw(): {
     $executeRawUnsafe: (sql: string, ...params: unknown[]) => Promise<number>;
@@ -208,6 +304,49 @@ export class PrismaNotificationDecisionRepository implements INotificationDecisi
   } {
     return this.prisma as any;
   }
+}
+
+/**
+ * One SQL row -> one bucket. `Number(...)` on every count for the reason the
+ * rest of this file does it: the two client modes this repository runs under
+ * (native engine and the offline WASM engine over node-postgres) do not agree
+ * on whether an `::int` arrives as a number or a string, and a count that is
+ * sometimes a string is a dashboard that sometimes concatenates.
+ */
+function toBucket(row: any): DecisionBreakdownBucket {
+  return {
+    bucket: String(row.bucket),
+    total: Number(row.total ?? 0),
+    decidedSend: Number(row.decided_send ?? 0),
+    decidedDefer: Number(row.decided_defer ?? 0),
+    decidedSuppress: Number(row.decided_suppress ?? 0),
+    delivered: Number(row.delivered ?? 0),
+    deliveryErrors: Number(row.delivery_errors ?? 0),
+  };
+}
+
+/** The shape of «nothing matched», so the grand-total object is never absent.
+ * Zeros are CORRECT here and are not a fabricated measurement: this is a COUNT
+ * over a range that really did contain no decisions, which is a different thing
+ * from a rate whose denominator is zero. */
+function emptyBucket(bucket: string): DecisionBreakdownBucket {
+  return {
+    bucket,
+    total: 0,
+    decidedSend: 0,
+    decidedDefer: 0,
+    decidedSuppress: 0,
+    delivered: 0,
+    deliveryErrors: 0,
+  };
+}
+
+/** Whole days from `from` to `to`, both `YYYY-MM-DD`. Negative when inverted,
+ * which is how `breakdown` tells the two refusals apart. */
+function dayDistance(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00.000Z`);
+  const b = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((b - a) / 86_400_000);
 }
 
 /**
