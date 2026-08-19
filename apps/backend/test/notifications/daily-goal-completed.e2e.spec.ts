@@ -69,11 +69,20 @@ import {
   dailyGoalCauses,
   dailyGoalName,
 } from '../../src/modules/notifications/domain/engine/notification-nouns';
-import { forChildAudience, forEntity } from '../../src/shared/notifications/notification-source-key';
 import {
+  forChildAudience,
+  forEntity,
+  forRecurringSignal,
+} from '../../src/shared/notifications/notification-source-key';
+import {
+  COPY_CATALOGUE,
   hasEnumOrPlaceholderLeak,
   renderNotificationCopy,
 } from '../../src/modules/notifications/domain/engine/notification-copy';
+import {
+  RUNTIME_ALERT_REPOSITORY,
+  type IRuntimeAlertRepository,
+} from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
 import { resolveNotificationDestination } from '../../src/modules/notifications/domain/engine/notification-destination';
 import { getBusinessDate, getBusinessTimeHHMM } from '../../src/common/time/family-date';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
@@ -150,6 +159,10 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
   let prisma: any;
   let health: HealthEngineService;
   let childSafety: ChildSafetyFilterService;
+  /** THE SINGLE WRITER OF `notifications`, resolved from the real container.
+   * §5 tests its dedupe predicate directly; nothing else in this file touches
+   * it, because every other section reaches it through the engine. */
+  let alerts: IRuntimeAlertRepository;
 
   const stamp = Date.now();
   const createdFamilies: string[] = [];
@@ -352,6 +365,7 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
     prisma = app.get(PrismaService);
     health = app.get(HealthEngineService);
     childSafety = app.get(ChildSafetyFilterService);
+    alerts = app.get(RUNTIME_ALERT_REPOSITORY);
   }, 180_000);
 
   afterAll(async () => {
@@ -652,7 +666,7 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
     /**
      * ==========================================================================
      * THE TWO DAILY GOALS ARE TWO FACTS AND DO NOT DEDUP EACH OTHER AWAY —
-     * BUT ONLY ONE OF THEM REACHES THE CHILD, AND THAT IS A REPORTED DEFECT.
+     * AND THE DEFECT THIS TEST USED TO PIN IS CLOSED, MEASURED HERE.
      * ==========================================================================
      *
      * WHAT THIS TEST IS FOR, UNCHANGED. The two crossings share a child, a day
@@ -661,68 +675,65 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
      * is proven where the cause key actually lives: TWO `notification_decisions`
      * rows with TWO distinct `source_event_id`s. That assertion is untouched.
      *
-     * WHAT CHANGED, AND WHY IT IS NOT A WEAKENING. This test asserted two CHILD
-     * MESSAGES. Measured against real PostgreSQL, the second crossing now
-     * produces none — and the reason is neither deduplication nor a silent drop.
-     * Read out of `notification_decisions.explanation`, at `maxPerHour = 3`:
-     *
-     *   BADGE_EARNED         / CHILD  SEND     score 42  hour=0/3
-     *   REWARD_GRANTED_CHILD / CHILD  SEND     score 30  hour=1/3  fatigue −8.33
-     *   DAILY_GOAL_COMPLETED / CHILD  SEND     score 26  hour=2/3  fatigue −16.67
-     *   -- the hydration crossing has now spent the child's whole hour --
-     *   BADGE_EARNED         / CHILD  SUPPRESS score 17  hour=3/3  fatigue −25
-     *   REWARD_GRANTED_CHILD / CHILD  SUPPRESS score 13  hour=3/3  fatigue −25
-     *   DAILY_GOAL_COMPLETED / CHILD  SUPPRESS score 18  hour=3/3  fatigue −25
-     *
-     * So the activity receipt is REFUSED ON VOLUME, with `decision = 'SUPPRESS'`
-     * and `reason = 'SCORE_BELOW_FLOOR'` written to the ledger — a decision the
-     * system was asked and answered, not a row that vanished. The test asserts
-     * exactly that, which is MORE than it asserted before: the second cause
-     * exists, is suppressed, and says why.
+     * THE SECOND RECEIPT IS STILL REFUSED, AND STILL ON VOLUME. That is correct
+     * and it is not what changed: the hourly cap is real, `decision =
+     * 'SUPPRESS'` with `reason = 'SCORE_BELOW_FLOOR'` is written to the ledger,
+     * and the test reads the arithmetic back out of `explanation` rather than
+     * trusting the verdict. A daily receipt that loses to volume has another one
+     * tomorrow.
      *
      * ------------------------------------------------------------------------
-     * THE VERDICT, STATED RATHER THAN SMOOTHED OVER: THIS IS NOT CORRECT.
+     * WHAT THIS TEST USED TO PIN, AND WHAT THE LEDGER SAYS NOW.
      * ------------------------------------------------------------------------
-     * The hourly cap itself is right, and one crossing legitimately produces
-     * three child-facing facts on a child's first time. The defect is WHICH
-     * three win, and the evidence is in the same table: the child's own
-     * `first_activity_goal` BADGE_EARNED scored 17 and was SUPPRESSED, while
-     * `BADGE_EARNED_PARENT` for THE SAME BADGE scored 25 and was SENT. The child
-     * earned a once-ever badge, their parent was told about it, and the child
-     * was not — because a repeatable daily receipt happened to arrive first in
-     * the same rolling hour.
      *
-     * A ONCE-EVER FACT AND A ONCE-A-DAY FACT ARE RANKED THE SAME WAY AND THEN
-     * SEPARATED BY ARRIVAL ORDER. A daily receipt that loses to volume is
-     * correct — there is another one tomorrow. A once-ever badge that loses to
-     * volume is gone; there is no second first time.
+     * IT PINNED A REPORTED DEFECT: the child's own once-ever
+     * `first_activity_goal` BADGE_EARNED scored 17 against a floor of 25 and was
+     * SUPPRESSED, while `BADGE_EARNED_PARENT` FOR THE SAME BADGE was SENT. The
+     * child earned a badge, their parent was told, and the child was not —
+     * because a repeatable daily receipt happened to arrive first in the same
+     * rolling hour. A once-ever badge that loses to volume is gone; there is no
+     * second first time.
+     *
+     * TWO CHANGES CLOSED IT, and both are named here because either one alone
+     * would have left the parent's half broken in the mirror direction:
+     *
+     *   `ONCE_EVER_TYPES` (`notification-policy.ts`) exempts `BADGE_EARNED` and
+     *   `BADGE_EARNED_PARENT` from all three volume loads, on the strength of
+     *   the `child_badge_awards (child_id, badge_id)` UNIQUE constraint. The
+     *   child's badge now scores 42 and is delivered.
+     *
+     *   `PrismaRuntimeAlertRepository`'s five-minute dedupe stopped comparing
+     *   TITLES. Every `BADGE_EARNED_PARENT` in the catalogue carries the same
+     *   constant «وسام جديد», so the parent's SECOND badge of the minute came
+     *   back `decision=SEND, outcome=SUPPRESS/ALREADY_NOTIFIED` — a reason
+     *   `notification-audience-symmetry.ts` counts as TOLD, which is how the
+     *   loss stayed invisible. §5 measures that half on its own, in both
+     *   directions.
+     *
+     * THE LEDGER, READ OUT OF `notification_decisions.explanation` AT
+     * `maxPerHour = 3`, AND THE ASSERTIONS BELOW ARE TAKEN FROM IT:
+     *
+     *   BADGE_EARNED         / CHILD  SEND     score 42  exempt from volume
+     *   BADGE_EARNED_PARENT  / PARENT SEND     score 42  exempt from volume
+     *   REWARD_GRANTED       / PARENT SEND     score 30  hour=1/3
+     *   REWARD_GRANTED_CHILD / CHILD  SEND     score 30  hour=1/3
+     *   DAILY_GOAL_COMPLETED / CHILD  SEND     score 26  hour=2/3
+     *   -- the activity crossing --
+     *   BADGE_EARNED         / CHILD  SEND     score 42  exempt from volume
+     *   BADGE_EARNED_PARENT  / PARENT SEND     score 42  exempt from volume
+     *   REWARD_GRANTED       / PARENT SUPPRESS score 13  hour=3/3
+     *   REWARD_GRANTED_CHILD / CHILD  SUPPRESS score 13  hour=4/3
+     *   DAILY_GOAL_COMPLETED / CHILD  SUPPRESS score 18  hour=4/3
+     *
+     * The two badges are the four SEND rows the block at the end of this test
+     * asserts; the last line is the row `fatigue.note` is read from, and the
+     * comment there explains why its hour reads 4 and not the 3 this file used
+     * to carry.
      *
      * IT IS NOT ANOTHER INSTANCE OF THE DUPLICATE-RULE COLLISION migration 0030
      * closed. That was two rules paying one crossing, and closing it removed two
      * decision rows per crossing — measured here, and it was not enough, because
-     * three legitimate messages still fill a three-message hour.
-     *
-     * THE FIX IS NOT THIS SUITE'S AND NOT THIS AGENT'S TO MAKE. It is a ranking
-     * change in code this task does not own:
-     *   `src/modules/notifications/domain/engine/notification-scoring.ts#fatigue`
-     *     — `raw` is `max(dayLoad, hourLoad, categoryLoad)` applied uniformly, so
-     *       a once-ever type takes the same −25 as a daily one; and
-     *   `src/modules/notifications/domain/engine/notification-scoring.ts`
-     *     `ACHIEVEMENT_VALUE` baseline for `BADGE_EARNED` (0.75), which is not
-     *       high enough to clear the floor at `hour=3/3`.
-     * The suppression is finally applied in
-     *   `src/modules/notifications/application/providers/rule-based-notification-decision.provider.ts`
-     *   (`score.band === 'SUPPRESS' -> reason 'SCORE_BELOW_FLOOR'`).
-     * The shape of the fix, stated so the owner can argue with it rather than
-     * guess: a once-ever type should either be exempt from `hourLoad` (the way
-     * `COOLDOWN_EXEMPT_TYPES` already exempts `DAILY_GOAL_COMPLETED` from the
-     * cooldown, by name and in one table) or carry an `ACHIEVEMENT_VALUE` that
-     * survives a full hour — NOT a raised `maxPerHour`, which would make every
-     * type louder to rescue one.
-     *
-     * UNTIL THEN THIS TEST PINS THE MEASURED TRUTH, so the day the ranking is
-     * fixed this assertion fails and is updated deliberately rather than the
-     * regression passing unnoticed in either direction.
+     * three legitimate messages still filled a three-message hour.
      */
     it('2.2 the hydration and activity crossings are DIFFERENT causes on the same day — and the second is refused on VOLUME, not deduplicated', async () => {
       jest.setSystemTime(MIDDAY);
@@ -760,7 +771,27 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
       // database and not a reading of this comment.
       const fatigue = (activity.explanation as any[]).find((c) => c.name === 'FATIGUE_PENALTY');
       expect(fatigue.raw).toBe(1);
-      expect(fatigue.note).toContain('hour=3/3');
+      // WHY `hour=4/3` AND NOT `hour=3/3`, WHICH IS WHAT THIS LINE READ BEFORE.
+      // The cap did not move — `maxPerHour` is still 3 and §0 asserts it. The
+      // LOAD moved, by one, and the extra row is the child's own activity
+      // badge. It used to be SUPPRESSED at this exact point (score 17, floor
+      // 25) and therefore never became a `child_messages` row, so it never
+      // counted toward the hour it had just lost to. `ONCE_EVER_TYPES` now
+      // exempts `BADGE_EARNED` from the volume loads, the badge is delivered,
+      // and a delivered row is part of the household's load like any other:
+      //
+      //   BADGE_EARNED         hydration badge   delivered  (hour reads 0)
+      //   REWARD_GRANTED_CHILD hydration reward  delivered  (hour reads 1)
+      //   DAILY_GOAL_COMPLETED hydration receipt delivered  (hour reads 2)
+      //   BADGE_EARNED         activity badge    delivered  (hour reads 3)
+      //   -- the activity receipt is scored against all four --
+      //   DAILY_GOAL_COMPLETED activity receipt  hour=4/3   SUPPRESS
+      //
+      // So 4 is the count going UP because a child stopped losing something,
+      // not a number drifting. The claim this test makes — refused on VOLUME
+      // rather than deduplicated — is unchanged and is still carried by
+      // `fatigue.raw === 1` and a negative contribution beside it.
+      expect(fatigue.note).toBe('today=4/6 hour=4/3 category=1/2');
       expect(fatigue.contribution).toBeLessThan(0);
 
       // --- WHAT THE CHILD ACTUALLY READ ---
@@ -772,24 +803,54 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
       expect(messages[0].source_event_id).toBe(forChildAudience(hydrationCause));
       for (const m of messages) assertChildSafeBytes(m);
 
-      // THE REPORTED DEFECT, PINNED WHERE IT CAN BE SEEN: the child's own
-      // once-ever activity badge was suppressed while their PARENT was told
-      // about the very same badge. See this test's docstring for the handoff.
+      // ====================================================================
+      // THE ASYMMETRY THIS TEST USED TO PIN, MEASURED AGAIN AND NOW ABSENT.
+      // ====================================================================
+      //
+      // The same query that used to return «one child badge SUPPRESSED while
+      // the parent's copy of it was SENT» is kept, pointed at the same rows,
+      // and asserts the opposite — because that is what reconciles: an
+      // assertion deleted proves nothing, and an assertion inverted proves the
+      // defect is gone. Two once-ever badges are earned in this one minute and
+      // all FOUR rows they produce (two causes × two audiences) are SEND at
+      // the verdict AND SEND at the outcome.
+      //
+      // TWO FIXES ARE LOAD-BEARING HERE AND THE SECOND ONE IS NOT THE ENGINE'S:
+      //   `ONCE_EVER_TYPES` stops the child's badge losing to the hour, and
+      //   `PrismaRuntimeAlertRepository`'s dedupe now names the OCCURRENCE
+      //   instead of the title — without which the parent's SECOND badge came
+      //   back `decision=SEND, outcome=SUPPRESS/ALREADY_NOTIFIED`, because
+      //   every `BADGE_EARNED_PARENT` in the catalogue carries the identical
+      //   constant title. §5 holds that half on its own.
       const badgeDecisions = (await allDecisions(h.familyId)).filter((d) =>
         String(d.event_type).startsWith('BADGE_EARNED'),
       );
-      const childActivityBadge = badgeDecisions.filter(
-        (d) => d.target_audience === 'CHILD' && d.decision === 'SUPPRESS',
-      );
-      const parentActivityBadge = badgeDecisions.filter(
-        (d) => d.target_audience === 'PARENT' && d.decision === 'SEND',
-      );
-      expect(childActivityBadge).toHaveLength(1);
-      expect(childActivityBadge[0].reason).toBe('SCORE_BELOW_FLOOR');
-      // Same badge id, two audiences, two answers — the asymmetry itself.
-      expect(parentActivityBadge.map((d) => d.source_event_id)).toContain(
-        childActivityBadge[0].source_event_id,
-      );
+      expect(badgeDecisions).toHaveLength(4);
+      for (const d of badgeDecisions) {
+        // Composed into one string so a failure names WHICH row disagreed.
+        expect(`${d.event_type}/${d.target_audience} ${d.decision}/${d.outcome}`).toBe(
+          `${d.event_type}/${d.target_audience} SEND/SEND`,
+        );
+        expect(
+          (d.explanation as any[]).find((c) => c.name === 'FATIGUE_PENALTY').contribution,
+        ).toBe(0);
+      }
+
+      // TWO CAUSES, AND EACH ONE REACHED BOTH AUDIENCES. Grouped on the bare
+      // producer key — the column `notification-audience-symmetry.ts` groups on
+      // for the same reason — so «the child lost what the parent was told» has
+      // no instance left to point at, per cause rather than in aggregate.
+      const audiencesPerBadge = new Map<string, string[]>();
+      for (const d of badgeDecisions) {
+        audiencesPerBadge.set(d.source_event_id, [
+          ...(audiencesPerBadge.get(d.source_event_id) ?? []),
+          d.target_audience,
+        ]);
+      }
+      expect(audiencesPerBadge.size).toBe(2);
+      for (const [cause, audiences] of audiencesPerBadge) {
+        expect(`${cause} ${[...audiences].sort().join('+')}`).toBe(`${cause} CHILD+PARENT`);
+      }
     }, 180_000);
   });
 
@@ -958,5 +1019,147 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
       expect(link).toBe('abny://screen-time');
       expect(link).not.toBe('abny://goals');
     });
+  });
+
+  // ==========================================================================
+  // 5. THE PARENT'S INBOX — THE DEDUPE NAMES THE OCCURRENCE, NOT THE SENTENCE
+  // ==========================================================================
+  /**
+   * ==========================================================================
+   * A REAL DEFECT, FOUND WHILE §2.2 WAS BEING RECONCILED, AND MEASURED HERE.
+   * ==========================================================================
+   *
+   * `PrismaRuntimeAlertRepository.createForFamilyOwner` is the SINGLE WRITER of
+   * `notifications`, and it held a five-minute `findFirst` on
+   * `(user_id, child_id, type, TITLE)`. `BADGE_EARNED_PARENT`'s title is the
+   * CONSTANT «وسام جديد» for every badge in the catalogue — good copy repeats
+   * on purpose — so TWO DIFFERENT once-ever badges earned five minutes apart
+   * collapsed into one row and THE PARENT WAS NEVER TOLD ABOUT THE SECOND.
+   *
+   * IT WAS PRE-EXISTING AND IT WAS MASKED. The engine's own COOLDOWN refusal
+   * used to arrive first and produce the same end state under a different
+   * reason string; once `ONCE_EVER_COOLDOWN_EXEMPTIONS` removed that, the title
+   * dedupe was the only thing left losing the badge — and it reported the loss
+   * as `outcome_reason = ALREADY_NOTIFIED`, which
+   * `notification-audience-symmetry.ts` counts as TOLD. A loss that names
+   * itself a success is invisible to the invariant built to catch it.
+   *
+   * WHY THIS SECTION IS A DIRECT REPOSITORY TEST AND NOT A THIRD CROSSING. The
+   * defect is in a PREDICATE, and a predicate has two sides. Driving it through
+   * the health engine proves one of them (§2.2 does exactly that, and the four
+   * SEND rows there are this fix's product consequence). This section calls the
+   * real repository against real PostgreSQL so that BOTH sides are stated where
+   * they can be read together — the direction that must still dedupe as loudly
+   * as the direction that must not.
+   */
+  describe('5. the five-minute dedupe, in both directions', () => {
+    /** The title every badge notification to a parent carries — read from the
+     * catalogue rather than typed here, so this test cannot drift away from the
+     * copy that caused the defect. */
+    const BADGE_PARENT_TITLE = 'وسام جديد';
+
+    const parentInbox = (familyId: string): Promise<any[]> =>
+      raw<any[]>(
+        `SELECT "type", "title", "source_event_id" FROM "notifications"
+          WHERE "family_id" = $1::uuid ORDER BY "created_at", "id"`,
+        familyId,
+      );
+
+    const tellParent = (h: Household, sourceEventId: string) =>
+      asFamily(h.familyId, () =>
+        alerts.createForFamilyOwner({
+          familyId: h.familyId,
+          childId: h.childId,
+          type: 'BADGE_EARNED_PARENT',
+          title: BADGE_PARENT_TITLE,
+          body: 'حصل محمد على وسام.',
+          priority: 'NORMAL',
+          sourceEventId,
+        }),
+      );
+
+    it('5.0 the premise: every BADGE_EARNED_PARENT in the catalogue carries the SAME title', () => {
+      // If this ever stops being true the defect below stops being reachable —
+      // and this test would then be passing for the wrong reason. So the
+      // premise is asserted from the shipped catalogue, not assumed.
+      const entry = COPY_CATALOGUE.BADGE_EARNED_PARENT;
+      expect(entry.variants.PARENT?.ar.title).toBe(BADGE_PARENT_TITLE);
+      // …and the title takes no variables, which is what makes it constant
+      // across badges rather than merely equal for two of them.
+      expect(entry.variants.PARENT?.ar.title).not.toContain('{');
+    });
+
+    it('5.1 the SAME occurrence twice inside the window is still ONE row — the flap this dedupe exists for', async () => {
+      jest.setSystemTime(MIDDAY);
+      const h = await createHousehold('dedupe-same', CAIRO);
+      const occurrence = forEntity('badge', h.childId, 'badge-alpha');
+
+      expect(await tellParent(h, occurrence)).toBe(true);
+      // The clock is frozen, so the second call is unambiguously INSIDE the
+      // five-minute window rather than merely fast.
+      expect(await tellParent(h, occurrence)).toBe(false);
+
+      const rows = await parentInbox(h.familyId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].source_event_id).toBe(occurrence);
+    }, 180_000);
+
+    it('5.2 TWO DIFFERENT badges inside the same window BOTH reach the parent — the defect', async () => {
+      jest.setSystemTime(MIDDAY);
+      const h = await createHousehold('dedupe-distinct', CAIRO);
+      const alpha = forEntity('badge', h.childId, 'badge-alpha');
+      const beta = forEntity('badge', h.childId, 'badge-beta');
+
+      // Same recipient, same child, same type, same TITLE, same minute — every
+      // field the old predicate compared. Only the occurrence differs, and the
+      // occurrence is the only thing that should decide this.
+      expect(await tellParent(h, alpha)).toBe(true);
+      expect(await tellParent(h, beta)).toBe(true);
+
+      const rows = await parentInbox(h.familyId);
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.source_event_id).sort()).toEqual([alpha, beta].sort());
+      // Both really do carry the identical sentence — otherwise this test would
+      // be proving that two different titles are not deduped, which was never
+      // in doubt.
+      expect(new Set(rows.map((r) => r.title))).toEqual(new Set([BADGE_PARENT_TITLE]));
+    }, 180_000);
+
+    it('5.3 a flapping RECURRING SIGNAL is still suppressed ACROSS a bucket edge, where the keys differ', async () => {
+      // THE CASE A BARE `sourceEventId` EQUALITY WOULD HAVE SILENTLY DROPPED.
+      // `forRecurringSignal` quantises time into a five-minute bucket, so two
+      // alerts seconds apart on opposite sides of an edge compose DIFFERENT
+      // keys — and `notification-source-key.ts` states in its own docstring
+      // that this repository's sliding window is what covers the gap. It still
+      // does: the predicate strips the `:w<bucket>` artefact before comparing.
+      jest.setSystemTime(MIDDAY);
+      const h = await createHousehold('dedupe-flap', CAIRO);
+
+      const beforeEdge = new Date(MIDDAY.getTime());
+      const afterEdge = new Date(MIDDAY.getTime() + 5 * 60_000);
+      const first = forRecurringSignal('runtime', h.childId, 'ACCESSIBILITY_DISABLED', beforeEdge);
+      const second = forRecurringSignal('runtime', h.childId, 'ACCESSIBILITY_DISABLED', afterEdge);
+      // The premise: two DIFFERENT keys for one flapping device.
+      expect(first).not.toBe(second);
+
+      expect(await tellParent(h, first)).toBe(true);
+      expect(await tellParent(h, second)).toBe(false);
+      expect(await parentInbox(h.familyId)).toHaveLength(1);
+    }, 180_000);
+
+    it('5.4 …and a DIFFERENT recurring signal in the same window is NOT collapsed with it', async () => {
+      // The control for 5.3: the bucket is stripped, the DISCRIMINATOR is not.
+      // Without this, 5.3 would also pass against a predicate that suppressed
+      // every runtime alert in the window regardless of what it was about.
+      jest.setSystemTime(MIDDAY);
+      const h = await createHousehold('dedupe-flap-control', CAIRO);
+
+      const accessibility = forRecurringSignal('runtime', h.childId, 'ACCESSIBILITY_DISABLED', MIDDAY);
+      const vpn = forRecurringSignal('runtime', h.childId, 'VPN_DETECTED', MIDDAY);
+
+      expect(await tellParent(h, accessibility)).toBe(true);
+      expect(await tellParent(h, vpn)).toBe(true);
+      expect(await parentInbox(h.familyId)).toHaveLength(2);
+    }, 180_000);
   });
 });

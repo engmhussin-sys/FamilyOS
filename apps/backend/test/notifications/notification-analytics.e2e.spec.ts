@@ -28,23 +28,62 @@ import { SmartNotificationEngineService } from '../../src/modules/notification-e
 import { NotificationAnalyticsController } from '../../src/modules/notification-engine/presentation/controllers/notification-analytics.controller';
 import { NotificationPolicyController } from '../../src/modules/notification-engine/presentation/controllers/notification-policy.controller';
 import type { NotificationEventInput } from '../../src/modules/notification-engine/application/services/notification-context.assembler';
+import type { DecisionAnalyticsReport } from '../../src/modules/notifications/application/ports/notification-decision.repository.port';
+import { getBusinessDate, getBusinessTimeHHMM } from '../../src/common/time/family-date';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
 
-const AFTERNOON = new Date('2026-01-15T15:00:00.000Z'); // 17:00 Cairo
-const DEEP_NIGHT = new Date('2026-01-15T22:30:00.000Z'); // 00:30 Cairo
+const AFTERNOON = new Date('2026-02-24T15:00:00.000Z'); // 17:00 Cairo
+const DEEP_NIGHT = new Date('2026-02-24T22:30:00.000Z'); // 00:30 Cairo
 /**
  * TWO DATES, and the second one is the assertion.
  *
- * `DEEP_NIGHT` is 22:30 UTC on the 15th and 00:30 CAIRO on the 16th, so the two
- * quiet-hours decisions carry `business_date = 2026-01-16`. That is the whole
+ * `DEEP_NIGHT` is 22:30 UTC on the 24th and 00:30 CAIRO on the 25th, so the two
+ * quiet-hours decisions carry `business_date = 2026-02-25`. That is the whole
  * point of storing the FAMILY'S business date rather than a UTC one — «last
  * month» has to mean the household's month — and a range that covered only the
  * UTC day would silently lose them.
+ *
+ * ===========================================================================
+ * FEBRUARY, NOT JANUARY, AND A BASELINE BESIDE IT. NEITHER IS COSMETIC.
+ * ===========================================================================
+ *
+ * WHAT WAS MEASURED: `utcDayOnly.total` came back 3 against `toBe(1)`, and the
+ * two extra rows belonged to `Golden Family e2e10en` — a fixture of `e2e-10`'s,
+ * on `business_date = 2026-01-15`, carrying one `REWARD_GRANTED` and one
+ * `REWARD_GRANTED_CHILD`. Those same two rows are why
+ * `topTypes.every(t => t.type === 'REWARD_GRANTED')` returned false.
+ *
+ * `2026-01-15` is a shared literal across some twenty suites here, and
+ * `GET /system/notifications/analytics` is a PLATFORM roll-up: its own
+ * docstring argues at length that it must never accept or return a family id,
+ * so there is no tenant filter to scope with and a test cannot add one. AN
+ * ABSOLUTE COUNT TAKEN THROUGH IT IS A COUNT OF WHATEVER ELSE SHARES THAT
+ * BUSINESS DATE on the reused `afdc_ci` database.
+ *
+ * This is the shape that has bitten this repository twice — most recently a
+ * pagination guard that asserted foreign families EXIST, so it passed on a
+ * reused database and failed on a clean one. Lowering `1` to `3` would have
+ * reproduced it precisely: green today, red on a fresh database, red again the
+ * day `e2e-10` renames a fixture.
+ *
+ * SO THERE ARE TWO DEFENCES AND THEY ARE INDEPENDENT ON PURPOSE.
+ *
+ *   A PRIVATE BUSINESS DATE. `2026-02-24`/`2026-02-25` appear in no other suite
+ *   and no migration. Egypt is UTC+02:00 in February exactly as in January, so
+ *   the Cairo-midnight geometry the assertions rest on is unchanged — and 0.1
+ *   below READS that from tzdata rather than trusting this sentence.
+ *
+ *   A BASELINE. Every absolute count is asserted as a DELTA against `BASELINE`,
+ *   captured through the same controller with the same arguments BEFORE this
+ *   suite writes a row. If a future suite colonises the date anyway, the delta
+ *   is still exactly this cohort's own contribution.
+ *
+ * `1` and `2` are this suite's own numbers and they do not move.
  */
-const BUSINESS_DATE = '2026-01-15';
-const NEXT_BUSINESS_DATE = '2026-01-16';
+const BUSINESS_DATE = '2026-02-24';
+const NEXT_BUSINESS_DATE = '2026-02-25';
 
 function offlinePrismaService(): any {
   const url = process.env.INTEGRATION_DATABASE_URL as string;
@@ -83,6 +122,38 @@ describeIfDb('PHASE F — notification analytics and the household policy surfac
   let family: { familyId: string; childId: string; userId: string };
   let quietFamily: { familyId: string; childId: string; userId: string };
   let deferFamily: { familyId: string; childId: string; userId: string };
+
+  /**
+   * WHAT THE PLATFORM ALREADY HELD ON THIS SUITE'S TWO DATES, READ THROUGH THE
+   * SAME CONTROLLER AND THE SAME ARGUMENTS, BEFORE THIS SUITE WROTE ANYTHING.
+   *
+   * Four windows because four assertions are absolute; every other assertion in
+   * the file is a `>=` and needs no baseline. See the header for why an
+   * absolute count through a cross-tenant roll-up cannot stand on its own.
+   */
+  let BASELINE: {
+    firstDay: DecisionAnalyticsReport;
+    secondDay: DecisionAnalyticsReport;
+    rewardCategory: DecisionAnalyticsReport;
+    otherBand: DecisionAnalyticsReport;
+  };
+
+  /**
+   * The types whose count GREW between two readings of the same window — this
+   * cohort's own contribution to a `topTypes` list that may also carry rows
+   * nobody here wrote. Sorted, so a failure reads as a set and not as an
+   * ordering accident.
+   */
+  const typesAddedSince = (
+    before: DecisionAnalyticsReport,
+    after: DecisionAnalyticsReport,
+  ): string[] => {
+    const was = new Map(before.topTypes.map((t) => [t.type, t.total]));
+    return after.topTypes
+      .filter((t) => t.total > (was.get(t.type) ?? 0))
+      .map((t) => t.type)
+      .sort();
+  };
 
   const sys = (what: string, fn: () => Promise<any>): Promise<any> =>
     runAsSystemAsync('TEST_FIXTURE', `Phase F analytics suite: ${what}`, async () => await fn());
@@ -142,6 +213,21 @@ describeIfDb('PHASE F — notification analytics and the household policy surfac
     analytics = app.get(NotificationAnalyticsController);
     policyApi = app.get(NotificationPolicyController);
 
+    // BEFORE A SINGLE ROW OF THIS SUITE'S OWN EXISTS.
+    BASELINE = {
+      firstDay: await analytics.analytics(BUSINESS_DATE, BUSINESS_DATE),
+      secondDay: await analytics.analytics(NEXT_BUSINESS_DATE, NEXT_BUSINESS_DATE),
+      rewardCategory: await analytics.analytics(
+        BUSINESS_DATE,
+        NEXT_BUSINESS_DATE,
+        undefined,
+        undefined,
+        undefined,
+        'REWARD',
+      ),
+      otherBand: await analytics.analytics(BUSINESS_DATE, NEXT_BUSINESS_DATE, undefined, '5-7'),
+    };
+
     family = await createFamily('sent');
     quietFamily = await createFamily('suppressed');
     deferFamily = await createFamily('deferred');
@@ -192,6 +278,24 @@ describeIfDb('PHASE F — notification analytics and the household policy surfac
     await app?.close();
   }, 60_000);
 
+  /**
+   * THE PREMISE THE MOVE TO FEBRUARY RESTS ON, READ FROM tzdata RATHER THAN
+   * ASSERTED IN A COMMENT. Egypt observes DST from the last Friday of April to
+   * the last Thursday of October, so February is UTC+02:00 exactly as January
+   * was — but «exactly as January was» is the kind of claim that is true until
+   * a tzdata release says otherwise, and the date literals above are chosen for
+   * this geometry and nothing else.
+   */
+  it('0.1 the two instants are 17:00 and 00:30 in Cairo, and only the household has crossed midnight', () => {
+    expect(getBusinessTimeHHMM(AFTERNOON, 'Africa/Cairo')).toBe('17:00');
+    expect(getBusinessTimeHHMM(DEEP_NIGHT, 'Africa/Cairo')).toBe('00:30');
+    expect(getBusinessDate(AFTERNOON, 'Africa/Cairo')).toBe(BUSINESS_DATE);
+    expect(getBusinessDate(DEEP_NIGHT, 'Africa/Cairo')).toBe(NEXT_BUSINESS_DATE);
+    // UTC is still on the FIRST day at that instant — which is the entire
+    // reason `business_date` exists and what the split assertion below proves.
+    expect(DEEP_NIGHT.toISOString().slice(0, 10)).toBe(BUSINESS_DATE);
+  });
+
   it('returns every §9 number over real rows, and the rates have a sane denominator', async () => {
     const report = await analytics.analytics(BUSINESS_DATE, NEXT_BUSINESS_DATE);
 
@@ -225,14 +329,19 @@ describeIfDb('PHASE F — notification analytics and the household policy surfac
     expect(report.topTypes.map((t) => t.type)).toContain('REWARD_GRANTED');
 
     // THE BUSINESS DATE IS THE FAMILY'S. The two quiet-hours decisions were
-    // taken at 22:30 UTC on the 15th, which is 00:30 in Cairo on the 16th, and
-    // they are filed under the 16th. A UTC-dated ledger would have put a
+    // taken at 22:30 UTC on the 24th, which is 00:30 in Cairo on the 25th, and
+    // they are filed under the 25th. A UTC-dated ledger would have put a
     // household's midnight activity on the wrong day for every family east of
     // Greenwich.
+    //
+    // ONE row of this suite's landed on the UTC day and TWO on the Cairo day —
+    // measured as a DELTA against what the platform held before this suite ran,
+    // so the split is this cohort's own and not the database's history. See the
+    // header.
     const utcDayOnly = await analytics.analytics(BUSINESS_DATE, BUSINESS_DATE);
-    expect(utcDayOnly.total).toBe(1);
+    expect(utcDayOnly.total - BASELINE.firstDay.total).toBe(1);
     const cairoNextDay = await analytics.analytics(NEXT_BUSINESS_DATE, NEXT_BUSINESS_DATE);
-    expect(cairoNextDay.total).toBe(2);
+    expect(cairoNextDay.total - BASELINE.secondDay.total).toBe(2);
   });
 
   it('an EMPTY range returns zeros and NO NaN — the case every dashboard hits first', async () => {
@@ -258,13 +367,22 @@ describeIfDb('PHASE F — notification analytics and the household policy surfac
       undefined,
       'REWARD',
     );
-    expect(rewards.total).toBeGreaterThanOrEqual(2);
-    expect(rewards.topTypes.every((t) => t.type === 'REWARD_GRANTED')).toBe(true);
+    expect(rewards.total - BASELINE.rewardCategory.total).toBe(2);
+    // THE CATEGORY FILTER REALLY IS A FILTER: the only types this cohort added
+    // to the REWARD bucket are its own two `REWARD_GRANTED` decisions. Asserted
+    // as the set that GREW rather than as `every()` over the whole list —
+    // `every()` over a cross-tenant roll-up is a claim about other people's
+    // rows, and it is the assertion `Golden Family e2e10en`'s stray
+    // `REWARD_GRANTED_CHILD` was failing.
+    expect(typesAddedSince(BASELINE.rewardCategory, rewards)).toEqual(['REWARD_GRANTED']);
 
     const band = await analytics.analytics(BUSINESS_DATE, NEXT_BUSINESS_DATE, undefined, '11-13');
     expect(band.total).toBeGreaterThanOrEqual(3);
+    // NOTHING OF THIS COHORT'S IS IN THE 5-7 BAND — the three children are all
+    // born 2013. A bare `toBe(0)` here would be the same absolute-count trap as
+    // the two above, one foreign seven-year-old away from red.
     const otherBand = await analytics.analytics(BUSINESS_DATE, NEXT_BUSINESS_DATE, undefined, '5-7');
-    expect(otherBand.total).toBe(0);
+    expect(otherBand.total - BASELINE.otherBand.total).toBe(0);
   });
 
   it('refuses an unparseable filter rather than silently ignoring it', async () => {

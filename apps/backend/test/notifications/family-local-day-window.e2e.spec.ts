@@ -70,6 +70,49 @@
  * The clock is frozen anyway (`freezeGoldenClock`, January) so that nothing on
  * the path — a dedupe window, a quiet-hours reading, an age in years — depends
  * on the day this suite happens to run.
+ *
+ * ---------------------------------------------------------------------------
+ * THE VEHICLE: `REWARD_GRANTED`, AND IT MUST STAY A REPEATABLE TYPE.
+ * ---------------------------------------------------------------------------
+ *
+ * NOTHING BELOW IS ABOUT REWARDS. This suite's subject is the family-local day
+ * boundary and the ceiling on history; the notification type is only the
+ * VEHICLE that has to carry a load across those boundaries and be scored
+ * against it. So the type is chosen for three properties and no others:
+ *
+ *   PARENT audience   — the seeded history lives in `notifications`, so the
+ *                       candidate must read the PARENT inbox (§5 uses
+ *                       `REWARD_GRANTED_CHILD` for the `child_messages` half,
+ *                       for the same reason in the mirror).
+ *   DEFER class       — `notification-class.ts` classes it DEFER, so a decision
+ *                       taken inside quiet hours is a deferral and §3 can assert
+ *                       counts at 23:30/00:30 without the quiet-hours matrix
+ *                       turning a SUPPRESS into the answer.
+ *   REPEATABLE        — and this is the one that is easy to lose.
+ *
+ * THIS SUITE USED `BADGE_EARNED_PARENT` AND IT STOPPED WORKING AS A VEHICLE.
+ * `ONCE_EVER_TYPES` (`notification-policy.ts`) now exempts `BADGE_EARNED` and
+ * `BADGE_EARNED_PARENT` from ALL THREE volume loads, on the strength of the
+ * `child_badge_awards (child_id, badge_id)` UNIQUE constraint. A type that is
+ * exempt from volume cannot demonstrate a volume budget resetting: every
+ * `FATIGUE_PENALTY` note came back prefixed `once-ever type — exempt from
+ * volume; …` and every contribution came back 0, including the −25 that IS the
+ * experiment in §1.2, §2.1 and §3.1.
+ *
+ * SO THE VEHICLE CHANGED AND THE EXPECTATIONS DID NOT. Every count string in
+ * this file — `today=6/6 hour=0/3 category=6/2`, `today=0/6 hour=0/3
+ * category=0/2`, `today=1/6 hour=1/3 category=1/2` — every contribution, every
+ * verdict and every row count reproduced BYTE FOR BYTE across the swap, which
+ * is the evidence that this suite was measuring the day boundary and not the
+ * badge. `REWARD_GRANTED` is PARENT, DEFER and repeatable, and its category
+ * (`REWARD`) is shared by the seeded history and the candidate alike, so the
+ * per-category axis counts the same six rows it always did.
+ *
+ * DO NOT PUT A ONCE-EVER TYPE BACK IN — not here, and not in
+ * `seedParentNotification`. The two must also stay the SAME type: the
+ * `category=n/2` axis counts history rows whose category matches the
+ * candidate's, so swapping one without the other silently changes the third
+ * number in every note.
  */
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -259,14 +302,16 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
    * whole subject of this suite is WHICH INSTANT a history row carries. The
    * causal key is unique per row, so nothing here is a duplicate of anything and
    * `DUPLICATE_PENALTY` stays out of the arithmetic being measured.
+   *
+   * THE TYPE MUST STAY A REPEATABLE ONE — see `THE VEHICLE` in the file header.
    */
   const seedParentNotification = (h: Household, at: Date): Promise<any> =>
     exec(
       `INSERT INTO "notifications"
          ("id", "family_id", "user_id", "child_id", "type", "title", "body",
           "priority", "source_event_id", "created_at")
-       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'BADGE_EARNED_PARENT',
-               'وسام جديد', 'حصل محمد على وسام.', 'NORMAL', $5::text, $6::timestamp)`,
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'REWARD_GRANTED',
+               'مكافأة جديدة', 'حصل محمد على مكافأة جديدة اليوم.', 'NORMAL', $5::text, $6::timestamp)`,
       randomUUID(),
       h.familyId,
       h.userId,
@@ -297,6 +342,8 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
    * scope every producer establishes. `now` is a parameter of `handleEvent` for
    * the reason it is a parameter of every decision on this path: a persisted
    * score must be reproducible from the row it was computed for.
+   *
+   * `eventType` MUST BE A REPEATABLE TYPE — see `THE VEHICLE` in the file header.
    */
   const decide = (h: Household, eventType: string, now: Date) =>
     runWithTenant({ familyId: h.familyId, actorType: 'SYSTEM', actorId: 'fld-test' }, () =>
@@ -418,7 +465,7 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
     }, 120_000);
 
     it('1.2 at 20:00 on that same day the household IS at its maximum, and is refused with the arithmetic in the row', async () => {
-      const result = await decide(h, 'BADGE_EARNED_PARENT', CAIRO_DAY1);
+      const result = await decide(h, 'REWARD_GRANTED', CAIRO_DAY1);
       expect(result.decision.targetAudience).toBe('PARENT');
 
       const [row] = await decisionRows(h.familyId);
@@ -435,7 +482,7 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
     }, 120_000);
 
     it('1.3 FIFTEEN HOURS LATER — a new family-local day, still inside a rolling 24h — the household is told again', async () => {
-      const result = await decide(h, 'BADGE_EARNED_PARENT', DAY2);
+      const result = await decide(h, 'REWARD_GRANTED', DAY2);
 
       const rows = await decisionRows(h.familyId);
       expect(rows).toHaveLength(2);
@@ -465,7 +512,7 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
       h = await createHousehold('riyadh', RIYADH);
       for (const at of SEEDS) await seedParentNotification(h, at);
 
-      await decide(h, 'BADGE_EARNED_PARENT', RIYADH_DAY1);
+      await decide(h, 'REWARD_GRANTED', RIYADH_DAY1);
 
       const [row] = await decisionRows(h.familyId);
       expect(row.business_date.toISOString().slice(0, 10)).toBe('2026-01-15');
@@ -476,7 +523,7 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
     }, 120_000);
 
     it('2.2 at 08:00 Riyadh the next day — fifteen hours on — it is told again', async () => {
-      await decide(h, 'BADGE_EARNED_PARENT', DAY2);
+      await decide(h, 'REWARD_GRANTED', DAY2);
 
       const rows = await decisionRows(h.familyId);
       expect(rows).toHaveLength(2);
@@ -516,8 +563,8 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
       expect(getBusinessDate(SPLIT, CAIRO)).toBe('2026-01-15');
       expect(getBusinessDate(SPLIT, RIYADH)).toBe('2026-01-16');
 
-      await decide(cairo, 'BADGE_EARNED_PARENT', SPLIT);
-      await decide(riyadh, 'BADGE_EARNED_PARENT', SPLIT);
+      await decide(cairo, 'REWARD_GRANTED', SPLIT);
+      await decide(riyadh, 'REWARD_GRANTED', SPLIT);
 
       const [cairoRow] = await decisionRows(cairo.familyId);
       const [riyadhRow] = await decisionRows(riyadh.familyId);
@@ -542,7 +589,7 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
       expect(getBusinessDate(future, CAIRO)).toBe(getBusinessDate(DAY2, CAIRO));
       await seedParentNotification(h, future);
 
-      await decide(h, 'BADGE_EARNED_PARENT', DAY2);
+      await decide(h, 'REWARD_GRANTED', DAY2);
 
       const [row] = await decisionRows(h.familyId);
       expect(componentOf(row, 'FATIGUE_PENALTY').note).toBe('today=0/6 hour=0/3 category=0/2');
@@ -558,7 +605,7 @@ describeIfDb('THE FAMILY-LOCAL DAY, AND THE CEILING ON HISTORY (real PostgreSQL)
       expect(getBusinessDate(past, CAIRO)).toBe(getBusinessDate(DAY2, CAIRO));
       await seedParentNotification(h, past);
 
-      await decide(h, 'BADGE_EARNED_PARENT', DAY2);
+      await decide(h, 'REWARD_GRANTED', DAY2);
 
       const [row] = await decisionRows(h.familyId);
       expect(componentOf(row, 'FATIGUE_PENALTY').note).toBe('today=1/6 hour=1/3 category=1/2');

@@ -17,6 +17,35 @@ import {
 } from '../../../notifications/domain/engine/notification-destination';
 import { EngineBypassDecisionRecorder } from '../../../notifications/application/services/engine-bypass-decision.recorder';
 
+/**
+ * The trailing five-minute bucket `notification-source-key.ts#forRecurringSignal`
+ * appends — `…:w<floor(now / windowMs)>` — and NOTHING ELSE in that module
+ * produces. `forDomainEvent` ends in a uuid or a named facet, `forEntity` in an
+ * entity id, `forQuietHoursDigest` in `PARENT`/`CHILD`, `forBillingEvent` in a
+ * provider event id or a `YYYY-MM-DD`. The bucket is negative only for instants
+ * before 1970, which no producer can reach; `-?` is there so the pattern
+ * describes the composer rather than the calendar.
+ */
+const RECURRING_SIGNAL_BUCKET = /:w-?\d+$/;
+
+/**
+ * «THE SAME OCCURRENCE AS THIS ONE», as a Prisma filter on `source_event_id`.
+ *
+ * For every key EXCEPT a recurring signal's this is plain equality — the key IS
+ * the occurrence, and two causes that merely share a title are two occurrences.
+ * For a recurring signal it is the whole bucket family, because the bucket is a
+ * stateless approximation of the sliding window the caller is already applying;
+ * see the long note at the `findFirst` for the measurement and the argument.
+ *
+ * The `startsWith` cannot reach a neighbouring signal: `forRecurringSignal`
+ * passes its discriminator through `segment()`, which strips the `:` separator,
+ * so `runtime:c1:ACC:w` can only ever prefix buckets of `runtime:c1:ACC`.
+ */
+function sameOccurrenceAs(sourceEventId: string): Prisma.StringFilter | string {
+  const stem = sourceEventId.replace(RECURRING_SIGNAL_BUCKET, '');
+  return stem === sourceEventId ? sourceEventId : { startsWith: `${stem}:w` };
+}
+
 @Injectable()
 export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
   constructor(
@@ -43,8 +72,8 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
    * required field on `ICreateRuntimeAlertInput`.
    *
    * TWO DEFENCES NOW, NOT ONE, AND THE OLD ONE IS KEPT ON PURPOSE:
-   *   1. the five-minute `findFirst` below — unchanged, still the product
-   *      behaviour for a flapping device, still a sliding window;
+   *   1. the five-minute `findFirst` below — still the product behaviour for a
+   *      flapping device, still a sliding window;
    *   2. `notifications (family_id, source_event_id, user_id)` — the
    *      constraint, which sees concurrent writers and never forgets.
    * Deleting (1) in favour of (2) would have changed flap-suppression from a
@@ -52,6 +81,15 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
    * behaviour is untouched and the correctness floor is absolute. This is the
    * same relationship `consumed_messages` has with the ledger's unique index,
    * and F3's own docstring calls that one an optimisation for the same reason.
+   *
+   * WHAT (1) COMPARES DID CHANGE, and the long note at the `findFirst` carries
+   * the measurement: it used to compare the TITLE and now compares the
+   * OCCURRENCE. A constant title made two different once-ever badges look like
+   * one notification and cost a parent the second of them. Both halves of the
+   * behaviour above survive it — `daily-goal-completed.e2e.spec.ts` §5 asserts
+   * the flap is still suppressed and the second badge now arrives, and §5.3
+   * fails against the naive `sourceEventId` equality that would have dropped
+   * flap-suppression silently.
    *
    * ==========================================================================
    * THE PUSH CHANNEL IS COMPUTED HERE AND DISCARDED HERE, AND THE REASON IT IS
@@ -124,9 +162,9 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
     // deduplication existed — the same event firing repeatedly in a
     // short window (e.g. a flaky Accessibility Service toggling on
     // and off) previously created a duplicate notification every
-    // single time. A 5-minute window matching the exact same
-    // recipient/type/childId/title is treated as the same real-world
-    // event, not a new one worth re-alerting about.
+    // single time. A 5-minute window matching the same real-world
+    // OCCURRENCE for the same recipient is treated as the same event,
+    // not a new one worth re-alerting about.
     //
     // FIXES A REAL BUG (Sprint 16.1 Phase 3): this query was
     // hardcoded to type: 'RUNTIME_ALERT' — deduplication would have
@@ -135,13 +173,68 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
     // every one of THOSE rows also has type='RUNTIME_ALERT' baked in
     // by the OLD version of this same query, comparing the wrong
     // field entirely. Now compares the REAL type.
+    //
+    // ======================================================================
+    // AND IT NO LONGER COMPARES THE TITLE. MEASURED, IN `notification_decisions`:
+    //
+    //   BADGE_EARNED_PARENT / PARENT / decision=SEND / outcome=SUPPRESS
+    //                       / outcome_reason=ALREADY_NOTIFIED
+    //
+    // for the SECOND of two DIFFERENT once-ever badges a child earned inside
+    // one five-minute window (`daily-goal-completed.e2e.spec.ts` §5 now holds
+    // the measurement). `BADGE_EARNED_PARENT`'s title is the CONSTANT
+    // «وسام جديد» for every badge in the catalogue
+    // (`notification-copy.ts` → COPY_CATALOGUE.BADGE_EARNED_PARENT), so a
+    // predicate on `title` said «same sentence» and this method reported
+    // «already told them». THE PARENT WAS NEVER TOLD ABOUT THE SECOND BADGE,
+    // and `ALREADY_NOTIFIED` is on `notification-audience-symmetry.ts`'s
+    // ALREADY_KNOWN_REASONS list — so the loss was invisible to the invariant
+    // built to catch exactly this. Pre-existing, and previously masked by the
+    // COOLDOWN refusal that used to arrive first for the same end state.
+    //
+    // A TITLE IS A PROXY FOR AN OCCURRENCE AND IT FAILS PRECISELY WHEN TWO
+    // DISTINCT CAUSES SHARE COPY — which good copy does on purpose. So the
+    // predicate now names the occurrence: `source_event_id`, the producer's
+    // own causal key and the column `notifications (family_id,
+    // source_event_id, user_id)` is unique on.
+    //
+    // ----------------------------------------------------------------------
+    // WHAT THE OLD WINDOW WAS PROTECTING, AND WHY IT STILL IS.
+    // ----------------------------------------------------------------------
+    //
+    // TWO things, and a bare `sourceEventId` equality would have kept only one:
+    //
+    //   1. A GENUINE DOUBLE-SEND OF THE SAME OCCURRENCE — a redelivered
+    //      outbox message, a retried webhook, a sweep run twice. Same key,
+    //      same row, refused here and refused absolutely by the unique index
+    //      underneath (the `P2002` catch below). Kept, exactly.
+    //
+    //   2. A FLAPPING RECURRING SIGNAL ACROSS A BUCKET EDGE — and this is the
+    //      one a naive swap would have silently dropped.
+    //      `notification-source-key.ts#forRecurringSignal` quantises time into
+    //      a five-minute bucket and puts `:w<bucket>` in the key, and its own
+    //      docstring states the limit honestly: «two identical alerts 30
+    //      seconds apart but on opposite sides of a bucket edge produce two
+    //      DIFFERENT keys and the database will accept both. That is why the
+    //      five-minute `findFirst` in `PrismaRuntimeAlertRepository` … [is]
+    //      KEPT rather than replaced». A flaky Accessibility Service is
+    //      exactly that case (`runtime-alert.service.ts#accessibilityChanged`).
+    //
+    // SO THE PREDICATE STRIPS THE QUANTISATION ARTEFACT AND COMPARES WHAT IS
+    // LEFT. `:w<bucket>` is not part of an occurrence's identity — it is how
+    // the composer approximated a sliding window with a stateless string — and
+    // this method HAS the sliding window, so it can afford to ignore it.
+    // `runtime:<child>:ACCESSIBILITY_DISABLED:w1234` and `…:w1235` are the
+    // same occurrence and the second is still refused; `badge:<child>:<A>` and
+    // `badge:<child>:<B>` are two occurrences that merely share a sentence,
+    // and both now reach the parent.
     const DEDUP_WINDOW_MS = 5 * 60 * 1000;
     const recentDuplicate = await this.prisma.notification.findFirst({
       where: {
         userId: recipient.userId,
         childId,
         type: notificationType,
-        title: input.title,
+        sourceEventId: sameOccurrenceAs(input.sourceEventId),
         createdAt: { gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
       },
     });
