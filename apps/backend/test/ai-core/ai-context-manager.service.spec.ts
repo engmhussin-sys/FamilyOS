@@ -3,6 +3,7 @@ import { AiContextManagerService } from '../../src/modules/ai-core/application/s
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { ScreenTimeService } from '../../src/modules/screen-time/application/services/screen-time.service';
 import { ChildNotFoundException } from '../../src/modules/children/domain/child.errors';
+import { FamilyDateService } from '../../src/common/time/family-date.service';
 
 describe('AiContextManagerService', () => {
   const childrenServiceMock = { getChildOrThrow: jest.fn() };
@@ -17,6 +18,11 @@ describe('AiContextManagerService', () => {
         AiContextManagerService,
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: ScreenTimeService, useValue: screenTimeServiceMock },
+        // The child's age is no longer computed from the container clock — it is
+        // the family's own calendar age, so the service asks FamilyDateService
+        // rather than a free function. Pinned here so the age under test is a
+        // fixture, not whatever timezone the runner happens to sit in.
+        { provide: FamilyDateService, useValue: { ageInYears: jest.fn().mockResolvedValue(9) } },
       ],
     }).compile();
     service = moduleRef.get(AiContextManagerService);

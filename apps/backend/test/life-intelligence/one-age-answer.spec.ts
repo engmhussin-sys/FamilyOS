@@ -41,11 +41,6 @@ const AGE_HOME = join(SRC, 'common', 'time', 'family-date.ts');
  * keeping it alive. Both are named so that removing one without the other
  * fails here.
  */
-const PENDING_HANDOFF = {
-  file: join(SRC, 'common', 'utils', 'age.ts'),
-  soleCaller: join(SRC, 'modules', 'ai-core', 'application', 'services', 'ai-context-manager.service.ts'),
-};
-
 function everyTsFile(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -82,10 +77,10 @@ describe('a child’s age has one answer', () => {
   // 1. NO FOURTH IMPLEMENTATION
   // ==========================================================================
 
-  it('1.1 only the one home and the one pending-handoff file compute an age', () => {
+  it('1.1 exactly one file computes a child\u2019s age', () => {
     const offenders: string[] = [];
     for (const file of everyTsFile(SRC)) {
-      if (file === AGE_HOME || file === PENDING_HANDOFF.file) continue;
+      if (file === AGE_HOME) continue;
       for (const line of ageArithmeticIn(file)) offenders.push(`${file}:${line}`);
     }
     expect(offenders).toEqual([]);
@@ -135,15 +130,22 @@ describe('a child’s age has one answer', () => {
   });
 
   // ==========================================================================
-  // 2. THE PENDING HANDOFF — delete this whole section with the file
+  // 2. THE HANDOFF IS CLOSED
   // ==========================================================================
+  //
+  // Section 2 asserted that `common/utils/age.ts` had exactly one caller —
+  // `ai-context-manager.service.ts` — and named both so neither could be
+  // removed without the other. `calculateAge` read the CONTAINER clock, so a
+  // child's age depended on which host answered; on a European staging box
+  // serving Cairo and Riyadh that is a wrong answer, not a stylistic one.
+  // The caller now asks `FamilyDateService.ageInYears`, and the file is gone.
+  // Section 1 is what remains, and it is the durable half: it fails if a
+  // FOURTH implementation of "how old is this child" ever appears.
 
-  it('2.1 calculateAge has exactly one caller, and it is the one named for handoff', () => {
-    const callers = everyTsFile(SRC).filter(
-      (file) =>
-        file !== PENDING_HANDOFF.file &&
-        codeLines(file).some(({ line }) => /\bcalculateAge\b/.test(line)),
+  it('2.1 no age implementation survives outside the one home', () => {
+    const strays = everyTsFile(SRC).filter((file) =>
+      codeLines(file).some(({ line }) => /\bcalculateAge\b/.test(line)),
     );
-    expect(callers).toEqual([PENDING_HANDOFF.soleCaller]);
+    expect(strays).toEqual([]);
   });
 });

@@ -50,8 +50,13 @@ const PUBLIC_ROUTES: Record<string, string> = {
     "PHASE D (GROWTH). An app install precedes every credential this system could check — there is no account, no family and no token on first launch, which is the entire reason INSTALL is a funnel step above REGISTRATION. Three controls stand in for a token: a 10/min throttle, a payload that cannot name a family, a user or a child (it carries a client-generated session id and market dimensions only), and the fact that the event GRANTS NOTHING — the worst an abuser achieves is inflating a chart they have no way to read. The row lands in `analytics_events` with `family_id IS NULL`, which is PLATFORM_ANNOTATED and therefore invisible to every tenant.",
   'GET /health/live': 'Liveness probe. Orchestrators cannot authenticate. Returns {status:"ok"} and nothing else.',
   'GET /health/ready': 'Readiness probe. Returns three booleans, no tenant data.',
-  'GET /system/readiness': 'Infrastructure readiness probe, same reasoning as /health/ready.',
-  'GET /system/diagnostics': 'Build/config diagnostics — booleans, counts and version strings only, reviewed line by line for the absence of secrets and tenant data.',
+  // `GET /system/readiness` and `GET /system/diagnostics` stood here. Both were
+  // anonymous, and both named the build to anyone who asked: version, commit,
+  // NODE_ENV, feature flags, and — on readiness — raw dependency error strings
+  // and which payment providers are configured. They now sit behind
+  // InternalAdminGuard with the rest of `system/*`. The liveness and readiness
+  // probes the deploy actually polls are `/health/live` and `/health/ready`,
+  // which are above and disclose nothing about the build.
   'POST /support': 'A support request may legitimately come from someone who cannot log in (that is often WHY they are writing). Throttled 5/min; SupportRequest.familyId is nullable for exactly this case. It carries OptionalJwtAuthGuard, which never rejects — it exists only so a caller who DOES have a session is identified from the verified token instead of from the request body (see NON_REJECTING_GUARDS below).',
 };
 
