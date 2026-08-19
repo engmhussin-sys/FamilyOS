@@ -108,6 +108,45 @@ describeGolden('GOLDEN E2E-10 — G10/G11/G12/G13: the language of the household
     await world.sys('the English household’s owner reads English', () =>
       world.prisma.user.update({ where: { id: english.ownerUserId }, data: { locale: 'en' } }),
     );
+
+    /**
+     * ======================================================================
+     * THIS HOUSEHOLD SWITCHES ITS COOLDOWN OFF, AND THE SCENARIO SAYS WHY.
+     * ======================================================================
+     *
+     * SPRINT F1 wired `toFatiguePolicy` into the delivery gate, so
+     * `notification.cooldown.defaultMinutes` (30) is now ENFORCED rather than
+     * merely stored — it had NO CALL SITE IN `src/` at all, which is why two
+     * `REWARD_GRANTED_CHILD` occurrences twenty minutes apart both used to
+     * deliver.
+     *
+     * `english` is the ONE household in this file that is asked for a SECOND
+     * and a THIRD reward, and all of them are fired at the same frozen
+     * `GOLDEN_NOON` — so under a working cooldown the second is a repeat of the
+     * first well inside thirty minutes and is correctly refused. That behaviour
+     * is the right one and it is measured in both directions, from persisted
+     * rows, by `test/notifications/fatigue-policy.e2e.spec.ts`.
+     *
+     * THIS FILE IS ABOUT WHICH LANGUAGE A DECISION IS WRITTEN IN. How soon a
+     * child may be told a second time belongs to the suites that measure the
+     * caps directly — exactly the argument the paragraph further down already
+     * makes about `maxPerHour` and `categoryMaxPerDay`, which this file already
+     * raises for this same household. The caps are PER-FAMILY CONFIGURATION
+     * (migration 0018): a household that wants to hear more says so in its own
+     * settings, which is a supported product action and not a test back door.
+     *
+     * NO ASSERTION MOVES. Every expectation below still demands the same rows,
+     * the same locales and the same sentences.
+     */
+    await world.sys('the English household turns its cooldown off', () =>
+      world.prisma.notificationPolicySetting.create({
+        data: {
+          familyId: english.familyId,
+          key: 'notification.cooldown.defaultMinutes',
+          value: '0',
+        },
+      }),
+    );
   }, 240_000);
 
   afterAll(async () => {

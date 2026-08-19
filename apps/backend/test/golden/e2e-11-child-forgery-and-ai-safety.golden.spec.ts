@@ -124,6 +124,44 @@ describeGolden('GOLDEN E2E-11 — G15 the child who forges, G16 the model that s
       childDateOfBirth: `${year - 12}-01-05`,
     });
     await ageTheHousehold(world, home, goldenAt('08:00'));
+
+    /**
+     * ======================================================================
+     * THIS HOUSEHOLD SWITCHES ITS COOLDOWN OFF, AND THE SCENARIO SAYS WHY.
+     * ======================================================================
+     *
+     * SPRINT F1 wired `toFatiguePolicy` into the delivery gate, so
+     * `notification.cooldown.defaultMinutes` (30) is now ENFORCED rather than
+     * merely stored — it had NO CALL SITE IN `src/` at all, which is why two
+     * `REWARD_GRANTED_CHILD` occurrences inside half an hour both used to
+     * deliver.
+     *
+     * G16 earns SEVERAL achievements in this ONE household at the same frozen
+     * `GOLDEN_NOON`, so under a working cooldown every one after the first is a
+     * repeat within thirty minutes and is correctly refused. That behaviour is
+     * measured, in both directions and from persisted rows, by
+     * `test/notifications/fatigue-policy.e2e.spec.ts`.
+     *
+     * THIS FILE IS ABOUT WHAT THE MODEL MAY SAY TO A CHILD — that an unsafe
+     * rewrite never reaches `child_messages` and the human-written template
+     * ships instead. How SOON a child may be told a second time is a different
+     * question with a different owner, and letting it decide how many rows this
+     * file has to look at would make a safety assertion depend on a cap.
+     * The caps are PER-FAMILY CONFIGURATION (migration 0018), so this is a
+     * supported product action and not a test back door.
+     *
+     * NO ASSERTION MOVES. Every expectation below still demands the same rows
+     * and the same sentences.
+     */
+    await world.sys('this household turns its cooldown off', () =>
+      world.prisma.notificationPolicySetting.create({
+        data: {
+          familyId: home.familyId,
+          key: 'notification.cooldown.defaultMinutes',
+          value: '0',
+        },
+      }),
+    );
   }, 240_000);
 
   afterAll(async () => {
