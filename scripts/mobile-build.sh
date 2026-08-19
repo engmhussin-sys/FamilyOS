@@ -31,6 +31,16 @@
 # (AppConfig.debugDefaultApiBaseUrl, via scripts/lib/repo-pins.sh), never
 # hardcoded here. Override with --api-base-url.
 #
+# AND A RELEASE MUST NOT INHERIT THE DEBUG DEFAULT. That default is
+# `http://10.0.2.2:3000/api/v1` — cleartext, and an emulator-only host. Both
+# apps' lib/core/config/app_config.dart THROWS StateError at launch when a
+# RELEASE build's API_BASE_URL is not https (`assertUsableForBuildMode`), so
+# `--release` without an explicit URL produced a perfectly signed,
+# perfectly uploadable, CRASH-ON-LAUNCH artifact and this script called it
+# "ALL STAGES PASSED". It now takes the release URL from --api-base-url or from
+# the environment variable .github/workflows/build-apk.yml already uses,
+# RELEASE_API_BASE_URL, and refuses to start a release build without one.
+#
 # THE RELEASE PREFLIGHT, ADDED HERE FOR PARITY WITH mobile-build.ps1.
 # Without it, `--release` ran pub get, analyze, test and a full debug APK build
 # — several minutes each — and only then reached `flutter build apk --release`,
@@ -92,7 +102,10 @@ LOG_DIR=""
 REPO_ROOT=""
 ALLOW_NO_PUSH="no"
 
-usage() { sed -n '2,81p' "$0" | sed 's/^# \{0,1\}//'; }
+# 2,92p is this file's header block. It grew when the release-URL refusal above
+# was written down; a stale range silently truncates --help, which is how a
+# usage message stops mentioning the flag that would have unblocked the caller.
+usage() { sed -n '2,92p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # An option that takes a value must HAVE one. Without this, `--log-dir` with
 # nothing after it reached `shift 2` with one argument left; `shift` fails, `$#`
@@ -216,7 +229,24 @@ if ! read_pins "$REPO_ROOT"; then
 fi
 
 # API_BASE_URL default comes from the repository, not from this file.
-if [ -z "$API_BASE_URL" ]; then
+if [ -n "$API_BASE_URL" ]; then
+  API_URL_ORIGIN="--api-base-url"
+elif [ "$DO_RELEASE" = "yes" ] && [ -n "${RELEASE_API_BASE_URL:-}" ]; then
+  # The same variable name .github/workflows/build-apk.yml uses, so one value
+  # serves CI, this script and scripts/release-doctor.sh's api-base-url row.
+  API_BASE_URL="$RELEASE_API_BASE_URL"
+  API_URL_ORIGIN="RELEASE_API_BASE_URL (environment)"
+elif [ "$DO_RELEASE" = "yes" ]; then
+  echo "mobile-build: a RELEASE build needs an explicit https API_BASE_URL and none was given." >&2
+  echo "              The repository default is ${PIN_DEBUG_API_URL:-<unreadable>} — cleartext, and emulator-only." >&2
+  echo "              apps/*/lib/core/config/app_config.dart throws StateError at launch on a release" >&2
+  echo "              build whose API_BASE_URL is not https, so this would be a signed artifact that" >&2
+  echo "              cannot open. Refusing to build it." >&2
+  echo "              Fix, either one:" >&2
+  echo "                export RELEASE_API_BASE_URL=https://<host>/api/v1" >&2
+  echo "                scripts/mobile-build.sh --release --api-base-url https://<host>/api/v1" >&2
+  exit 2
+else
   API_BASE_URL="$PIN_DEBUG_API_URL"
   API_URL_ORIGIN="AppConfig.debugDefaultApiBaseUrl (read from the repository)"
   if [ -z "$API_BASE_URL" ]; then
@@ -224,8 +254,16 @@ if [ -z "$API_BASE_URL" ]; then
     echo "              Refusing to build: an APK without --dart-define=API_BASE_URL installs and can talk to nothing (audit MA-004)." >&2
     exit 2
   fi
-else
-  API_URL_ORIGIN="--api-base-url"
+fi
+
+# A release build's URL must be https NO MATTER WHERE IT CAME FROM — including
+# from --api-base-url. This mirrors AppConfig.configurationError() exactly.
+if [ "$DO_RELEASE" = "yes" ] && [ "${API_BASE_URL#https://}" = "$API_BASE_URL" ]; then
+  echo "mobile-build: API_BASE_URL '$API_BASE_URL' [$API_URL_ORIGIN] is not https." >&2
+  echo "              apps/*/lib/core/config/app_config.dart rejects a non-https URL in release mode" >&2
+  echo "              and assertUsableForBuildMode() turns that into a StateError on the first frame." >&2
+  echo "              Refusing to produce an artifact that cannot open." >&2
+  exit 2
 fi
 
 # ENABLE_PUSH: default follows whether Firebase is actually configured, so a
@@ -505,18 +543,28 @@ done
 # ARTIFACTS
 # ===========================================================================
 head_line 'ARTIFACTS'
-printf '%s' "$ARTIFACTS" | while IFS= read -r line; do
+# A HERE-STRING, NOT A PIPE, AND THAT IS THE FIX FOR A FALSE GREEN.
+# This loop used to be `printf '%s' "$ARTIFACTS" | while ...`, which runs the
+# body in a SUBSHELL: `MISSING_ARTIFACTS` incremented inside it and was gone by
+# the time the exit code was decided, so a run in which every declared artifact
+# was absent still printed "ALL STAGES PASSED" and exited 0. The stage exit
+# codes were honest; the summary was not.
+MISSING_ARTIFACTS=0
+while IFS= read -r line; do
   [ -z "$line" ] && continue
   path="$(printf '%s' "$line" | awk '{print $NF}')"
   if [ -f "$path" ]; then
     size="$(du -h "$path" 2>/dev/null | cut -f1)"
     printf '  %s[ OK ]%s %s  (%s)\n' "$C_GRN" "$C_RESET" "$line" "$size"
   else
+    MISSING_ARTIFACTS=$((MISSING_ARTIFACTS + 1))
     printf '  %s[MISSING]%s %s\n' "$C_RED" "$C_RESET" "$line"
     printf '           The stage reported success but the file is not there. Treat this as a failure:\n'
     printf '           check the build log in %s.\n' "$LOG_DIR"
   fi
-done
+done <<EOF
+$ARTIFACTS
+EOF
 
 printf '\n  logs: %s\n' "$LOG_DIR"
 if [ "$DO_RELEASE" = "yes" ]; then
@@ -528,5 +576,14 @@ if [ "$DO_RELEASE" = "yes" ]; then
   printf '  %sRelease artifacts were signed from apps/<app>/android/signing.properties (checked in RELEASE PREFLIGHT).%s\n' "$C_YEL" "$C_RESET"
   printf '  Verify the signature before uploading:  python3 scripts/verify_release_signing.py\n'
 fi
-printf '\n  %sALL STAGES PASSED.%s\n\n' "$C_GRN" "$C_RESET"
+
+if [ "$MISSING_ARTIFACTS" -gt 0 ]; then
+  printf '\n  %s%s DECLARED ARTIFACT(S) ARE NOT ON DISK.%s\n' "$C_RED" "$MISSING_ARTIFACTS" "$C_RESET"
+  printf '  Every stage exited 0 and the files are still missing, so something in the Gradle\n'
+  printf '  output paths does not match what this script expects. That is a failure, and this\n'
+  printf '  run exits non-zero rather than reporting a pass nobody can install.\n\n'
+  exit 1
+fi
+
+printf '\n  %sALL STAGES PASSED AND EVERY DECLARED ARTIFACT EXISTS.%s\n\n' "$C_GRN" "$C_RESET"
 exit 0

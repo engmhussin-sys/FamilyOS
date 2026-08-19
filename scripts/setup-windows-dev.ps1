@@ -393,7 +393,7 @@ if ($SkipInstall) {
     Write-Info "  * gradle-wrapper.properties pins Gradle $($pins.Gradle); Gradle only learned to RUN"
     Write-Info '    on JDK 21 in 8.5, so a newer JDK dies with "Unsupported class file major'
     Write-Info '    version 65" before compiling a single line.'
-    Write-Info "  * settings.gradle pins AGP $($pins.Agp), which wants JDK 17."
+    Write-Info "  * settings.gradle pins AGP $($pins.Agp), which wants JDK $($pins.JavaMajor)."
     Write-Info "  * app/build.gradle sets source/targetCompatibility to $($pins.JavaMajor)."
     Write-Info "  JDK $($pins.JavaMajor) is the only version satisfying all three."
     $javaExe = Join-Path $jdkRoot 'bin\java.exe'
@@ -656,8 +656,15 @@ Write-Host '    <app>-pubget.txt  <app>-analyze.txt  <app>-test.txt  <app>-build
 Write-Host '    flutter-doctor.txt'
 Write-Host ''
 Write-Host '  INSTALL A DEBUG APK ON A CONNECTED DEVICE'
-Write-Host '    adb devices'
+Write-Host '    adb devices                      # must list one device, state "device"'
 Write-Host '    adb install -r "<path printed above>"'
+Write-Host '    Then walk GOLDEN_DEVICE_SMOKE_TEST.md — that document, not this script,'
+Write-Host '    is what decides whether the artifact actually works on a phone.'
+Write-Host ''
+Write-Host '  THE BUILD GATE — run this before any RELEASE build, and read its table:'
+Write-Host '    powershell -ExecutionPolicy Bypass -File scripts\release-doctor.ps1'
+Write-Host '    Debug-only readiness instead:  .\scripts\release-doctor.ps1 -Profile debug'
+Write-Host '    It classifies every check PASS / WARN / BLOCKED and ends on one line.'
 Write-Host ''
 Write-Host '  A DEBUG APK POINTS AT ' -NoNewline; Write-Host $ApiBaseUrl -ForegroundColor Yellow
 Write-Host '    10.0.2.2 is the Android EMULATOR alias for the host machine. On a physical'

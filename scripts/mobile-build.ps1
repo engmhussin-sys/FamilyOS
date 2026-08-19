@@ -38,6 +38,16 @@
     (AppConfig.debugDefaultApiBaseUrl), never hardcoded here. Override with
     -ApiBaseUrl.
 
+    AND A RELEASE MUST NOT INHERIT THE DEBUG DEFAULT. That default is
+    `http://10.0.2.2:3000/api/v1` — cleartext, and an emulator-only host. Both
+    apps' lib/core/config/app_config.dart THROWS StateError at launch when a
+    RELEASE build's API_BASE_URL is not https (`assertUsableForBuildMode`), so
+    -Release without an explicit URL produced a perfectly signed, perfectly
+    uploadable, CRASH-ON-LAUNCH artifact and this script called it
+    "ALL STAGES PASSED". It now takes the release URL from -ApiBaseUrl or from
+    the environment variable .github/workflows/build-apk.yml already uses,
+    RELEASE_API_BASE_URL, and refuses to start a release build without one.
+
     ENABLE_PUSH defaults per app to whether that app actually has a
     google-services.json, so an artifact built without Firebase is HONESTLY
     labelled rather than silently shipping a push path that cannot work.
@@ -86,11 +96,23 @@
     and nothing here may be described as BUILD VERIFIED until a Windows machine
     produces an artifact.
 
-    ITS BASH TWIN IS NOW BEHIND. `scripts/mobile-build.sh` HAS been executed
-    (its BLOCKED preflight and first-failing-stage stop are recorded in the
-    Phase G ship report). It does NOT have the RELEASE PREFLIGHT added here and
-    it still names `key.properties` in its closing note; whoever owns the .sh
-    needs the same two corrections.
+    THE TWO HALVES ARE NOW IN PARITY, and three defects were closed in this one
+    to get there — each of them a green summary over a build that had failed:
+
+      * A MISSING ARTIFACT NO LONGER PASSES. The ARTIFACTS block printed
+        [MISSING] in red and then fell through to "ALL STAGES PASSED" with
+        exit 0.
+      * A RELEASE NO LONGER INHERITS THE CLEARTEXT DEBUG URL. -Release with no
+        -ApiBaseUrl used AppConfig.debugDefaultApiBaseUrl (http://10.0.2.2:...),
+        which app_config.dart turns into a StateError on the release build's
+        first frame — a signed, uploadable artifact that cannot open.
+      * THE DEBUG-KEYSTORE REFUSAL (L3) was in the .sh and absent here, so the
+        two halves disagreed on whether a release signed with debug.keystore
+        was a blocker. It is a blocker in both now.
+
+    The Firebase requirement is also derived from the same THREE files as the
+    .sh (pubspec.yaml + settings.gradle + app/build.gradle) rather than from
+    pubspec.yaml alone.
 #>
 
 [CmdletBinding()]
@@ -243,7 +265,25 @@ Write-Head 'ABNY / «ابني» — mobile build'
 
 $pins = Get-BuildPins -Root $RepoRoot
 
-if (-not $ApiBaseUrl) {
+if ($ApiBaseUrl) {
+    $apiOrigin = '-ApiBaseUrl'
+} elseif ($Release -and $env:RELEASE_API_BASE_URL) {
+    # The same variable name .github\workflows\build-apk.yml uses, so one value
+    # serves CI, this script and release-doctor.ps1's api-base-url row.
+    $ApiBaseUrl = $env:RELEASE_API_BASE_URL
+    $apiOrigin = 'RELEASE_API_BASE_URL (environment)'
+} elseif ($Release) {
+    $defaultShown = if ($pins.DebugApiUrl) { $pins.DebugApiUrl } else { '<unreadable>' }
+    Write-Host '  mobile-build: a RELEASE build needs an explicit https API_BASE_URL and none was given.' -ForegroundColor Red
+    Write-Host "                The repository default is $defaultShown — cleartext, and emulator-only." -ForegroundColor Red
+    Write-Host '                apps\*\lib\core\config\app_config.dart throws StateError at launch on a release' -ForegroundColor Red
+    Write-Host '                build whose API_BASE_URL is not https, so this would be a signed artifact that' -ForegroundColor Red
+    Write-Host '                cannot open. Refusing to build it.' -ForegroundColor Red
+    Write-Host '                Fix, either one:'
+    Write-Host '                  $env:RELEASE_API_BASE_URL = "https://<host>/api/v1"'
+    Write-Host '                  .\scripts\mobile-build.ps1 -Release -ApiBaseUrl https://<host>/api/v1'
+    exit 2
+} else {
     $ApiBaseUrl = $pins.DebugApiUrl
     $apiOrigin = 'AppConfig.debugDefaultApiBaseUrl (read from the repository)'
     if (-not $ApiBaseUrl) {
@@ -253,8 +293,16 @@ if (-not $ApiBaseUrl) {
         Write-Host '                can talk to nothing (audit MA-004).' -ForegroundColor Red
         exit 2
     }
-} else {
-    $apiOrigin = '-ApiBaseUrl'
+}
+
+# A release build's URL must be https NO MATTER WHERE IT CAME FROM — including
+# from -ApiBaseUrl. This mirrors AppConfig.configurationError() exactly.
+if ($Release -and ($ApiBaseUrl -notlike 'https://*')) {
+    Write-Host "  mobile-build: API_BASE_URL '$ApiBaseUrl' [$apiOrigin] is not https." -ForegroundColor Red
+    Write-Host '                apps\*\lib\core\config\app_config.dart rejects a non-https URL in release mode' -ForegroundColor Red
+    Write-Host '                and assertUsableForBuildMode() turns that into a StateError on the first frame.' -ForegroundColor Red
+    Write-Host '                Refusing to produce an artifact that cannot open.' -ForegroundColor Red
+    exit 2
 }
 
 $appDirs = switch ($App) {
@@ -371,22 +419,56 @@ if ($Release) {
             } else {
                 $storeRel = [regex]::Match($text, '(?m)^\s*storeFile\s*=\s*(.+)$').Groups[1].Value.Trim()
                 $storeAbs = Join-Path $androidDir $storeRel
-                if (-not ((Test-Path -LiteralPath $storeAbs) -or (Test-Path -LiteralPath $storeRel))) {
+                $resolved = $null
+                if (Test-Path -LiteralPath $storeAbs)     { $resolved = $storeAbs }
+                elseif (Test-Path -LiteralPath $storeRel) { $resolved = (Resolve-Path -LiteralPath $storeRel).Path }
+                if (-not $resolved) {
                     [void]$releaseBlockers.Add(
                         "$appName : the keystore named by signing.properties does not exist: '$storeRel'.`n" +
                         "            storeFile is resolved relative to apps\$appName\android\. Generate it there with:`n" +
                         "              $keytoolCmd")
                 } else {
-                    Write-Good "$appName : signing.properties complete, keystore present"
+                    # A RELEASE MUST NOT BE SIGNABLE WITH A DEBUG KEY, and this
+                    # refuses it by name before any work starts. It was present
+                    # in scripts/mobile-build.sh and MISSING here, so the two
+                    # halves disagreed on whether a debug keystore was a
+                    # blocker. app/build.gradle's L3 assertion refuses the same
+                    # thing at the end of a fifteen-minute build; both refusals
+                    # exist because the debug key is a well-known, machine-local
+                    # throwaway and an artifact signed with it can never be
+                    # uploaded to Play and never updated.
+                    $leaf = (Split-Path -Leaf $resolved).ToLower()
+                    $norm = $resolved.Replace('\', '/').ToLower()
+                    if ($leaf -eq 'debug.keystore' -or $leaf -eq 'debug.jks' -or $norm -match '/\.android/debug') {
+                        [void]$releaseBlockers.Add(
+                            "$appName : signing.properties points the RELEASE config at what looks like a DEBUG keystore:`n" +
+                            "              $resolved`n" +
+                            "            app\build.gradle fails this build by name for the same reason. Generate a real upload key:`n" +
+                            "              $keytoolCmd")
+                    } else {
+                        Write-Good "$appName : signing.properties complete, keystore $leaf present"
+                    }
                 }
             }
         }
 
-        # Firebase, required only of the app that actually declares it.
-        $pubspecText  = ''
+        # Firebase, required only of the app that actually declares it — DERIVED
+        # from the SAME THREE FILES, in the same order, as `uses_firebase` in
+        # scripts/mobile-build.sh and Get-AppFirebasePosture in
+        # release-doctor.ps1. This used to read pubspec.yaml alone, so an app
+        # that carried the google-services PLUGIN without the Dart dependency
+        # read as "no Firebase" here and as "Firebase" in the bash twin.
         $pubspecPath  = Join-Path $RepoRoot "apps\$appName\pubspec.yaml"
-        if (Test-Path -LiteralPath $pubspecPath) { $pubspecText = Get-Content -LiteralPath $pubspecPath -Raw }
-        $usesFirebase = $pubspecText -match '(?m)^\s*(firebase_messaging|firebase_core)\s*:'
+        $settingsPath = Join-Path $RepoRoot "apps\$appName\android\settings.gradle"
+        $appGrPath    = Join-Path $androidDir 'app\build.gradle'
+        $usesFirebase = $false
+        foreach ($probe in @(
+            @{ Path = $pubspecPath;  Pattern = '(?m)^\s*(firebase_messaging|firebase_core)\s*:' },
+            @{ Path = $settingsPath; Pattern = '(id\s+"com\.google\.gms\.google-services")' },
+            @{ Path = $appGrPath;    Pattern = '(?m)^\s*(apply\s+plugin:\s*"com\.google\.gms\.google-services")' }
+        )) {
+            if (Get-FirstMatch $probe.Path $probe.Pattern) { $usesFirebase = $true }
+        }
         $gs = Join-Path $RepoRoot "apps\$appName\android\app\google-services.json"
         $appId = Get-FirstMatch (Join-Path $androidDir 'app\build.gradle') 'applicationId\s+"([^"]+)"'
         if (-not $usesFirebase) {
@@ -505,12 +587,19 @@ foreach ($appName in $appDirs) {
 }
 
 # ---- ARTIFACTS ------------------------------------------------------------
+#
+# A MISSING ARTIFACT IS A FAILED RUN. This block printed [MISSING] in red and
+# then fell through to "ALL STAGES PASSED" with exit 0 — a green summary over a
+# build whose output nobody can install. The count below is what the exit code
+# is now derived from.
 Write-Head 'ARTIFACTS'
+$missingArtifacts = 0
 foreach ($a in $artifacts) {
     if (Test-Path -LiteralPath $a.Path) {
         $sizeMb = [math]::Round((Get-Item -LiteralPath $a.Path).Length / 1MB, 1)
         Write-Host ("  [ OK ] {0}  {1,-12} {2}  ({3} MB)" -f $a.App, $a.Kind, $a.Path, $sizeMb) -ForegroundColor Green
     } else {
+        $missingArtifacts++
         Write-Host ("  [MISSING] {0}  {1,-12} {2}" -f $a.App, $a.Kind, $a.Path) -ForegroundColor Red
         Write-Host '           The stage reported success but the file is not there. Treat this as a failure:'
         Write-Host "           check the build log in $LogDir."
@@ -528,7 +617,18 @@ if ($Release) {
     Write-Host '  Release artifacts were signed from apps\<app>\android\signing.properties (checked in PREFLIGHT).' -ForegroundColor Yellow
     Write-Host '  Verify the signature before uploading:  python3 scripts\verify_release_signing.py'
 }
+
+if ($missingArtifacts -gt 0) {
+    Write-Host ''
+    Write-Host "  $missingArtifacts DECLARED ARTIFACT(S) ARE NOT ON DISK." -ForegroundColor Red
+    Write-Host '  Every stage exited 0 and the files are still missing, so something in the Gradle'
+    Write-Host '  output paths does not match what this script expects. That is a failure, and this'
+    Write-Host '  run exits non-zero rather than reporting a pass nobody can install.'
+    Write-Host ''
+    exit 1
+}
+
 Write-Host ''
-Write-Host '  ALL STAGES PASSED.' -ForegroundColor Green
+Write-Host '  ALL STAGES PASSED AND EVERY DECLARED ARTIFACT EXISTS.' -ForegroundColor Green
 Write-Host ''
 exit 0
