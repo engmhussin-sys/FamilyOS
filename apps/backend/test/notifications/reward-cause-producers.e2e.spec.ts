@@ -314,9 +314,21 @@ describeIfDb('F1-002 — the reward CAUSE reaches the copy layer (real PostgreSQ
      * that ask for it, so a child's FIRST habit or streak now awards a
      * once-ever badge ALONGSIDE the coins — a second CAUSE, with its own
      * `BADGE_EARNED` sentence for the child and `BADGE_EARNED_PARENT` for the
-     * parent. Two child-facing ACHIEVEMENT messages in the same instant is
-     * exactly what the anti-fatigue guard exists to prevent, so it delivers
-     * one of them, and on a brand-new child that one is the badge.
+     * parent. On a brand-new child the badge is then the only thing the child
+     * receives, and the reward sentence this suite is about does not arrive.
+     *
+     * THE MECHANISM, CORRECTED. This comment first said «two child-facing
+     * ACHIEVEMENT messages in the same instant is exactly what the anti-fatigue
+     * guard exists to prevent, so it delivers one of them».
+     * `first-completion-badge-and-reward.e2e.spec.ts` measured that against the
+     * real rows and it is false twice over. They are not two ACHIEVEMENTs —
+     * `BADGE_EARNED` is ACHIEVEMENT and `REWARD_GRANTED_CHILD` is REWARD, which
+     * is why the per-category cap never fired — and the anti-fatigue guard never
+     * runs: `SmartNotificationEngineService` returns on a SUPPRESS verdict
+     * before it calls `notifyEvent`, and `outcome IS NULL` on the row proves the
+     * pipeline was never reached. What refuses the child's reward is the
+     * DECISION PROVIDER's own `SCORE_BELOW_FLOOR`, whose `FATIGUE_PENALTY` is
+     * counted over the PARENT's `notifications` rows.
      *
      * F1-002 IS NOT ABOUT THAT MOMENT. It is about whether the reward's CAUSE
      * («حافظت على سلسلتك ٧ أيام» rather than «مكافأة جديدة») survives the

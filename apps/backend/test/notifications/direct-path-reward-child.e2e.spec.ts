@@ -284,12 +284,24 @@ describeIfDb('F1 DECISION 1 — the DIRECT reward path tells the child too (real
      * that ask for it, so a child's FIRST study session or learning goal now
      * awards a once-ever badge ALONGSIDE the XP or coins — a second CAUSE,
      * with `BADGE_EARNED` for the child and `BADGE_EARNED_PARENT` for the
-     * parent, announced in the same instant. `NotificationFatigueGuard`
-     * correctly delivers ONE child-facing ACHIEVEMENT message rather than
-     * two, and on a brand-new child that one is the badge.
+     * parent, announced in the same instant. On a brand-new child the badge is
+     * then the only thing the child receives, and the reward sentence this file
+     * is about does not arrive at all.
      *
-     * THIS FILE IS ABOUT THE REWARD SENTENCE, not about which of two
-     * simultaneous achievements wins the fatigue window, so the household
+     * THE MECHANISM, CORRECTED. This comment first said «`NotificationFatigueGuard`
+     * correctly delivers ONE child-facing ACHIEVEMENT message rather than two».
+     * `first-completion-badge-and-reward.e2e.spec.ts` measured that against the
+     * real rows and it is false in both halves: the guard NEVER RUNS —
+     * `SmartNotificationEngineService` returns on a SUPPRESS verdict before it
+     * calls `notifyEvent`, and `outcome IS NULL` on the row is the proof — and
+     * the two causes are ACHIEVEMENT and REWARD, not two ACHIEVEMENTs, which is
+     * why the per-category cap never fired. What refuses the child's reward is
+     * the DECISION PROVIDER's own `SCORE_BELOW_FLOOR`, whose `FATIGUE_PENALTY`
+     * is counted over the PARENT's `notifications` rows.
+     *
+     * NONE OF THAT CHANGES WHAT THIS FIXTURE IS FOR. This file is about whether
+     * the reward's CAUSE survives the notification door on the completions a
+     * child makes AFTER their first, which is all of them, so the household
      * starts holding its badges and every assertion below is the one this
      * suite always made, unchanged. `child_badge_awards (child_id, badge_id)`
      * is UNIQUE and the engine only pays a badge when that insert succeeded,
