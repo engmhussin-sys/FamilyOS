@@ -48,7 +48,7 @@ import { runAsSystemAsync } from '../../src/common/tenancy/system-context';
 import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { OutboxRelay } from '../../src/modules/events/application/outbox.relay';
-import { PLATFORM_DEFAULT_REWARD_RULES } from '../../src/shared/rewards/reward-rule-catalogue';
+import { PLATFORM_DEFAULT_REWARD_RULES, ruleRewardValue } from '../../src/shared/rewards/reward-rule-catalogue';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
@@ -231,7 +231,16 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       prisma.notification.count({ where: { familyId: t.familyId, type: 'REWARD_GRANTED' } }),
     );
 
-  /** All three at once — the shape every domain test asserts on. */
+  /** All three at once — the shape every domain test asserts on.
+   *
+   * 0026 CHANGED WHAT `ledger` COUNTS ON A FIRST COMPLETION, and the tests
+   * below say so out loud rather than being loosened. Migration 0026 seeded the
+   * badge catalogue AND the platform BADGE rules that ask for it, so a child's
+   * FIRST habit / faith / study completion now pays twice: the XP or COINS the
+   * domain always paid, plus a once-ever badge. Both are EARN rows in the same
+   * ledger. The second one is refused by `child_badge_awards (child_id,
+   * badge_id)` on every later completion, which is why only the first is 2.
+   * `resetTenant` clears the awards so the count does not depend on test order. */
   async function chain(t: Tenant): Promise<{ ledger: number; timeline: number; notification: number }> {
     return {
       ledger: await ledgerCount(t),
@@ -240,9 +249,21 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
     };
   }
 
+  /** The badges this child holds right now, by key. */
+  const badgeKeys = (t: Tenant): Promise<string[]> =>
+    sys('badge keys', async () =>
+      (
+        await prisma.childBadgeAward.findMany({ where: { childId: t.childId }, include: { badge: true } })
+      ).map((a: any) => a.badge.key).sort(),
+    );
+
   async function resetTenant(t: Tenant): Promise<void> {
     await sys('reset', async () => {
       await prisma.notification.deleteMany({ where: { familyId: t.familyId } });
+      // 0026: a badge is once-ever per (child, badge), so leaving awards behind
+      // would make "the first completion pays twice" true for whichever test
+      // ran first and false for every later one — an order-dependent suite.
+      await prisma.childBadgeAward.deleteMany({ where: { familyId: t.familyId } });
       await prisma.rewardsLedgerEntry.deleteMany({ where: { familyId: t.familyId } });
       await prisma.rewardsAccount.deleteMany({ where: { familyId: t.familyId } });
       await prisma.lifeTimelineEvent.deleteMany({ where: { familyId: t.familyId } });
@@ -348,7 +369,11 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
             JSON.stringify(r.triggerCondition) === JSON.stringify(expected.triggerCondition),
         );
         expect(row).toBeDefined();
-        expect(row.rewardAmountOrBadgeId).toBe(String(expected.amount));
+        // 0026: `reward_amount_or_badge_id` holds a NUMBER on an XP/COINS rule
+        // and a `badge_definitions.key` on a BADGE one, so the comparison goes
+        // through the catalogue's own accessor rather than reading `.amount`,
+        // which does not exist on a badge rule.
+        expect(row.rewardAmountOrBadgeId).toBe(ruleRewardValue(expected));
         expect(row.maxPerDay).toBe(expected.maxPerDay);
         expect(row.isActive).toBe(true);
       }
@@ -384,7 +409,14 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
         .send({});
       expect([200, 201]).toContain(res.status);
 
-      expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
+      // TWO ledger rows, ONE timeline entry, ONE `REWARD_GRANTED` notification.
+      // The second ledger row is the `first_habit` badge migration 0026 seeded;
+      // it is a once-ever grant, so this is 2 only because `resetTenant` cleared
+      // the award. The timeline and notification counters are unchanged: a
+      // trigger writes one `reward_granted` entry and one `REWARD_GRANTED`
+      // notification no matter how many rules matched it.
+      expect(await chain(A)).toEqual({ ledger: 2, timeline: 1, notification: 1 });
+      expect(await badgeKeys(A)).toEqual(['first_habit']);
     });
 
     it('HYDRATION / HEALTH — POST /self/health/hydration-logs, once the goal is actually reached', async () => {
@@ -396,6 +428,13 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       // from the child's age and the stored logs on the family's business day.
       await request(http).post('/life-intelligence/self/health/hydration-logs').set(deviceAuth(A)).send({ amountMl: 3000 });
       expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
+      // STILL ONE, and deliberately: `HealthEngineService` fires the reward
+      // trigger as `DAILY_GOAL_COMPLETED {metric: hydration}`, while 0026's
+      // hydration badge is written against `HYDRATION_GOAL_COMPLETED` — the
+      // event type the platform's own XP default already uses on the device
+      // ingestion path. This asserts the absence so a future badge rule on this
+      // trigger cannot change the count silently.
+      expect(await badgeKeys(A)).toEqual([]);
     });
 
     it('ACTIVITY — POST /self/health/activity-logs, once the daily minutes are actually reached', async () => {
@@ -404,6 +443,9 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
 
       await request(http).post('/life-intelligence/self/health/activity-logs').set(deviceAuth(A)).send({ date: FAKE_DAY, activityType: 'WALKING', durationMinutes: 90 });
       expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
+      // Same as hydration above: the direct path fires
+      // `DAILY_GOAL_COMPLETED {metric: activity}`, not `ACTIVITY_GOAL_COMPLETED`.
+      expect(await badgeKeys(A)).toEqual([]);
     });
 
     it('FAITH — POST /self/faith/:practiceId/log', async () => {
@@ -413,7 +455,9 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
         .send({});
       expect([200, 201]).toContain(res.status);
 
-      expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
+      // XP + the once-ever `first_faith_practice` badge (0026).
+      expect(await chain(A)).toEqual({ ledger: 2, timeline: 1, notification: 1 });
+      expect(await badgeKeys(A)).toEqual(['first_faith_practice']);
     });
 
     it('LEARNING / EDUCATION — POST /self/learning/sessions', async () => {
@@ -423,7 +467,9 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
         .send({ subject: 'MATH', durationMinutes: 30, date: FAKE_DAY });
       expect([200, 201]).toContain(res.status);
 
-      expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
+      // XP + the once-ever `first_study_session` badge (0026).
+      expect(await chain(A)).toEqual({ ledger: 2, timeline: 1, notification: 1 });
+      expect(await badgeKeys(A)).toEqual(['first_study_session']);
     });
 
     it('EDUCATION through the OUTBOX path — POST /events/batch reaches the same three', async () => {
@@ -490,8 +536,13 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       expect(res.body.status).toBe('COMPLETED');
 
       const after = await chain(A);
-      expect(after.ledger - before.ledger).toBe(1);
+      // COINS for the goal, plus the once-ever `first_learning_goal` badge
+      // (0026). `first_study_session` was already earned by the two sessions
+      // above and is therefore inside `before`, not in the delta — which is the
+      // once-ever property, measured rather than assumed.
+      expect(after.ledger - before.ledger).toBe(2);
       expect(after.timeline - before.timeline).toBe(1);
+      expect(await badgeKeys(A)).toEqual(['first_learning_goal', 'first_study_session']);
     });
 
     it('a rule that demands PARENT verification pays nothing for a SELF-asserted completion', async () => {
@@ -528,12 +579,16 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
   describe('one business event produces one reward, under replay and under concurrency', () => {
     it('THE REPLAY — the same habit completed again on the same business day adds nothing', async () => {
       await request(http).post(`/life-intelligence/self/habits/${A.habitId}/complete`).set(deviceAuth(A)).send({});
-      expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
+      // XP + the once-ever `first_habit` badge (0026).
+      expect(await chain(A)).toEqual({ ledger: 2, timeline: 1, notification: 1 });
 
       for (let i = 0; i < 5; i++) {
         await request(http).post(`/life-intelligence/self/habits/${A.habitId}/complete`).set(deviceAuth(A)).send({});
       }
-      expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
+      // Unchanged after five replays — the XP row by its idempotency key, the
+      // badge row by `child_badge_awards (child_id, badge_id)`.
+      expect(await chain(A)).toEqual({ ledger: 2, timeline: 1, notification: 1 });
+      expect(await badgeKeys(A)).toEqual(['first_habit']);
     });
 
     it('THE RACE — 8 concurrent identical completions produce exactly one reward', async () => {
@@ -545,8 +600,12 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       expect(results.filter((r) => [200, 201].includes(r.status)).length).toBeGreaterThan(0);
 
       const seen = await chain(A);
-      expect(seen.ledger).toBe(1);
+      // ONE XP row and ONE badge row out of eight concurrent attempts. The
+      // badge half is the stronger statement: eight racing INSERTs into
+      // `child_badge_awards` and the UNIQUE constraint admits exactly one.
+      expect(seen.ledger).toBe(2);
       expect(seen.timeline).toBe(1);
+      expect(await badgeKeys(A)).toEqual(['first_habit']);
     });
 
     it('THE RACE — 6 concurrent completions of ONE learning goal complete it once and pay once', async () => {
@@ -572,7 +631,9 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       expect(results.filter((r) => r.status === 409)).toHaveLength(5);
 
       const after = await chain(A);
-      expect(after.ledger - before.ledger).toBe(1);
+      // COINS + the once-ever `first_learning_goal` badge (0026), from the ONE
+      // request that moved the row; the other five paid nothing at all.
+      expect(after.ledger - before.ledger).toBe(2);
     });
 
     it('THE REDELIVERY — replaying the outbox does not add a second reward', async () => {
@@ -784,7 +845,9 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
           .set(deviceAuth(A))
           .send({ date });
       }
-      expect((await chain(A)).ledger).toBe(1);
+      // ONE XP row and ONE badge row for the whole six — not six of each.
+      expect((await chain(A)).ledger).toBe(2);
+      expect(await badgeKeys(A)).toEqual(['first_faith_practice']);
     });
   });
 
@@ -803,12 +866,17 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
 
       await request(http).post(`/life-intelligence/self/habits/${B.habitId}/complete`).set(deviceAuth(B)).send({});
 
-      // B earns the PLATFORM default (10 XP), never A's 500.
+      // B earns the PLATFORM defaults — 10 XP, never A's 500 — plus the
+      // once-ever `first_habit` badge 0026 seeded for the same trigger.
       const entries = await sys('B ledger', () =>
         prisma.rewardsLedgerEntry.findMany({ where: { familyId: B.familyId, type: 'EARN' } }),
       );
-      expect(entries).toHaveLength(1);
-      expect(entries[0].amount).toBe(10);
+      expect(entries).toHaveLength(2);
+      const xp = entries.filter((e: any) => e.rewardType === 'XP');
+      expect(xp).toHaveLength(1);
+      expect(xp[0].amount).toBe(10);
+      expect(entries.filter((e: any) => e.rewardType === 'BADGE')).toHaveLength(1);
+      expect(await badgeKeys(B)).toEqual(['first_habit']);
     });
 
     it("family A's parent cannot read, patch, deactivate or delete family B's rule — 404, never 403", async () => {
@@ -891,8 +959,13 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       const entries = await sys('ledger', () =>
         prisma.rewardsLedgerEntry.findMany({ where: { familyId: A.familyId, type: 'EARN' } }),
       );
-      expect(entries).toHaveLength(1);
-      expect(entries[0].amount).toBe(10); // the platform default, back in force
+      // BOTH platform defaults for this engine are back in force — the 10 XP
+      // and the `first_habit` badge 0026 seeded against the same trigger.
+      expect(entries).toHaveLength(2);
+      const xp = entries.filter((e: any) => e.rewardType === 'XP');
+      expect(xp).toHaveLength(1);
+      expect(xp[0].amount).toBe(10); // the platform default, back in force
+      expect(await badgeKeys(A)).toEqual(['first_habit']);
     });
   });
 
