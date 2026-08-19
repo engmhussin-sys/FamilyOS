@@ -15,6 +15,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { ChildrenModule } from './modules/children/children.module';
 import { FamiliesModule } from './modules/families/families.module';
 import { ScreenTimeModule } from './modules/screen-time/screen-time.module';
+import { AppCatalogModule } from './modules/screen-time/app-catalog.module';
 import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { ComplianceModule } from './modules/compliance/compliance.module';
 import { SupportModule } from './modules/support/support.module';
@@ -84,6 +85,13 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
     FamiliesModule,
     ChildrenModule,
     ScreenTimeModule,
+    // The app catalogue: screen-time code, in screen-time's directory, in its
+    // own Nest module because its child surface needs `PairingModule` and
+    // `PairingModule -> ScreenTimeModule` already exists. Registered here for
+    // the same reason `BillingNotificationsModule` is — it is imported by
+    // nothing, so removing this line silently un-ships two routes rather than
+    // breaking a build. `app-catalog.module.ts` has the full reasoning.
+    AppCatalogModule,
     AiAssistantModule,
     ComplianceModule,
     SupportModule,

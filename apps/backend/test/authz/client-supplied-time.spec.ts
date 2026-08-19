@@ -142,6 +142,13 @@ const CLASSIFIED: readonly ClientTimeField[] = [
     disposition: 'TELEMETRY_ONLY',
     why: 'Batch-level device clock reading, kept precisely so clock skew is measurable rather than invisible. No decision reads it.',
   },
+  {
+    dto: 'ReportedAppDto',
+    field: 'lastUsedAt',
+    disposition: 'TELEMETRY_ONLY',
+    why:
+      'The app inventory a child device uploads to `POST /self/apps`. It reaches no rule, no cap, no streak and no ledger key — the only thing it is read for is the sort order of the parent-facing app picker, and the catalogue grants nothing. It is still not taken at face value: `ReportedAppDto` REJECTS anything more than five minutes ahead of the server (that is a claim, not clock drift) and `AppCatalogService.reportDeviceInventory` CLAMPS what survives to the server clock, so no future instant is ever stored and a child cannot pin an app to the top of a parent’s list by editing the device clock.',
+  },
 
   // ---- NOT_A_BUSINESS_DATE: configuration, profile, wall-clock schedule ---
   {
