@@ -76,6 +76,41 @@ class Control:
         self.within = within
 
 
+class Probe:
+    """A control that WRITES whole files instead of mutating existing ones.
+
+    Two things the `Control` shape above cannot express, and SCOPE-UNDEF needs
+    both:
+
+      * a POSITIVE control over a construct that does not happen to occur in
+        either app at the exact shape being tested (an arrow-bodied getter that
+        reaches for a name declared only in its siblings, say). Hunting for a
+        real anchor and mutating it would test the anchor, not the construct.
+
+      * a NEGATIVE control — `expect=False` — asserting that a construct the
+        checker DELIBERATELY does not analyse produces NO finding. A checker's
+        silences are as much a claim as its findings, and an unasserted silence
+        is the one that rots first: delete the `extension` exclusion and
+        nothing here would have noticed.
+
+    Each probe's files are written into the scratch tree, the full preflight is
+    re-run, and the files are deleted again; the residue check at the end of
+    `main` proves the deletion was clean.
+
+    Every `expect=False` probe MUST be accompanied, in `why`, by the mutation
+    that makes it fire — otherwise it is a test that cannot fail, and this
+    harness exists precisely to refuse those.
+    """
+
+    def __init__(self, check: str, files: dict, why: str,
+                 expect: bool = True, expect_rel: str = ""):
+        self.check = check
+        self.files = files            # {relative path: source text}
+        self.why = why
+        self.expect = expect
+        self.expect_rel = expect_rel or next(iter(files))
+
+
 # ---------------------------------------------------------------------------
 # The controls. Each `find` string is asserted to exist exactly `count` times
 # (inside `within`, when the control is scope-qualified) before mutation, so a
@@ -302,6 +337,231 @@ CONTROLS: List[Control] = [
         "}\n\nclass _FakePairingApi implements PairingApi {",
         "an `implements` class missing members with no `noSuchMethod`",
     ),
+    # ---- SCOPE-UNDEF ------------------------------------------------------
+    # Control 1 RE-SEEDS THE ESCAPED ERROR ITSELF. `_MessageCard.build` shipped
+    # for a while calling `t('myGrowth.newLabel')` with no `t` in scope; nine
+    # checkers were green on a tree that could not compile. Deleting the `t`
+    # declaration that commit 105accf added puts the file back in exactly that
+    # state, and this control requires SCOPE-UNDEF to say so.
+    Control(
+        "SCOPE-UNDEF",
+        "apps/child-app/lib/features/family_growth/presentation/my_growth_screen.dart",
+        "    final t = ref.watch(localeControllerProvider.notifier).t;\n"
+        "    final isNew = message['acknowledgedAt'] == null;",
+        "    final isNew = message['acknowledgedAt'] == null;",
+        "the escaped error re-seeded: `t(...)` in a class with no `t` in scope",
+    ),
+    # Control 2 is the SAME error arriving by the opposite route — a use
+    # copy-pasted INTO a scope that never declared the name, rather than a
+    # declaration deleted out from under one. `_markAllRead` has no `t`; the
+    # three sibling methods around it do.
+    Control(
+        "SCOPE-UNDEF",
+        "apps/parent-app/lib/features/notifications/presentation/notifications_screen.dart",
+        "  Future<void> _markAllRead() async {\n"
+        "    try {\n"
+        "      await ref.read(notificationsApiProvider).markAllAsRead();",
+        "  Future<void> _markAllRead() async {\n"
+        "    if (t('notifications.markAllRead').isEmpty) return;\n"
+        "    try {\n"
+        "      await ref.read(notificationsApiProvider).markAllAsRead();",
+        "a `t(...)` call pasted into a sibling method that never declared `t`",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# The probes. See `Probe` above for why SCOPE-UNDEF needs a control shape that
+# writes files. `_scope_probe_*.dart` names are unique enough that a stale copy
+# left behind by a crashed run is obvious, and the residue check catches it.
+# ---------------------------------------------------------------------------
+_PROBE_DIR = "apps/child-app/lib/core/_selftest"
+
+PROBES: List[Probe] = [
+    Probe(
+        "SCOPE-UNDEF",
+        {
+            f"{_PROBE_DIR}/_scope_probe_undeclared.dart": '''
+class _ScopeProbeUndeclared {
+  String first() {
+    final label = 'a';
+    return label;
+  }
+
+  String second() {
+    final label = 'b';
+    return label;
+  }
+
+  String third() {
+    return label;
+  }
+}
+''',
+        },
+        "a bare identifier declared in two sibling methods and in none of "
+        "`third`'s own scopes IS reported",
+    ),
+    Probe(
+        "SCOPE-UNDEF",
+        {
+            f"{_PROBE_DIR}/_scope_probe_declared.dart": '''
+class _ScopeProbeDeclared {
+  String first() {
+    final label = 'a';
+    return label;
+  }
+
+  String second() {
+    final label = 'b';
+    return label;
+  }
+
+  String third() {
+    final label = 'c';
+    return label;
+  }
+}
+''',
+        },
+        "the SAME file with the declaration added goes silent — the finding "
+        "tracks the declaration, not the name",
+        expect=False,
+    ),
+    Probe(
+        "SCOPE-UNDEF",
+        {
+            f"{_PROBE_DIR}/_scope_probe_arrow.dart": '''
+class _ScopeProbeArrow {
+  String one() {
+    final tag = 'x';
+    return tag;
+  }
+
+  String two() {
+    final tag = 'y';
+    return tag;
+  }
+
+  String get three => tag;
+}
+''',
+        },
+        "an ARROW-bodied member is analysed too — `=>` ends in `>`, and reading "
+        "that as a closing generic once made every arrow body invisible",
+    ),
+    Probe(
+        "SCOPE-UNDEF",
+        {
+            f"{_PROBE_DIR}/_scope_probe_fn_param.dart": '''
+class _ScopeProbeFnParam {
+  String one() {
+    final t = 'x';
+    return t;
+  }
+
+  String two() {
+    final t = 'y';
+    return t;
+  }
+
+  String three(String Function(String) t) {
+    return t('key');
+  }
+}
+''',
+        },
+        "a FUNCTION-TYPED parameter (`String Function(String) t`) is a "
+        "declaration, not a use — this exact shape was the check's first false "
+        "positive, 28 of them. Fires again if `_classify` stops treating a "
+        "preceding `)` as a declaration.",
+        expect=False,
+    ),
+    Probe(
+        "SCOPE-UNDEF",
+        {
+            f"{_PROBE_DIR}/_scope_probe_extension.dart": '''
+class _ScopeProbeExtension {
+  int one() {
+    final length = 1;
+    return length;
+  }
+
+  int two() {
+    final length = 2;
+    return length;
+  }
+}
+
+extension _ScopeProbeStringExt on String {
+  int get doubled {
+    return length * 2;
+  }
+}
+''',
+        },
+        "an EXTENSION body is deliberately not analysed: inside `on String` "
+        "every member of `String` is nameable bare and this tree cannot read "
+        "them. Fires if the `kind == 'extension'` exclusion is removed.",
+        expect=False,
+    ),
+    Probe(
+        "SCOPE-UNDEF",
+        {
+            f"{_PROBE_DIR}/_scope_probe_part_owner.dart": '''
+part '_scope_probe_part.dart';
+
+const String probeTag = 'library-level';
+''',
+            f"{_PROBE_DIR}/_scope_probe_part.dart": '''
+part of '_scope_probe_part_owner.dart';
+
+class _ScopeProbePart {
+  String a() {
+    final probeTag = 'x';
+    return probeTag;
+  }
+
+  String b() {
+    final probeTag = 'y';
+    return probeTag;
+  }
+
+  String c() {
+    return probeTag;
+  }
+}
+''',
+        },
+        "a `part` / `part of` pair is deliberately not analysed: the part's "
+        "scope is its parent LIBRARY's and spans files. `c()` here really does "
+        "resolve, to the owner's top-level `probeTag`. Fires if the "
+        "`lib.part_of or lib.parts` exclusion is removed.",
+        expect=False,
+        expect_rel=f"{_PROBE_DIR}/_scope_probe_part.dart",
+    ),
+    Probe(
+        "SCOPE-UNDEF",
+        {
+            f"{_PROBE_DIR}/_scope_probe_package_name.dart": '''
+import 'package:flutter_test/flutter_test.dart';
+
+void probeOne() {
+  final expect = 1;
+  print(expect);
+}
+
+void probeTwo() {
+  expect(1, 1);
+}
+''',
+        },
+        "the IDIOM GATE holds: `expect` comes from a package this environment "
+        "cannot download, and ONE coincidental local of the same name is not "
+        "evidence that it needs declaring. Fires if `_IDIOM_MIN_UNITS` drops "
+        "to 1.",
+        expect=False,
+    ),
 ]
 
 
@@ -504,6 +764,61 @@ def main() -> int:
             finally:
                 open(path, "w", encoding="utf-8").write(original)
 
+        for p in PROBES:
+            written = []
+            for rel, source in p.files.items():
+                full = os.path.join(scratch, rel)
+                if os.path.exists(full):
+                    failures.append(
+                        f"{p.check}: probe path {rel} already exists in the tree "
+                        f"— rename the probe, do not overwrite a real file"
+                    )
+                    print(f"  FAIL  {p.check:<16} — probe path collides with a real file")
+                    break
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                open(full, "w", encoding="utf-8").write(source.lstrip("\n"))
+                written.append(full)
+            else:
+                try:
+                    pf = run(scratch)
+                    hit = [
+                        f
+                        for f in pf.findings
+                        if f.check == p.check
+                        and os.path.relpath(f.file, scratch).replace("\\", "/")
+                        == p.expect_rel
+                        and (f.check, os.path.relpath(f.file, scratch), f.line, f.msg)
+                        not in base_fp
+                    ]
+                    label = f"{p.check}/probe"
+                    if p.expect and hit:
+                        print(f"  PASS  {label:<16} — {p.why}")
+                        if args.verbose:
+                            print(f"          -> {hit[0].msg[:160]}")
+                    elif p.expect and not hit:
+                        failures.append(
+                            f"{p.check}: probe «{p.why}» was written and the "
+                            f"checker stayed silent"
+                        )
+                        print(f"  FAIL  {label:<16} — NOT DETECTED")
+                    elif not p.expect and hit:
+                        failures.append(
+                            f"{p.check}: probe «{p.why}» must produce NO finding "
+                            f"and produced {len(hit)}: {hit[0].msg[:120]}"
+                        )
+                        print(f"  FAIL  {label:<16} — FALSE POSITIVE")
+                    else:
+                        print(f"  PASS  {label:<16} — silent, as designed: {p.why}")
+                finally:
+                    for full in written:
+                        os.remove(full)
+            for full in written:
+                if os.path.exists(full):
+                    os.remove(full)
+        probe_dir = os.path.join(scratch, _PROBE_DIR)
+        if os.path.isdir(probe_dir):
+            shutil.rmtree(probe_dir, ignore_errors=True)
+
         # Residue check: after every revert the tree must be byte-identical in
         # its findings to the baseline, or the controls above proved nothing.
         after = set(fingerprint(run(scratch)))
@@ -523,8 +838,10 @@ def main() -> int:
                 print(f"  - {f}")
             return 1
         print(
-            f"All {len(CONTROLS)} negative controls passed, plus anchor "
-            f"resolution and the residue check."
+            f"All {len(CONTROLS)} mutation controls and {len(PROBES)} probes "
+            f"({sum(1 for p in PROBES if not p.expect)} of them asserting a "
+            f"deliberate SILENCE) passed, plus anchor resolution and the "
+            f"residue check."
         )
         return 0
     finally:

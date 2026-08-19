@@ -69,6 +69,25 @@ analyser would have to infer.
   ARG-TYPE        the LITERAL-TYPE decision widened past numeric literals to
                   string, list and map/set literals
 
+CHECKS — PHASE F (23)
+---------------------
+  SCOPE-UNDEF     identifier scope resolution: a BARE lowercase identifier used
+                  in a declaration that can reach no declaration of that name —
+                  not a local, not a parameter, not a member of the enclosing
+                  type or of its in-tree supertypes, not a top-level of this
+                  file or of anything it imports (`undefined_identifier`, an
+                  ERROR)
+
+                  Every check above answers "does this name resolve AS A
+                  MEMBER / AS A CONSTRUCTOR / AS AN IMPORT". None of them asked
+                  the flattest question of all — "does this name resolve at
+                  all" — and a `t('myGrowth.newLabel')` in a class with no `t`
+                  in scope therefore passed all twenty-two of them, plus
+                  `verify_l10n_parity`, which resolved the KEY without ever
+                  type-checking the CALL SITE. The app could not be built. See
+                  the block comment above `check_scope` for what it decides,
+                  what it refuses to decide, and why.
+
 DELIBERATELY STILL NOT ATTEMPTED, by name: type inference of any expression
 that is not a literal; generics substitution; nullability FLOW analysis;
 extension-method resolution; exhaustiveness over sealed hierarchies; const
@@ -102,6 +121,7 @@ from dart_static_model import (  # noqa: E402
     Workspace,
     find_app_roots,
     line_of,
+    mask_source,
     match_bracket,
     split_top_level,
 )
@@ -1468,7 +1488,7 @@ class Preflight:
                         f"declares it; it is declared in "
                         f"{os.path.relpath(d.file, self.repo)}:{d.line}",
                     )
-                self.examined["files-scanned-for-scope"] += 1
+                self.examined["files-scanned-for-unimported"] += 1
 
     # ---- PROVIDER-SCOPE ---------------------------------------------------
     # Riverpod's `ref.read(xProvider)` fails at ANALYSIS time, not runtime, if
@@ -1668,6 +1688,533 @@ class Preflight:
             last = max(last, m.end())
         return lib.masked[last:]
 
+    # ---- SCOPE-UNDEF ------------------------------------------------------
+    # WHY THIS CHECK EXISTS
+    # ---------------------
+    # `_MessageCard.build` in apps/child-app/.../my_growth_screen.dart called
+    # `t('myGrowth.newLabel')` inside a class that had no `t` in scope, no
+    # enclosing closure to inherit one from, and no top-level `t()` anywhere in
+    # the app. That is `undefined_identifier` — a COMPILE error, not a runtime
+    # one — and it sat behind roughly three hundred green `t(...)` call sites.
+    # Nine checkers reported zero problems on a tree that could not be built:
+    # `verify_l10n_parity` resolved the KEY (it exists in both locales) without
+    # ever type-checking the CALL SITE, and nothing else in this repo asked
+    # whether a bare identifier resolves at all. This check asks exactly that.
+    #
+    # WHAT IT DECIDES, AND HOW IT REFUSES TO GUESS
+    # -------------------------------------------
+    # For each "scope unit" — one member declaration (its parameter list plus
+    # its body) or one top-level declaration — every occurrence of a bare
+    # lowercase identifier is classified USE / DECL / UNKNOWN. A name is
+    # reported ONLY when, in that unit:
+    #
+    #     uses >= 1   AND   decls == 0   AND   unknowns == 0
+    #
+    # and the name is absent from every scope that could supply it: the
+    # enclosing type's members and its in-tree supertype closure, the library's
+    # own top-level declarations, the top-level declarations of every in-tree
+    # import, and the SDK inventory below.
+    #
+    # The three-way classification is the zero-false-positive mechanism.
+    # Misreading a declaration as a use is the only way this check can lie, so
+    # every ambiguous shape is resolved TOWARDS silence: DECL and UNKNOWN both
+    # suppress the report, and only shapes that are unambiguously a use count
+    # as one. An incomplete classifier therefore makes the check quieter, never
+    # noisier — the same rule the rest of this file is built on.
+    #
+    # THE IDIOM GATE — the second, independent reason a report is trustworthy
+    # ---------------------------------------------------------------------
+    # A bare lowercase name could always be something a source-only scan cannot
+    # see: a top-level function of a package this environment cannot download,
+    # a member inherited from a Flutter base class, an extension method. So a
+    # name is a candidate ONLY if the LIBRARY ITSELF proves the name needs
+    # declaring — it is declared as a local or a parameter in at least
+    # `_IDIOM_MIN_UNITS` OTHER scope units of the same file. That is exactly
+    # the shape of the escaped error ("299 methods declare `final t = …`, one
+    # forgot") and it is what makes the finding self-evidencing: the file's own
+    # author, elsewhere in the same file, wrote the declaration this site is
+    # missing. `min` from `dart:math` is never declared as a local, so the
+    # check never has an opinion about it.
+    #
+    # DELIBERATELY NOT ANALYSED, and why
+    # ----------------------------------
+    #   `part` / `part of`      A part's scope is its parent library's, spread
+    #                           across files; the unit model here is per-file.
+    #                           Neither app contains one — if one appears, this
+    #                           check abstains on it rather than guess.
+    #   extension bodies        Inside `extension E on T`, every member of `T`
+    #                           is nameable bare. When `T` is out of tree its
+    #                           member set is unknowable. Abstained outright.
+    #   mixins from outside     `with SomeMixin` where the mixin is not in tree
+    #                           contributes members this scan cannot see; those
+    #                           names fall to the SDK inventory and the idiom
+    #                           gate, which is why both exist.
+    #   `dynamic` receivers     Irrelevant here: this check only looks at BARE
+    #                           identifiers, never at `x.member`.
+    #   generated code          `.g.dart` / `.freezed.dart` are skipped: their
+    #                           declarations are produced by a builder that has
+    #                           never run in this environment. Neither app has
+    #                           any today.
+    #   conditional imports     `import … if (dart.library.io) …` makes the
+    #                           visible name set configuration-dependent. The
+    #                           file is abstained on. Neither app has one.
+    #   use-before-declaration  A local declared LATER in the same block than
+    #                           its use is a real Dart error; a declaration
+    #                           anywhere in the unit counts here, so this check
+    #                           stays silent on it.
+    #
+    # Names the SDK and the declared packages provide as BARE identifiers —
+    # top-level functions/getters, and members inherited from base classes this
+    # tree does not contain (StatefulWidget, State, ChangeNotifier, Notifier…).
+    # Used ONLY to abstain, so an incomplete entry costs coverage, never
+    # correctness. Every entry is a name that is ALSO declared as a local
+    # somewhere in this tree — anything else could never reach this gate.
+    _SDK_BARE_NAMES = {
+        # dart:core / dart:async / dart:convert / dart:math / dart:io
+        "print", "identical", "identityHashCode", "min", "max", "pow", "sqrt",
+        "sin", "cos", "tan", "atan2", "exp", "log", "pi", "e", "json",
+        "jsonEncode", "jsonDecode", "utf8", "ascii", "latin1", "base64",
+        "base64Encode", "base64Decode", "base64Url", "base64UrlEncode",
+        "unawaited", "scheduleMicrotask", "runZonedGuarded", "runZoned",
+        "exit", "sleep", "stdout", "stderr", "stdin", "pid", "exitCode",
+        # flutter foundation / widgets / material top-levels
+        "debugPrint", "debugPrintStack", "runApp", "compute", "describeEnum",
+        "precacheImage", "showDialog", "showModalBottomSheet",
+        "showGeneralDialog", "showDatePicker", "showTimePicker", "showMenu",
+        "showSearch", "showBottomSheet", "showAboutDialog", "showLicensePage",
+        "lerpDouble", "clampDouble", "defaultTargetPlatform", "kIsWeb",
+        "kDebugMode", "kReleaseMode", "kProfileMode", "kToolbarHeight",
+        "rootBundle", "imageCache", "timeDilation", "nonconst",
+        # members inherited from out-of-tree base classes, nameable bare
+        "widget", "context", "mounted", "setState", "initState", "dispose",
+        "didUpdateWidget", "didChangeDependencies", "deactivate", "activate",
+        "reassemble", "createState", "createElement", "build", "key", "ref",
+        "state", "stream", "value", "listen", "read", "watch", "refresh",
+        "invalidate", "notifyListeners", "addListener", "removeListener",
+        "hasListeners", "debugFillProperties", "toStringShort", "toStringDeep",
+        "debugDescribeChildren", "updateShouldNotify", "wantKeepAlive",
+        "createTicker", "vsync", "didChangeAppLifecycleState",
+        "didChangeMetrics", "didChangeLocales", "didChangePlatformBrightness",
+        "didChangeTextScaleFactor", "didHaveMemoryPressure", "didPopRoute",
+        "didPushRoute", "didPushRouteInformation", "didRequestAppExit",
+        "didChangeAccessibilityFeatures", "restoreState", "restorationId",
+        "registerForRestoration", "unregisterFromRestoration", "bucket",
+        "didToggleBucket", "onError", "noSuchMethod", "toString", "hashCode",
+        "runtimeType", "future", "isCompleted", "complete", "cancel", "close",
+        "mock", "when", "then", "verify",
+    }
+
+    # How many OTHER scope units in the same library must declare the name as a
+    # local or a parameter before a use of it here is reportable. One would
+    # already be evidence; two is the threshold at which the name is an
+    # established local idiom of the file rather than a single coincidental
+    # shadow of something the SDK provides. Lowering this to 1 was tried and
+    # produced the `value` / `state` class of false positive.
+    _IDIOM_MIN_UNITS = 2
+
+    _IDENT_RE = re.compile(r"(?<![\w$.])([a-z_]\w*)")
+
+    # Words that can never be an identifier reference. `_DART_KEYWORDS` above
+    # is the set the OTHER checks needed and is missing several of these; a
+    # missing entry here is a false positive, so this list is deliberately
+    # over-long rather than minimal.
+    _NEVER_AN_IDENTIFIER = {
+        "null", "true", "false", "try", "finally", "on", "with", "extends",
+        "implements", "operator", "external", "abstract", "async", "sync",
+        "base", "sealed", "interface", "of", "when", "assert", "export",
+        "typedef",
+    }
+
+    # Words after which a following identifier is being DECLARED.
+    _DECL_LEAD = {
+        "final", "var", "const", "late", "required", "covariant", "factory",
+        "get", "set", "typedef", "class", "enum", "mixin", "extension",
+        "deferred", "as", "show", "hide", "part", "library", "on",
+    }
+    # Lowercase words that introduce a type, so a following identifier is a
+    # declaration. Uppercase-initial predecessors are handled positionally.
+    _LOWER_TYPE_LEAD = {
+        "void", "int", "double", "num", "bool", "dynamic", "var",
+    }
+    # Words after which a following identifier is unambiguously a USE.
+    _USE_LEAD = {
+        "return", "await", "yield", "throw", "rethrow", "if", "else", "while",
+        "do", "switch", "case", "in", "is", "new", "assert", "when", "print",
+    }
+    # Statement/expression punctuation after which an identifier is a USE.
+    _USE_PUNCT = set(";}{)]!&|+-*/%^~,=<>?:([")
+
+    @staticmethod
+    def _scope_units(masked: str, start: int, end: int) -> List[Tuple[int, int]]:
+        """Partition [start, end) into one span per declaration.
+
+        A span is a declaration's header PLUS its brace body when it has one,
+        so a method's parameter names and its locals land in the same unit and
+        are both seen as declarations without the parser ever having to tell
+        the two apart. Segments end at a depth-0 `;` otherwise, which is what
+        puts a field initialiser in a unit of its own.
+        """
+        units: List[Tuple[int, int]] = []
+        depth = 0
+        seg = start
+        i = start
+        while i < end:
+            ch = masked[i]
+            if ch in "([":
+                depth += 1
+            elif ch in ")]":
+                depth -= 1
+            elif ch == "{":
+                if depth == 0:
+                    close = match_bracket(masked, i)
+                    if close == -1 or close > end:
+                        break
+                    units.append((seg, close))
+                    i = close
+                    seg = i
+                    continue
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            elif ch == ";" and depth == 0:
+                units.append((seg, i))
+                i += 1
+                seg = i
+                continue
+            i += 1
+        if seg < end:
+            units.append((seg, end))
+        return units
+
+    @staticmethod
+    def _prev_token(u: str, at: int) -> Tuple[str, str]:
+        """(kind, text) of the token before offset `at`. kind: word|punct|bos."""
+        i = at - 1
+        while i >= 0 and u[i] in " \t\r\n":
+            i -= 1
+        if i < 0:
+            return ("bos", "")
+        if u[i].isalnum() or u[i] == "_":
+            j = i
+            while j >= 0 and (u[j].isalnum() or u[j] == "_"):
+                j -= 1
+            return ("word", u[j + 1 : i + 1])
+        return ("punct", u[i])
+
+    @classmethod
+    def _is_param_list(cls, u: str, at: int) -> bool:
+        """Is offset `at` directly inside a parameter list (of a declaration,
+        a closure or a `catch`)? Deciding YES suppresses a report, so this
+        errs towards YES whenever the shape is not clearly a call."""
+        depth = 0
+        i = at - 1
+        while i >= 0:
+            c = u[i]
+            if c in ")]}":
+                depth += 1
+            elif c in "([{":
+                if depth == 0:
+                    if c != "(":
+                        return False
+                    break
+                depth -= 1
+            i -= 1
+        if i < 0:
+            return False
+        close = match_bracket(u, i)
+        if close == -1:
+            return False
+        kind, text = cls._prev_token(u, i)
+        if kind == "word" and text == "catch":
+            return True
+        # `if (…) {` / `while (…) {` / `switch (…) {` / `for (…) {` are control
+        # headers, not parameter lists — their contents are uses.
+        if kind == "word" and text in {"if", "while", "switch", "for"}:
+            return False
+        tail = u[close:]
+        m = re.match(r"\s*(?:async\*?|sync\*)?\s*(=>|\{)", tail)
+        return bool(m)
+
+    @classmethod
+    def _classify(cls, u: str, at: int, name: str) -> str:
+        """USE / DECL / UNKNOWN for the identifier `name` at offset `at` in the
+        scope-unit text `u`. Anything not certainly a use is not a use."""
+        after = at + len(name)
+        # `r'…'` / `r"…"`. The source masker blanks a raw string's BODY but
+        # leaves its `r` prefix and its quotes standing, so the prefix reads as
+        # a bare identifier named `r`. It is not one.
+        if after < len(u) and u[after] in "'\"":
+            return "SKIP"
+        j = after
+        while j < len(u) and u[j] in " \t\r\n":
+            j += 1
+        nxt = u[j] if j < len(u) else ""
+        nxt2 = u[j + 1] if j + 1 < len(u) else ""
+
+        # `name:` — a named-argument label, a map key, a pattern field name or
+        # a statement label. Never a use of a value called `name`.
+        if nxt == ":" and nxt2 != ":":
+            return "DECL"
+        # `name = …` (but not `==`, `=>`): an initialiser or an assignment. An
+        # assignment to a name that resolves nowhere is its own error; treating
+        # it as a declaration keeps this check to one claim.
+        if nxt == "=" and nxt2 not in "=>":
+            return "DECL"
+
+        kind, tok = cls._prev_token(u, at)
+        if kind == "bos":
+            return "UNKNOWN"
+        if kind == "word":
+            if tok in cls._DECL_LEAD or tok in cls._LOWER_TYPE_LEAD:
+                return "DECL"
+            if tok in cls._USE_LEAD:
+                return "USE"
+            if tok.lstrip("_")[:1].isupper():
+                # `SomeType name` and `_PrivateType name` are both declarations.
+                return "DECL"
+            return "UNKNOWN"           # two lowercase words: cannot tell
+        # punctuation
+        if tok == ">":
+            # `=>` is an arrow and everything after it is an expression; a lone
+            # `>` closes a generic type, so what follows it is being declared.
+            # Conflating the two made EVERY arrow-bodied member in the tree
+            # invisible to this check — `int get doubled => length * 2;` read
+            # `length` as a declaration and the whole unit went quiet.
+            return "USE" if u[:at].rstrip().endswith("=>") else "DECL"
+        if tok in "?])":
+            # `T? name`, `List<T> name`, and — the shape that produced this
+            # check's first false positive — `String Function(String) t`, a
+            # function-TYPED parameter whose declared name follows the closing
+            # paren of the function type. `t` there is a declaration; reading
+            # it as a use made `_buildFriendlyError` look like it called an
+            # undefined `t` when the name was its own parameter.
+            return "DECL"
+        if tok == ".":
+            return "SKIP"              # member access, not a bare identifier
+        if tok == "@":
+            return "SKIP"              # an annotation name, not a value use
+        if tok in "'\"":
+            # The masker blanks a string's TEXT but keeps its quotes and its
+            # interpolated expressions, so an identifier whose predecessor is a
+            # quote is the first thing inside `'…$name…'` — a use. Without this
+            # the check was blind to every `'${t('key')}'`, which in a
+            # localised app is where a large share of the call sites live.
+            return "USE"
+        if tok in "(,":
+            if cls._is_param_list(u, at):
+                return "DECL"
+            return "USE"
+        if tok == ":":
+            # `label: value` and `cond ? a : b` are uses; `Foo(:name)` is a
+            # pattern binding.
+            k2, t2 = cls._prev_token(u, at - 1)
+            if k2 == "punct" and t2 in "(,":
+                return "DECL"
+            return "USE"
+        if tok in cls._USE_PUNCT:
+            return "USE"
+        return "UNKNOWN"
+
+    def visible_values(self, lib: Library, app: App) -> Set[str]:
+        """Bare top-level value/function names this library can name."""
+        names: Set[str] = set(lib.top_functions) | set(lib.top_vars)
+        for uri, _ln, prefix, show, hide in lib.imports:
+            if prefix:
+                # `import 'dart:developer' as developer;` puts `developer`
+                # itself in scope as a name. Missing this made every
+                # `developer.log(…)` look like an undefined identifier.
+                names.add(prefix)
+                continue
+            p = self._resolve_uri(lib, app, uri)
+            if not p:
+                continue
+            got: Set[str] = set()
+            target = app.libs[p]
+            got |= set(target.top_functions) | set(target.top_vars)
+            for t in target.types.values():
+                got |= set(t.enum_values)
+            for uri2, _l2 in target.exports:
+                p2 = self._resolve_uri(target, app, uri2)
+                if not p2:
+                    continue
+                got |= set(app.libs[p2].top_functions) | set(app.libs[p2].top_vars)
+                for uri3, _l3 in app.libs[p2].exports:
+                    p3 = self._resolve_uri(app.libs[p2], app, uri3)
+                    if p3:
+                        got |= set(app.libs[p3].top_functions)
+                        got |= set(app.libs[p3].top_vars)
+            if show:
+                got &= set(show)
+            names |= got - set(hide)
+        return names
+
+    def _chain_members(
+        self, decl: TypeDecl, vis: Dict[str, TypeDecl]
+    ) -> Set[str]:
+        """Every member name reachable from `decl` through the part of its
+        supertype closure that IS in this tree. A link that leaves the tree
+        (`extends ConsumerWidget`, `with SingleTickerProviderStateMixin`) ends
+        that branch rather than the whole walk, so what comes back is a LOWER
+        bound on the names really in scope.
+
+        Be clear about which way that cuts: a lower bound makes the caller
+        NOISIER, not quieter — a member inherited from a Flutter base class is
+        absent from this set and would read as unresolved. That is exactly the
+        hole `_SDK_BARE_NAMES` and the idiom gate exist to plug, and it is why
+        neither is optional. Refusing to walk at all on an out-of-tree link,
+        the way `chain()` does, would leave the check no reach worth having:
+        almost every widget in this tree extends something Flutter owns —
+        including `_MessageCard`, where the escaped error lived."""
+        out: Set[str] = set()
+        stack = [decl]
+        seen = {decl.name}
+        while stack:
+            cur = stack.pop()
+            out |= set(cur.members)
+            out |= set(cur.enum_values)
+            for c in cur.ctors.values():
+                out |= {p.name for p in c.params}
+            for s in cur.supertypes:
+                nxt = vis.get(s)
+                if nxt is not None and nxt.name not in seen:
+                    seen.add(nxt.name)
+                    stack.append(nxt)
+        return out
+
+    def check_scope(self) -> None:
+        for app in self.ws.apps.values():
+            for lib in app.libs.values():
+                base = os.path.basename(lib.path)
+                if base.endswith((".g.dart", ".freezed.dart", ".gr.dart")):
+                    self.abstained["scope-generated-file"] += 1
+                    continue
+                if lib.part_of or lib.parts:
+                    self.abstained["scope-part-file"] += 1
+                    continue
+                if "if (dart.library" in lib.masked:
+                    self.abstained["scope-conditional-import"] += 1
+                    continue
+
+                # The DEEP mask. `lib.masked` leaves a string literal nested
+                # inside an interpolation — `'${t('healthTrend.title')}'` —
+                # completely unmasked, so `healthTrend` read as a bare
+                # identifier preceded by a quote and produced 21 false
+                # positives, every one of them an l10n key segment. Offsets are
+                # identical to `lib.masked`, so every span already computed
+                # against it stays valid.
+                masked = mask_source(lib.src, deep=True)
+
+                vis = self.visible_types(lib, app)
+                top = self.visible_values(lib, app)
+                type_names = set(vis) | set(lib.types)
+
+                # ---- collect every unit, with its owning type -------------
+                spans = sorted(
+                    (t.body_span[0] - 1, t.body_span[1] + 1)
+                    for t in lib.types.values()
+                    if t.body_span != (0, 0)
+                )
+                units: List[Tuple[int, int, Optional[TypeDecl]]] = []
+                for t in lib.types.values():
+                    if t.body_span == (0, 0):
+                        continue
+                    if t.kind == "extension":
+                        # Inside an extension every member of the extended type
+                        # is nameable bare; when that type is not in tree its
+                        # members are unknowable. No opinion, by construction.
+                        self.abstained["scope-extension-body"] += 1
+                        continue
+                    for a, b in self._scope_units(
+                        masked, t.body_span[0], t.body_span[1]
+                    ):
+                        units.append((a, b, t))
+                cursor = 0
+                gaps: List[Tuple[int, int]] = []
+                for a, b in spans:
+                    if cursor < a:
+                        gaps.append((cursor, a))
+                    cursor = max(cursor, b)
+                if cursor < len(masked):
+                    gaps.append((cursor, len(masked)))
+                for a, b in gaps:
+                    for ua, ub in self._scope_units(masked, a, b):
+                        units.append((ua, ub, None))
+
+                # ---- pass 1: classify, and learn the file's local idiom ----
+                per_unit: List[Tuple[int, int, Optional[TypeDecl], Dict[str, Dict[str, int]]]] = []
+                declaring_units: Dict[str, int] = defaultdict(int)
+                for ua, ub, owner in units:
+                    u = masked[ua:ub]
+                    if not u.strip():
+                        continue
+                    tally: Dict[str, Dict[str, int]] = defaultdict(
+                        lambda: {"USE": 0, "DECL": 0, "UNKNOWN": 0}
+                    )
+                    for m in self._IDENT_RE.finditer(u):
+                        n = m.group(1)
+                        if n in _DART_KEYWORDS or n in self._DECL_LEAD:
+                            continue
+                        if n in self._NEVER_AN_IDENTIFIER:
+                            continue
+                        if set(n) == {"_"}:
+                            continue   # `_`, `__` — the wildcard parameter
+                        if n in self._LOWER_TYPE_LEAD or n in self._USE_LEAD:
+                            continue
+                        verdict = self._classify(u, m.start(1), n)
+                        if verdict == "SKIP":
+                            continue
+                        tally[n][verdict] += 1
+                    for n, t in tally.items():
+                        if t["DECL"]:
+                            declaring_units[n] += 1
+                    per_unit.append((ua, ub, owner, tally))
+
+                # ---- pass 2: report ---------------------------------------
+                reported: Set[Tuple[str, int]] = set()
+                for ua, ub, owner, tally in per_unit:
+                    scope = set(top) | type_names
+                    if owner is not None:
+                        scope |= self._chain_members(owner, vis)
+                    for n, t in sorted(tally.items()):
+                        if t["USE"] < 1:
+                            continue
+                        if t["UNKNOWN"]:
+                            self.abstained["scope-use-not-classifiable"] += 1
+                            continue
+                        self.examined["scope-identifier-uses"] += t["USE"]
+                        if t["DECL"]:
+                            continue
+                        if n in scope or n in self._SDK_BARE_NAMES:
+                            continue
+                        self.examined["scope-uses-unresolved"] += 1
+                        # The idiom gate: the file must itself prove, in OTHER
+                        # units, that this name is one you have to declare.
+                        if declaring_units.get(n, 0) < self._IDIOM_MIN_UNITS:
+                            self.abstained["scope-not-a-local-idiom"] += 1
+                            continue
+                        if (n, ua) in reported:
+                            continue
+                        reported.add((n, ua))
+                        where = f" of `{owner.name}`" if owner is not None else ""
+                        self.add(
+                            "SCOPE-UNDEF", lib.path,
+                            line_of(lib.src, ua + next(
+                                m.start(1)
+                                for m in self._IDENT_RE.finditer(masked[ua:ub])
+                                if m.group(1) == n
+                            )),
+                            f"`{n}` is used in this declaration{where} but is "
+                            f"declared nowhere it can reach: not a local here, "
+                            f"not a parameter, not a member of this type or of "
+                            f"its in-tree supertypes, not a top-level "
+                            f"declaration of this file or of anything it "
+                            f"imports. {declaring_units.get(n, 0)} other "
+                            f"declaration(s) in this same file DO declare `{n}` "
+                            f"as a local — this one does not "
+                            f"(`undefined_identifier`, a compile ERROR)",
+                        )
+                self.examined["scope-units"] += len(per_unit)
+
     # ---- PART-INTEGRITY ---------------------------------------------------
     def check_parts(self) -> None:
         for app in self.ws.apps.values():
@@ -1700,6 +2247,7 @@ class Preflight:
         self.check_calls()
         self.check_member_refs()
         self.check_unimported()
+        self.check_scope()
         self.check_providers()
         self.check_types()
         self.check_duplicates()

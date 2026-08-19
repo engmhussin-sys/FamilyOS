@@ -56,8 +56,22 @@ from typing import Dict, List, Optional, Set, Tuple
 # ---------------------------------------------------------------------------
 
 
-def mask_source(src: str) -> str:
-    """Return `src` with comment and string bodies blanked, offsets preserved."""
+def mask_source(src: str, deep: bool = False) -> str:
+    """Return `src` with comment and string bodies blanked, offsets preserved.
+
+    `deep=False` (the default, and what every caller but SCOPE-UNDEF wants)
+    leaves an interpolated expression COMPLETELY untouched — including any
+    string literal nested inside it, so `'${t('a.b')}'` keeps `'a.b'` intact
+    and the key text reads as code. That is harmless for the checks that only
+    look at declarations, and re-running this function over its own output does
+    NOT fix it: the second pass pairs the outer opening quote with the inner
+    opening quote and blanks the `t(` between them instead.
+
+    `deep=True` recurses into `${…}` and masks whatever it contains by the same
+    rules, so a nested literal's TEXT is blanked while the expression around it
+    survives. SCOPE-UNDEF needs this: without it, every `.`-separated segment
+    of an l10n key inside an interpolated call read as a bare identifier.
+    """
     out = list(src)
     n = len(src)
     i = 0
@@ -127,6 +141,11 @@ def mask_source(src: str) -> str:
                         out[j + 1] = " "
                         if k - 1 < n and src[k - 1] == "}":
                             out[k - 1] = " "
+                        if deep:
+                            inner = mask_source(src[j + 2 : k - 1], deep=True)
+                            for off, ch2 in enumerate(inner):
+                                if ch2 == " " and src[j + 2 + off] != " ":
+                                    out[j + 2 + off] = " "
                         j = k
                     else:
                         k = j + 1
