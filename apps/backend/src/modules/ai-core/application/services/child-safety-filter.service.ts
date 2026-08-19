@@ -218,7 +218,16 @@ const RULES: readonly Rule[] = Object.freeze([
     reason: 'ASKS_CHILD_FOR_INFO',
     patterns: [
       /(?:ما\s+هو|أخبرني\s+بـ?)\s*(?:عنوانك|رقمك|مدرستك|كلمة\s+مرورك|اسم\s+أبيك)/i,
-      /\b(?:what'?s?\s+your\s+(?:address|phone|school|password))\b/i,
+      // `what'?s?` MATCHED THE CONTRACTION AND MISSED THE EXPANSION. It reads
+      // "what" + an optional apostrophe + an optional s, so «what's your
+      // address» and «whats your address» tripped it and «what IS your
+      // address» — four more characters, and the form a model writing careful
+      // prose to a child is MORE likely to produce than the contraction —
+      // walked straight past. The copula is now spelled as the alternation it
+      // always needed to be. The noun set is deliberately unchanged: widening
+      // the verb closes the hole that was measured, and adding nouns would be
+      // a different change with its own false positives.
+      /\b(?:what(?:'?s|\s+is|\s+was)?\s+your\s+(?:address|phone|school|password))\b/i,
     ],
   },
   {
@@ -267,7 +276,35 @@ export class ChildSafetyFilterService {
     const charCeiling = limits?.maxChars ?? profile.maxChars;
     const wordCeiling = limits?.maxWords ?? profile.maxWords;
 
-    if (!text.trim()) {
+    // EVERY LIST IS MATCHED AGAINST THE ORIGINAL TEXT *AND* ITS NORMALISED
+    // FORM — see the loop below for why. It is computed HERE because the
+    // emptiness check needs it too.
+    const variants = textVariants(text);
+    /** The normalised copy when one exists, else the original. */
+    const folded = variants[variants.length - 1];
+
+    // SILENCE IS NOT A SAFE MESSAGE — AND NEITHER IS INVISIBLE INK.
+    //
+    // This was `if (!text.trim())`, and `String.prototype.trim` removes
+    // WhiteSpace and LineTerminators only. U+200B ZERO WIDTH SPACE, U+200D
+    // ZERO WIDTH JOINER, U+FEFF and the bidi marks are none of those, so a
+    // candidate consisting ENTIRELY of them survived `trim()` as a non-empty
+    // string, counted as one word, matched no banned list, and came back
+    // `isSafe: true`. The child's card then rendered blank — which is the exact
+    // outcome the empty-string refusal and `MINIMAL_SAFE_LINE` both exist to
+    // prevent, reached by writing nothing in characters `trim` cannot see.
+    //
+    // The filter already KNEW those characters were invisible: `normaliseArabic`
+    // strips them so a zero-width space cannot split a banned word. The defect
+    // was that the knowledge was applied to the banned lists and not to the
+    // emptiness question. Both now read the same folded copy.
+    //
+    // The reason stays `TOO_LONG` rather than becoming a new enum member, for
+    // the reason the self-harm group states above: `CHILD_SAFETY_REASONS` is a
+    // published set that a `copy_safety_check` dashboard counts, and widening
+    // it silently is not this change's business. The child-facing outcome — the
+    // candidate is refused and the human-written template ships — is identical.
+    if (!text.trim() || !folded.trim()) {
       return { isSafe: false, reasons: ['TOO_LONG'] };
     }
 
@@ -284,8 +321,7 @@ export class ChildSafetyFilterService {
       reasons.push('INJECTION_ECHO');
     }
 
-    // EVERY LIST IS MATCHED AGAINST THE ORIGINAL TEXT *AND* ITS NORMALISED
-    // FORM. `e2e-15` found three separate holes — a shadda (GAP-1), Arabic-Indic
+    // `e2e-15` found three separate holes — a shadda (GAP-1), Arabic-Indic
     // digits (GAP-7) and a missing hamza (GAP-9) — that were one hole: a list of
     // literal spellings cannot enumerate Arabic orthography. Matching the union
     // is purely additive, so no rule that fired before can stop firing, and it
@@ -294,7 +330,6 @@ export class ChildSafetyFilterService {
     // `variants` is a DECISION artefact. Nothing below returns it, stores it, or
     // logs it; `chooseSafe` still ships the candidate's original bytes, which is
     // what `e2e-15` ACT I asserts byte-for-byte out of `child_messages`.
-    const variants = textVariants(text);
     for (const rule of RULES) {
       if (rule.patterns.some((p) => matchesAnyVariant(p, variants))) reasons.push(rule.reason);
     }
