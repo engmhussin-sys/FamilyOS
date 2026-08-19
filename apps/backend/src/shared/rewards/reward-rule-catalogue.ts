@@ -87,6 +87,14 @@ export function isRuleEngine(value: string): value is RuleEngine {
  * `practice_logged`) are DELIBERATELY ABSENT. No managed rule can ever be
  * written against them, so the same real-world completion can no longer be paid
  * twice — once through the keyed name and once through the keyless one.
+ *
+ * THAT SENTENCE WAS A COMMENT AND IT LET A REAL DEFECT THROUGH. It is true of
+ * the keyed/keyless pair it was written about and says nothing about the case
+ * that actually shipped: ONE producer firing TWO KEYED contract names for ONE
+ * crossing, with a seeded rule waiting on each — 30 XP for one glass of water,
+ * measured. The invariant is now `crossingCollisions()` below, checked by
+ * `test/rewards/reward-rule-collision.spec.ts` against this file and by
+ * `test/rewards/reward-rule-connection.e2e.spec.ts` against the seeded rows.
  */
 export const RULE_EVENT_TYPES = [
   // -- the completion catalogue (`shared/events/event-types.ts`) --
@@ -292,30 +300,10 @@ export const PLATFORM_DEFAULT_REWARD_RULES: readonly RewardRuleDefault[] = [
     category: 'FITNESS',
     labelAr: 'هدف النشاط البدني اليومي',
   },
-  {
-    key: 'default:health:daily-goal-hydration',
-    triggerEngine: 'health',
-    eventType: 'DAILY_GOAL_COMPLETED',
-    triggerCondition: { metric: 'hydration' },
-    rewardType: 'XP',
-    amount: 15,
-    maxPerDay: 1,
-    maxPerWeek: 7,
-    category: 'HEALTH',
-    labelAr: 'هدف شرب الماء اليومي',
-  },
-  {
-    key: 'default:health:daily-goal-activity',
-    triggerEngine: 'health',
-    eventType: 'DAILY_GOAL_COMPLETED',
-    triggerCondition: { metric: 'activity' },
-    rewardType: 'XP',
-    amount: 20,
-    maxPerDay: 1,
-    maxPerWeek: 7,
-    category: 'FITNESS',
-    labelAr: 'هدف النشاط البدني اليومي',
-  },
+  // `default:health:daily-goal-hydration` and `default:health:daily-goal-activity`
+  // WERE HERE. They are RETIRED — see `RETIRED_PLATFORM_RULES` below for the
+  // measurement, the reason the two rows above are the survivors, and what
+  // happened to the ledger rows the retired pair had already paid.
   {
     key: 'default:health:streak',
     triggerEngine: 'health',
@@ -456,10 +444,318 @@ export const PLATFORM_DEFAULT_BADGE_RULES: readonly BadgeRewardRuleDefault[] =
   );
 
 /**
+ * ===========================================================================
+ * THE RETIRED PLATFORM RULES — WHAT WAS PAID TWICE, AND WHY THESE TWO LOST.
+ * ===========================================================================
+ *
+ * THE MEASUREMENT, taken against real PostgreSQL through the Child App's own
+ * hydration button (`POST /life-intelligence/self/health/hydration-logs`) with
+ * a family that had configured nothing:
+ *
+ *   rewards_ledger_entries   EARN 15 XP  source `reward_rule:…0005`
+ *                                        idem  `daily-goal:hydration:<child>:<day>:XP:…`
+ *                            EARN 15 XP  source `reward_rule:…0003`
+ *                                        idem  `child:<child>:hydration:<day>:XP:…`
+ *   rewards_accounts.xp      30
+ *
+ * and the same shape on activity: 20 + 20, `rewards_accounts.xp = 40`. ONE
+ * crossing, TWO payments. The two rules carried identical amounts, identical
+ * caps, identical categories and BYTE-IDENTICAL `labelAr`, so nothing in the
+ * parent's own catalogue screen could tell them apart either.
+ *
+ * THE DATABASE COULD NOT COLLAPSE IT, and that is the load-bearing detail:
+ * `rewards_ledger_entries (child_id, idempotency_key)` is a UNIQUE CONSTRAINT,
+ * but the key has the granting rule's id appended, so two rule ids produce two
+ * different keys. A duplicate that survives the unique index is not a race the
+ * database can win — it has to stop being seeded.
+ *
+ * WHY THE `*_GOAL_COMPLETED` NAMES SURVIVED AND `DAILY_GOAL_COMPLETED {metric}`
+ * DID NOT. Three reasons, in order of weight:
+ *
+ *   1. BOTH DOORS EMIT THE SURVIVOR, ONLY ONE EMITS THE RETIREE.
+ *      `HealthEngineService.logHydration` / `logActivity` now fire
+ *      `HYDRATION_GOAL_COMPLETED` / `ACTIVITY_GOAL_COMPLETED` with a key from
+ *      `composeIdempotencyKey`, which is the SAME call `EventIngestionService`
+ *      makes for the device door — so the two doors produce a byte-identical
+ *      key and the unique constraint refuses the second grant. The retired
+ *      pair was reachable ONLY from the direct app door, with a hand-written
+ *      key that could never collide with anything. Keeping the retiree would
+ *      have left the device door unpaid or paid on a second, uncollidable key.
+ *   2. THE BADGES ARE SEEDED AGAINST THE SURVIVOR. `first_hydration_goal` and
+ *      `first_activity_goal` name `HYDRATION_GOAL_COMPLETED` /
+ *      `ACTIVITY_GOAL_COMPLETED` in `badge-catalogue.ts`. Retiring those names
+ *      would have re-broken the chain the health-engine fix had just connected.
+ *   3. NOTHING ELSE CONSUMES `DAILY_GOAL_COMPLETED {metric: …}`. Checked, and
+ *      it is not a claim: `evaluateRewardRules` matches on `triggerEngine`
+ *      FIRST, and the only other seeded `DAILY_GOAL_COMPLETED` rule is
+ *      `default:habit:daily-goal` on the `habit-builder` engine — which is
+ *      where `/events/batch` routes that name
+ *      (`TYPE_SPECS.DAILY_GOAL_COMPLETED.completionKind = 'HABIT'`). It is a
+ *      different engine, a different trigger and a different real-world fact,
+ *      and it is untouched. The event NAME itself is still emitted by
+ *      `HealthEngineService` and still drives `announceDailyGoal` — this
+ *      retires a REWARD RULE, not an event.
+ *
+ * THE ROWS ARE DEACTIVATED, NOT DELETED, and migration `0030` says so in SQL.
+ * Every ledger row the retired pair ever paid records `source =
+ * 'reward_rule:<id>'`, which is exactly why
+ * `PrismaRewardsRepository.deactivateRewardRule` already documents «DEACTIVATE,
+ * never DELETE» for a parent's own rules. A household that already earned 30 XP
+ * for one crossing KEEPS those 30 XP and keeps a resolvable provenance row for
+ * both halves: a child's earned history is not rewritten to make a catalogue
+ * tidy, and `evaluateRewardRules` skips an inactive rule on its FIRST line, so
+ * the next crossing pays once. There is no foreign key to orphan — `source` is
+ * a provenance string — and that is the reason the row must stay readable.
+ */
+export const RETIRED_PLATFORM_RULES: readonly {
+  readonly key: string;
+  readonly id: string;
+  readonly supersededByKey: string;
+  readonly reason: string;
+}[] = [
+  {
+    key: 'default:health:daily-goal-hydration',
+    id: '00000000-0000-4b40-8000-000000000005',
+    supersededByKey: 'default:hydration:goal',
+    reason:
+      'Paid a second 15 XP for the same hydration crossing as `default:hydration:goal`, on a key no other door can collide with.',
+  },
+  {
+    key: 'default:health:daily-goal-activity',
+    id: '00000000-0000-4b40-8000-000000000006',
+    supersededByKey: 'default:activity:goal',
+    reason:
+      'Paid a second 20 XP for the same activity crossing as `default:activity:goal`, on a key no other door can collide with.',
+  },
+];
+
+/**
+ * ===========================================================================
+ * ONE REAL-WORLD CROSSING, AND EVERY TRIGGER ITS PRODUCER FIRES FOR IT.
+ * ===========================================================================
+ *
+ * WHY THIS TABLE HAD TO EXIST. The header of `RULE_EVENT_TYPES` states the
+ * invariant this catalogue is built on — «the same real-world completion can no
+ * longer be paid twice» — and it was a COMMENT. It held for the keyed/keyless
+ * pair it was written about and said nothing about the case that actually
+ * happened: ONE producer firing TWO KEYED contract names for ONE crossing, with
+ * a seeded rule waiting on each.
+ *
+ * A rule-versus-rule check cannot see that. The two rules never match the same
+ * trigger — they match two different triggers that describe one glass of water.
+ * So the unit of the invariant is the CROSSING, and a crossing is only knowable
+ * from its producer. This table is that knowledge, written down where the rules
+ * are, and `test/rewards/reward-rule-collision.spec.ts` fails the build when a
+ * crossing acquires a second paying rule.
+ *
+ * EVERY ENTRY IS COPIED FROM A PRODUCER, not inferred. The full set of reward
+ * triggers in `src/` is fifteen calls across four services; these are the ones
+ * where a single call site fires more than one, plus the single-trigger
+ * crossings kept for completeness so a new co-emission is added HERE rather
+ * than appearing in a diff nobody reads.
+ *
+ * THE KEYLESS LEGACY NAMES (`habit_completed`, `hydration_event`,
+ * `practice_logged`) ARE LISTED. They are not in `RULE_EVENT_TYPES`, so no
+ * managed rule can match them — and listing them is what makes that provable
+ * here instead of assumed.
+ */
+export interface CrossingTrigger {
+  readonly type: string;
+  readonly payload: Readonly<Record<string, string | number | boolean>>;
+}
+
+export interface ProducerCrossing {
+  /** The real-world fact, in one phrase. */
+  readonly crossing: string;
+  /** `file#method` — where the triggers below are fired. */
+  readonly producer: string;
+  readonly engine: RuleEngine;
+  readonly triggers: readonly CrossingTrigger[];
+}
+
+export const PRODUCER_CROSSINGS: readonly ProducerCrossing[] = [
+  {
+    crossing: 'a child ticks one habit',
+    producer: 'habit-engine.service.ts#completeHabit',
+    engine: 'habit-builder',
+    triggers: [
+      { type: 'habit_completed', payload: {} },
+      { type: 'HABIT_COMPLETED', payload: {} },
+    ],
+  },
+  {
+    crossing: 'a habit streak milestone is reached',
+    producer: 'habit-engine.service.ts#completeHabit',
+    engine: 'habit-builder',
+    triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'habits' } }],
+  },
+  {
+    crossing: "a child crosses today's hydration target",
+    producer: 'health-engine.service.ts#logHydration',
+    engine: 'health',
+    triggers: [
+      { type: 'hydration_event', payload: { metric: 'hydration_target_reached' } },
+      { type: 'DAILY_GOAL_COMPLETED', payload: { metric: 'hydration' } },
+      { type: 'HYDRATION_GOAL_COMPLETED', payload: { metric: 'hydration' } },
+    ],
+  },
+  {
+    crossing: "a child crosses today's 60-minute activity target",
+    producer: 'health-engine.service.ts#logActivity',
+    engine: 'health',
+    triggers: [
+      { type: 'DAILY_GOAL_COMPLETED', payload: { metric: 'activity' } },
+      { type: 'ACTIVITY_GOAL_COMPLETED', payload: { metric: 'activity' } },
+    ],
+  },
+  {
+    crossing: 'a health streak milestone is reached',
+    producer: 'health-engine.service.ts#logHydration / #logActivity',
+    engine: 'health',
+    triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'hydration' } }],
+  },
+  {
+    crossing: 'a child logs one faith practice',
+    producer: 'faith-engine.service.ts#logPractice',
+    engine: 'faith',
+    triggers: [
+      { type: 'practice_logged', payload: {} },
+      { type: 'FAITH_PRACTICE_COMPLETED', payload: {} },
+    ],
+  },
+  {
+    crossing: 'a child logs one learning session',
+    producer: 'learning-engine.service.ts#logSession',
+    engine: 'learning',
+    triggers: [{ type: 'EDUCATION_TASK_COMPLETED', payload: {} }],
+  },
+  {
+    crossing: 'a learning goal is completed',
+    producer: 'learning-engine.service.ts#completeGoal',
+    engine: 'learning',
+    triggers: [{ type: 'LEARNING_GOAL_ACHIEVED', payload: {} }],
+  },
+  {
+    crossing: 'a learning streak milestone is reached',
+    producer: 'learning-engine.service.ts#logSession',
+    engine: 'learning',
+    triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'education' } }],
+  },
+  {
+    crossing: 'a device-aggregated daily goal arrives through POST /events/batch',
+    producer: 'event-ingestion.service.ts -> RewardsCompletionConsumer',
+    engine: 'habit-builder',
+    triggers: [{ type: 'DAILY_GOAL_COMPLETED', payload: {} }],
+  },
+];
+
+/**
+ * The rule-matching predicate `evaluateRewardRules` uses, in the only form a
+ * catalogue check can reuse: engine, then event type, then subset-match on the
+ * trigger condition. It deliberately IGNORES `isActive`, caps and the
+ * verification floor — a rule that is merely switched off or capped is still a
+ * rule that CAN match the crossing, and «it happens not to pay today» is not an
+ * invariant.
+ */
+export function ruleMatchesTrigger(
+  rule: RewardRuleDefault,
+  engine: string,
+  trigger: CrossingTrigger,
+): boolean {
+  if (rule.triggerEngine !== engine) return false;
+  if (rule.eventType !== trigger.type) return false;
+  return Object.entries(rule.triggerCondition).every(([k, v]) => trigger.payload[k] === v);
+}
+
+/** Every seeded rule that can be granted for one crossing, across all of the
+ * triggers that crossing fires. */
+export function rulesPayingCrossing(
+  crossing: ProducerCrossing,
+  rules: readonly RewardRuleDefault[] = PLATFORM_DEFAULT_REWARD_RULES,
+): RewardRuleDefault[] {
+  return rules.filter((rule) =>
+    crossing.triggers.some((trigger) => ruleMatchesTrigger(rule, crossing.engine, trigger)),
+  );
+}
+
+/**
+ * THE INVARIANT, AS A FUNCTION RATHER THAN A SENTENCE.
+ *
+ * Returns every way the seeded catalogue can pay one crossing twice. Empty is
+ * the only acceptable answer, and `test/rewards/reward-rule-collision.spec.ts`
+ * asserts exactly that — against the CODE copy, and again in
+ * `reward-rule-connection.e2e.spec.ts` against the rows PostgreSQL actually
+ * holds, because a migration can seed a row this file never mentions.
+ *
+ * TWO KINDS OF DOUBLE PAYMENT, and they are different facts:
+ *
+ *   CURRENCY  two or more XP rules, or two or more COINS rules, matching one
+ *             crossing. This is the defect that was measured: 15 + 15 XP for
+ *             one glass of water. An XP rule and a COINS rule together are NOT
+ *             a collision — they are two different currencies for one act, and
+ *             `default:habit:completed` (XP) beside a future coin rule is a
+ *             product decision, not an accident.
+ *   BADGE     two rules pointing at the SAME `badgeKey`. A crossing that can
+ *             award `first_habit` twice is a duplicate even though
+ *             `child_badge_awards (child_id, badge_id)` would refuse the second
+ *             insert — the refusal is the database catching a catalogue that
+ *             should not have asked. Two DIFFERENT badges on one crossing are
+ *             fine and deliberate: an XP rule and a once-ever badge rule are
+ *             how every first completion in this product already works.
+ */
+export interface CrossingCollision {
+  readonly crossing: string;
+  readonly producer: string;
+  /** `'XP'`, `'COINS'`, or `badge:<key>`. */
+  readonly paidTwiceAs: string;
+  readonly ruleKeys: readonly string[];
+}
+
+export function crossingCollisions(
+  rules: readonly RewardRuleDefault[] = PLATFORM_DEFAULT_REWARD_RULES,
+  crossings: readonly ProducerCrossing[] = PRODUCER_CROSSINGS,
+): CrossingCollision[] {
+  const collisions: CrossingCollision[] = [];
+
+  for (const crossing of crossings) {
+    const paying = rulesPayingCrossing(crossing, rules);
+    const buckets = new Map<string, string[]>();
+
+    for (const rule of paying) {
+      const bucket = rule.rewardType === 'BADGE' ? `badge:${rule.badgeKey}` : rule.rewardType;
+      const keys = buckets.get(bucket) ?? [];
+      keys.push(rule.key);
+      buckets.set(bucket, keys);
+    }
+
+    for (const [paidTwiceAs, ruleKeys] of buckets) {
+      if (ruleKeys.length > 1) {
+        collisions.push({
+          crossing: crossing.crossing,
+          producer: crossing.producer,
+          paidTwiceAs,
+          ruleKeys: [...ruleKeys].sort(),
+        });
+      }
+    }
+  }
+
+  return collisions;
+}
+
+/**
  * Deterministic UUIDs for the seeded platform rows, so the migration is
  * re-runnable (`ON CONFLICT DO NOTHING`) and a test can assert a specific row
  * exists. `00000000-0000-4b40-8000-0000000000NN` — version nibble 4, variant
  * nibble 8, index in the last two hex digits. Not random, by design.
+ *
+ * THE INDEX IS NOT THE ARRAY POSITION, and that is not sloppiness: the seeded
+ * ids are literals in migration `0007`, assigned in insertion order at the time
+ * each row was ADDED (`default:habit:daily-goal` is `…000f`, seeded after
+ * `…000e`, even though it reads third in the list). Renumbering by array
+ * position would rewrite the `source` of every ledger row ever paid, which is
+ * the same reason `RETIRED_PLATFORM_RULES` keeps its ids rather than closing
+ * the gap they leave.
  */
 export function platformRuleId(index: number): string {
   const suffix = index.toString(16).padStart(12, '0');

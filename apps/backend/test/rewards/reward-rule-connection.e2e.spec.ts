@@ -48,7 +48,12 @@ import { runAsSystemAsync } from '../../src/common/tenancy/system-context';
 import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { TokenService } from '../../src/modules/auth/application/services/token.service';
 import { OutboxRelay } from '../../src/modules/events/application/outbox.relay';
-import { PLATFORM_DEFAULT_REWARD_RULES, ruleRewardValue } from '../../src/shared/rewards/reward-rule-catalogue';
+import {
+  PLATFORM_DEFAULT_REWARD_RULES,
+  RETIRED_PLATFORM_RULES,
+  crossingCollisions,
+  ruleRewardValue,
+} from '../../src/shared/rewards/reward-rule-catalogue';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
@@ -249,6 +254,48 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
     };
   }
 
+  /**
+   * ONE CROSSING, ONE PAYMENT — READ OUT OF THE LEDGER AND THE ACCOUNT.
+   *
+   * `chain().ledger` counts rows and cannot answer this: a badge row and a
+   * duplicate XP row both make it 2. The doubling that migration 0030 closed
+   * was two XP rows of 15 for one glass of water, and the assertion that would
+   * have caught it on the day it was seeded is this one — how many XP rows, for
+   * how much, and does `rewards_accounts.xp` agree.
+   *
+   * The expected amount comes from `PLATFORM_DEFAULT_REWARD_RULES` rather than a
+   * literal, so a deliberate re-pricing of a default is one edit and an
+   * accidental second payment is still a failure.
+   *
+   * It also names the RETIRED rule ids explicitly: re-activating `…0005` in some
+   * future migration would put the second row back, and the failure should say
+   * which rule put it there rather than just «2, expected 1».
+   */
+  async function assertPaidExactlyOnce(t: Tenant, ruleKey: string): Promise<void> {
+    const expected = PLATFORM_DEFAULT_REWARD_RULES.find((r) => r.key === ruleKey);
+    if (!expected || expected.rewardType === 'BADGE') throw new Error(`not an amount rule: ${ruleKey}`);
+
+    const rows = await sys('xp ledger', () =>
+      prisma.rewardsLedgerEntry.findMany({
+        where: { familyId: t.familyId, childId: t.childId, type: 'EARN', rewardType: 'XP' },
+      }),
+    );
+
+    expect(rows.map((r: any) => ({ amount: r.amount, delta: r.delta }))).toEqual([
+      { amount: expected.amount, delta: expected.amount },
+    ]);
+
+    // Not paid by a rule 0030 retired.
+    const retiredSources = RETIRED_PLATFORM_RULES.map((r) => `reward_rule:${r.id}`);
+    expect(rows.filter((r: any) => retiredSources.includes(r.source))).toEqual([]);
+
+    // And the account is the reconcilable cache of that one row, not of two.
+    const account = await sys('account', () =>
+      prisma.rewardsAccount.findFirst({ where: { familyId: t.familyId, childId: t.childId } }),
+    );
+    expect(account.xp).toBe(expected.amount);
+  }
+
   /** The badges this child holds right now, by key. */
   const badgeKeys = (t: Tenant): Promise<string[]> =>
     sys('badge keys', async () =>
@@ -349,10 +396,16 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
   // =========================================================================
 
   describe('the platform defaults exist and reach a family that configured nothing', () => {
+    /** Every platform row PostgreSQL actually holds, retired ones included. */
+    const platformRows = (): Promise<any[]> =>
+      sys('platform rules', () => prisma.rewardRule.findMany({ where: { familyId: null, programId: null } }));
+
     it('migration 0007 seeded every rule in the code catalogue, with family_id NULL', async () => {
-      const rows = await sys('platform rules', () =>
-        prisma.rewardRule.findMany({ where: { familyId: null, programId: null } }),
-      );
+      // ACTIVE rows only, and 0030 is why. The retired pair below is still on
+      // disk — deliberately, so the ledger rows that name it stay resolvable —
+      // so the code catalogue is the set of rules that can still PAY, which is
+      // what `is_active` means and what the next assertion pins independently.
+      const rows = (await platformRows()).filter((r: any) => r.isActive);
       expect(rows).toHaveLength(PLATFORM_DEFAULT_REWARD_RULES.length);
 
       // Row for row against the code copy — two copies of a constant only stay
@@ -363,9 +416,9 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
             r.triggerEngine === expected.triggerEngine &&
             r.eventType === expected.eventType &&
             r.rewardType === expected.rewardType &&
-            // The two health DAILY_GOAL_COMPLETED defaults differ ONLY by their
-            // trigger condition (`{metric: hydration}` vs `{metric: activity}`),
-            // which is precisely why the unique index hashes the condition.
+            // Trigger condition is part of the identity because two rules on one
+            // engine and one event name may still be two different rules — which
+            // is precisely why the unique index hashes the condition.
             JSON.stringify(r.triggerCondition) === JSON.stringify(expected.triggerCondition),
         );
         expect(row).toBeDefined();
@@ -379,10 +432,87 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       }
     });
 
-    it('EVERY managed rule names an event type — a wildcard rule would pay twice (PA-B-013)', async () => {
-      const rows = await sys('platform rules', () =>
-        prisma.rewardRule.findMany({ where: { familyId: null, programId: null } }),
+    /**
+     * 0030 — THE RETIRED PAIR IS STILL ON DISK, AND SWITCHED OFF.
+     *
+     * Both halves matter and neither is decoration. The row SURVIVES because
+     * every ledger entry it ever paid records `source = 'reward_rule:<id>'` and
+     * there is no foreign key to make that resolvable for us — deleting it would
+     * orphan the audit trail of a real child's real XP. It is INACTIVE because
+     * `evaluateRewardRules` skips an inactive rule on its first line, which is
+     * the actual full stop on the double payment.
+     *
+     * A `DELETE` in some future tidy-up trips the first assertion; a
+     * `is_active = true` resurrection trips the second AND every count in §1.
+     */
+    it('0030 RETIRED the duplicate DAILY_GOAL_COMPLETED health rules without deleting them', async () => {
+      const rows = await platformRows();
+      for (const retired of RETIRED_PLATFORM_RULES) {
+        const row = rows.find((r: any) => r.id === retired.id);
+        expect(row).toBeDefined();
+        expect(row.isActive).toBe(false);
+        expect(row.triggerEngine).toBe('health');
+        expect(row.eventType).toBe('DAILY_GOAL_COMPLETED');
+      }
+
+      // No ACTIVE health rule answers `DAILY_GOAL_COMPLETED` any more — the
+      // condition the doubling needed, stated against the database rather than
+      // against the TypeScript list.
+      const activeHealthDailyGoal = rows.filter(
+        (r: any) => r.isActive && r.triggerEngine === 'health' && r.eventType === 'DAILY_GOAL_COMPLETED',
       );
+      expect(activeHealthDailyGoal).toEqual([]);
+    });
+
+    /**
+     * THE INVARIANT, AGAINST THE ROWS POSTGRESQL HOLDS — not against the
+     * TypeScript list. `reward-rule-collision.spec.ts` checks the code copy in
+     * milliseconds; this checks the SEEDED copy, because a migration can insert a
+     * paying rule that `reward-rule-catalogue.ts` never mentions and the code-side
+     * check would never see it. That is the exact shape of this repository's
+     * recurring defect class — «a rule nobody notices» — so it is checked on both
+     * sides of the wire.
+     */
+    it('no seeded rule pays any producer crossing twice — checked on the DATABASE copy', async () => {
+      const rows = (await platformRows()).filter((r: any) => r.isActive);
+
+      // The DB rows, in the catalogue's own shape, so the SAME pure function
+      // decides the question here as decides it in the unit spec. `key` is the
+      // rule id: seeded rows have no key column, and the id is what a failure
+      // message needs to point at anyway.
+      const asDefaults = rows.map((r: any) =>
+        r.rewardType === 'BADGE'
+          ? {
+              key: `${r.id} (${r.labelAr})`,
+              triggerEngine: r.triggerEngine,
+              eventType: r.eventType,
+              triggerCondition: r.triggerCondition ?? {},
+              rewardType: 'BADGE' as const,
+              badgeKey: r.rewardAmountOrBadgeId,
+              maxPerDay: null,
+              maxPerWeek: null,
+              category: r.category,
+              labelAr: r.labelAr,
+            }
+          : {
+              key: `${r.id} (${r.labelAr})`,
+              triggerEngine: r.triggerEngine,
+              eventType: r.eventType,
+              triggerCondition: r.triggerCondition ?? {},
+              rewardType: r.rewardType,
+              amount: Number(r.rewardAmountOrBadgeId),
+              maxPerDay: r.maxPerDay,
+              maxPerWeek: r.maxPerWeek,
+              category: r.category,
+              labelAr: r.labelAr,
+            },
+      );
+
+      expect(crossingCollisions(asDefaults as any)).toEqual([]);
+    });
+
+    it('EVERY managed rule names an event type — a wildcard rule would pay twice (PA-B-013)', async () => {
+      const rows = await platformRows();
       expect(rows.every((r: any) => r.eventType !== null)).toBe(true);
     });
 
@@ -391,8 +521,18 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       expect(res.status).toBe(200);
 
       const platform = res.body.filter((r: any) => r.tier === 'PLATFORM');
-      expect(platform.length).toBe(PLATFORM_DEFAULT_REWARD_RULES.length);
-      expect(platform.every((r: any) => r.isInEffect)).toBe(true);
+      // The retired rows are listed too — `listRewardRulesForFamily` returns
+      // every platform row and does not filter on `is_active`. That is the
+      // honest rendering: a parent sees the rule and sees `isInEffect: false`
+      // beside it, the same way they already see their own deactivated rule.
+      expect(platform.length).toBe(PLATFORM_DEFAULT_REWARD_RULES.length + RETIRED_PLATFORM_RULES.length);
+
+      const retiredIds = RETIRED_PLATFORM_RULES.map((r) => r.id);
+      const inEffect = platform.filter((r: any) => !retiredIds.includes(r.id));
+      expect(inEffect).toHaveLength(PLATFORM_DEFAULT_REWARD_RULES.length);
+      expect(inEffect.every((r: any) => r.isInEffect)).toBe(true);
+      expect(platform.filter((r: any) => retiredIds.includes(r.id)).every((r: any) => r.isInEffect === false)).toBe(true);
+
       expect(res.body.filter((r: any) => r.tier === 'FAMILY')).toHaveLength(0);
     });
   });
@@ -419,6 +559,33 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       expect(await badgeKeys(A)).toEqual(['first_habit']);
     });
 
+    /**
+     * ======================================================================
+     * THE TRIPWIRE THAT TRIPPED, AND WHAT IT NOW GUARDS.
+     * ======================================================================
+     *
+     * THIS TEST USED TO ASSERT `ledger: 1` AND `badgeKeys: []`, with a comment
+     * saying the absence was pinned «so a future badge rule on this trigger
+     * cannot change the count silently». It was doing exactly its job when it
+     * went red: `HealthEngineService.logHydration` began firing the contract
+     * name `HYDRATION_GOAL_COMPLETED` beside its `DAILY_GOAL_COMPLETED`, which
+     * made 0026's `first_hydration_goal` badge earnable through the app's own
+     * button for the first time — a real fix — and the counts moved.
+     *
+     * THE MEASUREMENT THE MOVE EXPOSED. `ledger` did not go 1 -> 2 (XP + badge).
+     * It went 1 -> 3, and `rewards_accounts.xp` read 30 for one glass of water:
+     * migration 0007 had seeded a paying rule for BOTH names — `…0005`
+     * (`DAILY_GOAL_COMPLETED {metric: hydration}`, 15 XP) and `…0003`
+     * (`HYDRATION_GOAL_COMPLETED`, 15 XP) — with byte-identical `label_ar`.
+     * Different rule ids mean different ledger keys, so the UNIQUE constraint
+     * could not collapse them. Migration 0030 retired `…0005`.
+     *
+     * SO THE NUMBERS ARE UPDATED AND THE TEETH ARE SHARPER, not blunter. It now
+     * asserts the XP AMOUNT and the ledger row COUNT per currency, which is the
+     * assertion that would have caught the doubling on the day it was seeded —
+     * `ledger: 2` alone would have passed while a child was paid twice, because
+     * the badge row also counts as 2.
+     */
     it('HYDRATION / HEALTH — POST /self/health/hydration-logs, once the goal is actually reached', async () => {
       // BELOW the target: a log is written, the goal is not met, nothing pays.
       await request(http).post('/life-intelligence/self/health/hydration-logs').set(deviceAuth(A)).send({ amountMl: 100 });
@@ -427,14 +594,17 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       // Crossing the target is the VERIFICATION CONDITION, computed server-side
       // from the child's age and the stored logs on the family's business day.
       await request(http).post('/life-intelligence/self/health/hydration-logs').set(deviceAuth(A)).send({ amountMl: 3000 });
-      expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
-      // STILL ONE, and deliberately: `HealthEngineService` fires the reward
-      // trigger as `DAILY_GOAL_COMPLETED {metric: hydration}`, while 0026's
-      // hydration badge is written against `HYDRATION_GOAL_COMPLETED` — the
-      // event type the platform's own XP default already uses on the device
-      // ingestion path. This asserts the absence so a future badge rule on this
-      // trigger cannot change the count silently.
-      expect(await badgeKeys(A)).toEqual([]);
+
+      // XP + the once-ever `first_hydration_goal` badge — the same shape HABIT
+      // and FAITH have had since 0026, and the shape this door could not reach
+      // until the contract name was fired.
+      expect(await chain(A)).toEqual({ ledger: 2, timeline: 1, notification: 1 });
+      expect(await badgeKeys(A)).toEqual(['first_hydration_goal']);
+
+      // AND THE CHILD WAS PAID ONCE. This is the assertion the count alone
+      // cannot make: EXACTLY ONE XP row, for EXACTLY the catalogue's amount, and
+      // an account balance that agrees with it.
+      await assertPaidExactlyOnce(A, 'default:hydration:goal');
     });
 
     it('ACTIVITY — POST /self/health/activity-logs, once the daily minutes are actually reached', async () => {
@@ -442,10 +612,13 @@ describeIfDb('B4 — the severed reward chains, connected (real PostgreSQL, real
       expect(await chain(A)).toEqual({ ledger: 0, timeline: 0, notification: 0 });
 
       await request(http).post('/life-intelligence/self/health/activity-logs').set(deviceAuth(A)).send({ date: FAKE_DAY, activityType: 'WALKING', durationMinutes: 90 });
-      expect(await chain(A)).toEqual({ ledger: 1, timeline: 1, notification: 1 });
-      // Same as hydration above: the direct path fires
-      // `DAILY_GOAL_COMPLETED {metric: activity}`, not `ACTIVITY_GOAL_COMPLETED`.
-      expect(await badgeKeys(A)).toEqual([]);
+
+      // Same as hydration above, and for the same two reasons: the contract name
+      // `ACTIVITY_GOAL_COMPLETED` is what `first_activity_goal` is seeded
+      // against, and 0030 retired the second XP rule that was paying alongside.
+      expect(await chain(A)).toEqual({ ledger: 2, timeline: 1, notification: 1 });
+      expect(await badgeKeys(A)).toEqual(['first_activity_goal']);
+      await assertPaidExactlyOnce(A, 'default:activity:goal');
     });
 
     it('FAITH — POST /self/faith/:practiceId/log', async () => {

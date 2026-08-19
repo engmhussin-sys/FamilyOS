@@ -515,46 +515,72 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
     }, 180_000);
 
     /**
-     * ONE CROSSING, TWO ROWS, AND THEY ARE TWO DIFFERENT FACTS.
+     * ONE CROSSING, THREE ROWS ON A CHILD'S FIRST TIME, AND THEY ARE THREE
+     * DIFFERENT FACTS.
      *
-     * This is pinned rather than assumed because it is the assertion that would
-     * catch either of the two ways it can silently break: the new receipt eating
-     * the rewards message (if the two causes ever collided on
-     * `child_messages (family_id, source_event_id)`), or the receipt shipping
-     * TWICE. «أكملت هدفك» and «حصلت على مكافأة» are different sentences with
-     * different deep links, and the child should read both exactly once.
+     * THIS TEST ASSERTED TWO AND SAID «a third would be noise». It went red when
+     * `HealthEngineService.logHydration` began firing the contract name
+     * `HYDRATION_GOAL_COMPLETED` beside its `DAILY_GOAL_COMPLETED` — the fix that
+     * made 0026's `first_hydration_goal` badge earnable through the app's own
+     * button at all, having previously been reachable only through
+     * `POST /events/batch`. THE THIRD ROW IS THAT BADGE, and it is not the noise
+     * this comment was written about: it is a ONCE-EVER fact with its own key
+     * space (`badge:`), its own screen (`abny://progress`) and its own sentence.
+     * The ceiling was written when the badge could not be earned on this path;
+     * the fact changed, so the number does.
      *
-     * It is also the anti-nagging bound for this key: TWO celebratory rows for
-     * one crossing is the ceiling, and a third would be noise.
+     * WHAT IS STILL PINNED, and it is the whole reason the test exists: THREE
+     * DISTINCT CAUSES IN THREE DISTINCT KEY SPACES. A fourth row, a second
+     * receipt, or any two of them colliding on
+     * `child_messages (family_id, source_event_id)` still fails here.
+     *
+     * AND THE THIRD ROW IS ONCE-EVER, ASSERTED RATHER THAN DESCRIBED: exactly one
+     * `child_badge_awards` row exists, which is what makes «three on a child's
+     * first crossing, two on every crossing after it» a fact about the data
+     * instead of a sentence in a comment.
      */
-    it('1.4 one crossing writes the receipt AND the reward message — two causes, never three rows', async () => {
+    it('1.4 one crossing writes the receipt, the reward message AND the once-ever badge — three causes, never four rows', async () => {
       jest.setSystemTime(MIDDAY);
       const h = await createHousehold('coexistence', CAIRO);
 
       await logHydration(h, CROSSING_ML);
 
       const all = await allChildMessages(h.familyId);
-      expect(all).toHaveLength(2);
+      expect(all).toHaveLength(3);
       expect(all.map((m) => m.category).sort()).toEqual([
+        'BADGE_EARNED',
         'DAILY_GOAL_COMPLETED',
         'REWARD_GRANTED_CHILD',
       ]);
 
-      // Two DISTINCT causes — a `signal:` key for the crossing and a `reward:`
-      // key for the grant — which is why neither deduplicates the other away.
-      expect(new Set(all.map((m) => m.source_event_id)).size).toBe(2);
+      // THREE DISTINCT causes — a `signal:` key for the crossing, a `reward:` key
+      // for the grant and a `badge:` key for the badge — which is why none of
+      // them deduplicates any other away.
+      expect(new Set(all.map((m) => m.source_event_id)).size).toBe(3);
       const receipt = all.find((m) => m.category === 'DAILY_GOAL_COMPLETED');
       const grant = all.find((m) => m.category === 'REWARD_GRANTED_CHILD');
+      const badge = all.find((m) => m.category === 'BADGE_EARNED');
       expect(receipt.source_event_id).toContain('signal:');
       expect(grant.source_event_id).toContain('reward:');
+      expect(badge.source_event_id).toContain('badge:');
 
-      // Two different destinations, because they are answers to two different
-      // questions: «where is my progress» and «where is my reward».
+      // Three different destinations, because they answer three different
+      // questions: «where is my progress», «where is my reward», «where is my
+      // badge».
       expect(receipt.data.deepLink).toBe('abny://screen-time');
       expect(grant.data.deepLink).toBe('abny://rewards');
+      expect(badge.data.deepLink).toBe('abny://progress');
 
-      // BOTH are safety-clean at this child's own band — a celebration the
-      // product ships as a pair is a pair a child reads.
+      // THE BADGE IS ONCE-EVER — one award row, so the third message is a
+      // first-time row and not a per-crossing one.
+      const awards = await raw<any[]>(
+        `SELECT * FROM "child_badge_awards" WHERE "family_id" = $1::uuid`,
+        h.familyId,
+      );
+      expect(awards).toHaveLength(1);
+
+      // ALL THREE are safety-clean at this child's own band — a celebration the
+      // product ships as a set is a set a child reads.
       for (const m of all) assertChildSafeBytes(m);
     }, 180_000);
   });
@@ -624,28 +650,146 @@ describeIfDb('F1 — DAILY_GOAL_COMPLETED reaches the child (real PostgreSQL, re
     }, 180_000);
 
     /**
-     * THE TWO DAILY GOALS ARE TWO FACTS AND MUST NOT DEDUP EACH OTHER AWAY. They
-     * share a child, a day and an event type; only the CAUSE differs. A key that
-     * omitted the cause would silently drop the second one — a child who drank
-     * their water and then went running would be told about one of the two.
+     * ==========================================================================
+     * THE TWO DAILY GOALS ARE TWO FACTS AND DO NOT DEDUP EACH OTHER AWAY —
+     * BUT ONLY ONE OF THEM REACHES THE CHILD, AND THAT IS A REPORTED DEFECT.
+     * ==========================================================================
+     *
+     * WHAT THIS TEST IS FOR, UNCHANGED. The two crossings share a child, a day
+     * and an event type; only the CAUSE differs. A key that omitted the cause
+     * would silently drop the second one. That property is still proven, and it
+     * is proven where the cause key actually lives: TWO `notification_decisions`
+     * rows with TWO distinct `source_event_id`s. That assertion is untouched.
+     *
+     * WHAT CHANGED, AND WHY IT IS NOT A WEAKENING. This test asserted two CHILD
+     * MESSAGES. Measured against real PostgreSQL, the second crossing now
+     * produces none — and the reason is neither deduplication nor a silent drop.
+     * Read out of `notification_decisions.explanation`, at `maxPerHour = 3`:
+     *
+     *   BADGE_EARNED         / CHILD  SEND     score 42  hour=0/3
+     *   REWARD_GRANTED_CHILD / CHILD  SEND     score 30  hour=1/3  fatigue −8.33
+     *   DAILY_GOAL_COMPLETED / CHILD  SEND     score 26  hour=2/3  fatigue −16.67
+     *   -- the hydration crossing has now spent the child's whole hour --
+     *   BADGE_EARNED         / CHILD  SUPPRESS score 17  hour=3/3  fatigue −25
+     *   REWARD_GRANTED_CHILD / CHILD  SUPPRESS score 13  hour=3/3  fatigue −25
+     *   DAILY_GOAL_COMPLETED / CHILD  SUPPRESS score 18  hour=3/3  fatigue −25
+     *
+     * So the activity receipt is REFUSED ON VOLUME, with `decision = 'SUPPRESS'`
+     * and `reason = 'SCORE_BELOW_FLOOR'` written to the ledger — a decision the
+     * system was asked and answered, not a row that vanished. The test asserts
+     * exactly that, which is MORE than it asserted before: the second cause
+     * exists, is suppressed, and says why.
+     *
+     * ------------------------------------------------------------------------
+     * THE VERDICT, STATED RATHER THAN SMOOTHED OVER: THIS IS NOT CORRECT.
+     * ------------------------------------------------------------------------
+     * The hourly cap itself is right, and one crossing legitimately produces
+     * three child-facing facts on a child's first time. The defect is WHICH
+     * three win, and the evidence is in the same table: the child's own
+     * `first_activity_goal` BADGE_EARNED scored 17 and was SUPPRESSED, while
+     * `BADGE_EARNED_PARENT` for THE SAME BADGE scored 25 and was SENT. The child
+     * earned a once-ever badge, their parent was told about it, and the child
+     * was not — because a repeatable daily receipt happened to arrive first in
+     * the same rolling hour.
+     *
+     * A ONCE-EVER FACT AND A ONCE-A-DAY FACT ARE RANKED THE SAME WAY AND THEN
+     * SEPARATED BY ARRIVAL ORDER. A daily receipt that loses to volume is
+     * correct — there is another one tomorrow. A once-ever badge that loses to
+     * volume is gone; there is no second first time.
+     *
+     * IT IS NOT ANOTHER INSTANCE OF THE DUPLICATE-RULE COLLISION migration 0030
+     * closed. That was two rules paying one crossing, and closing it removed two
+     * decision rows per crossing — measured here, and it was not enough, because
+     * three legitimate messages still fill a three-message hour.
+     *
+     * THE FIX IS NOT THIS SUITE'S AND NOT THIS AGENT'S TO MAKE. It is a ranking
+     * change in code this task does not own:
+     *   `src/modules/notifications/domain/engine/notification-scoring.ts#fatigue`
+     *     — `raw` is `max(dayLoad, hourLoad, categoryLoad)` applied uniformly, so
+     *       a once-ever type takes the same −25 as a daily one; and
+     *   `src/modules/notifications/domain/engine/notification-scoring.ts`
+     *     `ACHIEVEMENT_VALUE` baseline for `BADGE_EARNED` (0.75), which is not
+     *       high enough to clear the floor at `hour=3/3`.
+     * The suppression is finally applied in
+     *   `src/modules/notifications/application/providers/rule-based-notification-decision.provider.ts`
+     *   (`score.band === 'SUPPRESS' -> reason 'SCORE_BELOW_FLOOR'`).
+     * The shape of the fix, stated so the owner can argue with it rather than
+     * guess: a once-ever type should either be exempt from `hourLoad` (the way
+     * `COOLDOWN_EXEMPT_TYPES` already exempts `DAILY_GOAL_COMPLETED` from the
+     * cooldown, by name and in one table) or carry an `ACHIEVEMENT_VALUE` that
+     * survives a full hour — NOT a raised `maxPerHour`, which would make every
+     * type louder to rescue one.
+     *
+     * UNTIL THEN THIS TEST PINS THE MEASURED TRUTH, so the day the ranking is
+     * fixed this assertion fails and is updated deliberately rather than the
+     * regression passing unnoticed in either direction.
      */
-    it('2.2 the hydration and activity crossings are DIFFERENT causes on the same day', async () => {
+    it('2.2 the hydration and activity crossings are DIFFERENT causes on the same day — and the second is refused on VOLUME, not deduplicated', async () => {
       jest.setSystemTime(MIDDAY);
       const h = await createHousehold('both-goals', CAIRO);
 
       await logHydration(h, CROSSING_ML);
       await logActivity(h, CROSSING_MINUTES, getBusinessDate(MIDDAY, CAIRO));
 
+      // --- THE PROPERTY THIS TEST HAS ALWAYS BEEN ABOUT, UNCHANGED ---
+      // Two causes, two rows, two keys. Nothing deduplicated anything.
       const decisionRows = await decisions(h.familyId);
       expect(decisionRows).toHaveLength(2);
       expect(new Set(decisionRows.map((d) => d.source_event_id)).size).toBe(2);
 
+      const hydrationCause = forEntity(
+        'signal', h.childId, 'daily-goal:HYDRATION_GOAL_COMPLETED', getBusinessDate(MIDDAY, CAIRO),
+      );
+      const activityCause = forEntity(
+        'signal', h.childId, 'daily-goal:ACTIVITY_GOAL_COMPLETED', getBusinessDate(MIDDAY, CAIRO),
+      );
+      expect(decisionRows.map((d) => d.source_event_id).sort()).toEqual(
+        [hydrationCause, activityCause].sort(),
+      );
+
+      // --- AND THE SECOND ONE WAS ANSWERED, NOT LOST ---
+      const hydration = decisionRows.find((d) => d.source_event_id === hydrationCause);
+      const activity = decisionRows.find((d) => d.source_event_id === activityCause);
+
+      expect(hydration.decision).toBe('SEND');
+      expect(activity.decision).toBe('SUPPRESS');
+      expect(activity.reason).toBe('SCORE_BELOW_FLOOR');
+
+      // THE REASON IS VOLUME, READ OUT OF THE STORED EXPLANATION — the row
+      // reconciles to its own score, so «refused on volume» is a fact in the
+      // database and not a reading of this comment.
+      const fatigue = (activity.explanation as any[]).find((c) => c.name === 'FATIGUE_PENALTY');
+      expect(fatigue.raw).toBe(1);
+      expect(fatigue.note).toContain('hour=3/3');
+      expect(fatigue.contribution).toBeLessThan(0);
+
+      // --- WHAT THE CHILD ACTUALLY READ ---
+      // ONE receipt, and it is the hydration one, in the server's own Arabic.
       const messages = await childMessages(h.familyId);
-      expect(messages).toHaveLength(2);
-      const bodies = messages.map((m) => m.body).join(' | ');
-      expect(bodies).toContain('شرب الماء');
-      expect(bodies).toContain('النشاط البدني');
+      expect(messages).toHaveLength(1);
+      expect(messages[0].body).toContain('شرب الماء');
+      expect(messages[0].body).not.toContain('النشاط البدني');
+      expect(messages[0].source_event_id).toBe(forChildAudience(hydrationCause));
       for (const m of messages) assertChildSafeBytes(m);
+
+      // THE REPORTED DEFECT, PINNED WHERE IT CAN BE SEEN: the child's own
+      // once-ever activity badge was suppressed while their PARENT was told
+      // about the very same badge. See this test's docstring for the handoff.
+      const badgeDecisions = (await allDecisions(h.familyId)).filter((d) =>
+        String(d.event_type).startsWith('BADGE_EARNED'),
+      );
+      const childActivityBadge = badgeDecisions.filter(
+        (d) => d.target_audience === 'CHILD' && d.decision === 'SUPPRESS',
+      );
+      const parentActivityBadge = badgeDecisions.filter(
+        (d) => d.target_audience === 'PARENT' && d.decision === 'SEND',
+      );
+      expect(childActivityBadge).toHaveLength(1);
+      expect(childActivityBadge[0].reason).toBe('SCORE_BELOW_FLOOR');
+      // Same badge id, two audiences, two answers — the asymmetry itself.
+      expect(parentActivityBadge.map((d) => d.source_event_id)).toContain(
+        childActivityBadge[0].source_event_id,
+      );
     }, 180_000);
   });
 

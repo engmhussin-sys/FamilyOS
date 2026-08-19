@@ -59,6 +59,7 @@ import { PLATFORM_BADGES } from '../../src/shared/rewards/badge-catalogue';
 import {
   PLATFORM_DEFAULT_BADGE_RULES,
   PLATFORM_DEFAULT_REWARD_RULES,
+  RETIRED_PLATFORM_RULES,
   ruleRewardValue,
 } from '../../src/shared/rewards/reward-rule-catalogue';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
@@ -368,10 +369,35 @@ describeIfDb('0026 — the badge catalogue (real PostgreSQL, real Redis, real ap
     });
 
     it('the code catalogue and the seeded platform rules agree row for row', async () => {
-      const rows = await sys('platform rules', () =>
+      const all = await sys('platform rules', () =>
         prisma.rewardRule.findMany({ where: { familyId: null, programId: null } }),
       );
+
+      /**
+       * ACTIVE ROWS ONLY, AND MIGRATION 0030 IS WHY.
+       *
+       * 0030 retired the two `DAILY_GOAL_COMPLETED {metric}` health rules that
+       * were paying a SECOND 15 XP / 20 XP for the same crossing as
+       * `default:hydration:goal` / `default:activity:goal` — measured at
+       * `rewards_accounts.xp = 30` for one glass of water. It DEACTIVATED them
+       * rather than deleting them, because every ledger row they ever paid
+       * records `source = 'reward_rule:<id>'` and no foreign key exists to make
+       * that resolvable for us: deleting the rule would orphan the audit trail
+       * of a real child's real XP.
+       *
+       * So «the rules that can still pay» is what this catalogue describes, and
+       * the retired rows are pinned separately BY ID right below. The count is
+       * not loosened — it is split in two, and both halves are asserted.
+       */
+      const rows = all.filter((r: any) => r.isActive);
       expect(rows).toHaveLength(PLATFORM_DEFAULT_REWARD_RULES.length);
+      expect(all).toHaveLength(PLATFORM_DEFAULT_REWARD_RULES.length + RETIRED_PLATFORM_RULES.length);
+
+      for (const retired of RETIRED_PLATFORM_RULES) {
+        const row = all.find((r: any) => r.id === retired.id);
+        expect(row).toBeDefined();
+        expect(row.isActive).toBe(false);
+      }
 
       for (const expected of PLATFORM_DEFAULT_REWARD_RULES) {
         const row = rows.find(
