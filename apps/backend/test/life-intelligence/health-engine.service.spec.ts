@@ -8,6 +8,8 @@ import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domai
 import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
 import { computeHydrationTargetMl } from '../../src/modules/life-intelligence/application/services/health-rules';
 import { familyDateProvider } from '../common/family-date.testing';
+import { getBusinessDate } from '../../src/common/time/family-date';
+import { composeIdempotencyKey } from '../../src/shared/events/idempotency';
 
 describe('computeHydrationTargetMl (pure rule component)', () => {
   it('returns the correct band for a range of ages, including boundary values', () => {
@@ -207,7 +209,7 @@ describe('HealthEngineService', () => {
 
   // --- Sprint 25: Reward Rules wiring ---
   describe('logHydration — reward trigger wiring (FIXED Sprint 16.3: this section was broken since Sprint 16.1 Phase 4 extended the real behavior to 3 events + a repository call this mock never had — would have thrown a runtime error if ever actually executed)', () => {
-    it('triggers Reward Rules exactly when the target is crossed — real current behavior: hydration_event + DAILY_GOAL_COMPLETED', async () => {
+    it('triggers Reward Rules exactly when the target is crossed — hydration_event + DAILY_GOAL_COMPLETED + the contract name HYDRATION_GOAL_COMPLETED', async () => {
       repositoryMock.createHydrationLog.mockResolvedValue({ id: 'h4', childId, amountMl: 400, loggedAt: new Date() });
       repositoryMock.sumHydrationMlOnDate.mockResolvedValue(2200);
       repositoryMock.getDailyHydrationTotals.mockResolvedValue(new Map());
@@ -221,6 +223,39 @@ describe('HealthEngineService', () => {
       expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
         childId, familyId,
         expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'hydration' }) }),
+      );
+
+      /**
+       * THE CONTRACT NAME, AND THE KEY THAT MAKES THE TWO DOORS ONE.
+       *
+       * `first_hydration_goal` is seeded against `HYDRATION_GOAL_COMPLETED`, a
+       * name this method never fired — so the badge was unreachable through the
+       * Child App's own button while being reachable through `POST
+       * /events/batch`. The trigger below closes that.
+       *
+       * THE KEY IS ASSERTED AGAINST `composeIdempotencyKey`, NOT AGAINST A
+       * LITERAL, and that is the point of this assertion rather than a
+       * decoration: `EventIngestionService` composes the DEVICE door's key with
+       * the same call, so a hand-written key here would award the badge and
+       * still let the same crossing be PAID TWICE across the two doors. The
+       * shared string is what lets `rewards_ledger_entries (child_id,
+       * idempotency_key)` refuse the second grant.
+       */
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({
+          engine: 'health',
+          type: 'HYDRATION_GOAL_COMPLETED',
+          payload: expect.objectContaining({ metric: 'hydration', verifiedBy: 'SELF' }),
+          // `familyDateProvider()` defaults this suite's family to UTC, and the
+          // day is DERIVED with the product's own function rather than written
+          // as a literal — so the assertion follows the calendar rather than
+          // pinning a date that goes stale tomorrow.
+          idempotencyKey: composeIdempotencyKey('HYDRATION_GOAL_COMPLETED', {
+            childId,
+            localDate: getBusinessDate(new Date(), 'UTC'),
+          }),
+        }),
       );
       // SPRINT F1 — AND THE CHILD IS TOLD, on the same crossing, through the
       // engine door and nothing else. The cause is the SERVER-OWNED domain event
@@ -291,6 +326,24 @@ describe('HealthEngineService', () => {
         childId, familyId,
         expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'activity' }) }),
       );
+
+      /** The contract name, for the same reason and with the same shared-key
+       *  discipline as `logHydration`'s — see that assertion's own comment.
+       *  Without it `first_activity_goal` is unreachable through
+       *  `POST /life-intelligence/self/health/activity-logs`. */
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({
+          engine: 'health',
+          type: 'ACTIVITY_GOAL_COMPLETED',
+          payload: expect.objectContaining({ metric: 'activity', verifiedBy: 'SELF' }),
+          idempotencyKey: composeIdempotencyKey('ACTIVITY_GOAL_COMPLETED', {
+            childId,
+            localDate: getBusinessDate(new Date(), 'UTC'),
+          }),
+        }),
+      );
+
       // The OTHER of the two crossings that have ever emitted this name, and it
       // carries the OTHER server-owned cause — so the child reads «هدف الحركة»
       // and not the hydration sentence.

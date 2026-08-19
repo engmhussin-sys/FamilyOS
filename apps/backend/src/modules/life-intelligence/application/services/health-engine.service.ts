@@ -21,6 +21,7 @@ import { SmartNotificationEngineService } from '../../../notification-engine/app
 import type { DailyGoalCause } from '../../../notifications/domain/engine/notification-nouns';
 import { computeHydrationTargetMl } from './health-rules';
 import { computeCurrentStreak } from './streak-calculator';
+import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessDayRange, isBusinessDate } from '../../../../common/time/family-date';
 
@@ -145,6 +146,60 @@ export class HealthEngineService {
           // rule's `minVerifiedBy` and log hydration from the parent app.
           payload: { metric: 'hydration', targetMl: target, totalMl: totalToday, verifiedBy: 'SELF' },
           idempotencyKey: `daily-goal:hydration:${childId}:${todayStr}`,
+        });
+
+        /**
+         * ===================================================================
+         * THE CONTRACT NAME, FIRED BESIDE THE LEGACY ONE — AND THE REASON THE
+         * KEY IS COMPOSED RATHER THAN WRITTEN.
+         * ===================================================================
+         *
+         * THE DEFECT THIS CLOSES, MEASURED BEFORE IT WAS FIXED. Migration 0026
+         * seeds `first_hydration_goal` against `eventType:
+         * 'HYDRATION_GOAL_COMPLETED'`. This method fired only
+         * `DAILY_GOAL_COMPLETED`, a name no badge rule carries, and
+         * `HYDRATION_GOAL_COMPLETED` was produced as a REWARD TRIGGER by exactly
+         * one thing — `RewardsCompletionConsumer`, i.e. only for a completion
+         * that arrived through `POST /events/batch`. So a child crossing their
+         * target with the Child App's own hydration button got the XP and could
+         * NEVER earn the badge, while the same crossing posted as a device event
+         * did. Two doors onto one business event, one of them badge-blind.
+         *
+         * THIS IS `HabitEngineService.completeHabit`'S SHAPE, NOT A NEW ONE. That
+         * method fires the contract name `HABIT_COMPLETED` additively beside its
+         * legacy `habit_completed`, and that is precisely why `first_habit` is
+         * earnable through both doors. Health is now the same. The alternative —
+         * re-seeding the badge against `DAILY_GOAL_COMPLETED` — would have traded
+         * the working door for the broken one, because the device door produces
+         * `HYDRATION_GOAL_COMPLETED` and nothing else.
+         *
+         * THE KEY IS `composeIdempotencyKey`, AND THAT IS THE LOAD-BEARING PART.
+         * A hand-written key here (`hydration-goal:{child}:{date}`) would have
+         * awarded the badge and still been wrong: `EventIngestionService` composes
+         * the device door's key with exactly this call, so a hand-written one
+         * would NOT collide, and a child who both pressed the button and had a
+         * device event for the same crossing would be paid the
+         * `default:hydration:goal` XP TWICE on the same business day. Composing it
+         * makes the two doors produce a BYTE-IDENTICAL key, and
+         * `rewards_ledger_entries (child_id, idempotency_key)` — a DATABASE
+         * UNIQUE CONSTRAINT, not a check-then-insert — is what refuses the second
+         * grant, in whichever order the two doors arrive.
+         *
+         * `todayStr` IS THE FAMILY'S BUSINESS DATE, `Family.timezone` applied to
+         * the server clock by `getBusinessDate` — never UTC and never a string a
+         * device sent. It is the same value the ingestion path derives, which is
+         * the other half of why the two keys agree.
+         */
+        await this.rewardTrigger.trigger(childId, familyId, {
+          engine: 'health',
+          type: 'HYDRATION_GOAL_COMPLETED',
+          // Same honest evidence level as the legacy trigger above: the CROSSING
+          // is server-decided, the millilitres are child-reported.
+          payload: { metric: 'hydration', targetMl: target, totalMl: totalToday, verifiedBy: 'SELF' },
+          idempotencyKey: composeIdempotencyKey('HYDRATION_GOAL_COMPLETED', {
+            childId,
+            localDate: todayStr,
+          }),
         });
 
         // SPRINT F1 — AND THE CHILD IS TOLD. Same crossing, same day, same
@@ -292,6 +347,35 @@ export class HealthEngineService {
           type: 'DAILY_GOAL_COMPLETED',
           payload: { metric: 'activity', targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes, verifiedBy: 'SELF' },
           idempotencyKey: `daily-goal:activity:${childId}:${todayStr}`,
+        });
+
+        /**
+         * THE CONTRACT NAME, for the same reason and with the same key
+         * discipline as `logHydration`'s own `HYDRATION_GOAL_COMPLETED` trigger
+         * — read that comment; it carries the full argument and the measurement.
+         *
+         * In short: `first_activity_goal` is seeded against
+         * `ACTIVITY_GOAL_COMPLETED`, this method fired only
+         * `DAILY_GOAL_COMPLETED`, and so the badge was unreachable through
+         * `POST /life-intelligence/self/health/activity-logs` while being
+         * reachable through `POST /events/batch`. `composeIdempotencyKey` is what
+         * makes the two doors share one key, so the ledger's own unique
+         * constraint — not an `if` — refuses the second grant.
+         *
+         * `todayStr`, not `logDate`, and they are provably equal here: this whole
+         * block is behind `logDate === todayStr` (see PC-B-004 above), so a
+         * back-dated parent log never reaches it. Using the same variable the
+         * legacy trigger and `announceDailyGoal` already use keeps one day per
+         * crossing rather than two derivations that could drift.
+         */
+        await this.rewardTrigger.trigger(childId, familyId, {
+          engine: 'health',
+          type: 'ACTIVITY_GOAL_COMPLETED',
+          payload: { metric: 'activity', targetMinutes: activityTargetMinutes, totalMinutes: todayMinutes, verifiedBy: 'SELF' },
+          idempotencyKey: composeIdempotencyKey('ACTIVITY_GOAL_COMPLETED', {
+            childId,
+            localDate: todayStr,
+          }),
         });
 
         // SPRINT F1 — AND THE CHILD IS TOLD. See `announceDailyGoal`.

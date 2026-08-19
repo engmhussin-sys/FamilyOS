@@ -2,10 +2,8 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
 import { ConsumerIdempotency } from '../../../events/application/consumers/consumer-idempotency.service';
-import { OutboxWriter } from '../../../events/application/outbox.writer';
 import { EVENT_SUBSCRIBER, type IEventSubscriber } from '../../../events/domain/event-bus.port';
 import type { DomainEventEnvelope } from '../../../../shared/events/event-envelope';
-import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
 import {
   BASE_MULTIPLIER_BPS,
   achievementGrantKeyPrefix,
@@ -40,7 +38,13 @@ export class RewardSideEffectConsumer implements OnModuleInit {
     @Inject(EVENT_SUBSCRIBER) private readonly bus: IEventSubscriber,
     private readonly repo: PrismaRewardProgramRepository,
     private readonly payout: RewardPayoutService,
-    private readonly outbox: OutboxWriter,
+    /**
+     * NO `OutboxWriter`, DELIBERATELY. This consumer used to hold one for the
+     * single purpose of emitting `BADGE_EARNED` — an event with no reader; see
+     * the block in `handle` below. The dependency is removed with the emission
+     * rather than left injected and unused, so nothing here can quietly grow a
+     * second producer of an event this module does not own.
+     */
     private readonly idempotency: ConsumerIdempotency,
   ) {}
 
@@ -104,23 +108,56 @@ export class RewardSideEffectConsumer implements OnModuleInit {
           );
         }
 
-        // BADGE_EARNED is emitted ONLY here, i.e. only after a ledger row of
-        // type BADGE really exists — which itself only happens after a real
-        // `ChildBadgeAward` insert succeeded inside the untouched engine.
-        if (String(entry.rewardType) === 'BADGE') {
-          await this.outbox.write({
-            type: 'BADGE_EARNED',
-            aggregateType: 'ChildBadgeAward',
-            aggregateId: entry.id,
-            childId,
-            deviceId: null,
-            idempotencyKey: composeIdempotencyKey('BADGE_EARNED', { childId, sourceId: entry.id }),
-            clientEventId: null,
-            occurredAt: new Date(),
-            traceId: envelope.traceId,
-            payload: { childId, ledgerEntryId: entry.id, achievementId },
-          });
-        }
+        /**
+         * =================================================================
+         * THE `BADGE_EARNED` EMISSION THAT USED TO BE HERE IS GONE, AND THIS
+         * COMMENT IS WHY IT MUST NOT COME BACK.
+         * =================================================================
+         *
+         * WHAT WAS HERE. `if (String(entry.rewardType) === 'BADGE')` wrote a
+         * `BADGE_EARNED` outbox message for every BADGE ledger row under a
+         * verified achievement's key prefix. It was the ONLY producer of
+         * `BADGE_EARNED` in the backend.
+         *
+         * IT HAD NO READER. `IEventSubscriber` is a typed, per-type registry
+         * with NO WILDCARD (by design — see `event-bus.port.ts`), and nothing
+         * anywhere called `register('BADGE_EARNED', …)`. The relay published
+         * the message to zero handlers and marked it PUBLISHED. An event
+         * nobody reads is indistinguishable from a working feature, which is
+         * exactly how this survived review.
+         *
+         * IT WAS ALSO UNREACHABLE. Getting here needs a BADGE ledger row under
+         * an ACHIEVEMENT's key prefix, which needs a `RewardRule` with
+         * `eventType: 'ACHIEVEMENT_VERIFIED'` and `reward_type = 'BADGE'`. The
+         * only BADGE rules that exist are the nine migration 0026 seeded from
+         * `PLATFORM_BADGES`, not one of which names `ACHIEVEMENT_VERIFIED`;
+         * and a program's own companion rules cannot pay BADGE at all
+         * (`PROGRAM_REWARD_TYPES` has no such member and `CreateRewardRuleDto`
+         * is `@IsIn(['XP','COINS'])`).
+         *
+         * ---------------------------------------------------------------
+         * WHO OWNS THE BADGE ANNOUNCEMENT — `RewardsEngineService
+         * .processTriggerEvent`, in its `if (granted)` branch, with TWO
+         * `notifyGrant` calls: `BADGE_EARNED` for the child and
+         * `BADGE_EARNED_PARENT` for the parent, issued SYNCHRONOUSLY on the
+         * request that earned the badge, immediately after
+         * `awardBadgeIfNotAlready` and `applyEarn` have BOTH succeeded.
+         * ---------------------------------------------------------------
+         *
+         * SO A READER WOULD HAVE BEEN A SECOND ANNOUNCEMENT, NOT A MISSING
+         * ONE. Both audiences already hold their row before this consumer ever
+         * runs — proved on persisted rows by
+         * `test/rewards/badge-chain.e2e.spec.ts` §4/§5 and by
+         * `test/life-intelligence/health-goal-badge-doors.e2e.spec.ts` §1.
+         * Giving this event a consumer would have produced TWO notifications
+         * for ONE badge, so the honest resolution was to delete the producer
+         * rather than to feed it.
+         *
+         * DO NOT RE-ADD IT.
+         * `test/life-intelligence/badge-earned-dormant.guard.spec.ts` goes red
+         * if this producer returns, if a reader appears, or if the real
+         * announcement named above is ever removed.
+         */
       }
 
       // Audit convenience only. The ledger remains the source of truth; this

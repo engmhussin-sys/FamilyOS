@@ -297,10 +297,42 @@ export const DOMAIN_EVENT_CATALOGUE: Readonly<Record<DomainEventType, DomainEven
     carriesCompletionEvent: false,
     deviceIngestible: false,
   },
+  /**
+   * DECLARED DORMANT, ON PURPOSE — NO PRODUCER AND NO READER.
+   *
+   * This entry used to name `RewardSideEffectConsumer` as its producer. THAT
+   * PRODUCER HAS BEEN REMOVED, because it had no reader: the bus is a typed
+   * per-type registry with no wildcard (`event-bus.port.ts`), nothing ever
+   * called `register('BADGE_EARNED', …)`, and the relay published every one of
+   * those messages to zero handlers. It was also unreachable — the branch
+   * needed a BADGE ledger row under an `ACHIEVEMENT_VERIFIED` rule, and no
+   * seeded badge rule has one.
+   *
+   * GIVING IT A READER WOULD HAVE BEEN THE WRONG FIX. The badge announcement
+   * ALREADY reaches both audiences on the working path:
+   * `RewardsEngineService.processTriggerEvent` makes two `notifyGrant` calls
+   * (`BADGE_EARNED` for the child, `BADGE_EARNED_PARENT` for the parent) in one
+   * `if (granted)` branch, synchronously, on the request that earned the badge.
+   * A consumer here would have announced a SECOND time — two notifications for
+   * one badge.
+   *
+   * THE NAME IS KEPT rather than deleted from `DOMAIN_EVENT_TYPES`, because the
+   * string is load-bearing in a DIFFERENT namespace: `BADGE_EARNED` is the
+   * CHILD'S NOTIFICATION COPY KEY (`notification-copy.ts`,
+   * `notification-scoring.ts`, `notification-class.ts`,
+   * `notification-destination.ts`), and `notifyGrant` takes a plain `string`,
+   * not a `DomainEventType`. Deleting the member would not remove that key and
+   * would only make this catalogue — the one place a reader looks to learn what
+   * a name means — silent about a name they will still meet in four other files.
+   *
+   * IT CANNOT ROT: `test/life-intelligence/badge-earned-dormant.guard.spec.ts`
+   * goes red if a producer or a reader appears, or if the real announcement
+   * named above is ever removed.
+   */
   BADGE_EARNED: {
     type: 'BADGE_EARNED',
-    producer: 'RewardsCompletionConsumer path (derived — only after a real ChildBadgeAward row)',
-    consumers: ['(none registered — the existing RewardsEngineService already notifies for badges)'],
+    producer: '(none — removed; RewardsEngineService.processTriggerEvent owns the badge announcement)',
+    consumers: ['(none registered — a reader here would be a SECOND notification, not a missing one)'],
     idempotencyKeyTemplate: 'child:{childId}:badge:{badgeId}',
     carriesCompletionEvent: false,
     deviceIngestible: false,
