@@ -122,10 +122,10 @@ export class PrismaCommunicationRepository {
   async findRecentNotificationsForChild(
     childId: string,
     since: Date,
-  ): Promise<Array<{ type: string; createdAt: Date }>> {
+  ): Promise<Array<{ type: string; createdAt: Date; sourceEventId: string | null }>> {
     const rows = await this.prisma.childMessage.findMany({
       where: { childId, createdAt: { gte: since }, sourceEventId: { not: null } },
-      select: { category: true, createdAt: true },
+      select: { category: true, createdAt: true, sourceEventId: true },
       orderBy: { createdAt: 'desc' },
     });
     // `category` HOLDS THE NOTIFICATION TYPE on this path —
@@ -134,7 +134,17 @@ export class PrismaCommunicationRepository {
     // vocabulary `IRecentNotification.type` carries on the parent branch, and
     // the guard's per-type cooldown and category cap read the same strings for
     // both audiences.
-    return rows.map((row) => ({ type: row.category, createdAt: row.createdAt }));
+    return rows.map((row) => ({
+      type: row.category,
+      createdAt: row.createdAt,
+      // THE KEY AS PERSISTED, `:child`-faceted, and deliberately NOT un-faceted
+      // here: the fatigue guard composes the candidate's key forwards with the
+      // same `forAudience` the writer used, so the two strings are comparable
+      // by construction. An inverse would have to guess what a 200-character
+      // clamp did to the suffix. Same technique, same sentence, as
+      // `NotificationContextAssembler.readChildInbox`.
+      sourceEventId: row.sourceEventId,
+    }));
   }
 
   /** Only DELIVERED messages are visible to the child — a PENDING

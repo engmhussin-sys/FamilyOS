@@ -65,6 +65,96 @@ describe('evaluateFatigue (Sprint 16 — CLOSES A REAL GAP: zero fatigue protect
       const result = evaluateFatigue(noCooldownCandidate, history, now, '12:00', utcDayStart(now));
       expect(result.allowed).toBe(true);
     });
+
+    /**
+     * «SAME CAUSE», NOT «SAME TYPE».
+     *
+     * The rule's own two examples — «a retried request, a race between two
+     * triggers» — are both the SAME CAUSE arriving twice. Type equality was a
+     * proxy for that and it is wrong in the direction that costs a child a
+     * fact: `DAILY_GOAL_COMPLETED` carries the hydration crossing AND the
+     * activity crossing, `REWARD_GRANTED_CHILD` carries three causes, and
+     * inside five minutes the second of any of them was silently dropped.
+     * `DUPLICATE_PENALTY` one layer up was fixed for exactly this in `ee02f16`.
+     */
+    describe('«same cause», not «same type»', () => {
+      const cause = 'evt:reward-1';
+      const childCandidate = {
+        type: 'DAILY_GOAL_COMPLETED',
+        priority: 'NORMAL' as const,
+        title: 't',
+        body: 'b',
+        targetAudience: 'CHILD' as const,
+        sourceEventId: cause,
+      };
+
+      it('the SAME cause inside the window is still a duplicate', () => {
+        const history: IRecentNotification[] = [
+          {
+            type: 'DAILY_GOAL_COMPLETED',
+            priority: 'NORMAL',
+            createdAt: new Date('2026-08-10T11:58:00.000Z'),
+            // AS PERSISTED — `deliverNow` appended the `:child` facet, and the
+            // guard composes the candidate's key forwards with the same
+            // function rather than trying to invert this one.
+            sourceEventId: `${cause}:child`,
+          },
+        ];
+        expect(evaluateFatigue(childCandidate, history, now, '12:00', utcDayStart(now))).toEqual({
+          allowed: false,
+          blockedReason: 'DUPLICATE',
+        });
+      });
+
+      it('a DIFFERENT cause of the same type inside the window is NOT a duplicate', () => {
+        const history: IRecentNotification[] = [
+          {
+            type: 'DAILY_GOAL_COMPLETED',
+            priority: 'NORMAL',
+            createdAt: new Date('2026-08-10T11:58:00.000Z'),
+            sourceEventId: 'evt:a-different-goal:child',
+          },
+        ];
+        // The hydration crossing and the activity crossing are two facts about
+        // two different goals. Under the old rule the child heard about one.
+        expect(evaluateFatigue(childCandidate, history, now, '12:00', utcDayStart(now)).allowed).toBe(true);
+      });
+
+      it('and with no key on either side the OLD type comparison is unchanged', () => {
+        const noKey = { ...childCandidate, sourceEventId: undefined };
+        const history: IRecentNotification[] = [
+          { type: 'DAILY_GOAL_COMPLETED', priority: 'NORMAL', createdAt: new Date('2026-08-10T11:58:00.000Z') },
+        ];
+        expect(evaluateFatigue(noKey, history, now, '12:00', utcDayStart(now))).toEqual({
+          allowed: false,
+          blockedReason: 'DUPLICATE',
+        });
+      });
+    });
+
+    /**
+     * HISTORY IS WHAT ALREADY HAPPENED.
+     *
+     * Every window in this function was open-ended in the future, and
+     * `now - createdAt` for a row from the future is NEGATIVE — smaller than
+     * any window, so such a row read as «two seconds ago» to the duplicate
+     * rule and as «today» to both caps. `now` is a parameter precisely so a
+     * decision is reproducible from the rows it was computed for; a window with
+     * no upper bound is not a function of `now`.
+     *
+     * MEASURED: `quiet-hours-deferral.e2e.spec.ts` §9 redelivers SIX MINUTES
+     * after the first delivery, deliberately outside the five-minute window,
+     * and got `DUPLICATE` — because the persisted row carried the database's
+     * `now()` while the decision carried a frozen January instant.
+     */
+    it('a row stamped AFTER `now` is not history, and no window swallows it', () => {
+      const future: IRecentNotification[] = [
+        { type: 'HYDRATION_REMINDER', priority: 'NORMAL', createdAt: new Date('2026-09-01T12:00:00.000Z') },
+      ];
+      // Not a duplicate, not today, not in the last hour, and not inside the
+      // 120-minute HYDRATION_REMINDER cooldown.
+      expect(evaluateFatigue(candidate, future, now, '12:00', utcDayStart(now)).allowed).toBe(true);
+    });
   });
 
   describe('quiet hours (21:00-07:00, wraps past midnight)', () => {

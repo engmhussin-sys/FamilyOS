@@ -4,6 +4,7 @@ import { SmartNotificationIntegrationService } from '../../src/modules/life-inte
 import { NOTIFICATION_REPOSITORY } from '../../src/modules/notifications/application/ports/notification.repository.port';
 import { NOTIFICATION_DELIVERY_REPOSITORY } from '../../src/modules/notifications/application/ports/notification-delivery.repository.port';
 import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
+import { NOTIFICATION_POLICY_REPOSITORY } from '../../src/modules/notifications/application/ports/notification-decision.repository.port';
 import { FamilyCommunicationService } from '../../src/modules/life-intelligence/application/services/family-communication.service';
 import { PrismaCommunicationRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-communication.repository';
 import type { ISmartNotificationSignals } from '../../src/modules/life-intelligence/application/services/smart-notification-decision-engine';
@@ -34,6 +35,14 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
   // service returned and nothing more; it now writes a row, so the service has
   // a dependency it did not have and this mock is where a test observes it.
   const deferralRepoMock = { enqueue: jest.fn() };
+  /**
+   * `notification_policy_settings` for this household. EMPTY by default, which
+   * is the state nearly every real household is in and the one in which
+   * `ceilingsFor` must return Sprint 16's numbers untouched — so every
+   * expectation in this file that predates the per-family ceilings still
+   * measures exactly what it measured before them.
+   */
+  const policyRepoMock = { readSettings: jest.fn(), upsertSetting: jest.fn() };
 
   let service: SmartNotificationIntegrationService;
 
@@ -53,6 +62,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
     jest.clearAllMocks();
     notificationRepoMock.findRecentForChild.mockResolvedValue([]);
     childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+    policyRepoMock.readSettings.mockResolvedValue({});
     // B9 — `true`/a message means «a row was written». `false`/`null` now
     // means «the constraint or the window said this already exists», which the
     // service reports as SUPPRESS/ALREADY_NOTIFIED.
@@ -68,6 +78,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         { provide: NOTIFICATION_REPOSITORY, useValue: notificationRepoMock },
         { provide: NOTIFICATION_DELIVERY_REPOSITORY, useValue: deferralRepoMock },
         { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertRepoMock },
+        { provide: NOTIFICATION_POLICY_REPOSITORY, useValue: policyRepoMock },
         { provide: FamilyCommunicationService, useValue: familyCommunicationMock },
         { provide: PrismaCommunicationRepository, useValue: childMessagesRepoMock },
         // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
@@ -205,6 +216,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       notificationRepoMock.findRecentForChild.mockResolvedValue(sixToday);
       // The child has been told nothing today.
       childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+    policyRepoMock.readSettings.mockResolvedValue({});
 
       const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
 
@@ -243,6 +255,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
       notificationRepoMock.findRecentForChild.mockResolvedValue(sixToday);
       childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+    policyRepoMock.readSettings.mockResolvedValue({});
 
       const outcome = await service.notifyEvent(childId, familyId, {
         type: 'BADGE_EARNED',
@@ -264,6 +277,64 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     });
 
+    it('A HOUSEHOLD THAT CONFIGURED A HIGHER CEILING IS NOT OVERRIDDEN BY A CONSTANT', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+      // Six of the CHILD's own today — over Sprint 16's `dailyMax` of 6 — and a
+      // household that has explicitly asked to hear more.
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue(
+        sixToday.map((n) => ({ type: n.type, createdAt: n.createdAt })),
+      );
+      policyRepoMock.readSettings.mockResolvedValue({
+        'notification.cap.maxPerDay': '10',
+        'notification.cap.categoryMaxPerDay': '10',
+      });
+
+      const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
+
+      // This gate called `evaluateFatigue` with NO policy, so it always used
+      // `DEFAULT_FATIGUE_POLICY`. That was invisible while the child's history
+      // was the parent's empty stream; with the history correct, a hard-coded 6
+      // would silently override the 10 this household stored — the same defect
+      // `7abe440` fixed at the engine's gate, over a different set of rows.
+      expect(result).toEqual([
+        { type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'SEND' },
+      ]);
+      expect(policyRepoMock.readSettings).toHaveBeenCalledWith(familyId);
+    });
+
+    it('AND A HOUSEHOLD THAT CONFIGURED NOTHING KEEPS SPRINT 16\'S NUMBERS EXACTLY', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue(
+        sixToday.map((n) => ({ type: n.type, createdAt: n.createdAt })),
+      );
+      // No rows at all — which is nearly every household.
+      policyRepoMock.readSettings.mockResolvedValue({});
+
+      const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
+
+      expect(result).toEqual([
+        {
+          type: 'HYDRATION_REMINDER',
+          targetAudience: 'CHILD',
+          decision: 'SUPPRESS',
+          reason: 'DAILY_MAX',
+        },
+      ]);
+    });
+
+    it('AND AN UNREADABLE SETTINGS TABLE DEGRADES TO THE DEFAULTS, NEVER TO AN ERROR', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+      policyRepoMock.readSettings.mockRejectedValue(new Error('settings table unavailable'));
+
+      // A notification problem must never fail the thing that triggered it, and
+      // a settings read is a notification problem.
+      const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
+      expect(result).toEqual([
+        { type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'SEND' },
+      ]);
+    });
+
     it('EACH AUDIENCE IS ASKED FOR ITS OWN TABLE, AND ONLY ITS OWN', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
 
@@ -277,6 +348,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       jest.clearAllMocks();
       notificationRepoMock.findRecentForChild.mockResolvedValue([]);
       childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+    policyRepoMock.readSettings.mockResolvedValue({});
       familyCommunicationMock.draftAiMessageIfAbsent.mockResolvedValue({ id: 'msg-1' });
       runtimeAlertRepoMock.createForFamilyOwner.mockResolvedValue(true);
 

@@ -22,11 +22,29 @@
  * shortcut quietly overriding it in another.
  */
 import { quietHoursClassOf } from '../../../../shared/notifications/notification-class';
+import { forAudience } from '../../../../shared/notifications/notification-source-key';
 
 export interface IRecentNotification {
   type: string;
   priority: 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
   createdAt: Date;
+  /**
+   * THE CAUSAL KEY the row was written under, AS PERSISTED — i.e. already
+   * carrying its audience facet, because that is the string the table holds.
+   *
+   * It exists so the DUPLICATE rule below can ask «is this the same CAUSE?»
+   * rather than «is this the same TYPE?» — two questions that give different
+   * answers whenever one type carries more than one cause, which
+   * `DAILY_GOAL_COMPLETED` (hydration / activity) and `REWARD_GRANTED_CHILD`
+   * (three causes) both do. `INotificationRepository.findRecentForChild` states
+   * the same reason on the same field, and `DUPLICATE_PENALTY` one layer up was
+   * fixed for exactly this in `ee02f16`.
+   *
+   * OPTIONAL, so no existing caller or test double has to invent a key to keep
+   * compiling: an absent one reads as «identity unknown» and the rule falls
+   * back to the type comparison it used before this field.
+   */
+  sourceEventId?: string | null;
 }
 
 export interface ICandidateNotification {
@@ -43,6 +61,19 @@ export interface ICandidateNotification {
    * FamilyCommunicationService.draftAiMessage, which enforces the
    * real approval gate). */
   targetAudience: 'PARENT' | 'CHILD';
+  /**
+   * THE CANDIDATE'S OWN CAUSAL KEY, UNFACETED — the form a producer composes.
+   * The rule below applies `forAudience` to it before comparing, so it is
+   * compared against the history's PERSISTED key by construction rather than by
+   * a caller remembering to facet it.
+   *
+   * Optional for the same reason as `IRecentNotification.sourceEventId`:
+   * `ICandidateNotification` is the input to a PURE function whose unit tests
+   * construct it directly, and a caller with no key still gets the pre-existing
+   * type comparison. `IDeliverableNotification` — the shape that actually
+   * reaches a table — declares it REQUIRED.
+   */
+  sourceEventId?: string;
 }
 
 export interface IFatiguePolicy {
@@ -179,7 +210,35 @@ export function evaluateFatigue(
     return { allowed: false, blockedReason: 'QUIET_HOURS' };
   }
 
-  const todayHistory = recentHistory.filter((n) => n.createdAt >= businessDayStart);
+  /**
+   * HISTORY IS WHAT ALREADY HAPPENED — bounded ABOVE by `now`, and this line is
+   * a fix rather than a tidy-up.
+   *
+   * Every window below was open-ended in the future: `createdAt >=
+   * businessDayStart`, `createdAt >= hourAgo`, `now - createdAt <
+   * DUPLICATE_WINDOW_MS` (a NEGATIVE difference is smaller than any window, so
+   * a row from the future is always «two seconds ago»). `now` is a parameter of
+   * this function precisely so a decision is reproducible from the rows it was
+   * computed for — and a window with no upper bound is not a function of `now`
+   * at all: re-score the same decision later and it answers differently.
+   *
+   * It is not hypothetical and it is not only a test artifact. Any caller
+   * evaluating an instant that is not the wall clock — a replayed decision, a
+   * back-dated import, a released deferral evaluated at its scheduled instant,
+   * a replica whose clock is ahead of the database's — hands this function rows
+   * stamped AFTER `now`. Measured: `quiet-hours-deferral.e2e.spec.ts` §9 asks
+   * for a redelivery SIX MINUTES after the first, deliberately outside the
+   * five-minute duplicate window, and got `DUPLICATE` — because the persisted
+   * row carried the database's own `now()` while the decision carried a frozen
+   * January instant, so the difference was negative and every window swallowed
+   * it.
+   *
+   * ONE FILTER, AT THE TOP, rather than a bound repeated in four places: every
+   * rule below is then a statement about the past by construction.
+   */
+  const history = recentHistory.filter((n) => n.createdAt.getTime() <= now.getTime());
+
+  const todayHistory = history.filter((n) => n.createdAt >= businessDayStart);
 
   // Duplicate prevention: the exact same type sent within the last 5
   // minutes is treated as a duplicate (e.g. a retried request, a race
@@ -193,9 +252,47 @@ export function evaluateFatigue(
   // `NOTIFICATION_DEDUPE_WINDOW_MS`'s bucket width so the product behaviour and
   // the database backstop keep agreeing.
   const DUPLICATE_WINDOW_MS = policy.duplicateWindowMs ?? 5 * 60 * 1000;
-  const isDuplicate = recentHistory.some(
-    (n) => n.type === candidate.type && now.getTime() - n.createdAt.getTime() < DUPLICATE_WINDOW_MS,
-  );
+
+  /**
+   * «SAME CAUSE», NOT «SAME TYPE», WHENEVER BOTH SIDES CAN NAME ONE.
+   *
+   * THE DEFECT THIS CLOSES. The rule read `n.type === candidate.type`, and its
+   * own docstring above names its two examples — «a retried request, a race
+   * between two triggers» — both of which are the SAME CAUSE arriving twice.
+   * Type equality is a proxy for that, and it is wrong in one direction that
+   * matters: a type that carries more than one cause has its SECOND, GENUINELY
+   * DIFFERENT fact silently dropped inside five minutes. Measured, three ways:
+   * `DAILY_GOAL_COMPLETED` for the hydration crossing and then the activity
+   * crossing on the same day; `REWARD_GRANTED_CHILD`, which has three causes;
+   * two decisions for one household in one test minute. Each lost the second.
+   *
+   * `DUPLICATE_PENALTY` one layer up was fixed for exactly this in `ee02f16`,
+   * and `INotificationRepository.findRecentForChild` already carried the column
+   * to ask with. This is the same question, asked by the guard.
+   *
+   * `forAudience` IS WHAT MAKES THE TWO STRINGS COMPARABLE. The history row
+   * holds the key AS PERSISTED — `deliverNow` appends the `:child` facet before
+   * writing — and the candidate holds the producer's bare key. Composing the
+   * candidate's with the same, idempotent function `deliverNow` used is the
+   * same technique `NotificationContextAssembler` states for its own history:
+   * compose forwards, never try to invert a clamped suffix.
+   *
+   * THE FALLBACK IS THE OLD RULE, UNCHANGED, and it is reached whenever either
+   * side has no key — a pure-function caller, a pre-B9 producer, a test double.
+   * Nothing that worked before this field existed behaves differently.
+   */
+  const candidateCause =
+    candidate.sourceEventId !== undefined
+      ? forAudience(candidate.sourceEventId, candidate.targetAudience)
+      : null;
+
+  const isDuplicate = history.some((n) => {
+    if (now.getTime() - n.createdAt.getTime() >= DUPLICATE_WINDOW_MS) return false;
+    if (candidateCause !== null && n.sourceEventId != null) {
+      return n.sourceEventId === candidateCause;
+    }
+    return n.type === candidate.type;
+  });
   if (isDuplicate) {
     return { allowed: false, blockedReason: 'DUPLICATE' };
   }
@@ -215,7 +312,7 @@ export function evaluateFatigue(
   // legally through the rule meant to stop it.
   if (policy.hourlyMax !== undefined) {
     const hourAgo = now.getTime() - 60 * 60 * 1000;
-    const lastHourCount = recentHistory.filter((n) => n.createdAt.getTime() >= hourAgo).length;
+    const lastHourCount = history.filter((n) => n.createdAt.getTime() >= hourAgo).length;
     if (lastHourCount >= policy.hourlyMax) {
       return { allowed: false, blockedReason: 'HOURLY_MAX' };
     }
@@ -234,7 +331,7 @@ export function evaluateFatigue(
   // `undefined` when nobody configured it, so pre-F6 behaviour is unchanged.
   const cooldownMinutes = policy.cooldownMinutesByType[candidate.type] ?? policy.defaultCooldownMinutes;
   if (cooldownMinutes !== undefined) {
-    const lastOfType = recentHistory
+    const lastOfType = history
       .filter((n) => n.type === candidate.type)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
     if (lastOfType) {

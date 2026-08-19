@@ -278,6 +278,11 @@ export class QuietHoursReleaseService {
           title: row.title,
           body: row.body,
           targetAudience: row.targetAudience,
+          // ALREADY FACETED — `handleQuietHours` enqueued it through
+          // `forAudience`, and that function is idempotent, so the guard's own
+          // `forAudience` leaves it exactly as it is. The DUPLICATE rule can
+          // therefore ask «same CAUSE» about a released row too.
+          sourceEventId: row.sourceEventId,
         },
         history,
         now,
@@ -386,6 +391,7 @@ export class QuietHoursReleaseService {
             type: row.type,
             priority: row.priority,
             createdAt: new Date(now),
+            sourceEventId: row.sourceEventId,
           });
         }
       } catch (err) {
@@ -485,10 +491,23 @@ export class QuietHoursReleaseService {
     // stay identical to.
     if (audience === 'CHILD') {
       const rows = await this.childMessages.findRecentNotificationsForChild(childId, since);
-      return rows.map((m) => ({ type: m.type, priority: 'NORMAL' as const, createdAt: m.createdAt }));
+      return rows
+        .filter((m) => m.createdAt.getTime() <= now.getTime())
+        .map((m) => ({
+          type: m.type,
+          priority: 'NORMAL' as const,
+          createdAt: m.createdAt,
+          sourceEventId: m.sourceEventId,
+        }));
     }
 
-    const raw = await this.notifications.findRecentForChild(childId, since);
+    const raw = (await this.notifications.findRecentForChild(childId, since)).filter(
+      // HISTORY IS WHAT ALREADY HAPPENED. `now` here is the RELEASE instant the
+      // sweep was given, which is not the wall clock for a replayed or
+      // back-dated pass; a row stamped after it is not history and every window
+      // in `evaluateFatigue` would otherwise read it as «seconds ago».
+      (n) => n.createdAt.getTime() <= now.getTime(),
+    );
     return raw.map((n) => ({
       type: n.type,
       priority: (KNOWN_PRIORITIES.has(n.priority) ? n.priority : 'NORMAL') as

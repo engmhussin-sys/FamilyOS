@@ -6,6 +6,10 @@ import {
   NOTIFICATION_DELIVERY_REPOSITORY,
   type INotificationDeliveryRepository,
 } from '../../../notifications/application/ports/notification-delivery.repository.port';
+import {
+  NOTIFICATION_POLICY_REPOSITORY,
+  type INotificationPolicyRepository,
+} from '../../../notifications/application/ports/notification-decision.repository.port';
 import { childSafeNotificationPayload } from '../../../notifications/domain/engine/notification-destination';
 import { PrismaCommunicationRepository } from '../../infrastructure/repositories/prisma-communication.repository';
 import { FamilyCommunicationService } from './family-communication.service';
@@ -14,8 +18,10 @@ import {
   DEFAULT_FATIGUE_POLICY,
   evaluateFatigue,
   type ICandidateNotification,
+  type IFatiguePolicy,
   type IRecentNotification,
 } from './notification-fatigue-guard';
+import { resolveNotificationPolicy } from '../../../notifications/domain/engine/notification-policy';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import {
   getBusinessDate,
@@ -137,6 +143,8 @@ export class SmartNotificationIntegrationService {
     @Inject(NOTIFICATION_DELIVERY_REPOSITORY)
     private readonly deferralRepository: INotificationDeliveryRepository,
     @Inject(RUNTIME_ALERT_REPOSITORY) private readonly runtimeAlertRepository: IRuntimeAlertRepository,
+    @Inject(NOTIFICATION_POLICY_REPOSITORY)
+    private readonly policySettings: INotificationPolicyRepository,
     private readonly familyCommunication: FamilyCommunicationService,
     /** THE CHILD'S OWN INBOX, for the CHILD branch of `fetchHistory` and for
      * nothing else. This service still writes child messages through
@@ -204,7 +212,18 @@ export class SmartNotificationIntegrationService {
       // message sent in this batch counts against the child's next candidate
       // and not against the parent's, which is the whole point of the fix.
       if (outcome.decision === 'SEND') {
-        history.unshift({ type: candidate.type, priority: candidate.priority, createdAt: new Date() });
+        history.unshift({
+          type: candidate.type,
+          priority: candidate.priority,
+          // `now`, not `new Date()`: the row this stands in for was written at
+          // the instant being evaluated, and a stamp from the wall clock is a
+          // stamp from a different day for every caller that is not live.
+          createdAt: now,
+          // THE KEY AS IT WILL BE PERSISTED, so the next candidate in this same
+          // batch compares causes rather than types — the same question the
+          // rows themselves answer.
+          sourceEventId: forAudience(deliverable.sourceEventId, candidate.targetAudience),
+        });
       }
     }
 
@@ -241,6 +260,70 @@ export class SmartNotificationIntegrationService {
     // `fetchHistory`.
     const history = await this.fetchHistory(childId, now, candidate.targetAudience);
     return this.evaluateAndDeliver(childId, familyId, candidate, history, now);
+  }
+
+  /**
+   * THE HOUSEHOLD'S OWN CEILINGS, AND NOTHING ELSE OF ITS POLICY.
+   *
+   * WHY THIS EXISTS AT ALL. This gate called `evaluateFatigue` with no policy
+   * argument, so it always used `DEFAULT_FATIGUE_POLICY` — `dailyMax = 6`,
+   * `categoryDailyMax = 2`, no hourly ceiling. That was invisible while the
+   * CHILD's history was the parent's inbox, because the array it counted was
+   * empty for every child-audience candidate and no cap could bite. Making the
+   * history audience-correct turns those two constants into REAL ceilings, and
+   * a hard-coded 2 that overrides a household which explicitly configured 10 is
+   * the same defect `7abe440` fixed at the engine's gate, pointed at a
+   * different set of rows: a per-family setting that is validated, persisted,
+   * and inert.
+   *
+   * ONLY WHAT THE HOUSEHOLD ACTUALLY SET, and that is the whole design of this
+   * method. A key that is absent from `notification_policy_settings` leaves the
+   * Sprint 16 default exactly where it was, so a household that has configured
+   * nothing — which is nearly all of them — sees no change whatsoever. An
+   * hourly ceiling in particular is NOT introduced by default: `hourlyMax`
+   * stays `undefined` («this rule did not exist for you») unless a household
+   * asked for one.
+   *
+   * AND DELIBERATELY NOT THE COOLDOWN, THE DUPLICATE WINDOW OR THE QUIET-HOURS
+   * WINDOW. `SmartNotificationEngineService` already enforces the configured
+   * cooldown at ITS gate, over the same audience-scoped rows, together with
+   * `COOLDOWN_EXEMPT_TYPES` — the table that says `DAILY_GOAL_COMPLETED`'s two
+   * occurrences are two different facts. That table lives in
+   * `modules/notification-engine`, which this module may not import (it imports
+   * this one), so bringing the cooldown down here would mean a SECOND copy of
+   * an exemption list, and a second copy of an exemption list is how one of
+   * them goes stale. The ceilings need no exemption table; they are counts.
+   */
+  private async ceilingsFor(familyId: string): Promise<IFatiguePolicy> {
+    let settings: Record<string, string> = {};
+    try {
+      settings = await this.policySettings.readSettings(familyId);
+    } catch (err) {
+      // A settings read that fails must never fail the notification. The
+      // documented defaults are the conservative answer and the same one this
+      // gate has always used.
+      this.logger.warn(
+        `notification.policy_read_failed family=${familyId.slice(0, 8)} — using the default ceilings. ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return DEFAULT_FATIGUE_POLICY;
+    }
+
+    const configured = resolveNotificationPolicy(settings);
+    return {
+      ...DEFAULT_FATIGUE_POLICY,
+      dailyMax:
+        'notification.cap.maxPerDay' in settings
+          ? configured.maxPerDay
+          : DEFAULT_FATIGUE_POLICY.dailyMax,
+      categoryDailyMax:
+        'notification.cap.categoryMaxPerDay' in settings
+          ? configured.categoryMaxPerDay
+          : DEFAULT_FATIGUE_POLICY.categoryDailyMax,
+      hourlyMax:
+        'notification.cap.maxPerHour' in settings ? configured.maxPerHour : undefined,
+    };
   }
 
   /**
@@ -300,7 +383,9 @@ export class SmartNotificationIntegrationService {
 
     if (audience === 'CHILD') {
       const rows = await this.childMessages.findRecentNotificationsForChild(childId, since);
-      return rows.map((m) => ({
+      return rows
+        .filter((m) => m.createdAt.getTime() <= now.getTime())
+        .map((m) => ({
         type: m.type,
         // `child_messages` HAS NO PRIORITY COLUMN, stated rather than guessed:
         // a child's message surface has never had a loudness axis. Nothing
@@ -310,6 +395,7 @@ export class SmartNotificationIntegrationService {
         // on. The assembler's own child branch says the same thing.
         priority: 'NORMAL' as const,
         createdAt: m.createdAt,
+        sourceEventId: m.sourceEventId,
       }));
     }
 
@@ -318,11 +404,14 @@ export class SmartNotificationIntegrationService {
     // exact union (schema's own open-string design means TypeScript
     // can't narrow it automatically) — an unexpected stored value
     // defensively falls back to NORMAL rather than crashing.
-    return rawHistory.map((n) => ({
-      type: n.type,
-      priority: (KNOWN_PRIORITIES.has(n.priority) ? n.priority : 'NORMAL') as 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW',
-      createdAt: n.createdAt,
-    }));
+    return rawHistory
+      .filter((n) => n.createdAt.getTime() <= now.getTime())
+      .map((n) => ({
+        type: n.type,
+        priority: (KNOWN_PRIORITIES.has(n.priority) ? n.priority : 'NORMAL') as 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW',
+        createdAt: n.createdAt,
+        sourceEventId: n.sourceEventId ?? null,
+      }));
   }
 
   /** Extracted from Sprint 16.1 Phase 3's own processSignals loop
@@ -381,7 +470,14 @@ export class SmartNotificationIntegrationService {
       return this.deliverEvaluated(childId, familyId, candidate);
     }
 
-    const decision = evaluateFatigue(candidate, history, now, currentLocalTime, businessDayStart);
+    const decision = evaluateFatigue(
+      candidate,
+      history,
+      now,
+      currentLocalTime,
+      businessDayStart,
+      await this.ceilingsFor(familyId),
+    );
 
     if (!decision.allowed) {
       // PHASE D (`PC-D-005`) — THE LINE THAT USED TO LOSE THE NOTIFICATION.
