@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { SEARCH_COPY_AR } from '../domain/search-copy';
 
 export interface ISearchResult {
   type: 'CHILD' | 'DEVICE' | 'NOTIFICATION';
@@ -51,18 +52,26 @@ export class SearchService {
       }),
     ]);
 
+    // EVERY STRING BELOW IS RENDERED VERBATIM by both consumers \u2014 the admin
+    // dashboard's `SearchBar.tsx` prints `title` and `subtitle` straight into
+    // the dropdown, with no lookup table of its own. So the server is the only
+    // place these can be right, and `search-copy.ts` is where they live.
     const results: ISearchResult[] = [
       ...children.map((c: any) => ({
         type: 'CHILD' as const,
         id: c.id,
+        // The child's own given name, as the parent typed it. Never rewritten.
         title: c.firstName,
-        subtitle: 'Child profile',
+        subtitle: SEARCH_COPY_AR.childProfile(),
       })),
       ...devices.map((d: any) => ({
         type: 'DEVICE' as const,
         id: d.id,
-        title: d.deviceModel ?? d.platform,
-        subtitle: `Device \u00b7 ${d.platform}`,
+        // `d.platform` IS A PRISMA ENUM and used to be the title outright
+        // whenever `deviceModel` was null \u2014 \u00abANDROID\u00bb as a row title on an
+        // Arabic screen. It no longer reaches the response in any field.
+        title: d.deviceModel ?? SEARCH_COPY_AR.deviceTitleFallback(d.platform),
+        subtitle: SEARCH_COPY_AR.deviceSubtitle(d.platform),
       })),
       ...notifications.map((n: any) => ({
         type: 'NOTIFICATION' as const,
