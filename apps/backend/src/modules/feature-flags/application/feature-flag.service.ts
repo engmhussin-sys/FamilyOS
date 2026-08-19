@@ -4,6 +4,7 @@ import {
   FEATURE_FLAG_REPOSITORY,
   type IFeatureFlagRepository,
 } from '../domain/feature-flag.repository.port';
+import type { IFeatureFlagClientView, IFeatureFlagSummary } from '../domain/feature-flag.types';
 
 /**
  * Sprint 8's internal Feature Flag engine. "The application should
@@ -28,7 +29,40 @@ export class FeatureFlagService {
     return false;
   }
 
-  listAll() {
+  /**
+   * THE CLIENT-FACING LIST. The server takes the decision and sends the
+   * decision: one `isEnabledForMe` boolean per flag, evaluated here from the
+   * `familyId` on the caller's verified access token.
+   *
+   * The predecessor of this method returned raw rows, which meant the CLIENT
+   * held the rollout allow-list and worked out its own answer — an entitlement
+   * decided on the far side of the trust boundary, using the UUIDs of every
+   * other family on that list.
+   *
+   * A caller with no `familyId` (a principal not bound to a household) sees
+   * only the globally-enabled flags: absence of a family cannot be an
+   * accidental match against an allow-list.
+   */
+  async listForFamily(familyId?: string): Promise<IFeatureFlagClientView[]> {
+    const flags = await this.repository.listAll();
+    const allowListed = familyId
+      ? new Set((await this.repository.listKeysEnabledForFamily(familyId)).map((f) => f.key))
+      : new Set<string>();
+
+    return flags.map((flag) => ({
+      key: flag.key,
+      isEnabledForMe: flag.isEnabledGlobally || allowListed.has(flag.key),
+    }));
+  }
+
+  /**
+   * OPERATOR/DIAGNOSTIC read: every flag and its GLOBAL state, with no
+   * per-family allow-list attached. `GET /system/diagnostics` is its one
+   * caller. Kept separate from `listForFamily` so that "what has the
+   * deployment switched on?" and "what may this household do?" cannot be
+   * answered by the same query by accident.
+   */
+  listAll(): Promise<IFeatureFlagSummary[]> {
     return this.repository.listAll();
   }
 
