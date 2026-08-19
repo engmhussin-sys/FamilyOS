@@ -52,6 +52,7 @@ import {
   type INotificationPolicyRepository,
 } from '../../../notifications/application/ports/notification-decision.repository.port';
 import { notificationCategoryOf } from '../../../../shared/notifications/notification-class';
+import { readChildInboxHistory } from '../../../../shared/notifications/child-inbox-history';
 import {
   resolveLocale,
   type GoalFacts,
@@ -324,7 +325,8 @@ export class NotificationContextAssembler {
    * THE SAME 24-HOUR WINDOW `SmartNotificationIntegrationService.fetchHistory`
    * uses, anchored to the `now` being evaluated rather than to the wall clock —
    * `PD-N-003`'s point, and the reason a replayed instant produces the same
-   * decision twice.
+   * decision twice. BOUNDED ABOVE BY `now` as well as below, which is a fix and
+   * not a tidy-up; see the paragraph on `readHistory` itself.
    *
    * The category is derived here rather than stored, because
    * `notification-class.ts` is the one owner of that mapping and the history rows
@@ -350,9 +352,46 @@ export class NotificationContextAssembler {
   ): Promise<RecentNotificationFact[]> {
     const since = new Date(now.getTime() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000);
     try {
-      return audience === 'CHILD'
-        ? await this.readChildInbox(childId, since)
-        : await this.readParentInbox(childId, since);
+      /**
+       * ====================================================================
+       * HISTORY IS WHAT ALREADY HAPPENED — BOUNDED ABOVE BY `now`.
+       * ====================================================================
+       *
+       * THE DEFECT, MEASURED. Both reads below were `createdAt >= since` with
+       * NO upper bound, so a row stamped AFTER the instant being evaluated
+       * counted as history. `child-signal-producer.e2e.spec.ts` §5 asks for a
+       * notification on the NEXT family-local day at a frozen January instant;
+       * the previous day's `child_messages` row carries the DATABASE's own
+       * `now()` (a real 2026 wall clock, months ahead of the frozen one), so it
+       * sat ABOVE `now` and was counted — the persisted note read
+       * `today=1/6 hour=1/3 category=1/2`, and `hour=1` at a Jan-17 `now` is
+       * only possible for a row in the future. `FATIGUE_PENALTY` went 0 -> −12.5,
+       * the score 35 -> 23 against a floor of 25, and the child was never told.
+       *
+       * It is not a test artifact. Any caller evaluating an instant that is not
+       * the wall clock hands this method rows stamped after it: a replayed
+       * decision, a back-dated import, a deferral released at its scheduled
+       * instant, a replica whose clock runs behind the database's. And every
+       * rule downstream measures AGE — `now - createdAt` is NEGATIVE for such a
+       * row, which is smaller than any window, so it reads as «two seconds ago»
+       * everywhere.
+       *
+       * THE BOUND IS IN THE QUERY (`lte: now`) rather than only in memory, so
+       * the rows never leave PostgreSQL, AND it is re-applied here as one
+       * filter over both branches — because `INotificationRepository.findRecentForChild`
+       * is a PORT with other implementations (test doubles included) and a
+       * contract this layer must not assume was honoured.
+       *
+       * `evaluateFatigue` states the identical rule in its own words and
+       * applies the identical filter at the top of its body; so do
+       * `SmartNotificationIntegrationService.fetchHistory` and
+       * `QuietHoursReleaseService`. This is that pattern, one layer up.
+       */
+      const raw =
+        audience === 'CHILD'
+          ? await this.readChildInbox(childId, since, now)
+          : await this.readParentInbox(childId, since, now);
+      return raw.filter((n) => n.createdAt.getTime() <= now.getTime());
     } catch (err) {
       // An empty history is the CONSERVATIVE failure here in one direction and
       // the permissive one in the other: the fatigue penalty reads zero and a
@@ -370,8 +409,12 @@ export class NotificationContextAssembler {
 
   /** The PARENT's inbox, unchanged: `notifications` rows about this child, read
    * through the port that has always read them. */
-  private async readParentInbox(childId: string, since: Date): Promise<RecentNotificationFact[]> {
-    const raw = await this.notifications.findRecentForChild(childId, since);
+  private async readParentInbox(
+    childId: string,
+    since: Date,
+    until: Date,
+  ): Promise<RecentNotificationFact[]> {
+    const raw = await this.notifications.findRecentForChild(childId, since, until);
     return raw.map((n) => ({
       type: n.type,
       category: notificationCategoryOf(n.type),
@@ -388,23 +431,29 @@ export class NotificationContextAssembler {
   /**
    * The CHILD's inbox: the `child_messages` rows the child's own app renders.
    *
-   * THREE COLUMNS, and the same data-minimisation discipline as every other read
-   * in this file — no `title`, no `body`, no `data`. A scoring term needs to
-   * know that a message happened, what kind it was and when; it has never needed
-   * to know what it said.
+   * ==========================================================================
+   * THE QUERY IS NO LONGER HERE, AND THAT IS THE FIX.
+   * ==========================================================================
    *
-   * `sourceEventId != null` IS THE «IS THIS A NOTIFICATION?» TEST, and it is the
-   * table's own: `child_messages.source_event_id` is documented NULLABLE
-   * precisely because this table ALSO holds PARENT-AUTHORED messages, and NULL
-   * there means «a human wrote this». A parent typing «أحسنت» to their child is
-   * a conversation, not a notification, and counting it towards a notification
-   * fatigue cap would let a warm parent mute the product's own feedback loop —
-   * the same class of mistake, one table over, as the one this method fixes.
+   * This method and `PrismaCommunicationRepository.findRecentNotificationsForChild`
+   * (life-intelligence) were the same query written twice — same table, same
+   * window predicate, same `source_event_id IS NOT NULL` test, same
+   * `category`-as-type mapping, same three columns — and each docstring named
+   * the other as «the definition not to drift from». A comment cannot fail a
+   * build. They HAD drifted: the other side gained an upper bound at `now` and
+   * this one had not.
+   *
+   * `shared/notifications/child-inbox-history.ts` is now that single definition,
+   * and it carries the whole argument — why `source_event_id IS NOT NULL` is
+   * the «is this a notification?» test, why the window's upper bound is
+   * REQUIRED rather than optional, and why the causal key is returned faceted.
+   * What remains here is only the mapping into this layer's own fact type.
    *
    * `category` HOLDS THE NOTIFICATION TYPE on this path — `deliverNow` passes
    * `candidate.type` into `draftAiMessageIfAbsent`'s `category` parameter — so
-   * it is mapped through `notificationCategoryOf` exactly like the parent
-   * branch's `type`, and both branches hand the scorer the same vocabulary.
+   * the shared port's `type` is mapped through `notificationCategoryOf` exactly
+   * like the parent branch's, and both branches hand the scorer the same
+   * vocabulary.
    *
    * PRIORITY IS `NORMAL` FOR EVERY ROW, stated rather than guessed: this table
    * has no priority column, because a child's message surface has never had a
@@ -412,22 +461,21 @@ export class NotificationContextAssembler {
    * row — it counts them and buckets them by category — so this is an honest
    * filler for a required field and not a value any decision turns on.
    */
-  private async readChildInbox(childId: string, since: Date): Promise<RecentNotificationFact[]> {
-    const rows = await (this.prisma as any).childMessage.findMany({
-      where: { childId, createdAt: { gte: since }, sourceEventId: { not: null } },
-      select: { category: true, createdAt: true, sourceEventId: true },
-      orderBy: { createdAt: 'desc' },
+  private async readChildInbox(
+    childId: string,
+    since: Date,
+    until: Date,
+  ): Promise<RecentNotificationFact[]> {
+    const rows = await readChildInboxHistory((this.prisma as any).childMessage, {
+      childId,
+      since,
+      until,
     });
-    return (rows as Array<{ category: string; createdAt: Date; sourceEventId: string | null }>).map((m) => ({
-      type: m.category,
-      category: notificationCategoryOf(m.category),
+    return rows.map((m) => ({
+      type: m.type,
+      category: notificationCategoryOf(m.type),
       priority: 'NORMAL' as const,
       createdAt: m.createdAt,
-      // THE KEY AS PERSISTED, `:child`-faceted, and deliberately NOT un-faceted
-      // here: `forAudience` composes the candidate's key with the same function
-      // and the same clamp `deliverNow` used to write this one, so the two
-      // strings are comparable by construction. An inverse would have to guess
-      // what a 200-character clamp did to the facet.
       sourceEventId: m.sourceEventId,
     }));
   }

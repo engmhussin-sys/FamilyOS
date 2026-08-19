@@ -33,6 +33,7 @@
  * PURE. No clock, no I/O, no `Date.now()`. `context.now` is the only instant.
  */
 
+import { getStartOfBusinessDay } from '../../../../common/time/family-date';
 import { quietHoursClassOf } from '../../../../shared/notifications/notification-class';
 import { forAudience } from '../../../../shared/notifications/notification-source-key';
 import type { NotificationContext, RecentNotificationFact } from './notification-context';
@@ -345,13 +346,55 @@ function preference(context: NotificationContext, cfg: NotificationScoringConfig
  * marginal notification lose to a strong one when the household has already had
  * four today — which is a ranking question the guard, being a boolean, cannot
  * answer.
+ *
+ * ==========================================================================
+ * «TODAY» IS THE FAMILY'S OWN DAY, NOT A ROLLING TWENTY-FOUR HOURS.
+ * ==========================================================================
+ *
+ * WHAT WAS THERE: `const dayStartMs = context.now.getTime() - 24*60*60*1000`,
+ * and a `note` that called the result `today=n/6`. It was not today. It was a
+ * SLIDING WINDOW that never resets, and the difference is the entire product
+ * meaning of a daily budget: a household at its maximum at 20:00 was still at
+ * its maximum at 09:00 the next morning, because the window had dragged the
+ * previous evening along with it. `child-signal-producer.e2e.spec.ts` §5 names
+ * the case in its own title — «the NEXT family-local day is a different cause,
+ * and is told again» — and asks for it at a `now` LESS than 24 hours after the
+ * day-1 notification, which is precisely the interval a rolling window gets
+ * wrong and a real day gets right.
+ *
+ * IT WAS ALSO UNDEFINED RATHER THAN MERELY WRONG, in the same way
+ * `evaluateFatigue`'s `setHours(0,0,0,0)` was before `businessDayStart` became
+ * a REQUIRED parameter of it: nothing in the arithmetic named a calendar, so
+ * the answer belonged to no household in particular. `notification-context.ts`
+ * has documented `timeZone` as «every calendar question — quiet hours, THE
+ * DAILY CAP'S DAY BOUNDARY, a deadline in local time» since the field existed;
+ * this term simply did not read it.
+ *
+ * THE BOUNDARY IS THE FAMILY'S LOCAL MIDNIGHT, from the family's own timezone —
+ * resolved ONCE, from `families.timezone`, by `FamilyDateService.timeZoneOf`
+ * (the one reader of that column) and carried on `context.timeZone`.
+ * `getStartOfBusinessDay` is the exact primitive `FamilyDateService.getStartOfBusinessDay`
+ * delegates to, and it is the same call `SmartNotificationEngineService` makes
+ * to feed `evaluateFatigue`'s `businessDayStart` — so the term that RANKS and
+ * the guard that REFUSES now count over the same day. It is imported as the
+ * pure function rather than as the injectable because `domain/engine` is
+ * framework-free by construction and a scoring function that reached for a
+ * Nest provider (and through it a database) would stop being reproducible from
+ * the row it was computed for.
+ *
+ * STILL PURE. `context.now` remains the only instant; no clock is read here.
+ *
+ * THE HOURLY WINDOW STAYS ROLLING, deliberately: «how loud have the last sixty
+ * minutes been» is a question about an elapsed hour, not about a calendar, and
+ * a clock-hour bucket would make 13:59 and 14:01 answer differently for no
+ * reason a household could perceive.
  */
 function fatigue(
   context: NotificationContext,
   policy: NotificationPolicy,
   category: string,
 ): NotificationScoreComponent {
-  const dayStartMs = context.now.getTime() - 24 * 60 * 60 * 1000;
+  const dayStartMs = getStartOfBusinessDay(context.now, context.timeZone).getTime();
   const today = context.recentNotifications.filter((n) => n.createdAt.getTime() >= dayStartMs);
   const hourAgo = context.now.getTime() - 60 * 60 * 1000;
   const lastHour = today.filter((n) => n.createdAt.getTime() >= hourAgo).length;

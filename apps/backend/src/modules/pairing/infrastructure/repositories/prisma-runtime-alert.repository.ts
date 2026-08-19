@@ -43,6 +43,44 @@ export class PrismaRuntimeAlertRepository implements IRuntimeAlertRepository {
    * behaviour is untouched and the correctness floor is absolute. This is the
    * same relationship `consumed_messages` has with the ledger's unique index,
    * and F3's own docstring calls that one an optimisation for the same reason.
+   *
+   * ==========================================================================
+   * THE PUSH CHANNEL IS COMPUTED HERE AND DISCARDED HERE, AND THE REASON IT IS
+   * STILL DISCARDED IS A SIGNATURE THIS MODULE DOES NOT OWN.
+   * ==========================================================================
+   *
+   * `pushToUser` below already returns a `PushFanoutOutcome` — SENT · SKIPPED ·
+   * NONE · RETRYABLE · PERMANENT · NO_RECIPIENT — and the call on the last line
+   * of this method throws it away. So `notification_decisions` cannot say which
+   * channel a notification actually went out on, and an operator reading the
+   * decision ledger cannot tell «no push problems» from «we never looked».
+   * That is a real gap and it is stated here rather than left to be rediscovered.
+   *
+   * IT CANNOT BE CLOSED FROM INSIDE THIS FILE. Surfacing the value to the ledger
+   * needs the return type widened along a chain whose middle links live in
+   * modules that own their own signatures:
+   *
+   *   `pairing/application/ports/runtime-alert.repository.port.ts`
+   *       `createForFamilyOwner(input: ICreateRuntimeAlertInput): Promise<boolean>`
+   *   `life-intelligence/.../smart-notification-integration.service.ts`
+   *       `deliverNow(childId, familyId, candidate, options): Promise<boolean>`
+   *         — the caller that receives this method's result and returns a bare
+   *           boolean;
+   *       `deliverEvaluated(childId, familyId, candidate): Promise<INotificationOutcome>`
+   *         — the only place a SEND outcome is constructed for the PARENT path;
+   *       `export interface INotificationOutcome`
+   *         — the shape the channel would have to travel in.
+   *   `ai-core/.../distress-escalation.service.ts`
+   *       `const parentAlerted = await this.alerts.createForFamilyOwner({…})`
+   *         — a second consumer of the boolean, which a widened return breaks.
+   *
+   * The ledger's own half is ready: `INotificationDecisionRepository.recordOutcome`
+   * and `SmartNotificationEngineService.recordOutcome` already carry an outcome
+   * per decision row and would carry a channel with it. NO COLUMN HAS BEEN ADDED
+   * for it, deliberately — `test/architecture/dormant-schema.guard.spec.ts`
+   * exists because a column nothing can populate is worse than an absent one, and
+   * this repository is the only place in the chain that currently holds a value
+   * to put in it.
    */
   async createForFamilyOwner(input: ICreateRuntimeAlertInput): Promise<boolean> {
     const notificationType = input.type ?? 'RUNTIME_ALERT';

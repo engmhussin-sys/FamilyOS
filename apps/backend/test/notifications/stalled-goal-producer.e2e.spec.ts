@@ -581,12 +581,33 @@ describeIfDb('SPRINT F1 — GOAL_STALLED_PARENT has a producer (real PostgreSQL)
      *
      * AND WHAT THE PRODUCT THEN DOES WITH IT IS THE ENGINE'S CALL, NOT THE
      * PRODUCER'S — which is exactly the separation this whole design rests on,
-     * so it is asserted rather than glossed. A household that was told about a
-     * stalled goal yesterday morning is inside its own GOAL category load when
-     * tomorrow's 02:00 rollover asks again, so the second one is scored down
-     * and refused. That is a household-load fact recorded in a row with a
-     * reason, not silence, and it is why «the parent is not nagged nightly»
-     * does not depend on the producer having been careful.
+     * so it is asserted rather than glossed.
+     *
+     * =======================================================================
+     * WHAT THIS TEST USED TO ASSERT, AND WHY THAT WAS A DEFECT SPEAKING.
+     * =======================================================================
+     *
+     * It expected `SUPPRESS` / `SCORE_BELOW_FLOOR`, and its own docstring gave
+     * the reason: «a household that was told about a stalled goal YESTERDAY
+     * MORNING is inside its own GOAL category load when tomorrow's 02:00
+     * rollover asks again». That sentence is only true of a ROLLING TWENTY-FOUR
+     * HOURS, which is what `FATIGUE_PENALTY` was counting over —
+     * `notification-scoring.ts` bounded «today» with `now − 24h` while calling
+     * the result `today=n/6` in the persisted note. Yesterday 09:00 Cairo to
+     * today 02:00 Cairo is SEVENTEEN hours, so the sliding window dragged the
+     * previous family-local day along with it and this assertion passed for a
+     * reason the product does not mean. A household's daily notification budget
+     * resets at the family's local midnight; two rows on two different Cairo
+     * days are two different days' load, and the first must not be charged to
+     * the second.
+     *
+     * The instant is UNCHANGED (02:00 Cairo, the hour the rollover really
+     * runs), the scenario is UNCHANGED, and nothing is relaxed: the verdict now
+     * asserted is the one section 4 of this file already asserts for the
+     * identical hour on the identical type, and it is asserted with its
+     * `outcome`, its `outcome_reason` and its durable row as well — plus the
+     * FATIGUE arithmetic that PROVES the day reset, which is a claim this test
+     * could not previously make at all.
      */
     it('the NEXT business date is a DIFFERENT cause — a second ledger row, and the engine decides it on its own merits', async () => {
       const nextDay = getBusinessDate(MORNING_AFTER, CAIRO);
@@ -596,6 +617,10 @@ describeIfDb('SPRINT F1 — GOAL_STALLED_PARENT has a producer (real PostgreSQL)
       // 02:00 Cairo on the day after that — the hour the rollover really runs.
       const nextNight = new Date('2026-01-17T00:00:00.000Z');
       expect(getBusinessTimeHHMM(nextNight, CAIRO)).toBe('02:00');
+      // ...and it is a THIRD Cairo day, so the household's daily budget has
+      // reset twice since the notification it was told about first. Stated from
+      // the product's own function rather than assumed from the literals.
+      expect(getBusinessDate(nextNight, CAIRO)).not.toBe(nextDay);
       const report = await sweep(h, nextDay, nextNight);
       expect(report.candidates).toBe(1);
       // NOT «already decided» — the constraint did not refuse this one.
@@ -608,12 +633,38 @@ describeIfDb('SPRINT F1 — GOAL_STALLED_PARENT has a producer (real PostgreSQL)
       expect(keys).toContain(forEntity('signal', h.childId, programId, stalledDay(CAIRO)));
       expect(keys).toContain(forEntity('signal', h.childId, programId, nextDay));
 
-      // The second row is a DECISION with a stated reason, and the parent's
-      // phone did not receive a second sentence.
       const second = decisions.find((d) => d.source_event_id.endsWith(nextDay));
-      expect(second.decision).toBe('SUPPRESS');
-      expect(second.reason).toBe('SCORE_BELOW_FLOOR');
+
+      // THE DAY RESET, READ OUT OF THE PERSISTED ARITHMETIC. Yesterday's
+      // notification is not in today's count on any of the three axes — this
+      // is the assertion the rolling window made impossible, and the reason
+      // the verdict below is no longer a suppression.
+      const fatigue = (second.explanation as any[]).find((c) => c.name === 'FATIGUE_PENALTY');
+      expect(fatigue.note).toBe('today=0/6 hour=0/3 category=0/2');
+      expect(fatigue.contribution).toBe(0);
+
+      // AND THE VERDICT IS THE QUIET-HOURS ONE, not a scoring one: 02:00 is
+      // inside the household's own quiet window and `GOAL_STALLED_PARENT` is a
+      // fact that survives the night, so it is HELD rather than deleted —
+      // identical to section 4 below, on the identical hour.
+      expect(second.decision).toBe('DEFER');
+      expect(second.reason).toBe('QUIET_HOURS_ACTIVE');
+      expect(second.outcome).toBe('DEFER');
+      expect(second.outcome_reason).toBe('QUIET_HOURS');
+
+      // THE PARENT'S PHONE STILL DID NOT RECEIVE A SECOND SENTENCE AT 02:00 —
+      // the original claim of this test, unchanged and still measured in
+      // PostgreSQL. It is HELD in a durable row for the morning instead of
+      // being dropped, which is the difference between «not nagged» and «lost».
       expect(await countOf('notifications', h.familyId)).toBe(1);
+      const deliveries = await deliveryRows(h.familyId);
+      expect(deliveries).toHaveLength(1);
+      expect(deliveries[0].state).toBe('PENDING');
+      expect(deliveries[0].defer_reason).toBe('QUIET_HOURS');
+      expect(deliveries[0].source_event_id).toBe(
+        forEntity('signal', h.childId, programId, nextDay),
+      );
+      expect(getBusinessTimeHHMM(new Date(deliveries[0].scheduled_for), CAIRO)).toBe('07:00');
     }, 120_000);
   });
 

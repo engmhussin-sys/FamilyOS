@@ -47,6 +47,7 @@ export class PrismaNotificationRepository implements INotificationRepository {
   async findRecentForChild(
     childId: string,
     since: Date,
+    until?: Date,
   ): Promise<Array<{ type: string; priority: string; createdAt: Date; sourceEventId: string }>> {
     /**
      * SPRINT F1 (BILLING) — «NO CHILD» IS AN ANSWER, NOT A QUERY.
@@ -70,7 +71,11 @@ export class PrismaNotificationRepository implements INotificationRepository {
     if (!childId) return [];
 
     const rows = await this.prisma.notification.findMany({
-      where: { childId, createdAt: { gte: since } },
+      // BOUNDED ABOVE WHEN THE CALLER NAMED AN INSTANT — see the port for the
+      // whole argument. `lte` rather than `lt`: a row written AT `now` is a row
+      // that has already happened, and the two bounds must be the same kind so
+      // an in-memory re-application of the filter cannot disagree with the SQL.
+      where: { childId, createdAt: until ? { gte: since, lte: until } : { gte: since } },
       // `source_event_id` is the CAUSAL KEY — see the port. Four columns, still
       // no title and no body: the scorer needs to know THAT a notification
       // happened, of what kind, when and FOR WHICH CAUSE, never what it said.
