@@ -48,13 +48,23 @@
  *   `URGENCY_BY_TYPE` /
  *   `ACHIEVEMENT_BASELINE_BY_TYPE` the scoring table.
  *   `DESTINATION_RULES`            the deep-link map (`destinationKeys()`).
+ *   `notification-source-key.ts`   the DOCUMENTED FORMS of a causal key —
+ *                                  `causalKeyComposers` reads the exported
+ *                                  function names, so a seventh form moves
+ *                                  RULE P12 with it.
  *   `deep_link.dart` x2            the CLIENT half of `abny://`, in both
- *   `*_deep_link_router.dart`      Flutter apps — read as text, never edited.
+ *   `*_deep_link_router.dart`      Flutter apps — read as text, never edited,
+ *                                  and now read as ROUTERS: the RETURNS of each
+ *                                  `case`, not merely its label, because a case
+ *                                  that answers `unavailable()` is a dead tap
+ *                                  with a line number (RULE P11).
  *
  * Add a copy key and no producer: RULE P1 goes red naming the key. Add a
  * producer whose type has no scoring row: RULE P2 goes red naming the key. Add
  * a destination the child app cannot service: RULE P4 goes red naming the
- * surface. Nobody has to remember anything.
+ * surface. Add a key with no Arabic sentence, no audience, no quiet-hours class,
+ * a screen its own app refuses to open, or a causal key invented at the call
+ * site: RULES P8..P12 go red naming the key. Nobody has to remember anything.
  *
  * ---------------------------------------------------------------------------
  * WHAT THIS GUARD CAN AND CANNOT DECIDE — read before trusting it.
@@ -95,6 +105,36 @@
  *       must flag a producerless key, must clear it when a producer appears,
  *       and must reject an unreasoned classification. This is the check that
  *       proves P1 is capable of failing after somebody refactors the regexes.
+ *       It covers P8..P12 too, one broken property at a time, in both
+ *       directions.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THE SECOND INVARIANT: A PRODUCER IS NOT ENOUGH.
+ *
+ * P1..P7 answer «can anything cause this sentence to be sent». They are
+ * satisfiable by a key that is produced and then lands nowhere, says nothing in
+ * Arabic, claims no audience, has no quiet-hours class, and cannot be traced to
+ * the occurrence it is about. Each of those has shipped in this repository. So
+ * every PRODUCIBLE key must also carry:
+ *
+ *   P8   A DECLARED AUDIENCE — PARENT or CHILD in the catalogue, agreeing with
+ *        `notification-class.ts` wherever both speak.
+ *   P9   ARABIC COPY — present, non-empty, and actually in Arabic script, in
+ *        every variant its own audience is rendered with (all four tone bands
+ *        for a child key, because the nearest-band walk hides a missing one).
+ *   P10  A SAFETY CLASSIFICATION — a written `NOTIFICATION_CLASSES` row, its
+ *        own or that of every type it can be selected under. Never
+ *        `DEFAULT_QUIET_HOURS_CLASS`, which its own docstring calls «a safety
+ *        net and never an answer».
+ *   P11  A DESTINATION THE APP ANSWERS — not merely a `case` in the router, but
+ *        a `case` that builds a route. The taps that die are on
+ *        `DEAD_DESTINATION_LEDGER` with an `it.failing` each.
+ *   P12  PROVENANCE — a named producing site, composing its causal key through
+ *        one of `notification-source-key.ts`'s documented forms rather than
+ *        inventing one, so «which occurrence is this?» has an answer in a row.
+ *
+ * THE SET UNDER AUDIT IS DISCOVERED, NOT LISTED: it is exactly the producible
+ * set P1 computes, so a key added tomorrow is audited tomorrow.
  *
  * ---------------------------------------------------------------------------
  * COMMENTS ARE STRIPPED, STRINGS ARE NOT, AND THE SCANNER IS A REAL SCANNER.
@@ -291,6 +331,28 @@ function objectKeys(text: string): string[] {
     .filter((k): k is string => typeof k === 'string');
 }
 
+/**
+ * The VALUE text of ONE top-level property, ACROSS NEWLINES.
+ *
+ * `objectKeys` answers «was this slot filled at all», which is what the copy
+ * rules need. RULE P11 needs the OTHER half — WITH WHAT — and the causal key it
+ * reads is routinely written over four lines (`goal-nudge.service.ts` composes
+ * `forEntity(...)` with one argument per line). A line-bounded regex would read
+ * `forEntity(` and conclude the producer invented something.
+ *
+ * Shorthand (`{ sourceEventId }`) returns the identifier, which is what it is:
+ * a relay of a value composed somewhere else.
+ */
+function objectProperty(text: string, name: string): string | null {
+  const body = text.trim().startsWith('{') ? text.trim().slice(1, -1) : text;
+  for (const part of splitTopLevel(body)) {
+    const trimmed = part.trim();
+    const m = new RegExp(`^${name}\\s*(?::([\\s\\S]*)|$)`).exec(trimmed);
+    if (m) return (m[1] ?? name).trim() || name;
+  }
+  return null;
+}
+
 const lineOf = (code: string, index: number): number => code.slice(0, index).split('\n').length;
 
 // ===========================================================================
@@ -329,6 +391,15 @@ export interface DoorSite {
   readonly how: string;
   /** Top-level keys of the call's object-literal argument: the FACT SLOTS. */
   readonly slots: readonly string[];
+  /**
+   * The source text of the `sourceEventId` argument — the CAUSAL KEY, which is
+   * this product's whole answer to «which occurrence is this?». Read as text
+   * rather than as a boolean because RULE P11 asks HOW it was composed, and a
+   * key invented at the call site (`\`evt:${x}\``) and one composed through
+   * `notification-source-key.ts` are the same shape to a slot check and
+   * opposites to an operator tracing a duplicate.
+   */
+  readonly sourceExpression: string | null;
   readonly resolved: boolean;
 }
 
@@ -501,6 +572,7 @@ export function findDoorSites(files: readonly SourceFile[]): DoorSite[] {
           types,
           how,
           slots,
+          sourceExpression: literal ? objectProperty(literal, 'sourceEventId') : null,
           resolved: types.length > 0,
         });
       }
@@ -600,6 +672,23 @@ export interface Producibility {
   readonly eventTypes: ReadonlyMap<string, readonly DoorSite[]>;
   /** Copy key -> the one-line reason it is reachable. */
   readonly copyKeys: ReadonlyMap<string, string>;
+  /**
+   * Copy key -> the door sites that can put it on somebody's screen. The
+   * PRODUCERS of a key, as opposed to the producers of a TYPE: `REWARD_GRANTED`
+   * and `REWARD_GRANTED_WITH_GOAL` are two sentences behind one type and one of
+   * them is chosen by a rule, so «who produces this SENTENCE» is a different
+   * question from «who emits this TYPE» and RULE P11 asks the first.
+   */
+  readonly copyKeySites: ReadonlyMap<string, readonly DoorSite[]>;
+  /**
+   * Copy key -> the EVENT TYPES under which the decision layer can select it.
+   * For a plain catalogue key that is the key itself; for a contextual rule it
+   * is every type whose producer supplies the facts the rule reads. This is the
+   * map RULE P10 resolves a safety classification through, because four copy
+   * keys in this catalogue are NOT notification types and therefore have no
+   * `NOTIFICATION_CLASSES` row of their own.
+   */
+  readonly copyKeyTypes: ReadonlyMap<string, readonly string[]>;
   readonly unresolved: readonly DoorSite[];
 }
 
@@ -637,11 +726,15 @@ export function computeProducibility(
   }
 
   const keys = new Map<string, string>();
+  const keySites = new Map<string, DoorSite[]>();
+  const keyTypes = new Map<string, string[]>();
 
   // 3. the plain type key
   for (const [type, where] of eventTypes) {
     if (catalogue[type]) {
       keys.set(type, `${where[0].file}:${where[0].line} emits eventType '${type}' (${where[0].how})`);
+      keySites.set(type, [...where]);
+      keyTypes.set(type, [type]);
     }
   }
 
@@ -663,10 +756,378 @@ export function computeProducibility(
         `copy rule [${rule.key}] is satisfiable from ${supporting[0].file}:${supporting[0].line}` +
           ` (audience ${rule.audience}, facts [${rule.factSlots.join(', ') || 'none'}])`,
       );
+      keySites.set(rule.key, [...(keySites.get(rule.key) ?? []), ...supporting]);
+      // THE TYPES THE RULE CAN ACTUALLY FIRE UNDER, not every type its
+      // producers emit: a site that emits two types only lends this rule the
+      // one whose catalogue audience the rule is written for.
+      keyTypes.set(rule.key, [
+        ...new Set([
+          ...(keyTypes.get(rule.key) ?? []),
+          ...supporting.flatMap((site) =>
+            site.types.filter(
+              (t) =>
+                catalogue[t]?.audience === rule.audience &&
+                (rule.eventTypes.length === 0 || rule.eventTypes.includes(t)),
+            ),
+          ),
+        ]),
+      ]);
     }
   }
 
-  return { eventTypes, copyKeys: keys, unresolved: sites.filter((s) => !s.resolved) };
+  return {
+    eventTypes,
+    copyKeys: keys,
+    copyKeySites: keySites,
+    copyKeyTypes: keyTypes,
+    unresolved: sites.filter((s) => !s.resolved),
+  };
+}
+
+// ===========================================================================
+// 3b. WHAT A KEY MUST CARRY BESIDES A PRODUCER
+// ===========================================================================
+
+/**
+ * ===========================================================================
+ * THE SECOND INVARIANT, AND WHY «A PRODUCER EXISTS» WAS NEVER ENOUGH.
+ * ===========================================================================
+ *
+ * RULES P1..P7 decide one thing: can anything in `src/` cause this sentence to
+ * be sent. That is the question `PF-E-001` and `PF-E-006` were, and it is now
+ * answered for every key in the catalogue. It is also, on its own, satisfiable
+ * by a key that is produced and then lands nowhere, says nothing in Arabic,
+ * claims no audience, has no quiet-hours class and cannot be traced back to the
+ * occurrence that caused it. Each of those has shipped here:
+ *
+ *   `CHILD_WELLBEING_CHECKIN`  produced, scored, classified, delivered — and
+ *                              its destination was `abny://coach`, which the
+ *                              parent app answers `DeepLinkRouteKind.unavailable`.
+ *                              A tap on the most important sentence this
+ *                              product sends did nothing. It was found by
+ *                              READING the router, not by reading the surface
+ *                              list, which is why RULE P9 reads the router too.
+ *   `GOAL_COMPLETED_PARENT`    copy in two languages and NO `NOTIFICATION_CLASSES`
+ *                              row (`PF-E-003`), so its quiet-hours behaviour
+ *                              was the unconsidered default and its per-category
+ *                              cap counted against the raw type string.
+ *   `RUNTIME_ALERT`            a sentence written for a type whose producers do
+ *                              not reach the composer — visible here as a key
+ *                              whose destination is the inbox BY DECISION, and
+ *                              the reason RULE P9 distinguishes «the inbox is
+ *                              the correct answer» from «the app cannot open
+ *                              this».
+ *
+ * SO: FIVE MORE PROPERTIES, PER KEY, EACH READ OUT OF A PRODUCTION ARTEFACT AND
+ * EACH WITH A NEGATIVE CONTROL UNDER RULE P7. The analysers below are PURE
+ * FUNCTIONS OF THEIR ARGUMENTS — no `fs`, no imports of the real catalogue —
+ * for exactly the reason `computeProducibility` is: a check that can only be
+ * run against the real repository is a check nobody can prove discriminates.
+ *
+ * EVERY ONE OF THEM RETURNS FINDINGS BY NAME. `expect(findings).toEqual([])`
+ * prints the key and what it is missing; `expect(count).toBe(0)` prints
+ * «expected 0, received 2», and the second is how a guard becomes a thing
+ * people delete.
+ */
+
+/** The catalogue shape these analysers need, and nothing else of it. */
+export interface QualityCatalogueEntry {
+  readonly category: string;
+  readonly audience: string;
+  readonly variants: Readonly<
+    Record<string, Readonly<Record<string, { readonly title: string; readonly body: string }>>>
+  >;
+}
+
+/** The class-matrix shape these analysers need. */
+export interface QualityClassEntry {
+  readonly quietHours: string;
+  readonly audience: string;
+  readonly category: string;
+  readonly why: string;
+}
+
+export interface KeyQualityInput {
+  /** The keys under audit — the PRODUCIBLE ones. A classified non-producer has
+   * no audience to serve and no tap to land. */
+  readonly keys: readonly string[];
+  readonly catalogue: Readonly<Record<string, QualityCatalogueEntry>>;
+  readonly classes: Readonly<Record<string, QualityClassEntry>>;
+  /** Copy key -> the event types the decision layer can select it under. */
+  readonly selectableUnder: ReadonlyMap<string, readonly string[]>;
+  /** Copy key -> the door sites that can produce it. */
+  readonly producedBy: ReadonlyMap<string, readonly DoorSite[]>;
+  /** The link the server would emit, or `null` when no explicit rule exists. */
+  readonly destinationOf: (key: string, audience: string) => string | null;
+  /** Audience -> the surfaces that audience's app can actually OPEN. */
+  readonly answeredSurfaces: Readonly<Record<string, readonly string[]>>;
+  /** The composer names `notification-source-key.ts` exports. */
+  readonly causalKeyComposers: readonly string[];
+}
+
+/** The two audiences this product has. `BOTH` is a CLASS-matrix word: the
+ * catalogue splits a both-audience fact into two keys, because `audience` is a
+ * property of the ENTRY there. */
+const AUDIENCES = ['PARENT', 'CHILD'] as const;
+
+/** The four child tone bands, in the order `notification-tone.ts` declares
+ * them. Read as a constant here rather than imported so a synthetic fixture can
+ * be audited without the real tone module. */
+const TONE_BANDS = ['5-7', '8-10', '11-13', '14-17'] as const;
+
+/** Arabic script. One test, used for «is the `ar` slot actually Arabic». */
+const ARABIC_LETTER = /[؀-ۿ]/;
+
+/** The surface half of an `abny://` link. */
+const surfaceOfLink = (link: string): string => link.replace('abny://', '').split('/')[0];
+
+/**
+ * RULE P8 — A DECLARED AUDIENCE.
+ *
+ * WHO IS THIS FOR is the first thing every other layer asks: it chooses the
+ * inbox the fatigue history is read from (`readHistory`), the table the row is
+ * written to (`deliverNow`), the safety filter that validates the words
+ * (`NotificationComposerService.validate`) and the app the tap is routed in. A
+ * key that does not answer it is not under-specified, it is unroutable — and
+ * the catalogue's own `resolveTargetAudience` would guess from «is there a
+ * child in the context», which is how a billing notice reaches a seven-year-old.
+ *
+ * AND IT MUST AGREE WITH THE CLASS MATRIX where the key is also a type. `BOTH`
+ * admits either, and that is not a loophole: `BOTH` means the PRODUCER composes
+ * two candidates with two facets, each carrying a single-audience key.
+ */
+export function keysWithoutDeclaredAudience(input: KeyQualityInput): string[] {
+  const findings: string[] = [];
+  for (const key of input.keys) {
+    const entry = input.catalogue[key];
+    if (!entry) {
+      findings.push(`${key} — no catalogue entry at all`);
+      continue;
+    }
+    if (!(AUDIENCES as readonly string[]).includes(entry.audience)) {
+      findings.push(`${key} — declares audience '${entry.audience ?? 'none'}', which is not PARENT or CHILD`);
+      continue;
+    }
+    const klass = input.classes[key];
+    if (klass && klass.audience !== 'BOTH' && klass.audience !== entry.audience) {
+      findings.push(
+        `${key} — the catalogue says ${entry.audience} and notification-class.ts says ${klass.audience}`,
+      );
+    }
+  }
+  return findings;
+}
+
+/**
+ * RULE P9 — ARABIC COPY, PRESENT AND NON-EMPTY.
+ *
+ * CONTEXT §1: Arabic is the product's first language and `ar` is the renderer's
+ * fallback locale — `renderNotificationCopy` reads `localised[locale] ?? localised.ar`,
+ * so an `ar` variant that is missing is not «English is used instead», it is a
+ * CRASH-SHAPED HOLE that degrades the whole notification to `GENERIC`. An `ar`
+ * slot holding an English sentence is worse than a missing one, because nothing
+ * downstream can tell.
+ *
+ * WHAT IS CHECKED, per key:
+ *   * the variant its audience will actually be rendered with EXISTS — `PARENT`
+ *     for a parent key, and ALL FOUR TONE BANDS for a child one. The four are
+ *     required rather than one-plus-`BAND_FALLBACK`, because the fallback walk
+ *     makes a missing band INVISIBLE while a six-year-old reads a sixteen-year-
+ *     old's sentence, and «age-aware, never shaming» is a product rule rather
+ *     than a rendering convenience;
+ *   * every declared variant has an `ar` template;
+ *   * its title and body are non-empty after trimming;
+ *   * they contain Arabic script — an English literal parked in an `ar` slot is
+ *     reported by name.
+ */
+export function keysWithoutArabicCopy(input: KeyQualityInput): string[] {
+  const findings: string[] = [];
+  for (const key of input.keys) {
+    const entry = input.catalogue[key];
+    if (!entry) {
+      findings.push(`${key} — no catalogue entry at all`);
+      continue;
+    }
+    const required = entry.audience === 'PARENT' ? ['PARENT'] : [...TONE_BANDS];
+    for (const variantKey of required) {
+      if (!entry.variants?.[variantKey]) {
+        findings.push(`${key} — no '${variantKey}' variant, which is the one its own audience is rendered with`);
+      }
+    }
+    for (const [variantKey, localised] of Object.entries(entry.variants ?? {})) {
+      const ar = localised?.ar;
+      if (!ar) {
+        findings.push(`${key}/${variantKey} — no 'ar' template, and 'ar' is the renderer's fallback locale`);
+        continue;
+      }
+      for (const field of ['title', 'body'] as const) {
+        const text = ar[field];
+        if (typeof text !== 'string' || text.trim().length === 0) {
+          findings.push(`${key}/${variantKey} — the Arabic ${field} is empty`);
+        } else if (!ARABIC_LETTER.test(text)) {
+          findings.push(`${key}/${variantKey} — the Arabic ${field} contains no Arabic letter: «${text}»`);
+        }
+      }
+    }
+  }
+  return findings;
+}
+
+/**
+ * RULE P10 — A SAFETY CLASSIFICATION, AND NEVER THE DEFAULT.
+ *
+ * `notification-class.ts` is where this product decides what a notification
+ * does at 02:00, and its three answers are safety decisions: SUPPRESS drops a
+ * fact whose premise expires overnight, DEFER holds one that survives it,
+ * DELIVER wakes a household. `DEFAULT_QUIET_HOURS_CLASS` exists so that a type
+ * nobody classified fails towards being KEPT — its own docstring calls it «a
+ * safety net and never an answer», and a shipped key standing on it is a
+ * decision nobody made.
+ *
+ * FOUR KEYS IN THIS CATALOGUE ARE NOT TYPES — `GOAL_ALMOST_DONE`,
+ * `GOAL_DEADLINE_NEAR`, `STREAK_AT_RISK`, `REWARD_GRANTED_WITH_GOAL` are
+ * SENTENCES the decision layer may select under some other type — so the class
+ * is resolved the way production resolves it: through the TYPE the row is
+ * written with. A key is classified when it has a row of its own, or when every
+ * event type it can be selected under has one. `why` must say something, for
+ * the reason every reason in this file must.
+ */
+export function keysWithoutSafetyClassification(input: KeyQualityInput): string[] {
+  const findings: string[] = [];
+  const classified = (type: string): boolean =>
+    Object.prototype.hasOwnProperty.call(input.classes, type) &&
+    typeof input.classes[type].quietHours === 'string' &&
+    input.classes[type].quietHours.length > 0 &&
+    typeof input.classes[type].why === 'string' &&
+    input.classes[type].why.trim().length > 60;
+
+  for (const key of input.keys) {
+    if (classified(key)) continue;
+    const types = input.selectableUnder.get(key) ?? [];
+    if (types.length === 0) {
+      findings.push(
+        `${key} — no notification-class.ts row of its own and no event type it can be selected under`,
+      );
+      continue;
+    }
+    const unclassified = types.filter((type) => !classified(type));
+    if (unclassified.length > 0) {
+      findings.push(
+        `${key} — falls back to DEFAULT_QUIET_HOURS_CLASS under [${unclassified.sort().join(', ')}]`,
+      );
+    }
+  }
+  return findings;
+}
+
+/**
+ * RULE P11 — A DESTINATION THE APP ACTUALLY ANSWERS.
+ *
+ * THE DISTINCTION THIS FUNCTION EXISTS FOR, and the one the previous check
+ * could not make. RULE P3 already asked «does the surface appear in the
+ * router's switch?». `CHILD_WELLBEING_CHECKIN` passed that check while its tap
+ * did nothing, because `abny://coach` DOES appear in `deep_link_router.dart` —
+ * it appears as `return DeepLinkRoute.unavailable()`. A case that exists and
+ * answers «no screen» is a dead tap with a line number.
+ *
+ * So the surfaces are read from the ROUTER'S RETURNS: a surface is ANSWERED
+ * when at least one branch of its case builds a route, and UNANSWERED when
+ * every branch is `unavailable()`. Read, never listed — `DEEP_LINK_SURFACES`
+ * says what the server may emit and says nothing about what a client can open.
+ *
+ * THE INBOX IS AN ANSWER. `RUNTIME_ALERT`, `QUIET_HOURS_DIGEST` and `GENERIC`
+ * resolve to `abny://notifications` BY DECISION — a digest of N things cannot
+ * point at one of them — and both apps route it. The check is «can this tap
+ * land», not «is this tap interesting».
+ */
+export function keysWithDeadDestination(input: KeyQualityInput): string[] {
+  const findings: string[] = [];
+  for (const key of input.keys) {
+    const audience = input.catalogue[key]?.audience;
+    if (!(AUDIENCES as readonly string[]).includes(audience)) continue; // RULE P8's finding, not this one
+    const link = input.destinationOf(key, audience);
+    if (link === null) {
+      findings.push(`${key} — no explicit destination rule; every tap falls to the inbox by accident`);
+      continue;
+    }
+    const surface = surfaceOfLink(link);
+    const answered = input.answeredSurfaces[audience] ?? [];
+    if (!answered.includes(surface)) {
+      findings.push(
+        `${key} — resolves to ${link}, and the ${audience} app answers '${surface}' with no screen (a dead tap)`,
+      );
+    }
+  }
+  return findings;
+}
+
+/**
+ * RULE P12 — PROVENANCE: THE OCCURRENCE THIS SENTENCE IS ABOUT.
+ *
+ * `notifications.source_event_id` is NOT NULL and unique per recipient, and
+ * `notification_decisions` joins to it — so the causal key is the whole of this
+ * product's answer to «is this the same notification?», «why did this household
+ * get two?» and «what caused the row I am looking at?». `B9` added the
+ * constraint precisely because a five-minute `findFirst` window is not one.
+ *
+ * WHAT MAKES A KEY TRACEABLE, and both halves are checked:
+ *
+ *   1. IT HAS A NAMED PRODUCER. A `file:line` a reader can open. A key that is
+ *      producible only in the abstract is a key nobody can audit.
+ *   2. ITS PRODUCERS COMPOSE THE KEY RATHER THAN INVENT IT.
+ *      `notification-source-key.ts` exports the documented forms —
+ *      `forDomainEvent`, `forEntity`, `forRecurringSignal`,
+ *      `forQuietHoursDigest`, `forBillingEvent`, `forAudience` — and the
+ *      composer list is READ OUT OF THAT FILE, so adding a seventh form moves
+ *      this check with it. A string or template literal written at the call
+ *      site is REPORTED: it is a key whose collision behaviour nobody reasoned
+ *      about, and the header of that module spends four hundred lines arguing
+ *      that the composition is the decision. A bare identifier or member
+ *      expression (`input.sourceEventId`) is ACCEPTED — that is a relay of a
+ *      key composed upstream, which is what `BillingNotificationProducer.tell`
+ *      and the quiet-hours release arm both are.
+ */
+export function keysWithoutProvenance(input: KeyQualityInput): string[] {
+  const findings: string[] = [];
+  const composers = new Set(input.causalKeyComposers);
+  for (const key of input.keys) {
+    const sites = input.producedBy.get(key) ?? [];
+    if (sites.length === 0) {
+      findings.push(`${key} — producible, but no door site names it: there is nothing to quote`);
+      continue;
+    }
+    for (const site of sites) {
+      const where = `${site.file}:${site.line}`;
+      const expression = site.sourceExpression;
+      if (expression === null) {
+        findings.push(`${key} — ${where} states no sourceEventId, so the occurrence it is about is unrecorded`);
+        continue;
+      }
+      if (/^['"`]/.test(expression)) {
+        findings.push(
+          `${key} — ${where} invents its causal key in place (${expression.split('\n')[0]}) instead of` +
+            ` composing it through notification-source-key.ts`,
+        );
+        continue;
+      }
+      const call = /^([A-Za-z_]\w*)\s*\(/.exec(expression);
+      if (call && !composers.has(call[1])) {
+        findings.push(
+          `${key} — ${where} composes its causal key with '${call[1]}', which notification-source-key.ts does not export`,
+        );
+      }
+    }
+  }
+  return findings;
+}
+
+/** The composer names `notification-source-key.ts` exports, read from it. */
+export function causalKeyComposers(files: readonly SourceFile[]): string[] {
+  const source = files.find((f) => f.file.endsWith('shared/notifications/notification-source-key.ts'));
+  if (!source) return [];
+  return [...stripComments(source.content).matchAll(/export\s+function\s+([A-Za-z_]\w*)\s*\(/g)].map(
+    (m) => m[1],
+  );
 }
 
 // ===========================================================================
@@ -674,6 +1135,37 @@ export function computeProducibility(
 // ===========================================================================
 
 /**
+ * ===========================================================================
+ * THE NON-PRODUCER VOCABULARY FOR A COPY KEY. FOUR WORDS, CLOSED.
+ * ===========================================================================
+ *
+ * `SYSTEM_ONLY`           the key exists for a system or integrity path that
+ *                         writes through the allow-listed direct writer, not
+ *                         through a business event.
+ * `TRANSACTIONAL_ONLY`    the key is relayed with a type somebody else already
+ *                         decided — a machine hop below the decision layer.
+ * `NO_PRODUCER_BY_DESIGN` having a producer would be the DEFECT. The renderer's
+ *                         terminal fallback is the only member today.
+ * `DEFERRED`              a decided product intention whose producer is a later
+ *                         piece of work, named here with the work that closes it.
+ *
+ * `DEFERRED` IS NOT AN EXEMPTION AND IT IS NOT THE LEDGER'S REPLACEMENT. It is
+ * for a key the product has DECIDED not to produce yet; a key that was supposed
+ * to be produced and is not is a DEFECT and belongs on `PRODUCERLESS_DEFECT_LEDGER`
+ * below, where an `it.failing` names it in every run's report. The difference is
+ * whether somebody decided, and the reason has to say so.
+ *
+ * WHAT IS NOT AN ACCEPTABLE REASON, written down so it cannot be added quietly:
+ * "no producer yet", "another work stream", "it is only one key". Every one of
+ * those is `PF-E-001` again.
+ */
+type KeyClassification = 'SYSTEM_ONLY' | 'TRANSACTIONAL_ONLY' | 'NO_PRODUCER_BY_DESIGN' | 'DEFERRED';
+
+/**
+ * The DOOR vocabulary, which is a different question and keeps its own words: a
+ * door classification says why an event type could not be RESOLVED at a call
+ * site, not why a sentence has no producer.
+ *
  * `FALLBACK`         the renderer's terminal answer; it has no producer BY
  *                    CONSTRUCTION and having one would be the bug.
  * `TRANSACTIONAL`    a human-initiated transaction or a machine relay below the
@@ -683,38 +1175,48 @@ export function computeProducibility(
  * `SCHEDULED_DIGEST` assembled by a scheduler out of decisions already taken.
  * `FOREIGN`          not a notification door at all; a same-named method on an
  *                    unrelated service.
- *
- * WHAT IS NOT AN ACCEPTABLE REASON, written down so it cannot be added quietly:
- * "no producer yet", "another work stream", "it is only one key". Every one of
- * those is `PF-E-001` again, and every one of them belongs on the DEFECT LEDGER
- * below, where it stays visible.
  */
-type Classification = 'FALLBACK' | 'TRANSACTIONAL' | 'SYSTEM' | 'SCHEDULED_DIGEST' | 'FOREIGN';
+type DoorClassification = 'FALLBACK' | 'TRANSACTIONAL' | 'SYSTEM' | 'SCHEDULED_DIGEST' | 'FOREIGN';
 
-interface ClassifiedEntry {
+interface ClassifiedEntry<C extends string = string> {
   readonly what: string;
-  readonly classification: Classification;
+  readonly classification: C;
   /** ONE LINE, and it must say something. A reason too short to be a sentence
    * is the same as no reason, and RULE P1 fails it. */
   readonly reason: string;
 }
 
 /** Copy keys that legitimately have no producer. */
-const CLASSIFIED_COPY_KEYS: readonly ClassifiedEntry[] = Object.freeze([
+const CLASSIFIED_COPY_KEYS: readonly ClassifiedEntry<KeyClassification>[] = Object.freeze([
   {
     what: GENERIC_COPY_KEY,
-    classification: 'FALLBACK',
+    classification: 'NO_PRODUCER_BY_DESIGN',
     reason:
       'The renderer’s terminal fallback, returned by copyFor when a producer emits a type the catalogue has no sentence for; a producer that named it directly would be the defect, not the fix.',
   },
 ]);
+
+const KEY_CLASSIFICATIONS: readonly KeyClassification[] = [
+  'SYSTEM_ONLY',
+  'TRANSACTIONAL_ONLY',
+  'NO_PRODUCER_BY_DESIGN',
+  'DEFERRED',
+];
+
+const DOOR_CLASSIFICATIONS: readonly DoorClassification[] = [
+  'FALLBACK',
+  'TRANSACTIONAL',
+  'SYSTEM',
+  'SCHEDULED_DIGEST',
+  'FOREIGN',
+];
 
 /**
  * Door sites whose event type this guard cannot resolve, and why that is
  * correct rather than a hole. RULE P5 fails on any unresolved site that is NOT
  * here, so the analyser can never quietly under-report.
  */
-const CLASSIFIED_DOORS: readonly ClassifiedEntry[] = Object.freeze([
+const CLASSIFIED_DOORS: readonly ClassifiedEntry<DoorClassification>[] = Object.freeze([
   {
     what: 'src/modules/billing/presentation/controllers/stripe-webhook.controller.ts:handleEvent',
     classification: 'FOREIGN',
@@ -798,27 +1300,124 @@ const PRODUCERLESS_DEFECT_LEDGER: readonly LedgerEntry[] = Object.freeze([
 ]);
 
 // ===========================================================================
+// 5b. THE DEAD-DESTINATION LEDGER — TAPS THAT DIE, LEFT VISIBLE
+// ===========================================================================
+
+/**
+ * ===========================================================================
+ * EVERY ENTRY HERE IS A DEFECT, NOT AN EXEMPTION — the same contract as
+ * `PRODUCERLESS_DEFECT_LEDGER`, for the same reason, with the same ratchet.
+ * ===========================================================================
+ *
+ * A key on this list is PRODUCED, CLASSIFIED, SCORED, has Arabic copy and an
+ * explicit destination rule — and its destination is a surface its own app
+ * answers with `DeepLinkRouteKind.unavailable`. The notification arrives, the
+ * reader taps it, and the app shows them the inbox they were already in with a
+ * snackbar saying it cannot open that. This repository has shipped that before
+ * on `CHILD_WELLBEING_CHECKIN` (`abny://coach`), which is why RULE P11 reads the
+ * router's RETURNS rather than its case labels.
+ *
+ * THE FIX IS NOT IN THIS MODULE'S REACH. `DESTINATION_RULES` lives in
+ * `src/modules/notifications/domain/engine/notification-destination.ts`; the
+ * two candidate repairs — re-point the two keys at a surface the parent app
+ * opens, or open `progress` in the parent app — are a notifications-module
+ * change and a Flutter change respectively. So this ledger reports rather than
+ * repairs, and the `it.failing` below turns the day either lands into a red
+ * build that forces the entry out.
+ */
+interface DeadDestinationEntry {
+  readonly copyKey: string;
+  /** Where the evidence is. `file:line`, so a reader can check the claim. */
+  readonly evidence: string;
+  readonly detail: string;
+}
+
+const DEAD_DESTINATION_LEDGER: readonly DeadDestinationEntry[] = Object.freeze([
+  {
+    copyKey: 'REWARD_GRANTED',
+    evidence: 'apps/parent-app/lib/core/routing/deep_link_router.dart:212',
+    detail:
+      'The most-sent parent sentence in this product — «حصل {childName} على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.» — resolves to `abny://progress`, and `DeepLinkRouter.resolve` answers `progress` with `DeepLinkRoute.unavailable()` because `LearningProgressScreen` needs a `childId` AND a `childName` that the identifier-free payload will never carry (`e2e-13 STEP 14`). The sentence tells a parent to open the app and the tap lands them back on the inbox with a snackbar.',
+  },
+  {
+    copyKey: 'BADGE_EARNED_PARENT',
+    evidence: 'apps/parent-app/lib/core/routing/deep_link_router.dart:212',
+    detail:
+      'The same dead surface, one key over: «حصل {childName} على وسام {badgeTitle}. التفاصيل داخل التطبيق.» resolves to `abny://progress` and the parent app cannot open it. It is listed separately rather than folded into the entry above because the two keys are repaired independently — the badge sentence has a defensible landing the reward sentence does not, and one being fixed must not silence the other.',
+  },
+]);
+
+// ===========================================================================
 // 6. THE CLIENT HALF — read from the Flutter apps, never edited
 // ===========================================================================
 
 interface ClientRouting {
   readonly wireNames: readonly string[];
   readonly routedSurfaces: readonly string[];
+  /** Surfaces whose case builds a route — a tap that lands somewhere. */
+  readonly answeredSurfaces: readonly string[];
+  /** Surfaces whose EVERY branch is `unavailable()` — a tap that dies. */
+  readonly unansweredSurfaces: readonly string[];
 }
 
+/**
+ * THE ROUTER, READ AS A ROUTER RATHER THAN AS A LIST OF LABELS.
+ *
+ * `routedSurfaces` — the old reading — is «does a `case` for this surface
+ * exist», and it cannot tell a screen from a refusal: `progress` and `coach`
+ * both have cases in `deep_link_router.dart` and both answer
+ * `DeepLinkRoute.unavailable()`. So the RETURNS are read too.
+ *
+ * FALL-THROUGH IS THE WHOLE REASON THIS IS A SCAN AND NOT A REGEX. Dart's
+ * `case a: case b: return X;` gives `a` no return of its own; the labels are
+ * therefore accumulated until a segment actually returns, and the verdict is
+ * applied to all of them — which is exactly how `progress` and `coach` share
+ * one `unavailable()` in the parent app and how `screen-time` and
+ * `notifications` share one `MyGrowthScreen` in the child app.
+ *
+ * A CASE IS ANSWERED IF ANY BRANCH BUILDS A ROUTE. `case goal: return id == null
+ * ? unavailable() : page(...)` is answered, and correctly so: the server never
+ * emits a bare id-bearing surface (`notification-destination.ts` degrades
+ * `goal` to `goals` itself), so the branch a real link takes is the page.
+ */
 function readClientRouting(dir: string, routerFile: string): ClientRouting {
   const link = fs.readFileSync(path.join(dir, 'deep_link.dart'), 'utf8');
-  const router = fs.readFileSync(path.join(dir, routerFile), 'utf8');
+  const router = stripComments(fs.readFileSync(path.join(dir, routerFile), 'utf8'));
   const enumToWire = new Map<string, string>();
   for (const m of link.matchAll(/DeepLinkSurface\.([A-Za-z_]\w*)\s*=>\s*'([^']+)'/g)) {
     enumToWire.set(m[1], m[2]);
   }
+
+  const labels = [...router.matchAll(/case\s+DeepLinkSurface\.([A-Za-z_]\w*)\s*:/g)];
   const routed = new Set<string>();
-  for (const m of router.matchAll(/case\s+DeepLinkSurface\.([A-Za-z_]\w*)\s*:/g)) {
-    const wire = enumToWire.get(m[1]);
-    if (wire) routed.add(wire);
+  const answered = new Set<string>();
+  const unanswered = new Set<string>();
+  let pending: string[] = [];
+
+  for (let i = 0; i < labels.length; i += 1) {
+    const wire = enumToWire.get(labels[i][1]);
+    if (!wire) continue;
+    routed.add(wire);
+    pending.push(wire);
+
+    const from = (labels[i].index as number) + labels[i][0].length;
+    const to = i + 1 < labels.length ? (labels[i + 1].index as number) : router.length;
+    const returns = [...router.slice(from, to).matchAll(/return\s+([\s\S]*?);/g)].map((m) => m[1]);
+    if (returns.length === 0) continue; // falls through to the next label
+
+    const dead = returns.every((expression) =>
+      /^\s*(?:const\s+)?[A-Za-z_]\w*\.unavailable\s*\(\s*\)\s*$/.test(expression),
+    );
+    for (const surface of pending) (dead ? unanswered : answered).add(surface);
+    pending = [];
   }
-  return { wireNames: [...enumToWire.values()].sort(), routedSurfaces: [...routed].sort() };
+
+  return {
+    wireNames: [...enumToWire.values()].sort(),
+    routedSurfaces: [...routed].sort(),
+    answeredSurfaces: [...answered].sort(),
+    unansweredSurfaces: [...unanswered].sort(),
+  };
 }
 
 // ===========================================================================
@@ -853,6 +1452,30 @@ const parentRouting = readClientRouting(PARENT_APP, 'deep_link_router.dart');
 const childRouting = readClientRouting(CHILD_APP, 'child_deep_link_router.dart');
 const audienceOf = (key: string): 'PARENT' | 'CHILD' => COPY_CATALOGUE[key].audience as 'PARENT' | 'CHILD';
 const surfaceOf = (link: string): string => link.replace('abny://', '').split('/')[0];
+const deadDestinationKeys = DEAD_DESTINATION_LEDGER.map((e) => e.copyKey);
+
+/**
+ * THE QUALITY AUDIT'S INPUT, ASSEMBLED FROM PRODUCTION ARTEFACTS AND NOTHING
+ * ELSE. Every field is either an imported production table, a function this
+ * suite did not write, or something read out of `src/` and the two Flutter
+ * routers at test time. There is no list here for anybody to keep in step.
+ */
+const quality: KeyQualityInput = {
+  keys: producibleKeys,
+  catalogue: COPY_CATALOGUE as unknown as Readonly<Record<string, QualityCatalogueEntry>>,
+  classes: NOTIFICATION_CLASSES as unknown as Readonly<Record<string, QualityClassEntry>>,
+  selectableUnder: producibility.copyKeyTypes,
+  producedBy: producibility.copyKeySites,
+  destinationOf: (key, audience) =>
+    hasExplicitDestination(key)
+      ? resolveNotificationDestination({ copyKey: key, audience: audience as 'PARENT' | 'CHILD' })
+      : null,
+  answeredSurfaces: {
+    PARENT: parentRouting.answeredSurfaces,
+    CHILD: childRouting.answeredSurfaces,
+  },
+  causalKeyComposers: causalKeyComposers(files),
+};
 
 describe('ARCHITECTURE GUARD — no producerless production notification', () => {
   // =========================================================================
@@ -972,11 +1595,18 @@ describe('ARCHITECTURE GUARD — no producerless production notification', () =>
       expect(producibleKeys.filter((k) => !catalogue.includes(k))).toEqual([]);
     });
 
-    it('every classification carries a class and a real one-line reason', () => {
+    it('every classification carries a class from its OWN closed vocabulary and a real one-line reason', () => {
+      // TWO VOCABULARIES, because they answer two questions: a KEY is classified
+      // when it legitimately has no producer; a DOOR is classified when its
+      // event type cannot be resolved. Sharing one word list let a door reason
+      // stand in for a key reason, which is the thing this file exists to stop.
+      for (const entry of CLASSIFIED_COPY_KEYS) {
+        expect(KEY_CLASSIFICATIONS).toContain(entry.classification);
+      }
+      for (const entry of CLASSIFIED_DOORS) {
+        expect(DOOR_CLASSIFICATIONS).toContain(entry.classification);
+      }
       for (const entry of [...CLASSIFIED_COPY_KEYS, ...CLASSIFIED_DOORS]) {
-        expect(['FALLBACK', 'TRANSACTIONAL', 'SYSTEM', 'SCHEDULED_DIGEST', 'FOREIGN']).toContain(
-          entry.classification,
-        );
         // A reason short enough to be nothing IS nothing.
         expect(`${entry.what}:${entry.reason.trim().length > 60}`).toBe(`${entry.what}:true`);
         expect(entry.reason).not.toMatch(/\n/);
@@ -1158,6 +1788,107 @@ describe('ARCHITECTURE GUARD — no producerless production notification', () =>
   });
 
   // =========================================================================
+  // RULES P8..P12 — WHAT A KEY MUST CARRY BESIDES A PRODUCER
+  //
+  // The set under audit is `producibleKeys`, which is DISCOVERED by RULE P1's
+  // own analysis. So a key added tomorrow is audited tomorrow, and a key that
+  // stops being producible stops being audited HERE and starts failing THERE.
+  // =========================================================================
+  describe('RULES P8..P12 — a producible key is not a shippable key', () => {
+    it('the set under audit is the producible set, and it is not empty', () => {
+      expect(producibleKeys.length).toBeGreaterThanOrEqual(25);
+      expect(quality.keys).toEqual(producibleKeys);
+      // And the artefacts really were read, rather than defaulting to empty —
+      // an audit over three empty tables passes every check it has.
+      expect(Object.keys(quality.catalogue).length).toBe(copyKeys().length);
+      expect(Object.keys(quality.classes).length).toBeGreaterThanOrEqual(25);
+      expect(quality.causalKeyComposers).toEqual(
+        expect.arrayContaining(['forDomainEvent', 'forEntity', 'forRecurringSignal']),
+      );
+      expect(quality.answeredSurfaces.PARENT.length).toBeGreaterThan(0);
+      expect(quality.answeredSurfaces.CHILD.length).toBeGreaterThan(0);
+    });
+
+    it('RULE P8 — every producible key declares an audience, and the two tables agree about it', () => {
+      expect(keysWithoutDeclaredAudience(quality)).toEqual([]);
+    });
+
+    it('RULE P9 — every producible key has Arabic copy, present, non-empty and actually Arabic', () => {
+      expect(keysWithoutArabicCopy(quality)).toEqual([]);
+    });
+
+    it('RULE P10 — every producible key resolves to a WRITTEN quiet-hours class, never the default', () => {
+      expect(keysWithoutSafetyClassification(quality)).toEqual([]);
+    });
+
+    it('RULE P12 — every producible key names a producer that COMPOSES its causal key', () => {
+      expect(keysWithoutProvenance(quality)).toEqual([]);
+    });
+
+    // -----------------------------------------------------------------------
+    // RULE P11 — the destination, and the ledger of the taps that die
+    // -----------------------------------------------------------------------
+    describe('RULE P11 — the tap lands on a screen the reader’s own app can open', () => {
+      it('the ONLY dead destinations are the ones on the ledger — a new one fails here BY NAME', () => {
+        const dead = keysWithDeadDestination(quality)
+          .map((finding) => finding.split(' — ')[0])
+          .sort();
+        expect(dead).toEqual([...deadDestinationKeys].sort());
+      });
+
+      it('the ledger names a real key, a real evidence file and says what is wrong', () => {
+        for (const entry of DEAD_DESTINATION_LEDGER) {
+          expect(copyKeys()).toContain(entry.copyKey);
+          expect(producibleKeys).toContain(entry.copyKey);
+          expect(`${entry.copyKey}:${entry.detail.trim().length > 60}`).toBe(`${entry.copyKey}:true`);
+          expect(entry.evidence).toMatch(/^apps\/(parent|child)-app\//);
+          expect(fs.existsSync(path.join(REPO_ROOT, entry.evidence.split(':')[0]))).toBe(true);
+        }
+        expect(deadDestinationKeys).toHaveLength(new Set(deadDestinationKeys).size);
+      });
+
+      /**
+       * THE RATCHET, and it is `PRODUCERLESS_DEFECT_LEDGER`'s idiom because it is
+       * the same contract: `it.failing` PASSES while the body throws and FAILS
+       * the day it stops. So every dead tap is named in every run's report, and
+       * fixing one breaks the build until its entry is deleted. Both branches
+       * assert, for the reason the producerless ledger's own branch does —
+       * `jest-each` refuses an empty table, so «no dead taps» must be a stated
+       * outcome rather than an absent block.
+       */
+      if (DEAD_DESTINATION_LEDGER.length === 0) {
+        it('is EMPTY — every producible key lands on a screen its own app can open', () => {
+          expect(keysWithDeadDestination(quality)).toEqual([]);
+          expect(parentRouting.unansweredSurfaces).toEqual([]);
+        });
+      } else {
+        it.failing.each(DEAD_DESTINATION_LEDGER.map((e) => [e.copyKey, e.detail]))(
+          '%s lands on a screen its own app can OPEN',
+          (copyKey) => {
+            expect(keysWithDeadDestination(quality).map((f) => f.split(' — ')[0])).not.toContain(copyKey);
+          },
+        );
+      }
+
+      it('the two surfaces the parent app refuses are READ from its router, not assumed', () => {
+        // Named, because the ledger above stands on them: if `progress` gains a
+        // screen this goes red beside the `it.failing`, and the two together say
+        // what happened rather than leaving one silent.
+        expect(parentRouting.unansweredSurfaces).toEqual(['coach', 'progress']);
+        expect(childRouting.unansweredSurfaces).toEqual([]);
+        // And ANSWERED + UNANSWERED partition the routed set: a surface the
+        // scan failed to attribute would otherwise vanish from both.
+        expect([...parentRouting.answeredSurfaces, ...parentRouting.unansweredSurfaces].sort()).toEqual(
+          parentRouting.routedSurfaces,
+        );
+        expect([...childRouting.answeredSurfaces, ...childRouting.unansweredSurfaces].sort()).toEqual(
+          childRouting.routedSurfaces,
+        );
+      });
+    });
+  });
+
+  // =========================================================================
   // RULE P7 — THE NEGATIVE CONTROL, WIRED IN AND PERMANENT
   // =========================================================================
   describe('RULE P7 — negative control: the detection provably fires', () => {
@@ -1281,6 +2012,352 @@ export class FakeProvider {}`,
       };
       const result = computeProducibility([...scaffolding, tricky], CATALOGUE);
       expect(result.copyKeys.has('WIDGET_EARNED_PARENT')).toBe(true);
+    });
+
+    // =======================================================================
+    // THE NEGATIVE CONTROLS FOR RULES P8..P12.
+    //
+    // ONE SYNTHETIC KEY, MADE COMPLETE, AND THEN BROKEN ONE PROPERTY AT A TIME.
+    // Each control asserts BOTH directions: the broken fixture is reported BY
+    // NAME, and the repaired one clears. A control that only checked the
+    // failing direction would pass for an analyser that reports everything, and
+    // one that only checked the passing direction would pass for an analyser
+    // that reports nothing — and this file has caught both shapes before.
+    // =======================================================================
+    describe('RULES P8..P12 — each new check provably discriminates', () => {
+      const AR = { title: 'عنوان', body: 'نص عربي حقيقي' };
+      const EN = { title: 'Title', body: 'An English body' };
+
+      const site = (over: Partial<DoorSite> = {}): DoorSite => ({
+        file: 'src/modules/x/x.service.ts',
+        line: 12,
+        method: 'handleEvent',
+        kind: 'ENGINE',
+        raw: "'WIDGET_EARNED'",
+        types: ['WIDGET_EARNED'],
+        how: 'LITERAL',
+        slots: ['familyId', 'eventType', 'sourceEventId', 'trigger'],
+        sourceExpression: 'forDomainEvent(envelope.id)',
+        resolved: true,
+        ...over,
+      });
+
+      /** A key with everything RULE P8..P12 demands. Every control below is
+       * this, minus one property. */
+      const complete = (over: Partial<KeyQualityInput> = {}): KeyQualityInput => ({
+        keys: ['WIDGET_EARNED'],
+        catalogue: {
+          WIDGET_EARNED: {
+            category: 'REWARD',
+            audience: 'PARENT',
+            variants: { PARENT: { ar: AR, en: EN } },
+          },
+        },
+        classes: {
+          WIDGET_EARNED: {
+            quietHours: 'DEFER',
+            audience: 'PARENT',
+            category: 'REWARD',
+            why: 'A widget is a durable fact about the household and it survives the night, so it is held until the window ends rather than dropped.',
+          },
+        },
+        selectableUnder: new Map([['WIDGET_EARNED', ['WIDGET_EARNED']]]),
+        producedBy: new Map([['WIDGET_EARNED', [site()]]]),
+        destinationOf: () => 'abny://rewards',
+        answeredSurfaces: { PARENT: ['rewards', 'notifications'], CHILD: ['rewards', 'notifications'] },
+        causalKeyComposers: ['forDomainEvent', 'forEntity'],
+        ...over,
+      });
+
+      it('the COMPLETE fixture passes all five — the controls below are measuring a difference', () => {
+        const input = complete();
+        expect(keysWithoutDeclaredAudience(input)).toEqual([]);
+        expect(keysWithoutArabicCopy(input)).toEqual([]);
+        expect(keysWithoutSafetyClassification(input)).toEqual([]);
+        expect(keysWithDeadDestination(input)).toEqual([]);
+        expect(keysWithoutProvenance(input)).toEqual([]);
+      });
+
+      // -- P8 ---------------------------------------------------------------
+      it('P8: a key with NO declared audience is reported by name, and declaring one clears it', () => {
+        const broken = complete({
+          catalogue: { WIDGET_EARNED: { category: 'REWARD', audience: '', variants: { PARENT: { ar: AR } } } },
+        });
+        expect(keysWithoutDeclaredAudience(broken).join('\n')).toContain('WIDGET_EARNED');
+        expect(keysWithoutDeclaredAudience(complete())).toEqual([]);
+      });
+
+      it('P8: a catalogue audience that CONTRADICTS the class matrix is reported', () => {
+        const contradiction = complete({
+          classes: {
+            WIDGET_EARNED: {
+              quietHours: 'DEFER',
+              audience: 'CHILD',
+              category: 'REWARD',
+              why: 'A widget is a durable fact about the household and it survives the night, so it is held until the window ends rather than dropped.',
+            },
+          },
+        });
+        expect(keysWithoutDeclaredAudience(contradiction).join('\n')).toMatch(
+          /WIDGET_EARNED.*PARENT.*CHILD/,
+        );
+        // …and `BOTH` is NOT a contradiction: it is the class matrix saying the
+        // producer composes two single-audience candidates.
+        const both = complete({
+          classes: {
+            WIDGET_EARNED: {
+              quietHours: 'DEFER',
+              audience: 'BOTH',
+              category: 'REWARD',
+              why: 'A widget is a durable fact about the household and it survives the night, so it is held until the window ends rather than dropped.',
+            },
+          },
+        });
+        expect(keysWithoutDeclaredAudience(both)).toEqual([]);
+      });
+
+      // -- P9 ---------------------------------------------------------------
+      it('P9: a key MISSING its Arabic template is reported by name, and adding it clears the report', () => {
+        const missing = complete({
+          catalogue: {
+            WIDGET_EARNED: { category: 'REWARD', audience: 'PARENT', variants: { PARENT: { en: EN } } },
+          },
+        });
+        expect(keysWithoutArabicCopy(missing).join('\n')).toContain("WIDGET_EARNED/PARENT — no 'ar' template");
+        expect(keysWithoutArabicCopy(complete())).toEqual([]);
+      });
+
+      it('P9: an EMPTY Arabic body, and an ENGLISH sentence parked in the `ar` slot, are both reported', () => {
+        const empty = complete({
+          catalogue: {
+            WIDGET_EARNED: {
+              category: 'REWARD',
+              audience: 'PARENT',
+              variants: { PARENT: { ar: { title: 'عنوان', body: '   ' } } },
+            },
+          },
+        });
+        expect(keysWithoutArabicCopy(empty).join('\n')).toContain('the Arabic body is empty');
+
+        const english = complete({
+          catalogue: {
+            WIDGET_EARNED: {
+              category: 'REWARD',
+              audience: 'PARENT',
+              variants: { PARENT: { ar: { title: 'عنوان', body: 'You earned a new reward' } } },
+            },
+          },
+        });
+        expect(keysWithoutArabicCopy(english).join('\n')).toContain('contains no Arabic letter');
+      });
+
+      it('P9: a CHILD key that skips a tone band is reported — the fallback walk hides it otherwise', () => {
+        const partial = complete({
+          catalogue: {
+            WIDGET_EARNED: {
+              category: 'REWARD',
+              audience: 'CHILD',
+              variants: { '5-7': { ar: AR }, '8-10': { ar: AR }, '11-13': { ar: AR } },
+            },
+          },
+        });
+        expect(keysWithoutArabicCopy(partial).join('\n')).toContain("no '14-17' variant");
+
+        const full = complete({
+          catalogue: {
+            WIDGET_EARNED: {
+              category: 'REWARD',
+              audience: 'CHILD',
+              variants: {
+                '5-7': { ar: AR },
+                '8-10': { ar: AR },
+                '11-13': { ar: AR },
+                '14-17': { ar: AR },
+              },
+            },
+          },
+        });
+        expect(keysWithoutArabicCopy(full)).toEqual([]);
+      });
+
+      // -- P10 --------------------------------------------------------------
+      it('P10: a key with no quiet-hours row anywhere is reported, and classifying it clears the report', () => {
+        const unclassified = complete({ classes: {} });
+        expect(keysWithoutSafetyClassification(unclassified).join('\n')).toContain(
+          'DEFAULT_QUIET_HOURS_CLASS',
+        );
+        expect(keysWithoutSafetyClassification(complete())).toEqual([]);
+      });
+
+      it('P10: a CONTEXTUAL key inherits the class of the type it is selected under', () => {
+        // The shape of `GOAL_ALMOST_DONE`: a sentence, not a type, with no row
+        // of its own — classified when its producing type is, and reported when
+        // its producing type is not.
+        const shared = {
+          catalogue: {
+            WIDGET_NEARLY: { category: 'REWARD', audience: 'PARENT', variants: { PARENT: { ar: AR } } },
+          },
+          keys: ['WIDGET_NEARLY'],
+          producedBy: new Map([['WIDGET_NEARLY', [site()]]]),
+        };
+        const viaClassifiedType = complete({
+          ...shared,
+          selectableUnder: new Map([['WIDGET_NEARLY', ['WIDGET_EARNED']]]),
+        });
+        expect(keysWithoutSafetyClassification(viaClassifiedType)).toEqual([]);
+
+        const viaUnclassifiedType = complete({
+          ...shared,
+          selectableUnder: new Map([['WIDGET_NEARLY', ['WIDGET_SOMETHING_ELSE']]]),
+        });
+        expect(keysWithoutSafetyClassification(viaUnclassifiedType).join('\n')).toContain(
+          'WIDGET_SOMETHING_ELSE',
+        );
+      });
+
+      it('P10: a class row whose `why` says nothing is not a classification', () => {
+        const unreasoned = complete({
+          classes: {
+            WIDGET_EARNED: { quietHours: 'DELIVER', audience: 'PARENT', category: 'REWARD', why: 'because' },
+          },
+        });
+        expect(keysWithoutSafetyClassification(unreasoned).join('\n')).toContain('WIDGET_EARNED');
+      });
+
+      // -- P11 --------------------------------------------------------------
+      it('P11: a destination the app answers with NO SCREEN is reported by name, and opening it clears the report', () => {
+        // THE `CHILD_WELLBEING_CHECKIN` SHAPE, reproduced: the surface is real,
+        // the link is well-formed, the router has a case for it — and the case
+        // returns `unavailable()`. This is the exact control that would have
+        // caught the shipped defect.
+        const dead = complete({ destinationOf: () => 'abny://coach' });
+        expect(keysWithDeadDestination(dead).join('\n')).toContain(
+          'WIDGET_EARNED — resolves to abny://coach',
+        );
+
+        const opened = complete({
+          destinationOf: () => 'abny://coach',
+          answeredSurfaces: { PARENT: ['coach', 'rewards', 'notifications'], CHILD: ['rewards'] },
+        });
+        expect(keysWithDeadDestination(opened)).toEqual([]);
+      });
+
+      it('P11: a key with NO explicit destination rule at all is reported', () => {
+        expect(keysWithDeadDestination(complete({ destinationOf: () => null })).join('\n')).toContain(
+          'no explicit destination rule',
+        );
+      });
+
+      it('P11: the check is PER AUDIENCE — a surface only the parent app opens is dead for a child', () => {
+        const childKey = complete({
+          catalogue: {
+            WIDGET_EARNED: {
+              category: 'REWARD',
+              audience: 'CHILD',
+              variants: {
+                '5-7': { ar: AR },
+                '8-10': { ar: AR },
+                '11-13': { ar: AR },
+                '14-17': { ar: AR },
+              },
+            },
+          },
+          destinationOf: () => 'abny://subscription',
+          answeredSurfaces: { PARENT: ['subscription'], CHILD: ['rewards', 'notifications'] },
+        });
+        expect(keysWithDeadDestination(childKey).join('\n')).toContain('the CHILD app answers');
+      });
+
+      it('P11: the router scan reads RETURNS, so a fall-through case inherits the verdict below it', () => {
+        // `case a: case b: return unavailable();` — the shape `progress` and
+        // `coach` share in `deep_link_router.dart`. A scan that stopped at the
+        // labels would call `a` routed and say nothing about whether it opens.
+        const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'abny-router-'));
+        fs.writeFileSync(
+          path.join(dir, 'deep_link.dart'),
+          `String wire(DeepLinkSurface s) => switch (s) {
+             DeepLinkSurface.alpha => 'alpha',
+             DeepLinkSurface.beta => 'beta',
+             DeepLinkSurface.gamma => 'gamma',
+           };`,
+        );
+        fs.writeFileSync(
+          path.join(dir, 'router.dart'),
+          `static Route resolve(d) {
+             switch (d.surface) {
+               case DeepLinkSurface.alpha:
+                 return Route.named(AppRoutes.alpha);
+               // a comment that says the word return, and must not be counted
+               case DeepLinkSurface.beta:
+               case DeepLinkSurface.gamma:
+                 return Route.unavailable();
+             }
+           }`,
+        );
+        const routing = readClientRouting(dir, 'router.dart');
+        expect(routing.routedSurfaces).toEqual(['alpha', 'beta', 'gamma']);
+        expect(routing.answeredSurfaces).toEqual(['alpha']);
+        expect(routing.unansweredSurfaces).toEqual(['beta', 'gamma']);
+        fs.rmSync(dir, { recursive: true, force: true });
+      });
+
+      // -- P12 --------------------------------------------------------------
+      it('P12: a producer that INVENTS its causal key is reported, and composing it clears the report', () => {
+        const invented = complete({
+          producedBy: new Map([['WIDGET_EARNED', [site({ sourceExpression: '`evt:${childId}:widget`' })]]]),
+        });
+        expect(keysWithoutProvenance(invented).join('\n')).toContain('invents its causal key in place');
+        expect(keysWithoutProvenance(complete())).toEqual([]);
+      });
+
+      it('P12: a producer that states NO causal key at all is reported', () => {
+        const silent = complete({
+          producedBy: new Map([['WIDGET_EARNED', [site({ sourceExpression: null })]]]),
+        });
+        expect(keysWithoutProvenance(silent).join('\n')).toContain('states no sourceEventId');
+      });
+
+      it('P12: an UNDOCUMENTED composer is reported, and a RELAY of an upstream key is not', () => {
+        const homeGrown = complete({
+          producedBy: new Map([['WIDGET_EARNED', [site({ sourceExpression: 'myOwnKey(childId)' })]]]),
+        });
+        expect(keysWithoutProvenance(homeGrown).join('\n')).toContain("composes its causal key with 'myOwnKey'");
+
+        // `BillingNotificationProducer.tell`'s shape: the key was composed by
+        // the caller and is relayed here. That is provenance, not its absence.
+        const relay = complete({
+          producedBy: new Map([['WIDGET_EARNED', [site({ sourceExpression: 'input.sourceEventId' })]]]),
+        });
+        expect(keysWithoutProvenance(relay)).toEqual([]);
+      });
+
+      it('P12: a key nothing produces is reported rather than quietly passing', () => {
+        expect(keysWithoutProvenance(complete({ producedBy: new Map() })).join('\n')).toContain(
+          'no door site names it',
+        );
+      });
+
+      it('the multi-line causal key a real producer writes is read whole', () => {
+        // `goal-nudge.service.ts` composes `forEntity(...)` over four lines, and
+        // a line-bounded read would see `forEntity(` and report an invention.
+        const literal = `{
+          familyId,
+          eventType: 'WIDGET_EARNED',
+          sourceEventId: forEntity(
+            'signal',
+            childId,
+            programId,
+            businessDate,
+          ),
+          trigger: 'DOMAIN_EVENT',
+        }`;
+        expect(objectProperty(literal, 'sourceEventId')?.startsWith('forEntity(')).toBe(true);
+        expect(objectProperty(literal, 'sourceEventId')).toContain('businessDate');
+        expect(objectProperty(literal, 'trigger')).toBe("'DOMAIN_EVENT'");
+        // Shorthand is a relay of a value composed elsewhere, and reads as one.
+        expect(objectProperty('{ familyId, sourceEventId }', 'sourceEventId')).toBe('sourceEventId');
+        expect(objectProperty('{ familyId }', 'sourceEventId')).toBeNull();
+      });
     });
 
     it('an unreasoned classification is rejected by the same assertion the real list faces', () => {
