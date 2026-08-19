@@ -72,7 +72,25 @@ const INSTANT_B = new Date('2026-03-11T05:00:00.000Z');
 const BUSINESS_DATE_B = '2026-03-10';
 const INSTANT_C = new Date('2026-03-12T05:00:00.000Z');
 const BUSINESS_DATE_C = '2026-03-11';
-const ALL_BUSINESS_DATES = [BUSINESS_DATE_A, BUSINESS_DATE_B, BUSINESS_DATE_C];
+/** §6's own day, so the mid-sweep mutation cannot read §1–§4's run rows. */
+const INSTANT_D = new Date('2026-03-13T05:00:00.000Z');
+const BUSINESS_DATE_D = '2026-03-12';
+const ALL_BUSINESS_DATES = [BUSINESS_DATE_A, BUSINESS_DATE_B, BUSINESS_DATE_C, BUSINESS_DATE_D];
+
+/**
+ * TWO UUIDs AT THE EXTREMES OF PostgreSQL'S `uuid` ORDER, used by §6 to place a
+ * mid-sweep INSERT provably BEFORE and provably AFTER the keyset cursor without
+ * having to guess where the cursor landed.
+ *
+ * `gen_random_uuid()` is v4: sixteen random bytes bar the version and variant
+ * nibbles, so the chance a real cohort row sorts below the first or above the
+ * second is ~2^-120. §6 does not rely on that anyway — it ASSERTS the two
+ * relationships against the observed cursor before it draws any conclusion, so
+ * an impossible collision fails the test loudly instead of quietly inverting
+ * what it proves.
+ */
+const UUID_BELOW_ANY_CURSOR = '00000000-0000-4000-8000-000000000001';
+const UUID_ABOVE_ANY_CURSOR = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
 
 function offlinePrismaService(): any {
   const url = process.env.INTEGRATION_DATABASE_URL as string;
@@ -184,6 +202,90 @@ describeIfDb('THE 201st FAMILY — a FAMILY sweep reaches every household (real 
       lastId = page[page.length - 1].id;
     }
     return ids;
+  }
+
+  /**
+   * The same walk, INSTRUMENTED — and the instrumentation is the point of §5.
+   *
+   * `pages` counts the non-empty pages the loop consumed; `queries` counts every
+   * round trip including the terminating empty one. They differ by exactly one
+   * when the row count is a whole multiple of the page size, which is the
+   * boundary case a naive paginator gets wrong in the most expensive possible
+   * way: it sees a full page, assumes there is more, and either loops forever or
+   * — the historically likelier bug — sees a full page, assumes it is the ONLY
+   * page, and stops. Counting both numbers is what lets §5 tell those apart
+   * instead of inferring them from the ids alone.
+   */
+  async function pageAllFamilyIdsCounted(
+    pageSize: number,
+  ): Promise<{ ids: string[]; pages: number; queries: number }> {
+    const ids: string[] = [];
+    let lastId: string | null = null;
+    let pages = 0;
+    let queries = 0;
+    for (;;) {
+      const page: Array<{ id: string }> = await raw<Array<{ id: string }>>(
+        SQL_LIST_ACTIVE_FAMILIES_PAGE,
+        pageSize,
+        lastId,
+      );
+      queries += 1;
+      if (page.length === 0) break;
+      pages += 1;
+      for (const row of page) ids.push(row.id);
+      if (page.length < pageSize) break;
+      lastId = page[page.length - 1].id;
+    }
+    return { ids, pages, queries };
+  }
+
+  /**
+   * THE COHORT'S OWN SUBSEQUENCE of a walk over the whole table.
+   *
+   * This database is shared, and another suite may insert or delete a family
+   * while §5 is walking it. That makes the GLOBAL id sequence a moving target
+   * and a global assertion a flake. The cohort's rows, however, are this
+   * suite's own and nothing else touches them — so filtering each walk down to
+   * the cohort turns "the same families in the same order at every page size"
+   * into a statement that is exactly as strong and completely deterministic.
+   */
+  const cohortSubsequence = (ids: string[]): string[] => {
+    const inCohort = new Set(cohort);
+    return ids.filter((id) => inCohort.has(id));
+  };
+
+  /**
+   * `pages` and `queries` are not free variables — they are a function of how
+   * many rows came back and how big the page was. Asserting them against THAT
+   * rather than against a number measured earlier is what keeps §5 immune to a
+   * concurrent insert: whatever the table did, the loop's arithmetic must still
+   * describe the walk it actually performed.
+   */
+  const expectedWalkShape = (rowCount: number, pageSize: number): { pages: number; queries: number } => {
+    if (rowCount === 0) return { pages: 0, queries: 1 };
+    const pages = Math.ceil(rowCount / pageSize);
+    // A last page that is exactly full cannot be recognised as the end, so the
+    // loop pays for one more round trip to learn the table is exhausted.
+    return { pages, queries: rowCount % pageSize === 0 ? pages + 1 : pages };
+  };
+
+  /**
+   * Walks with a page size chosen to equal the number of rows the walk returns,
+   * retrying if the shared table changed underneath it. Gives §5 the "EXACTLY
+   * one page" row of the matrix as a real observation rather than an assumption.
+   */
+  async function walkAtExactlyOnePage(): Promise<{
+    ids: string[];
+    pages: number;
+    queries: number;
+    pageSize: number;
+  }> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const total = (await pageAllFamilyIds(100_000)).length;
+      const walk = await pageAllFamilyIdsCounted(total);
+      if (walk.ids.length === total) return { ...walk, pageSize: total };
+    }
+    throw new Error('the families table changed under five consecutive walks; cannot size an exact page');
   }
 
   beforeAll(async () => {
@@ -708,6 +810,352 @@ describeIfDb('THE 201st FAMILY — a FAMILY sweep reaches every household (real 
         BUSINESS_DATE_C,
       );
       expect(rows).toBe(COHORT_SIZE);
+    }, 300_000);
+  });
+
+  // ==========================================================================
+  /**
+   * 5. THE PAGE-DIVISION MATRIX — every way the cohort can fall across pages.
+   *
+   * §1 proves the sweep reaches everyone when the cohort spans two pages. That
+   * is one row of a matrix, and it is the row a naive fix passes. The rows that
+   * catch the remaining off-by-ones are the DEGENERATE ones: a table smaller
+   * than a page (does the loop terminate without a second query?), a table that
+   * is EXACTLY a page (the full-last-page trap — the loop must not mistake a
+   * full page for the last page, which is precisely the shape of the original
+   * `LIMIT 200` defect), and a table spanning many pages (does the cursor
+   * advance correctly every time, or only the first?).
+   *
+   * WHAT EACH ROW ASSERTS, and why it is identity rather than counting: every
+   * page size must yield the IDENTICAL cohort subsequence. A count can be right
+   * while the membership is wrong — one family visited twice and another not at
+   * all is the exact failure mode a count cannot see, and it is the one that
+   * matters. Comparing the sequences elementwise makes "no family processed
+   * twice" and "no family skipped" the same assertion, checked four ways.
+   */
+  describe('5. THE PAGE-DIVISION MATRIX — fewer than, exactly, and many times one page', () => {
+    /** The reference every page size is compared against. */
+    let reference: string[] = [];
+
+    beforeAll(async () => {
+      reference = cohortSubsequence(await pageAllFamilyIds(100_000));
+    }, 300_000);
+
+    it('the reference walk sees the whole cohort exactly once, in ascending id order', () => {
+      expect(reference).toHaveLength(COHORT_SIZE);
+      expect(new Set(reference).size).toBe(COHORT_SIZE);
+      expect(reference).toEqual([...cohort].sort());
+    });
+
+    it('FEWER THAN ONE PAGE: a page bigger than the table is one page and one extra query is not paid', async () => {
+      const total = (await pageAllFamilyIds(100_000)).length;
+      const walk = await pageAllFamilyIdsCounted(total + 50);
+
+      // The short page IS the end of the table; recognising that is what saves
+      // the round trip, and paying it anyway would mean the loop cannot tell a
+      // short page from a full one.
+      expect(walk.ids.length).toBeLessThan(total + 50);
+      expect(walk.pages).toBe(1);
+      expect(walk.queries).toBe(1);
+      expect(cohortSubsequence(walk.ids)).toEqual(reference);
+    }, 300_000);
+
+    it('EXACTLY ONE PAGE: a full last page is not mistaken for the last page', async () => {
+      const walk = await walkAtExactlyOnePage();
+
+      // THE TRAP. Every row fits in one page and that page comes back FULL. A
+      // loop that breaks on a full page would stop here with the right answer
+      // by luck; a loop that never re-seeks would stop here with the right
+      // answer and the WRONG answer on every larger table. The only way to tell
+      // the two apart from outside is that the correct loop issues a second,
+      // empty query — so that is what is asserted.
+      // The page was full to the last row — that is what makes this the exact
+      // boundary rather than merely a large page.
+      expect(walk.ids).toHaveLength(walk.pageSize);
+      expect(walk.pages).toBe(1);
+      expect(walk.queries).toBe(2);
+      expect(cohortSubsequence(walk.ids)).toEqual(reference);
+    }, 300_000);
+
+    it('MORE THAN ONE PAGE: two pages visit the same families in the same order', async () => {
+      const total = (await pageAllFamilyIds(100_000)).length;
+      const walk = await pageAllFamilyIdsCounted(Math.ceil(total / 2));
+
+      expect(walk.pages).toBeGreaterThanOrEqual(2);
+      expect(cohortSubsequence(walk.ids)).toEqual(reference);
+    }, 300_000);
+
+    it('SEVERAL PAGES: a page size of one crosses every boundary there is', async () => {
+      // The most hostile division available: EVERY page is exactly full, so the
+      // full-page branch is taken once per family rather than once per walk, and
+      // the cursor has to advance correctly N times instead of twice. If the
+      // seek predicate were `>=` instead of `>` this walk would never terminate;
+      // if the cursor were taken from the wrong row it would skip every other
+      // family. Both are visible here and invisible at a page size of 200.
+      const walk = await pageAllFamilyIdsCounted(1);
+
+      expect(walk.pages).toBe(walk.ids.length);
+      expect(walk.queries).toBe(walk.ids.length + 1);
+      expect(cohortSubsequence(walk.ids)).toEqual(reference);
+    }, 300_000);
+
+    it('NO FAMILY TWICE AND NONE MISSING, at every page size, by identity', async () => {
+      const wanted = new Set(reference);
+
+      for (const pageSize of [1, 2, 7, 199, 200, 201, 219, 220, 221, 1000]) {
+        const walk = await pageAllFamilyIdsCounted(pageSize);
+
+        // (a) the walk is internally duplicate-free — no id appears on two pages
+        expect(new Set(walk.ids).size).toBe(walk.ids.length);
+
+        // (b) the page arithmetic describes the walk that actually happened,
+        //     whatever else the shared table did meanwhile
+        expect({ pages: walk.pages, queries: walk.queries }).toEqual(
+          expectedWalkShape(walk.ids.length, pageSize),
+        );
+
+        // (c) SET EQUALITY on the cohort: nothing skipped, nothing repeated
+        const seen = cohortSubsequence(walk.ids);
+        expect(new Set(seen)).toEqual(wanted);
+        expect(seen).toEqual(reference);
+      }
+    }, 300_000);
+  });
+
+  // ==========================================================================
+  /**
+   * 6. A FAMILY INSERTED OR DELETED WHILE THE SWEEP IS RUNNING.
+   *
+   * Keyset pagination is only correct if its sort key is STABLE and UNIQUE.
+   * `SQL_LIST_ACTIVE_FAMILIES_PAGE` orders by `families.id` — a primary key, so
+   * unique and never updated — which is the precondition. This section stops
+   * asserting that from the schema and executes it: it mutates the table
+   * BETWEEN two pages of a real sweep and then asks the database who was
+   * processed.
+   *
+   * WHY THIS IS THE TEST THAT MATTERS. Under `OFFSET`, a row inserted before
+   * the window shifts every later page by one and a family falls through the
+   * crack unnoticed; a row deleted before the window shifts them the other way
+   * and a family is returned twice. Both are silent. Under a keyset the claim
+   * is that neither can happen, because the cursor names a POSITION rather than
+   * a COUNT — and a claim of that shape is worth exactly as much as the test
+   * that tries to break it.
+   *
+   * WHAT IS AND IS NOT A DEFECT. A family inserted BEFORE the cursor is not
+   * enumerated by this pass. That is correct and is not a skip: the sweep is a
+   * pass over the households that existed as it walked past them, `job_runs`
+   * carries no cursor, and the next tick starts from the beginning and picks it
+   * up — which §6 proves rather than assumes. The defect would be a family that
+   * existed for the WHOLE sweep and was still missed, or one processed twice.
+   */
+  describe('6. MID-SWEEP INSERT AND DELETE — the keyset holds its position', () => {
+    let cursorAfterFirstPage: string;
+    /** Inserted mid-sweep, sorting BEFORE the cursor. */
+    let insertedBehind: string;
+    /** Inserted mid-sweep, sorting AFTER the cursor. */
+    let insertedAhead: string;
+    /** A cohort family soft-deleted mid-sweep, sorting AFTER the cursor. */
+    let deletedAhead: string;
+    /** The cohort minus the family that was deleted while the sweep ran. */
+    let survivors: string[] = [];
+    let report: any;
+
+    beforeAll(async () => {
+      await resetJob();
+
+      // THE HOOK. `JobRunner.executeFamilies` reads each page through
+      // `PrismaService.$queryRawUnsafe`, so wrapping that one method lets the
+      // mutation land in the real gap between two real pages — no fake
+      // paginator, no reimplementation of the loop, and the production
+      // statement is still the thing being paged.
+      const original = prisma.$queryRawUnsafe.bind(prisma);
+      let pageReads = 0;
+
+      prisma.$queryRawUnsafe = async (sql: string, ...params: unknown[]): Promise<any> => {
+        const rows = await original(sql, ...params);
+        if (sql !== SQL_LIST_ACTIVE_FAMILIES_PAGE || pageReads > 0) return rows;
+
+        pageReads += 1;
+        const page = rows as Array<{ id: string }>;
+        // The cohort is larger than one page, so the first page must be full
+        // and there must be a page after it for the mutation to affect.
+        expect(page.length).toBe(SCHEDULER_DEFAULTS.familyBatchSize);
+        cursorAfterFirstPage = page[page.length - 1].id;
+
+        // Writes go through $executeRawUnsafe, which is NOT wrapped, so the
+        // mutation cannot recurse into this hook.
+        await exec(
+          `INSERT INTO "families" ("id","name","timezone","updated_at")
+           VALUES ($1::uuid, $2, 'UTC', now()), ($3::uuid, $4, 'UTC', now())`,
+          UUID_BELOW_ANY_CURSOR,
+          `${cohortName}-MIDSWEEP-BEHIND`,
+          UUID_ABOVE_ANY_CURSOR,
+          `${cohortName}-MIDSWEEP-AHEAD`,
+        );
+        insertedBehind = UUID_BELOW_ANY_CURSOR;
+        insertedAhead = UUID_ABOVE_ANY_CURSOR;
+
+        // And take one household AWAY, from the part of the table the sweep has
+        // not reached yet. A soft delete, because that is how this product
+        // removes a household and what `deleted_at IS NULL` filters on.
+        const ahead = await raw<Array<{ id: string }>>(
+          `SELECT "id" FROM "families"
+            WHERE "id" = ANY($1::uuid[]) AND "id" > $2::uuid
+            ORDER BY "id" DESC LIMIT 1`,
+          cohort,
+          cursorAfterFirstPage,
+        );
+        deletedAhead = ahead[0].id;
+        await exec(`UPDATE "families" SET "deleted_at" = now() WHERE "id" = $1::uuid`, deletedAhead);
+
+        return rows;
+      };
+
+      try {
+        report = await runner.runJob(FAMILY_DAILY_ROLLOVER_JOB, { now: INSTANT_D, trigger: 'MANUAL' });
+      } finally {
+        prisma.$queryRawUnsafe = original;
+      }
+
+      survivors = cohort.filter((id) => id !== deletedAhead);
+    }, 300_000);
+
+    afterAll(async () => {
+      // Undo the soft delete so the cohort cleanup in the outer afterAll still
+      // removes every row this file created.
+      if (deletedAhead) {
+        await exec(
+          `UPDATE "families" SET "deleted_at" = NULL WHERE "id" = $1::uuid`,
+          deletedAhead,
+        ).catch(() => undefined);
+      }
+      for (const id of [insertedBehind, insertedAhead]) {
+        if (!id) continue;
+        await exec(`DELETE FROM "job_runs" WHERE "family_id" = $1::uuid`, id).catch(() => undefined);
+        await exec(`DELETE FROM "families" WHERE "id" = $1::uuid`, id).catch(() => undefined);
+      }
+      await resetJob().catch(() => undefined);
+    }, 300_000);
+
+    it('the mutation really did land between two pages, at the extremes of the cursor', () => {
+      expect(report.claimed).toBe(true);
+      expect(report.pages).toBeGreaterThanOrEqual(2);
+      expect(cursorAfterFirstPage).toBeTruthy();
+      // The whole section's reasoning depends on these two orderings; if a v4
+      // uuid ever landed outside them, this fails instead of silently proving
+      // the opposite of what it claims.
+      expect(insertedBehind < cursorAfterFirstPage).toBe(true);
+      expect(insertedAhead > cursorAfterFirstPage).toBe(true);
+      expect(deletedAhead > cursorAfterFirstPage).toBe(true);
+    });
+
+    it('NO SURVIVOR WAS SKIPPED — every family that existed throughout has a run row', async () => {
+      const rows = await raw<Array<{ family_id: string }>>(
+        `SELECT "family_id" FROM "job_runs"
+          WHERE "job_name" = $1 AND "family_id" = ANY($2::uuid[]) AND "business_date" = $3::date
+            AND "status" = 'SUCCEEDED'`,
+        FAMILY_DAILY_ROLLOVER_JOB,
+        survivors,
+        BUSINESS_DATE_D,
+      );
+      // BY IDENTITY. Not «219 rows» — «these 219 households», so a run row for
+      // one family standing in for a missing one cannot pass.
+      expect(new Set(rows.map((r) => r.family_id))).toEqual(new Set(survivors));
+    }, 300_000);
+
+    it('NO FAMILY WAS PROCESSED TWICE — one run row each, and one habit marked once', async () => {
+      const dupes = await raw<Array<{ family_id: string; c: number }>>(
+        `SELECT "family_id", count(*)::int AS c FROM "job_runs"
+          WHERE "job_name" = $1 AND "family_id" = ANY($2::uuid[]) AND "business_date" = $3::date
+          GROUP BY "family_id" HAVING count(*) > 1`,
+        FAMILY_DAILY_ROLLOVER_JOB,
+        cohort,
+        BUSINESS_DATE_D,
+      );
+      expect(dupes).toEqual([]);
+
+      // And the job BODY ran once, not merely the bookkeeping row: a second
+      // execution would have marked the same habit MISSED a second time.
+      const missedTwice = await raw<Array<{ habit_id: string }>>(
+        `SELECT hc."habit_id" FROM "habit_completions" hc
+           JOIN "habits" h ON h."id" = hc."habit_id"
+          WHERE h."family_id" = ANY($1::uuid[]) AND hc."date" = $2::date AND hc."status" = 'MISSED'
+          GROUP BY hc."habit_id" HAVING count(*) > 1`,
+        survivors,
+        BUSINESS_DATE_D,
+      );
+      expect(missedTwice).toEqual([]);
+    }, 300_000);
+
+    it('A FAMILY DELETED MID-SWEEP IS NOT ROLLED OVER', async () => {
+      const rows = await count(
+        `SELECT count(*)::int AS c FROM "job_runs"
+          WHERE "job_name" = $1 AND "family_id" = $2::uuid AND "business_date" = $3::date`,
+        FAMILY_DAILY_ROLLOVER_JOB,
+        deletedAhead,
+        BUSINESS_DATE_D,
+      );
+      // It was live when the sweep started and gone before the page that would
+      // have carried it was read. Rolling it over would be doing work for a
+      // household that has asked to be gone.
+      expect(rows).toBe(0);
+    }, 300_000);
+
+    it('A FAMILY INSERTED AHEAD OF THE CURSOR IS PICKED UP BY THE SAME SWEEP', async () => {
+      const rows = await count(
+        `SELECT count(*)::int AS c FROM "job_runs"
+          WHERE "job_name" = $1 AND "family_id" = $2::uuid AND "business_date" = $3::date
+            AND "status" = 'SUCCEEDED'`,
+        FAMILY_DAILY_ROLLOVER_JOB,
+        insertedAhead,
+        BUSINESS_DATE_D,
+      );
+      // Exactly one — reached because the cursor names a position and this row
+      // is past it, and reached ONCE because the position does not move when
+      // the table grows behind it.
+      expect(rows).toBe(1);
+    }, 300_000);
+
+    it('A FAMILY INSERTED BEHIND THE CURSOR IS DEFERRED, NEVER LOST', async () => {
+      // Not this pass: the sweep had already walked past that position.
+      const during = await count(
+        `SELECT count(*)::int AS c FROM "job_runs"
+          WHERE "job_name" = $1 AND "family_id" = $2::uuid AND "business_date" = $3::date`,
+        FAMILY_DAILY_ROLLOVER_JOB,
+        insertedBehind,
+        BUSINESS_DATE_D,
+      );
+      expect(during).toBe(0);
+
+      // THE HALF THAT MAKES THE FIRST HALF ACCEPTABLE. «Not this pass» is only
+      // benign if the next pass gets it, and the next pass starts its cursor at
+      // the beginning — so the household is deferred by one tick rather than
+      // dropped until someone notices. This is the assertion that separates a
+      // keyset from the OFFSET bug, where the row was gone for good.
+      await resetJob();
+      const second = await runner.runJob(FAMILY_DAILY_ROLLOVER_JOB, { now: INSTANT_D, trigger: 'MANUAL' });
+      expect(second.claimed).toBe(true);
+
+      const after = await count(
+        `SELECT count(*)::int AS c FROM "job_runs"
+          WHERE "job_name" = $1 AND "family_id" = $2::uuid AND "business_date" = $3::date
+            AND "status" = 'SUCCEEDED'`,
+        FAMILY_DAILY_ROLLOVER_JOB,
+        insertedBehind,
+        BUSINESS_DATE_D,
+      );
+      expect(after).toBe(1);
+
+      // And the re-run did not give anybody a second run row.
+      const dupes = await raw<Array<{ family_id: string }>>(
+        `SELECT "family_id" FROM "job_runs"
+          WHERE "job_name" = $1 AND "family_id" = ANY($2::uuid[]) AND "business_date" = $3::date
+          GROUP BY "family_id" HAVING count(*) > 1`,
+        FAMILY_DAILY_ROLLOVER_JOB,
+        cohort,
+        BUSINESS_DATE_D,
+      );
+      expect(dupes).toEqual([]);
     }, 300_000);
   });
 });
