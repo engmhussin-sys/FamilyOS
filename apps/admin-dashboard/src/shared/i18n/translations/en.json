@@ -689,5 +689,17 @@
     "rejected": "The server did not accept that key. Check it with whoever runs the server, then enter it again.",
     "locked": "The dashboard is locked. Enter the key again to continue.",
     "missing": "No operator key has been entered in this page yet."
+  },
+  "notFound": {
+    "title": "Page not found",
+    "body": "The link you opened does not point at any page in this dashboard. Check the address, or go back to the overview.",
+    "backToOverview": "Back to overview",
+    "goToLogin": "Go to sign in",
+    "goBack": "Go back"
+  },
+  "appError": {
+    "title": "Something went wrong",
+    "body": "This page could not be rendered. Nothing in your data was lost — reload the overview and try again.",
+    "backToOverview": "Reload the overview"
   }
 }

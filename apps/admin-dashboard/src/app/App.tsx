@@ -17,6 +17,8 @@ import { AcquisitionPage } from '../features/growth/pages/AcquisitionPage';
 import { ReferralPage } from '../features/growth/pages/ReferralPage';
 import { ProductAiPage } from '../features/growth/pages/ProductAiPage';
 import { ProtectedRoute } from './ProtectedRoute';
+import { NotFoundPage } from './NotFoundPage';
+import { RouteErrorBoundary } from './RouteErrorBoundary';
 import { AdminKeyGate } from '../features/admin-key/AdminKeyGate';
 import { LocaleProvider } from '../shared/i18n/LocaleProvider';
 import type { ReactNode } from 'react';
@@ -49,6 +51,10 @@ export function App() {
     <LocaleProvider>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
+          {/* Inside the router and inside the LocaleProvider on purpose: the
+              fallback needs `t()` and a `<Link>`, and a boundary placed above
+              either of them could only render untranslated English. */}
+          <RouteErrorBoundary>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
@@ -127,7 +133,16 @@ export function App() {
                 </ProtectedRoute>
               }
             />
+            {/* MUST BE LAST, and must exist at all. Without it react-router
+                matches nothing and renders an EMPTY DOCUMENT for any typo,
+                stale bookmark or demo link to a route that has moved — no
+                navigation, no message, no way back but the address bar.
+                `NotFoundPage` answers signed-in operators inside the shell and
+                signed-out ones standalone; see that file for why it is not
+                simply wrapped in ProtectedRoute. */}
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
+          </RouteErrorBoundary>
         </BrowserRouter>
       </QueryClientProvider>
     </LocaleProvider>

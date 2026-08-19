@@ -16,8 +16,13 @@ export function ReportsCard() {
 
   const { data: report, isLoading } = useQuery({
     queryKey: ['report', selectedDeviceId],
-    queryFn: () => reportsApi.getReport(selectedDevice!.childId, selectedDeviceId!),
-    enabled: !!selectedDeviceId,
+    // `selectedDevice`, not `selectedDeviceId`. The query reads
+    // `selectedDevice.childId`, and the two can disagree: the device list
+    // refetches, and a device that was unpaired or deleted while this card was
+    // open leaves an id selected with no row behind it. The gate now names the
+    // thing the query actually dereferences.
+    queryFn: () => reportsApi.getReport(selectedDevice!.childId, selectedDevice!.id),
+    enabled: !!selectedDevice,
   });
 
   if (!devices || devices.length === 0) return null;
