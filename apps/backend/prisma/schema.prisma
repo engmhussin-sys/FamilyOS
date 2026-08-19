@@ -1122,6 +1122,14 @@ model AiAlert {
   title            String
   description      String
   sourceModule     String        @map("source_module") // e.g. "keyboard-behavior-ai"
+  /// WHAT MAKES THIS ALERT THE SAME ALERT (migration 0027). Composed by the
+  /// PRODUCER — the only layer that knows what caused the detection — and held
+  /// by the unique index below, so a REPLAYED detection is refused by
+  /// PostgreSQL rather than by a `findFirst` that cannot see a concurrent
+  /// writer. Deliberately the same column name, and the same discipline, as
+  /// `notifications.source_event_id`. SERVER-INTERNAL: no parent-facing
+  /// payload returns it, and no producer may put a child's words in it.
+  sourceEventId    String        @map("source_event_id") @db.VarChar(200)
   status           AlertStatus   @default(NEW)
   reviewedByUserId String?       @map("reviewed_by_user_id") @db.Uuid
   reviewedAt       DateTime?     @map("reviewed_at")
@@ -1133,6 +1141,7 @@ model AiAlert {
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
+  @@unique([familyId, sourceEventId])
   @@index([childId, status])
   @@index([severity])
   @@index([familyId])
