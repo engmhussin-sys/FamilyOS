@@ -100,9 +100,30 @@ export function ageBandFor(ageYears: number): AgeBand {
  *
  * The strictest band is returned instead, so an unknown band is held to the
  * tightest ceilings this product has and the filter still returns a verdict.
+ *
+ * AND THE CHECK IS `hasOwnProperty`, NOT `??` — WHICH IS A SECOND FAIL-OPEN,
+ * FOUND BY MUTATION TESTING AND NOT BY AN EXAMPLE.
+ *
+ * This read `PROFILES[band] ?? PROFILES[SAFEST_AGE_BAND]`, and `??` only falls
+ * back on `null`/`undefined`. `PROFILES` is an object literal, so it INHERITS
+ * from `Object.prototype`: `PROFILES['toString']` is a FUNCTION, which is
+ * neither null nor undefined, so the fallback did not fire and the "profile"
+ * handed back to `ChildSafetyFilterService.validate` was
+ * `Object.prototype.toString`. Its `.maxChars` and `.maxWords` are `undefined`,
+ * every `x > undefined` comparison is FALSE, and the length ceiling therefore
+ * vanished: an over-long sentence came back `isSafe: true` at band `toString`.
+ * The band string comes from a `VARCHAR` column, so «nobody would ever store
+ * that» is a claim about data this function does not control — and
+ * `notification-destination.ts` already guards its own rule table with
+ * `Object.prototype.hasOwnProperty.call` for exactly this reason.
+ *
+ * An OWN-PROPERTY check has one answer for every string that is not one of the
+ * four: the strictest profile. `??` had two, and the second one was silent.
  */
 export function ageBandProfile(band: AgeBand): AgeBandProfile {
-  return PROFILES[band] ?? PROFILES[SAFEST_AGE_BAND];
+  return Object.prototype.hasOwnProperty.call(PROFILES, band)
+    ? PROFILES[band]
+    : PROFILES[SAFEST_AGE_BAND];
 }
 
 export function profileForAge(ageYears: number): AgeBandProfile {
