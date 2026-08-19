@@ -6,7 +6,7 @@ import {
   AsyncBoundary,
   FigureGridSkeleton,
   RefetchingOverlay,
-} from '../../growth/components/AsyncState';
+} from '../../../shared/components/AsyncState';
 import { formatCount } from '../../growth/lib/format';
 import { RANGE_PRESETS, rangeFor, type RangePreset } from '../../growth/lib/range';
 import { useDecisionBreakdown } from '../api/useDecisionBreakdown';

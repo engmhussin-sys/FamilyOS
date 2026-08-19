@@ -2,7 +2,7 @@ import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 import { COUNTRY_CODES, type CountryCode } from '../api/types';
 import { useGrowthSettings } from '../api/useGrowthQueries';
 import { composePilotStatus, pilotEnrollmentGap } from '../api/adapters';
-import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, GapBlock, RefetchingOverlay } from './AsyncState';
+import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, GapBlock, RefetchingOverlay } from '../../../shared/components/AsyncState';
 
 /**
  * THE CONTROLLED PILOT — `GET /admin/growth/settings`

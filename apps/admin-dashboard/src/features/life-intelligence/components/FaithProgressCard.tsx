@@ -4,12 +4,14 @@ import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi'
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — this panel had no error branch.
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 function ChildFaithPanel({ childId, childName }: { childId: string; childName: string }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  const { data: practices, isLoading } = useQuery<FaithPractice[]>({
+  const { data: practices, isLoading, error, refetch } = useQuery<FaithPractice[]>({
     queryKey: faithPracticesQueryKey(childId),
     queryFn: () => lifeIntelligenceApi.getFaithPractices(childId),
   });
@@ -27,10 +29,14 @@ function ChildFaithPanel({ childId, childName }: { childId: string; childName: s
     <div className="rounded-card border border-sand-200 p-3">
       <p className="text-sm font-medium text-ink">{childName}</p>
 
-      {isLoading && <p className="mt-2 text-sm text-ink-soft">{t('common.loading')}</p>}
-      {practices && practices.length === 0 && <p className="mt-2 text-sm text-ink-soft">{t('faithProgress.empty')}</p>}
-
-      {practices && practices.length > 0 && (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => void refetch()}
+        isEmpty={practices?.length === 0}
+        emptyHint={t('faithProgress.empty')}
+      >
+        {practices && practices.length > 0 && (
         <ul className="mt-2 flex flex-col gap-2">
           {practices.map((practice) => (
             <li key={practice.id} className="flex items-center justify-between rounded-card bg-sand-50 px-3 py-2">
@@ -41,7 +47,8 @@ function ChildFaithPanel({ childId, childName }: { childId: string; childName: s
             </li>
           ))}
         </ul>
-      )}
+        )}
+      </AsyncBoundary>
     </div>
   );
 }

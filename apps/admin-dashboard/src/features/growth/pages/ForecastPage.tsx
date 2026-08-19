@@ -20,7 +20,7 @@ import { ChartFrame, VizTable, type LegendEntry } from '../components/viz/ChartF
 import { ScenarioSwitcher } from '../components/ScenarioSwitcher';
 import { AssumptionsEditor } from '../components/AssumptionsEditor';
 import { ProvenanceBadge } from '../components/ProvenanceBadge';
-import { AsyncBoundary, ChartSkeleton, FigureGridSkeleton, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, FigureGridSkeleton, RefetchingOverlay } from '../../../shared/components/AsyncState';
 import { GrowthPageHeader } from '../components/FilterBar';
 
 /**

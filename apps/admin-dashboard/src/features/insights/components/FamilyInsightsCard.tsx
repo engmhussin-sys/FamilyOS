@@ -5,13 +5,16 @@ import { insightsApi, insightsQueryKey, decisionHistoryQueryKey } from '../api/i
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — `if (!insights) return null` made a
+// failed analysis look exactly like a device with nothing to say.
+import { AsyncBoundary, LoadingBlock } from '../../../shared/components/AsyncState';
 
 function DeviceInsightsPanel({ childId, deviceId }: { childId: string; deviceId: string }) {
   const { t, locale } = useTranslation();
   const [showHistory, setShowHistory] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
 
-  const { data: insights, isLoading } = useQuery({
+  const { data: insights, isLoading, error, refetch } = useQuery({
     queryKey: insightsQueryKey(childId, deviceId),
     queryFn: () => insightsApi.getInsights(childId, deviceId),
   });
@@ -22,10 +25,15 @@ function DeviceInsightsPanel({ childId, deviceId }: { childId: string; deviceId:
     enabled: showHistory,
   });
 
-  if (isLoading) return <p className="text-sm text-ink-soft">{t('insights.analyzing')}</p>;
-  if (!insights) return null;
-
   return (
+    <AsyncBoundary
+      isLoading={isLoading}
+      error={error}
+      onRetry={() => void refetch()}
+      isEmpty={!isLoading && !error && !insights}
+      skeleton={<LoadingBlock label={t('insights.analyzing')} />}
+    >
+      {insights && (
     <div className="rounded-card border border-sand-200 p-3">
       <p className="text-sm font-medium text-ink">{insights.recommendation.title}</p>
       <p className="text-xs text-ink-soft">{insights.recommendation.body}</p>
@@ -68,6 +76,8 @@ function DeviceInsightsPanel({ childId, deviceId }: { childId: string; deviceId:
         </ol>
       )}
     </div>
+      )}
+    </AsyncBoundary>
   );
 }
 

@@ -6,11 +6,16 @@ import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { AddChildForm } from './AddChildForm';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: the four states are decided in ONE place for the whole dashboard now,
+// not re-inlined per card. This card is also where a failed `GET /children`
+// is reported for the dashboard — the cards that merely LIST children stay
+// absent on failure rather than repeating one error eight times.
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 export function ChildrenListCard() {
   const [isAdding, setIsAdding] = useState(false);
   const { t } = useTranslation();
-  const { data: children, isLoading, isError } = useQuery({
+  const { data: children, isLoading, error, refetch } = useQuery({
     queryKey: CHILDREN_QUERY_KEY,
     queryFn: childrenApi.list,
   });
@@ -33,27 +38,30 @@ export function ChildrenListCard() {
       )}
 
       <div className="mt-4 flex flex-col gap-2">
-        {isLoading && <p className="text-sm text-ink-soft">{t('common.loading')}</p>}
-        {isError && <p className="text-sm text-brick-600">{t('common.error')}</p>}
-        {children?.length === 0 && !isAdding && (
-          <p className="text-sm text-ink-soft">{t('children.empty')}</p>
-        )}
-        {children?.map((child) => (
-          <div
-            key={child.id}
-            className="flex items-center gap-3 rounded-card border border-sand-200 px-4 py-3"
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-guardian-900 font-display text-sm text-sand-50">
-              {child.firstName.charAt(0)}
-            </span>
-            <div>
-              <p className="font-medium text-ink">{child.firstName}</p>
-              <p className="text-xs text-ink-soft">
-                {t('children.yearsOld', { age: calculateAge(child.dateOfBirth) })}
-              </p>
+        <AsyncBoundary
+          isLoading={isLoading}
+          error={error}
+          onRetry={() => void refetch()}
+          isEmpty={children?.length === 0 && !isAdding}
+          emptyHint={t('children.empty')}
+        >
+          {children?.map((child) => (
+            <div
+              key={child.id}
+              className="flex items-center gap-3 rounded-card border border-sand-200 px-4 py-3"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-guardian-900 font-display text-sm text-sand-50">
+                {child.firstName.charAt(0)}
+              </span>
+              <div>
+                <p className="font-medium text-ink">{child.firstName}</p>
+                <p className="text-xs text-ink-soft">
+                  {t('children.yearsOld', { age: calculateAge(child.dateOfBirth) })}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </AsyncBoundary>
       </div>
     </Card>
   );

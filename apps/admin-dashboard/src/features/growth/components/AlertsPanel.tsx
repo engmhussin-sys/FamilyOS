@@ -5,7 +5,7 @@ import { acknowledgeAlert, fetchAlerts } from '../api/growthApi';
 import type { GrowthAlert } from '../api/types';
 import { SEVERITY_STATUS, STATUS } from '../lib/vizTokens';
 import { useVizMode } from '../lib/useVizMode';
-import { AsyncBoundary } from './AsyncState';
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 import { formatRate } from '../lib/format';
 
 /**

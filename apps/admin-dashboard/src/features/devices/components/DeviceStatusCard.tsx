@@ -5,6 +5,7 @@ import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import type { DeviceHealthDiagnosis } from '../../../shared/types/api';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 const RISK_COLORS: Record<string, string> = {
   LOW: 'bg-sage-100 text-sage-700',
@@ -36,7 +37,7 @@ function useFormatLastSeen() {
 export function DeviceStatusCard() {
   const { t } = useTranslation();
   const formatLastSeen = useFormatLastSeen();
-  const { data: devices, isLoading, isError } = useQuery({
+  const { data: devices, isLoading, error, refetch } = useQuery({
     queryKey: DEVICES_QUERY_KEY,
     queryFn: devicesApi.list,
   });
@@ -62,10 +63,16 @@ export function DeviceStatusCard() {
       <h2 className="font-display text-lg text-ink">{t('devices.title')}</h2>
 
       <div className="mt-4 flex flex-col gap-3">
-        {isLoading && <p className="text-sm text-ink-soft">{t('common.loading')}</p>}
-        {isError && <p className="text-sm text-brick-600">{t('devices.loadError')}</p>}
-        {devices?.length === 0 && <p className="text-sm text-ink-soft">{t('devices.empty')}</p>}
-
+        {/* A2: loading / error / empty / data decided by the shared boundary.
+            The B3 envelope (code + requestId) now reaches the operator here,
+            where a hand-written line used to say only "could not load". */}
+        <AsyncBoundary
+          isLoading={isLoading}
+          error={error}
+          onRetry={() => void refetch()}
+          isEmpty={devices?.length === 0}
+          emptyHint={t('devices.empty')}
+        >
         {devices?.map((device) => (
           <div key={device.id} className="rounded-card border border-sand-200 px-4 py-3">
             <div className="flex items-center justify-between">
@@ -121,6 +128,7 @@ export function DeviceStatusCard() {
             )}
           </div>
         ))}
+        </AsyncBoundary>
       </div>
     </Card>
   );

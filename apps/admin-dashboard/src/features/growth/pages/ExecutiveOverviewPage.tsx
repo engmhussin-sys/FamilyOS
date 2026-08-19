@@ -15,7 +15,7 @@ import {
   GapBlock,
   KpiGridSkeleton,
   RefetchingOverlay,
-} from '../components/AsyncState';
+} from '../../../shared/components/AsyncState';
 import { PlatformTotalsPanel } from '../components/PlatformTotalsPanel';
 import { PilotPanel } from '../components/PilotPanel';
 import { GrowthPageHeader } from '../components/FilterBar';

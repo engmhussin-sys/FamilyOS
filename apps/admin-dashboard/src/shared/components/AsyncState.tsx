@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react';
-import { ApiError } from '../../../shared/lib/httpClient';
-import { useTranslation } from '../../../shared/i18n/LocaleProvider';
-import { Button } from '../../../shared/components/Button';
-import type { AdapterGap } from '../api/adapters';
+import { ApiError } from '../lib/httpClient';
+import { useTranslation } from '../i18n/LocaleProvider';
+import { Button } from './Button';
 
 /**
  * Every view on this dashboard has four possible states and all four are
@@ -12,7 +11,28 @@ import type { AdapterGap } from '../api/adapters';
  * "no data yet" and never `0` — the backend's rule 2 says a 45-day-old
  * cohort returns `null` for RETENTION_D90, and a dashboard that renders that
  * as 0% has invented a catastrophic retention figure out of a young cohort.
+ *
+ * ── WHY THIS FILE IS IN `shared/` (A2) ─────────────────────────────────
+ * It used to live in `features/growth/components/`, and the paragraph above
+ * was true of the growth pages only. Every card outside growth had inlined
+ * its own loading line, and most of them had NO error branch at all — a
+ * failed fetch left `data` undefined and rendered the empty state, so an
+ * operator could not tell "nothing happened yet" from "the request failed".
+ * That is precisely the state this header says must never exist, so the
+ * component moved to where every feature can reach it and the inline copies
+ * were removed. One home, one behaviour.
  */
+
+/**
+ * The shape `GapBlock` needs, declared structurally so that `shared/` does
+ * not import a feature's types. `growth`'s `AdapterGap` satisfies it.
+ */
+export interface MissingEndpointGap {
+  /** The endpoint that would close this gap, in the contract's own shape. */
+  proposedEndpoint: string;
+  /** i18n key for the operator-facing explanation. */
+  reasonKey: string;
+}
 
 export function LoadingBlock({ label }: { label?: string }) {
   const { t } = useTranslation();
@@ -172,7 +192,7 @@ export function ErrorBlock({ error, onRetry }: { error: unknown; onRetry?: () =>
  * explicit absence with the proposed contract written on it — never as a
  * zero, and never as a plausible-looking placeholder.
  */
-export function GapBlock({ gap }: { gap: AdapterGap }) {
+export function GapBlock({ gap }: { gap: MissingEndpointGap }) {
   const { t } = useTranslation();
   return (
     <div className="rounded-card border border-dashed border-amber-500/60 bg-amber-100/40 p-5">

@@ -4,12 +4,15 @@ import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi'
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary. This panel had no error branch, so a
+// failed habits fetch rendered «لا توجد عادات بعد» — a wrong statement.
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 function ChildHabitPanel({ childId, childName }: { childId: string; childName: string }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
 
-  const { data: habits, isLoading } = useQuery<Habit[]>({
+  const { data: habits, isLoading, error, refetch } = useQuery<Habit[]>({
     queryKey: habitsQueryKey(childId),
     queryFn: () => lifeIntelligenceApi.getHabits(childId),
   });
@@ -38,10 +41,14 @@ function ChildHabitPanel({ childId, childName }: { childId: string; childName: s
     <div className="rounded-card border border-sand-200 p-3">
       <p className="text-sm font-medium text-ink">{childName}</p>
 
-      {isLoading && <p className="mt-2 text-sm text-ink-soft">{t('common.loading')}</p>}
-      {habits && habits.length === 0 && <p className="mt-2 text-sm text-ink-soft">{t('habitTracker.empty')}</p>}
-
-      {habits && habits.length > 0 && (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => void refetch()}
+        isEmpty={habits?.length === 0}
+        emptyHint={t('habitTracker.empty')}
+      >
+        {habits && habits.length > 0 && (
         <ul className="mt-2 flex flex-col gap-2">
           {habits.map((habit) => (
             <li key={habit.id} className="flex items-center justify-between rounded-card bg-sand-50 px-3 py-2">
@@ -55,7 +62,8 @@ function ChildHabitPanel({ childId, childName }: { childId: string; childName: s
             </li>
           ))}
         </ul>
-      )}
+        )}
+      </AsyncBoundary>
 
       {missed && missed.length > 0 && (
         <div className="mt-3 rounded-card bg-amber-50 px-3 py-2">

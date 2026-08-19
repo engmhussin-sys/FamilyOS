@@ -5,7 +5,7 @@ import { pickKpi } from '../api/adapters';
 import { COUNTRY_CURRENCY, countryWithCurrencyLabel, formatRatio } from '../lib/format';
 import { KpiCard } from '../components/KpiCard';
 import { ProvenanceLegend } from '../components/ProvenanceBadge';
-import { AsyncBoundary, KpiGridSkeleton, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, KpiGridSkeleton, RefetchingOverlay } from '../../../shared/components/AsyncState';
 import { GrowthPageHeader } from '../components/FilterBar';
 import { STATUS } from '../lib/vizTokens';
 import { useVizMode } from '../lib/useVizMode';

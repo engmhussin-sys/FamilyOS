@@ -4,6 +4,9 @@ import { lifeIntelligenceApi, timelineQueryKey, TimelineEvent } from '../api/lif
 import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi';
 import { Card } from '../../../shared/components/Card';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — this panel had no error branch, so a
+// failed fetch was indistinguishable from "nothing recorded yet".
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 const CATEGORIES: TimelineEvent['category'][] = ['HEALTH', 'LEARNING', 'FAITH', 'REWARDS', 'SAFETY', 'HABITS', 'FAMILY'];
 
@@ -21,7 +24,7 @@ function ChildTimelinePanel({ childId, childName }: { childId: string; childName
   const { t, locale } = useTranslation();
   const [category, setCategory] = useState<TimelineEvent['category'] | undefined>(undefined);
 
-  const { data: events, isLoading } = useQuery<TimelineEvent[]>({
+  const { data: events, isLoading, error, refetch } = useQuery<TimelineEvent[]>({
     queryKey: timelineQueryKey(childId, category),
     queryFn: () => lifeIntelligenceApi.getTimeline(childId, category),
   });
@@ -50,11 +53,14 @@ function ChildTimelinePanel({ childId, childName }: { childId: string; childName
         ))}
       </div>
 
-      {isLoading && <p className="mt-3 text-sm text-ink-soft">{t('common.loading')}</p>}
-
-      {events && events.length === 0 && <p className="mt-3 text-sm text-ink-soft">{t('lifeTimeline.empty')}</p>}
-
-      {events && events.length > 0 && (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => void refetch()}
+        isEmpty={events?.length === 0}
+        emptyHint={t('lifeTimeline.empty')}
+      >
+        {events && events.length > 0 && (
         <ol className="mt-3 flex flex-col gap-3 border-s-2 border-sand-200 ps-4">
           {events.map((event) => (
             <li key={event.id} className="relative">
@@ -67,7 +73,8 @@ function ChildTimelinePanel({ childId, childName }: { childId: string; childName
             </li>
           ))}
         </ol>
-      )}
+        )}
+      </AsyncBoundary>
     </div>
   );
 }

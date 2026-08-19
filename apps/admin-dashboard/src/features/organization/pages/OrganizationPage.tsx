@@ -6,6 +6,8 @@ import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { Input } from '../../../shared/components/Input';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary.
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 const ORGANIZATION_QUERY_KEY = ['organizations', 'mine'] as const;
 
@@ -187,15 +189,23 @@ function BrandingPanel({ organizationId, currentSettings }: { organizationId: st
 
 export function OrganizationPage() {
   const { t } = useTranslation();
-  const { data: organizations, refetch } = useQuery({ queryKey: ORGANIZATION_QUERY_KEY, queryFn: organizationApi.listMine });
+  const { data: organizations, isLoading, error, refetch } = useQuery({
+    queryKey: ORGANIZATION_QUERY_KEY,
+    queryFn: organizationApi.listMine,
+  });
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const activeOrgId = selectedOrgId ?? organizations?.[0]?.id ?? null;
   const activeOrg = organizations?.find((org) => org.id === activeOrgId) ?? null;
 
-  if (!organizations) {
+  // A2: `!organizations` used to mean "still loading" unconditionally, so a
+  // failed request left this page saying «جارٍ التحميل…» forever. The boundary
+  // separates the three reasons the data can be absent.
+  if (isLoading || error || !organizations) {
     return (
       <Card>
-        <p className="text-sm text-ink-soft">{t('common.loading')}</p>
+        <AsyncBoundary isLoading={isLoading} error={error} onRetry={() => void refetch()} isEmpty>
+          {null}
+        </AsyncBoundary>
       </Card>
     );
   }

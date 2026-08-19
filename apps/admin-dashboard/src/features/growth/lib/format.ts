@@ -47,6 +47,18 @@ const BCP47: Record<Locale, string> = { ar: 'ar-EG', en: 'en-US' };
  * currency belongs to the country it is displayed under. */
 export const COUNTRY_CURRENCY: Record<'EG' | 'SA', CurrencyCode> = { EG: 'EGP', SA: 'SAR' };
 
+/** The inverse of `COUNTRY_CURRENCY`, and the only sanctioned way to answer
+ * "which market does this currency belong to" for a payload that carries a
+ * currency but no country. Derived from the same single mapping above, so
+ * the two can never drift apart. */
+export const CURRENCY_COUNTRY: Record<CurrencyCode, 'EG' | 'SA'> = { EGP: 'EG', SAR: 'SA' };
+
+/** Narrows a backend string to a currency this client actually knows the
+ * minor-unit scale of. Anything else is unknown, not "probably /100". */
+export function isKnownCurrency(code: string | null | undefined): code is CurrencyCode {
+  return code === 'EGP' || code === 'SAR';
+}
+
 export interface MoneyFormatOptions {
   /** Set only where space forces it (axis ticks, dense tables). */
   compact?: boolean;
@@ -85,6 +97,37 @@ export function formatMoneyMinor(
     maximumFractionDigits: options.compact ? 1 : 2,
     minimumFractionDigits: options.compact ? 0 : 2,
   }).format(major);
+}
+
+/**
+ * The same renderer, for the payloads that carry a currency STRING and no
+ * country at all — `/billing/plans` (`priceCents` + `currency`) and
+ * `/billing/history` (`amountCents` + `currency`).
+ *
+ * WHY THIS EXISTS (A1). Billing used to open-code `(cents / 100).toFixed(2)`,
+ * which is the exact assumption this module's own header refuses: minor units
+ * are a per-currency property, not a constant. It also produced Latin digits
+ * with a trailing code («179.00 EGP») on a dashboard whose every other money
+ * figure is locale-formatted with the currency placed by `Intl`. One number,
+ * two renderings, in one product.
+ *
+ * The country is resolved from the currency through `CURRENCY_COUNTRY`, so
+ * `formatMoneyMinor`'s country requirement is satisfied honestly rather than
+ * bypassed. A currency this client does not know renders as `NO_DATA`: an
+ * operator seeing a dash asks a question, and an operator seeing a number
+ * scaled by a guessed divisor does not.
+ *
+ * `cents` in the field name is the backend's word. The value is minor units.
+ */
+export function formatBackendMoneyMinor(
+  locale: Locale,
+  valueMinor: number | null | undefined,
+  currency: string | null | undefined,
+  options: MoneyFormatOptions = {},
+): string {
+  if (!isKnownCurrency(currency)) return NO_DATA;
+  if (valueMinor === null || valueMinor === undefined) return NO_DATA;
+  return formatMoneyMinor(locale, valueMinor, currency, CURRENCY_COUNTRY[currency], options);
 }
 
 export function formatCount(locale: Locale, value: number | null, compact = false): string {

@@ -10,7 +10,7 @@ import {
   GapBlock,
   KpiGridSkeleton,
   LoadingBlock,
-} from '@/features/growth/components/AsyncState';
+} from '@/shared/components/AsyncState';
 import { GAPS } from '@/features/growth/api/adapters';
 import { ApiError } from '@/shared/lib/httpClient';
 import { renderWithLocale } from './renderWithLocale';

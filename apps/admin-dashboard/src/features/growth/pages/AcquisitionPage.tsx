@@ -11,7 +11,7 @@ import { CATEGORICAL, DE_EMPHASIS, MARK, CHROME, ALL_PAIRS_SERIES_CAP } from '..
 import { useVizMode } from '../lib/useVizMode';
 import { ChartFrame, VizTable } from '../components/viz/ChartFrame';
 import { roundedBar } from '../components/viz/FunnelChart';
-import { AsyncBoundary, ChartSkeleton, ComposedFromNote, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, ComposedFromNote, RefetchingOverlay } from '../../../shared/components/AsyncState';
 import { FilterBar, GrowthPageHeader } from '../components/FilterBar';
 import { CampaignForm } from '../components/CampaignForm';
 

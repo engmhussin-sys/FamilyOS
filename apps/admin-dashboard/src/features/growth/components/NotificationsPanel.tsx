@@ -3,7 +3,7 @@ import type { CountryScope } from '../api/types';
 import { useNotificationAnalytics } from '../api/useGrowthQueries';
 import type { DateRange } from '../lib/range';
 import { formatCount, formatRate, NO_DATA } from '../lib/format';
-import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, RefetchingOverlay } from './AsyncState';
+import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, RefetchingOverlay } from '../../../shared/components/AsyncState';
 
 /**
  * NOTIFICATIONS — `GET /system/notifications/analytics`

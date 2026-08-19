@@ -6,7 +6,7 @@ import { activeChildrenGap, fetchProductAiMetrics, safetyEventsGap } from '../ap
 import { formatCount } from '../lib/format';
 import { rangeFor, type RangePreset } from '../lib/range';
 import { businessDateLabel } from '../lib/range';
-import { AsyncBoundary, ChartSkeleton, GapBlock, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ChartSkeleton, GapBlock, RefetchingOverlay } from '../../../shared/components/AsyncState';
 import { NotificationsPanel } from '../components/NotificationsPanel';
 import { FilterBar, GrowthPageHeader } from '../components/FilterBar';
 import { ChartFrame, VizTable } from '../components/viz/ChartFrame';

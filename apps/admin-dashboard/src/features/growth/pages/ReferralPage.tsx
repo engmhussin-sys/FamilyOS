@@ -5,7 +5,7 @@ import { useDaily } from '../api/useGrowthQueries';
 import { composeReferralSummary, GAPS } from '../api/adapters';
 import { formatCount, NO_DATA } from '../lib/format';
 import { rangeFor, type RangePreset } from '../lib/range';
-import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, GapBlock, RefetchingOverlay } from '../components/AsyncState';
+import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, GapBlock, RefetchingOverlay } from '../../../shared/components/AsyncState';
 import { FilterBar, GrowthPageHeader } from '../components/FilterBar';
 import { TrendChart } from '../components/viz/TrendChart';
 import { ChartFrame, VizTable } from '../components/viz/ChartFrame';

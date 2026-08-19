@@ -2,7 +2,7 @@ import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 import { usePlatformMetrics } from '../api/useGrowthQueries';
 import { activeParentsGap, activeChildrenGap, familiesByCountryGap } from '../api/adapters';
 import { formatCount } from '../lib/format';
-import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, GapBlock, RefetchingOverlay } from './AsyncState';
+import { AsyncBoundary, ComposedFromNote, FigureGridSkeleton, GapBlock, RefetchingOverlay } from '../../../shared/components/AsyncState';
 
 /**
  * PLATFORM TOTALS — `GET /analytics/dashboard-metrics`

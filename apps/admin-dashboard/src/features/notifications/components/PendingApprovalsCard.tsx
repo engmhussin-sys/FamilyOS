@@ -3,6 +3,10 @@ import { pendingApprovalsApi, PENDING_APPROVALS_QUERY_KEY } from '../api/pending
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: same shared error block as NotificationCenterCard. An approval
+// queue that vanishes on a failed fetch reads as "nothing to approve",
+// which is the one thing this card must never say by accident.
+import { ErrorBlock } from '../../../shared/components/AsyncState';
 
 /**
  * CLOSES A CRITICAL REAL GAP: mirrors the Parent App's own
@@ -15,11 +19,21 @@ import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 export function PendingApprovalsCard() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-  const { data: pending, isLoading } = useQuery({
+  const { data: pending, isLoading, error, refetch } = useQuery({
     queryKey: PENDING_APPROVALS_QUERY_KEY,
     queryFn: () => pendingApprovalsApi.list(),
   });
 
+  if (error) {
+    return (
+      <Card className="border-amber-200 bg-amber-50">
+        <h2 className="font-display text-lg text-ink">{t('pendingApprovals.title')}</h2>
+        <div className="mt-3">
+          <ErrorBlock error={error} onRetry={() => void refetch()} />
+        </div>
+      </Card>
+    );
+  }
   if (isLoading) return null;
   if (!pending || pending.length === 0) return null;
 
