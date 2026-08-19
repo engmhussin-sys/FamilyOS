@@ -28,8 +28,12 @@
  *      and the rules were read first. See §5's header for exactly which rule is
  *      asserted and which one is NOT.
  *   6. A DECISION-LOG ROW EXISTS FOR EVERY PRODUCTION NOTIFICATION and carries
- *      the thirteen things an operator needs. Two of the thirteen have no
- *      column and no value anywhere in this product; §6 reports them BY NAME
+ *      the thirteen things an operator needs. This suite opened three findings
+ *      against that list and two of them have since been CLOSED BY A FIX rather
+ *      than by an edit here — the cooldown is enforced (§6.10, §6.11) and AI
+ *      rewriting is observable (§6.14) — so those assertions now measure the
+ *      fix in the same experiment that measured the defect. ONE remains open:
+ *      CHANNEL has no column and no value anywhere, and §6.13 keeps it named
  *      rather than inventing a column to assert against.
  *
  * ---------------------------------------------------------------------------
@@ -1100,96 +1104,165 @@ describeIfDb('ENGINE QUALITY — the six invariants (real PostgreSQL, real app, 
     });
 
     /**
-     * DUPLICATE SUPPRESSION AND COOLDOWN, DRIVEN FOR REAL AND READ BACK.
+     * ========================================================================
+     * THE COOLDOWN, DRIVEN FOR REAL AND READ BACK — IN BOTH DIRECTIONS.
+     * ========================================================================
      *
-     * Three occurrences of the same kind, three DIFFERENT causal keys, one
-     * household, at +4, +8 and +24 minutes. Different keys are the point: with
-     * the same key the DATABASE refuses and no outcome is ever recorded (that is
-     * §6.9's proof), so the only way to see the GUARD's own vocabulary in
-     * `outcome_reason` is to give it three causes it has to judge on their
-     * merits.
+     * THIS BLOCK USED TO PIN A DEFECT AND NOW PINS THE FIX. Until `7abe440`,
+     * `toFatiguePolicy` — the documented bridge from a household's
+     * `notification_policy_settings` to the guard — had NO CALL SITE ANYWHERE
+     * IN `src/`, so `evaluateFatigue` ran on `DEFAULT_FATIGUE_POLICY` with
+     * `defaultCooldownMinutes` and `hourlyMax` both `undefined`. Measured here,
+     * from persisted rows: two `REWARD_GRANTED` twenty minutes apart both
+     * delivered, `outcome = SEND`, `outcome_reason = NULL`. Every per-family
+     * anti-spam knob was validated, stored and inert.
+     *
+     * `SmartNotificationEngineService` now makes that call, over the
+     * AUDIENCE-SCOPED history the assembler already produces. So the same three
+     * occurrences are re-measured below and the expectations are re-derived
+     * from what the engine now decides — not relaxed, and not deleted.
+     *
+     * FOUR OCCURRENCES, FOUR DIFFERENT CAUSAL KEYS, ONE HOUSEHOLD. Different
+     * keys are the point: with the SAME key the database refuses and no outcome
+     * is ever recorded (that is §6.9's proof), so the only way to see the
+     * GUARD's own vocabulary in `outcome_reason` is to give it causes it has to
+     * judge on their merits.
+     *
+     *   +4 min   the first — delivered.
+     *   +11 min  seven minutes later. OUTSIDE the five-minute window the
+     *            pipeline's type-proxy duplicate rule uses, INSIDE the
+     *            configured thirty-minute cooldown.
+     *   +40 min  thirty-six minutes after the delivered one — past the cooldown,
+     *            so the rule has to RELEASE as well as bite.
      */
     const cooldownRun: {
-      household?: Household;
-      decisions: any[];
-      notifications: any[];
-    } = { decisions: [], notifications: [] };
+      strict: any[];
+      strictNotifications: any[];
+      relaxed: any[];
+      relaxedNotifications: any[];
+    } = { strict: [], strictNotifications: [], relaxed: [], relaxedNotifications: [] };
+
+    /** +4, +11, +40 minutes past MIDDAY. Named once, used by both households, so
+     * the ONLY difference between them is the policy row. */
+    const FIRST = new Date(MIDDAY.getTime() + 4 * MINUTE);
+    const SEVEN_MINUTES_LATER = new Date(MIDDAY.getTime() + 11 * MINUTE);
+    const THIRTY_SIX_MINUTES_LATER = new Date(MIDDAY.getTime() + 40 * MINUTE);
 
     beforeAll(async () => {
-      const c = await createHousehold('cooldown');
-      cooldownRun.household = c;
-      const first = new Date(MIDDAY.getTime() + 4 * MINUTE);
-      const fourMinutesLater = new Date(MIDDAY.getTime() + 8 * MINUTE);
-      const twentyMinutesLater = new Date(MIDDAY.getTime() + 24 * MINUTE);
+      const strict = await createHousehold('cooldown-default');
 
-      atInstant(first);
-      await deliver(c, rewardEnvelope(c, { sourceEventType: 'HABIT_COMPLETED' }));
-      atInstant(fourMinutesLater);
-      await deliver(c, rewardEnvelope(c, { sourceEventType: 'HABIT_COMPLETED' }));
-      atInstant(twentyMinutesLater);
-      await deliver(c, rewardEnvelope(c, { sourceEventType: 'HABIT_COMPLETED' }));
+      /**
+       * AND A SECOND HOUSEHOLD THAT SAYS OTHERWISE, IN THE SUPPORTED WAY.
+       *
+       * `notification.cooldown.defaultMinutes = 0` is a per-family setting
+       * (migration 0018), validated against `NOTIFICATION_POLICY_SCHEMAS` and
+       * resolved by `resolveNotificationPolicy` — the same mechanism
+       * `e2e-10-notification-locale` uses. It is here as the CONTROL that makes
+       * the assertion above mean something: two households, the same producer,
+       * the same facts, the same instants, and one row in
+       * `notification_policy_settings` between them. If the knob were still
+       * inert both would behave identically and §6.11 would go red.
+       */
+      const relaxed = await createHousehold('cooldown-off');
+      await sys('the second household turns its cooldown off', () =>
+        prisma.notificationPolicySetting.create({
+          data: {
+            familyId: relaxed.familyId,
+            key: 'notification.cooldown.defaultMinutes',
+            value: '0',
+          },
+        }),
+      );
+
+      atInstant(FIRST);
+      await deliver(strict, rewardEnvelope(strict, { sourceEventType: 'HABIT_COMPLETED' }));
+      await deliver(relaxed, rewardEnvelope(relaxed, { sourceEventType: 'HABIT_COMPLETED' }));
+
+      atInstant(SEVEN_MINUTES_LATER);
+      await deliver(strict, rewardEnvelope(strict, { sourceEventType: 'HABIT_COMPLETED' }));
+      await deliver(relaxed, rewardEnvelope(relaxed, { sourceEventType: 'HABIT_COMPLETED' }));
+
+      atInstant(THIRTY_SIX_MINUTES_LATER);
+      await deliver(strict, rewardEnvelope(strict, { sourceEventType: 'HABIT_COMPLETED' }));
+
       atInstant(MIDDAY);
 
-      cooldownRun.decisions = (await decisionRows(c.familyId)).filter(
-        (d) => d.target_audience === 'PARENT',
-      );
-      cooldownRun.notifications = (await notificationRows(c.familyId)).filter(
-        (n) => n.type === 'REWARD_GRANTED',
-      );
-    }, 120_000);
+      const parentRows = async (familyId: string) =>
+        (await decisionRows(familyId)).filter((d) => d.target_audience === 'PARENT');
+      const rewardRows = async (familyId: string) =>
+        (await notificationRows(familyId)).filter((n) => n.type === 'REWARD_GRANTED');
 
-    it('6.10 DUPLICATE SUPPRESSION — the second occurrence inside the window is refused, and the row says so', () => {
-      const [, second] = cooldownRun.decisions;
-      // The ENGINE said send — the arithmetic did not refuse this one — and the
-      // GUARD refused it, which is exactly the disagreement `outcome` exists to
-      // make legible.
+      cooldownRun.strict = await parentRows(strict.familyId);
+      cooldownRun.strictNotifications = await rewardRows(strict.familyId);
+      cooldownRun.relaxed = await parentRows(relaxed.familyId);
+      cooldownRun.relaxedNotifications = await rewardRows(relaxed.familyId);
+    }, 180_000);
+
+    /**
+     * WHY `COOLDOWN` AND NOT `DUPLICATE`, WHICH IS WHAT THIS ASSERTION USED TO
+     * READ AND WHAT AN OPERATOR MIGHT EXPECT.
+     *
+     * The three occurrences here are three DIFFERENT causes — three
+     * `domain_events` ids, three `sourceEventId`s. They are not one event
+     * arriving three times.
+     *
+     * «Duplicate» in this product means THE SAME OCCURRENCE, and it is decided
+     * by CAUSAL IDENTITY: `notifications (family_id, source_event_id, user_id)`
+     * and `child_messages (family_id, source_event_id)` refuse a repeat and
+     * never forget, and `DUPLICATE_PENALTY` compares causes — its own header's
+     * «THIS EXACT THING» IS A CAUSE, NOT A TYPE», which is the principle the
+     * audience-scoping work established when a child who crossed their hydration
+     * goal AND their activity goal in one afternoon had the second declared a
+     * duplicate of the first.
+     *
+     * «Cooldown» means A SECOND REAL EVENT TOO SOON AFTER THE FIRST. That is
+     * exactly what a second habit completion seven minutes after the first is,
+     * and it is the honest word for it. The engine's gate therefore hands the
+     * guard `duplicateWindowMs: 0` — disabling the guard's TYPE-as-proxy
+     * duplicate rule at that gate only — so the answer this row carries is the
+     * one that is true.
+     *
+     * The old expectation (`DUPLICATE`) came from the PIPELINE's own pass, whose
+     * type-proxy rule fired first only because the engine's cooldown did not
+     * exist yet. It was the right assertion about the wrong gate.
+     */
+    it('6.10 a second DISTINCT occurrence too soon is COOLDOWN — «duplicate» is a question about CAUSE', () => {
+      const [, second] = cooldownRun.strict;
+
+      // The ENGINE decided to send — the arithmetic did not refuse this one —
+      // and a GATE refused it. That disagreement is exactly what `outcome`
+      // exists to make legible, and it is the row a support engineer reads.
       expect(second.decision).toBe('SEND');
       expect(second.outcome).toBe('SUPPRESS');
-      expect(second.outcome_reason).toBe('DUPLICATE');
-      // Four minutes apart, inside the five-minute window the policy declares.
+      expect(second.outcome_reason).toBe('COOLDOWN');
+
+      // SEVEN minutes: past the five-minute window the type-proxy duplicate rule
+      // uses, so `COOLDOWN` is not merely winning a race with `DUPLICATE`.
       expect(DEFAULT_NOTIFICATION_POLICY.duplicateWindowMinutes).toBe(5);
+      expect((SEVEN_MINUTES_LATER.getTime() - FIRST.getTime()) / MINUTE).toBe(7);
+
+      // …and it really was a different occurrence, not the same one twice.
+      expect(new Set(cooldownRun.strict.map((d) => d.source_event_id)).size).toBe(3);
     });
 
     /**
-     * ======================================================================
-     * FINDING — THE CONFIGURED COOLDOWN NEVER REACHES THE GUARD.
-     * ======================================================================
+     * ========================================================================
+     * THE CONFIGURED COOLDOWN REACHES THE GUARD — THE FINDING, CLOSED.
+     * ========================================================================
      *
-     * MEASURED, NOT INFERRED. The third occurrence above is TWENTY MINUTES
-     * after the delivered one, well inside
-     * `notification.cooldown.defaultMinutes` (30), and it is DELIVERED —
-     * `outcome = 'SEND'`, a second `notifications` row, no `COOLDOWN` anywhere.
+     * This assertion measured the defect and now measures the fix, in the three
+     * directions that together mean «enforced» rather than «sometimes says no»:
      *
-     * THE CAUSE, code-reviewed rather than guessed:
-     * `SmartNotificationIntegrationService.evaluateAndDeliver` calls
-     * `evaluateFatigue(candidate, history, now, currentLocalTime, businessDayStart)`
-     * — with NO policy argument — so the guard falls back to
-     * `DEFAULT_FATIGUE_POLICY`, in which `defaultCooldownMinutes`, `hourlyMax`
-     * and `duplicateWindowMs` are all `undefined`. `toFatiguePolicy`, the
-     * documented bridge that would carry the household's own settings across
-     * («the values come from notification-policy.ts via toFatiguePolicy, which
-     * resolves them per family from notification_policy_settings»), has NO
-     * CALL SITE IN `src/` at all — only in `notification-policy.spec.ts`.
-     *
-     * WHAT IT COSTS TODAY:
-     *   * `notification.cap.maxPerHour` (3) and
-     *     `notification.cooldown.defaultMinutes` (30) are validated, persisted,
-     *     per-family knobs that change nothing at the delivery gate.
-     *   * every type outside the three named in `cooldownMinutesByType`
-     *     (`HYDRATION_REMINDER`, `STUDY_REMINDER`, `EXERCISE_ENCOURAGEMENT`)
-     *     has NO cooldown there — `REWARD_GRANTED` included.
-     *   * the two layers disagree about one household: the ENGINE's scorer DOES
-     *     read the family policy (its `FATIGUE_PENALTY` is what actually
-     *     throttles a second reward), so «why was this suppressed» has two
-     *     different answers depending on which one refuses first.
-     *
-     * NOT FIXED HERE. `evaluateAndDeliver` is in `life-intelligence` and
-     * `toFatiguePolicy` is in `notifications`; neither is this suite's to edit.
-     * The assertion pins the MEASURED behaviour, so the day the policy is
-     * wired through this goes red and the finding is closed deliberately.
+     *   IT BITES     a second occurrence inside the window is refused (§6.10).
+     *   IT RELEASES  one past the window is delivered — a cooldown that never
+     *                let go would be a silent per-type daily cap of one.
+     *   IT IS THE HOUSEHOLD'S  a family that sets the knob to zero gets a
+     *                different answer at the SAME spacing. That is the half
+     *                that could not have passed before `7abe440`: the setting
+     *                was validated, stored, and read by nothing.
      */
-    it('6.11 FINDING — COOLDOWN: the configured 30-minute cooldown does not reach the delivery guard', () => {
-      const [, , third] = cooldownRun.decisions;
+    it('6.11 the configured cooldown is enforced — it bites, it releases, and the household owns it', () => {
+      const [, , third] = cooldownRun.strict;
 
       // The product's configured answer for this type, from the shipped policy.
       expect(DEFAULT_NOTIFICATION_POLICY.defaultCooldownMinutes).toBe(30);
@@ -1197,13 +1270,23 @@ describeIfDb('ENGINE QUALITY — the six invariants (real PostgreSQL, real app, 
         'REWARD_GRANTED',
       );
 
-      // The measured answer, twenty minutes after the last one of this type.
+      // IT RELEASES. Thirty-six minutes after the delivered one, past thirty.
+      expect((THIRTY_SIX_MINUTES_LATER.getTime() - FIRST.getTime()) / MINUTE).toBe(36);
       expect(third.outcome).toBe('SEND');
       expect(third.outcome_reason).toBeNull();
-      expect(cooldownRun.notifications).toHaveLength(2);
+      expect(cooldownRun.strictNotifications).toHaveLength(2);
 
-      // And the throttling that DID happen came from the engine's arithmetic,
-      // not from the guard: the fatigue penalty is on the row, by name.
+      // IT IS THE HOUSEHOLD'S. Same producer, same facts, same two instants —
+      // and the household that set `notification.cooldown.defaultMinutes = 0`
+      // is told both times.
+      expect(cooldownRun.relaxed.map((d) => `${d.outcome}/${d.outcome_reason ?? ''}`)).toEqual([
+        'SEND/',
+        'SEND/',
+      ]);
+      expect(cooldownRun.relaxedNotifications).toHaveLength(2);
+
+      // And the throttling the ENGINE does on its own is still on the row, by
+      // name, so the two mechanisms remain separable in the log.
       const penalty = jsonOf(third.explanation).find((c: any) => c.name === 'FATIGUE_PENALTY');
       expect(Number(penalty.contribution)).toBeLessThan(0);
       expect(penalty.note).toContain('today=1/6');
@@ -1224,11 +1307,14 @@ describeIfDb('ENGINE QUALITY — the six invariants (real PostgreSQL, real app, 
     });
 
     // ------------------------------------------------------------------------
-    // THE TWO FINDINGS. Reported by name, proved against the real schema and a
-    // real run, rather than asserted against a column somebody invented here.
+    // THE ONE FINDING STILL OPEN. Reported by name, proved against the real
+    // schema and a real run, rather than asserted against a column somebody
+    // invented here. The other two this suite opened — the inert cooldown and
+    // the unobservable AI rewrite — were closed by `7abe440` / `bcf66cc` and
+    // are measured as fixes in §6.10, §6.11 and §6.14.
     // ------------------------------------------------------------------------
     /**
-     * FINDING 1 — «CHANNEL» HAS NO COLUMN AND NO VALUE ANYWHERE.
+     * FINDING — «CHANNEL» HAS NO COLUMN AND NO VALUE ANYWHERE.
      *
      * There is no channel concept in this product's notification pipeline.
      * `deliverNow` routes on AUDIENCE — a PARENT candidate becomes a
@@ -1240,12 +1326,16 @@ describeIfDb('ENGINE QUALITY — the six invariants (real PostgreSQL, real app, 
      * DISCARDED. So «which channels did this notification actually go out on»
      * is not answerable from any row in this database.
      *
-     * IT IS NOT INVENTED HERE. Adding a `channel` column to
-     * `notification_decisions` would be a migration in a module this suite does
-     * not own, and asserting against one that does not exist would be asserting
-     * a bug into existence. The test therefore pins the ABSENCE, so that the
-     * day a channel is recorded this goes red and the finding is closed
-     * deliberately rather than forgotten.
+     * IT IS NOT INVENTED HERE, AND IT WAS DELIBERATELY NOT ADDED. A `channel`
+     * column written today would be NULL forever: the fan-out outcome is
+     * computed inside `PrismaRuntimeAlertRepository.createForFamilyOwner`, below
+     * the layer that writes the decision, and there is no plumbing between them.
+     * A column that no writer fills is worse than an honest gap, because a
+     * dashboard would report it as «no push problems».
+     *
+     * SO THIS STAYS OPEN, and stays visible: the test pins the ABSENCE, so the
+     * day a channel really is recorded this goes red and the finding is closed
+     * deliberately rather than forgotten. It is a real gap, not a closed one.
      */
     it('6.13 FINDING — CHANNEL: no column on notification_decisions, and no value anywhere', () => {
       expect(columns.filter((c) => c.includes('channel'))).toEqual([]);
@@ -1255,8 +1345,11 @@ describeIfDb('ENGINE QUALITY — the six invariants (real PostgreSQL, real app, 
       // report next to «what is not».
       expect(columns).toEqual(
         expect.arrayContaining([
+          'ai_allowed',
           'ai_failed',
+          'ai_invoked',
           'ai_rewritten',
+          'ai_safety_rejection',
           'copy_key',
           'decision',
           'event_type',
@@ -1274,66 +1367,108 @@ describeIfDb('ENGINE QUALITY — the six invariants (real PostgreSQL, real app, 
     });
 
     /**
-     * FINDING 2 — «AI REWRITING WAS ALLOWED» IS NOT RECORDED, AND «INVOKED» IS
-     * ONLY RECORDED WHEN IT SUCCEEDED OR THREW.
+     * ========================================================================
+     * AI REWRITING IS OBSERVABLE — THE FINDING, CLOSED, AND RE-MEASURED.
+     * ========================================================================
      *
-     * `notification_decisions` has `ai_rewritten` and `ai_failed`. Those are
-     * OUTCOMES, not permissions:
+     * WHAT THIS ASSERTION USED TO REPORT. `notification_decisions` had
+     * `ai_rewritten` and `ai_failed`, and those are OUTCOMES rather than
+     * permissions: `both false` carried four different histories — the feature
+     * OFF, the model called and refused by the safety gate, the model called and
+     * answering the same sentence back, and the TEMPLATE itself failing safety
+     * before a model was ever offered one. This suite PROVED the ambiguity by
+     * running the composer with the model provably called zero times and
+     * provably called once, and reading back two byte-identical rows.
      *
-     *   `ai_rewritten = true`   the model ran and its output shipped.
-     *   `ai_failed    = true`   the model ran and threw or timed out.
-     *   both false              AMBIGUOUS — it can mean the feature was OFF
-     *                           (`NOTIFICATION_AI_REPHRASE_ENABLED` unset, or
-     *                           no `AI_PROVIDER` bound), or that it was ON, was
-     *                           CALLED, and its answer was refused by the
-     *                           safety gate, or returned identical text.
+     * Migration `0029` adds `ai_allowed`, `ai_invoked` and `ai_safety_rejection`,
+     * populated from `NotificationComposerService`, which had always computed
+     * all three and thrown them away. The same two runs are re-measured below
+     * and must now be DISTINGUISHABLE — the assertion is the same experiment
+     * with the opposite expected answer, which is what closing a finding looks
+     * like.
      *
-     * The composer computes exactly the missing fact — `ComposedNotification.safetyRejection`,
-     * a closed reason string — and the engine discards it.
-     *
-     * PROVED, NOT ASSUMED: the two runs below differ in whether the model was
-     * called at all, and the persisted rows are byte-identical on both AI
-     * columns.
+     * THREE RUNS, NOT TWO, because the three columns only mean something if the
+     * middle case is separable from BOTH ends: off · called-and-refused ·
+     * called-and-accepted.
      */
-    it('6.14 FINDING — AI REWRITING: «allowed» has no column, and «invoked» is indistinguishable from «off»', async () => {
+    it('6.14 AI REWRITING — «allowed», «invoked» and the refusal are all on the row, and they separate three histories', async () => {
+      const read = async (household: Household) =>
+        (await decisionRows(household.familyId)).find((d) => d.target_audience === 'PARENT');
+
+      // ---- 1. THE FEATURE IS OFF. No permission, no call, nothing refused.
       const off = await createHousehold('ai-off');
       delete process.env.NOTIFICATION_AI_REPHRASE_ENABLED;
       aiStub.calls = 0;
       atInstant(MIDDAY);
       await deliver(off, rewardEnvelope(off, { sourceEventType: 'HABIT_COMPLETED' }));
       const callsWhenOff = aiStub.calls;
-      const offRow = (await decisionRows(off.familyId)).find((d) => d.target_audience === 'PARENT');
+      const offRow = await read(off);
 
-      const on = await createHousehold('ai-on-rejected');
+      // ---- 2. ALLOWED, CALLED, AND REFUSED BY SAFETY. The model answers with a
+      //         raw backend enum in it — one of the six failure modes the
+      //         composer's own header lists — so the template ships.
+      const refused = await createHousehold('ai-refused');
       process.env.NOTIFICATION_AI_REPHRASE_ENABLED = 'true';
       aiStub.mode = 'rejected';
       aiStub.calls = 0;
-      await deliver(on, rewardEnvelope(on, { sourceEventType: 'HABIT_COMPLETED' }));
-      const callsWhenOn = aiStub.calls;
-      const onRow = (await decisionRows(on.familyId)).find((d) => d.target_audience === 'PARENT');
+      await deliver(refused, rewardEnvelope(refused, { sourceEventType: 'HABIT_COMPLETED' }));
+      const callsWhenRefused = aiStub.calls;
+      const refusedRow = await read(refused);
+
+      // ---- 3. ALLOWED, CALLED, AND ACCEPTED. The model's sentence ships.
+      const accepted = await createHousehold('ai-accepted');
+      aiStub.mode = 'ok';
+      aiStub.calls = 0;
+      await deliver(accepted, rewardEnvelope(accepted, { sourceEventType: 'HABIT_COMPLETED' }));
+      const callsWhenAccepted = aiStub.calls;
+      const acceptedRow = await read(accepted);
+
       delete process.env.NOTIFICATION_AI_REPHRASE_ENABLED;
       aiStub.mode = 'ok';
 
-      // THE MODEL GENUINELY RAN IN ONE CASE AND NOT THE OTHER.
+      // THE MODEL GENUINELY RAN IN TWO CASES AND NOT IN THE THIRD — measured at
+      // the stub, which is the only witness outside the database.
       expect(callsWhenOff).toBe(0);
-      expect(callsWhenOn).toBeGreaterThan(0);
+      expect(callsWhenRefused).toBeGreaterThan(0);
+      expect(callsWhenAccepted).toBeGreaterThan(0);
 
-      // AND THE PERSISTED ROWS CANNOT TELL THE TWO APART.
-      expect(offRow.ai_rewritten).toBe(false);
-      expect(offRow.ai_failed).toBe(false);
-      expect(onRow.ai_rewritten).toBe(false);
-      expect(onRow.ai_failed).toBe(false);
+      // THE COLUMNS EXIST.
+      expect(columns).toEqual(
+        expect.arrayContaining(['ai_allowed', 'ai_invoked', 'ai_safety_rejection']),
+      );
 
-      // There is no column that would have distinguished them, and no record of
-      // the safety rejection that actually happened.
-      expect(columns.filter((c) => c.includes('ai_'))).toEqual(['ai_failed', 'ai_rewritten']);
-      expect(columns.filter((c) => c.includes('allow') || c.includes('safety'))).toEqual([]);
+      // AND THE THREE ROWS ARE NOW THREE DIFFERENT ROWS. This is the exact
+      // comparison that used to prove the ambiguity; it now proves the fix.
+      const shape = (row: any) =>
+        `allowed=${row.ai_allowed} invoked=${row.ai_invoked} rewritten=${row.ai_rewritten} ` +
+        `failed=${row.ai_failed} rejection=${row.ai_safety_rejection ?? 'none'}`;
 
-      // The deterministic template shipped, which is the behaviour that matters
-      // and is not in question — only the RECORD of it is.
-      const [row] = await notificationRows(on.familyId);
-      expect(row.body).toMatch(ARABIC_LETTER);
-      expect(row.body).not.toContain('REWARD_GRANTED');
+      expect(shape(offRow)).toBe(
+        'allowed=false invoked=false rewritten=false failed=false rejection=none',
+      );
+      expect(shape(refusedRow)).toBe(
+        'allowed=true invoked=true rewritten=false failed=false rejection=ENUM_OR_PLACEHOLDER_LEAK',
+      );
+      expect(shape(acceptedRow)).toBe(
+        'allowed=true invoked=true rewritten=true failed=false rejection=none',
+      );
+      expect(new Set([shape(offRow), shape(refusedRow), shape(acceptedRow)]).size).toBe(3);
+
+      // `ai_rewritten` AND `ai_failed` ALONE STILL CANNOT SEPARATE THEM — which
+      // is why the three columns were needed and is the finding this assertion
+      // used to carry, kept here as the reason rather than as a complaint.
+      const oldShape = (row: any) => `${row.ai_rewritten}/${row.ai_failed}`;
+      expect(oldShape(offRow)).toBe(oldShape(refusedRow));
+
+      // THE BEHAVIOUR IS UNCHANGED AND WAS NEVER IN QUESTION: the refused
+      // household reads the deterministic template, the accepted one reads the
+      // model's sentence, and neither reads an enum.
+      const [refusedNotification] = await notificationRows(refused.familyId);
+      expect(refusedNotification.body).toMatch(ARABIC_LETTER);
+      expect(refusedNotification.body).not.toContain('REWARD_GRANTED');
+
+      const [acceptedNotification] = await notificationRows(accepted.familyId);
+      expect(acceptedNotification.body).toBe('صياغة بديلة من النموذج لهذا الإشعار');
     });
   });
 
