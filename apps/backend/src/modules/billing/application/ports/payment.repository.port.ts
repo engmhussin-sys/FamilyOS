@@ -251,6 +251,25 @@ export interface IPaymentRepository {
 
   revokeEntitlements(familyId: string, reason: string, at: Date): Promise<number>;
 
+  /**
+   * EXTENDS the window of the family's LIVE grants to `validUntil`, and only
+   * ever forward — the same monotonic rule `grantEntitlement`'s `GREATEST()`
+   * applies, for the case where nothing new was purchased.
+   *
+   * Its one caller is the GRACE PERIOD: a household whose renewal charge failed
+   * keeps FULL access for the window `subscriptions.grace_period_ends_at`
+   * already records (`schema.prisma:92-94`), and a household whose rows lapsed
+   * at period end is exactly the one that was being refused during it.
+   *
+   * TOUCHES `ACTIVE` ROWS ONLY, deliberately. `REVOKED` is a DECISION — a
+   * refund, a chargeback, a provider revocation — and a grace-period callback
+   * arriving afterwards must not undo it. Rows with a NULL `valid_until` (an
+   * open-ended manual grant) are already unbounded and are left alone.
+   *
+   * Returns the number of rows moved.
+   */
+  extendEntitlements(familyId: string, validUntil: Date): Promise<number>;
+
   listEntitlements(familyId: string): Promise<IEntitlementRecord[]>;
 
   findEntitlement(familyId: string, featureKey: EntitlementKey): Promise<IEntitlementRecord | null>;

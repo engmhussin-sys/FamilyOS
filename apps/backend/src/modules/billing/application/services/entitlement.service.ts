@@ -183,6 +183,32 @@ export class EntitlementService {
   }
 
   /**
+   * KEEPS THE FAMILY'S LIVE GRANTS VALID UNTIL `validUntil`, and only ever
+   * forward.
+   *
+   * THE DEFECT THIS CLOSES. `schema.prisma:92-94` promises that GRACE_PERIOD
+   * keeps FULL access for seven days after a failed renewal, and
+   * `PaymentWebhookService` recorded that promise in
+   * `subscriptions.grace_period_ends_at` while the `entitlements` rows still
+   * ended at the period end. `hasFeature` answers FROM A ROW whenever one
+   * exists — row exists, window closed, false — and never reaches the
+   * compatibility computation that reads the subscription's status. So the
+   * household the grace period is FOR, the one whose card failed at renewal,
+   * was refused throughout it.
+   *
+   * THE WINDOW IS NOT RECOMPUTED HERE. The caller passes the date the domain
+   * already produced, so there is one answer to «when does grace end» and the
+   * rows and the subscription cannot disagree.
+   */
+  async extendThrough(familyId: string, validUntil: Date): Promise<number> {
+    const count = await this.payments.extendEntitlements(familyId, validUntil);
+    this.logger.log(
+      `Extended ${count} entitlement(s) for family ${familyId} through ${validUntil.toISOString()}.`,
+    );
+    return count;
+  }
+
+  /**
    * Revokes everything for a family. Used for a refund, a chargeback, a
    * revocation, and the end of a grace period.
    *

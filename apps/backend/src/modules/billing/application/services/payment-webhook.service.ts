@@ -529,11 +529,16 @@ export class PaymentWebhookService {
     const subscription = await this.billing.findSubscriptionByFamily(familyId);
     if (!subscription) return { outcome: 'IGNORED', familyId, detail: 'no subscription for this family' };
 
+    // ONE date for the end of grace, computed once and used by both the
+    // subscription row and the entitlement rows below. Two computations would
+    // be two answers.
+    const gracePeriodEndsAt = status === 'GRACE_PERIOD' ? this.graceEnd(event) : null;
+
     const applied = await this.payments.applySubscriptionStateIfNewer({
       subscriptionId: subscription.id,
       eventAt: event.signedAt ?? new Date(),
       status,
-      gracePeriodEndsAt: status === 'GRACE_PERIOD' ? this.graceEnd(event) : null,
+      gracePeriodEndsAt,
       canceledAt: status === 'CANCELLED' ? (event.signedAt ?? new Date()) : null,
       autoRenewing: status === 'CANCELLED' ? false : undefined,
     });
@@ -546,6 +551,27 @@ export class PaymentWebhookService {
 
     if (options.revoke) {
       await this.entitlements.revokeAll(familyId, detail, event.signedAt ?? new Date());
+    }
+
+    /**
+     * THE SEVEN-DAY PROMISE, DELIVERED TO THE ROWS THAT DECIDE ACCESS.
+     *
+     * `schema.prisma:92-94`: GRACE_PERIOD keeps FULL access for seven days.
+     * Writing `grace_period_ends_at` alone did not do that. `hasFeature`
+     * answers from an `entitlements` ROW whenever one exists, so a household
+     * granted through Phase D whose rows lapsed AT PERIOD END — which is when
+     * a renewal charge is attempted, i.e. the normal case — was refused
+     * throughout the window built to prevent exactly that. The fallback that
+     * would have said «GRACE_PERIOD is entitlement-bearing» is never reached
+     * for a family that has rows.
+     *
+     * The SAME `gracePeriodEndsAt` the subscription row just took, so the two
+     * cannot disagree about when grace ends. `extendThrough` moves ACTIVE rows
+     * FORWARD ONLY: a refund stays refunded and a longer paid window is not
+     * shortened.
+     */
+    if (gracePeriodEndsAt) {
+      await this.entitlements.extendThrough(familyId, gracePeriodEndsAt);
     }
 
     /**

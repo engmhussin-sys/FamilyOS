@@ -519,6 +519,247 @@ describe('PHASE D — GRACE PERIOD keeps FULL access, and its expiry revokes', (
 });
 
 /**
+ * ============================================================================
+ * THE SEVEN-DAY PROMISE, FOR THE HOUSEHOLD IT WAS NOT REACHING.
+ * ============================================================================
+ *
+ * The section above passes for a reason that does not generalise: its
+ * `DID_RENEW` grant runs to 1 September, so on 22 August the rows are still
+ * inside their OWN window and the grace period is never asked to carry
+ * anything.
+ *
+ * THE HOUSEHOLD THAT WAS REFUSED is the one whose card fails AT PERIOD END —
+ * which is when a renewal charge is actually attempted, so it is the normal
+ * case, not an edge one. `GRACE_PERIOD_STARTED` wrote
+ * `subscriptions.grace_period_ends_at` and stopped there; the `entitlements`
+ * rows still ended at the period end. `EntitlementService.hasFeature` answers
+ * FROM A ROW WHENEVER ONE EXISTS — row exists, window closed, false — and never
+ * reaches the compatibility computation that would have said GRACE_PERIOD is
+ * entitlement-bearing. So a family that HAS PAID, whose card merely failed to
+ * renew, was locked out during the exact window `schema.prisma:92-94` exists to
+ * prevent that.
+ *
+ * MEASURED BEFORE THE FIX, this harness, real services:
+ *   grace starts 1 Aug, `subscriptions.grace_period_ends_at` = 8 Aug,
+ *   `hasFeature('ai_diagnostics')` on 4 Aug -> FALSE.
+ *
+ * ============================= THE CLOCK, AND WHY =============================
+ *
+ * Time does not move inside these tests: `jest.setSystemTime` pins it, exactly
+ * as `freezeGoldenClock` does for the golden suites, so the verifier's
+ * ACTIVE/EXPIRED decision (`expiresDate <= Date.now()`) is a decision this file
+ * makes rather than one the calendar makes while nobody is looking.
+ *
+ * The pinned instant is derived from the run rather than written as a literal,
+ * and that is not laziness: `appleTestChain` MINTS ITS CERTIFICATES WITH
+ * `openssl` AT RUN TIME, so a literal date in the past falls before the leaf's
+ * notBefore and every signature fails for a reason that has nothing to do with
+ * grace periods. Every boundary below is derived from that one instant — and
+ * the seven-day end itself is READ BACK FROM `subscriptions.grace_period_ends_at`,
+ * the date the domain already computed, so this suite cannot drift into a
+ * second notion of when grace ends.
+ */
+describe('PHASE D — the grace window carries the entitlement rows, both edges of it', () => {
+  const DAY = 86_400_000;
+  /** The pinned instant. One per test, captured before the clock is frozen. */
+  let t0: Date;
+  /** The period the household paid for, ending ten days after the pin. */
+  let periodEnd: Date;
+
+  /** Locally what `freezeGoldenClock` is for the golden suites: fake `Date`
+   *  and nothing else, so timers and the event loop behave normally. */
+  const freezeAt = (at: Date): void => {
+    jest.useFakeTimers({
+      doNotFake: [
+        'hrtime',
+        'nextTick',
+        'performance',
+        'queueMicrotask',
+        'requestAnimationFrame',
+        'cancelAnimationFrame',
+        'requestIdleCallback',
+        'cancelIdleCallback',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+      ],
+    });
+    jest.setSystemTime(at);
+  };
+
+  beforeEach(() => {
+    t0 = new Date();
+    periodEnd = new Date(t0.getTime() + 10 * DAY);
+    freezeAt(t0);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  /**
+   * A household that paid through `periodEnd` and whose renewal charge then
+   * failed ON `periodEnd` — the grant's window and the failed renewal are the
+   * same instant, which is what a renewal IS.
+   */
+  async function householdWhoseCardFailedAtPeriodEnd(): Promise<{ h: IHarness; subscriptionId: string }> {
+    const h = harness();
+    h.payments.linkFamily('APPLE_IAP', 'apple-account-family-a', 'family-a');
+    const subscriptionId = h.billing.createSubscriptionFor('family-a');
+
+    const bought = await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_RENEW', {
+        uuid: 'u-buy-period',
+        signedDate: t0.getTime(),
+        txn: transaction({ purchaseDate: t0.getTime(), expiresDate: periodEnd.getTime() }),
+      }),
+      headers: {},
+    });
+    expect(bought.outcome).toBe('PROCESSED');
+
+    const grace = await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_FAIL_TO_RENEW', {
+        uuid: 'u-grace-at-period-end',
+        subtype: 'GRACE_PERIOD',
+        signedDate: periodEnd.getTime(),
+      }),
+      headers: {},
+    });
+    expect(grace.outcome).toBe('PROCESSED');
+    return { h, subscriptionId };
+  }
+
+  it('the rows really do lapse at the period end — the premise, stated rather than assumed', async () => {
+    const h = harness();
+    h.payments.linkFamily('APPLE_IAP', 'apple-account-family-a', 'family-a');
+    h.billing.createSubscriptionFor('family-a');
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_RENEW', {
+        uuid: 'u-buy-period',
+        signedDate: t0.getTime(),
+        txn: transaction({ purchaseDate: t0.getTime(), expiresDate: periodEnd.getTime() }),
+      }),
+      headers: {},
+    });
+
+    const records = await h.payments.listEntitlements('family-a');
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every((r) => r.validUntil?.getTime() === periodEnd.getTime())).toBe(true);
+    expect(await h.entitlements.hasFeature('family-a', 'ai_diagnostics', new Date(periodEnd.getTime() - 1000))).toBe(
+      true,
+    );
+    expect(await h.entitlements.hasFeature('family-a', 'ai_diagnostics', periodEnd)).toBe(false);
+  });
+
+  it('keeps FULL access for every day of the window it promised', async () => {
+    const { h, subscriptionId } = await householdWhoseCardFailedAtPeriodEnd();
+
+    const state = h.payments.subscriptionState(subscriptionId);
+    expect(state?.status).toBe('GRACE_PERIOD');
+    const graceEnd = state?.gracePeriodEndsAt as Date;
+    expect(graceEnd).toBeInstanceOf(Date);
+    // Seven days, from the provider's own signed timestamp. Read, not restated.
+    expect(Math.round((graceEnd.getTime() - periodEnd.getTime()) / DAY)).toBe(7);
+
+    // The first hour of the window, the middle of it, and the last second.
+    for (const at of [
+      new Date(periodEnd.getTime() + 3_600_000),
+      new Date(periodEnd.getTime() + 3 * DAY),
+      new Date(graceEnd.getTime() - 1000),
+    ]) {
+      expect(await h.entitlements.hasFeature('family-a', 'ai_diagnostics', at)).toBe(true);
+    }
+
+    // EVERY feature of the tier, because «FULL access» is the promise and one
+    // feature passing is not it.
+    const described = await h.entitlements.describe('family-a', new Date(periodEnd.getTime() + 3 * DAY));
+    expect(described.features.length).toBeGreaterThan(1);
+    // ONE notion of when grace ends: what the rows report is what the
+    // subscription reports.
+    expect(described.validUntil?.toISOString()).toBe(graceEnd.toISOString());
+  });
+
+  it('and lapses when that window ends — not before, not after', async () => {
+    const { h, subscriptionId } = await householdWhoseCardFailedAtPeriodEnd();
+    const graceEnd = h.payments.subscriptionState(subscriptionId)?.gracePeriodEndsAt as Date;
+
+    // THE BOUNDARY, both sides of it, one second apart.
+    expect(
+      await h.entitlements.hasFeature('family-a', 'ai_diagnostics', new Date(graceEnd.getTime() - 1000)),
+    ).toBe(true);
+    expect(await h.entitlements.hasFeature('family-a', 'ai_diagnostics', graceEnd)).toBe(false);
+    expect(
+      await h.entitlements.hasFeature('family-a', 'ai_diagnostics', new Date(graceEnd.getTime() + DAY)),
+    ).toBe(false);
+
+    // AN EXTENSION, NOT A RE-GRANT: no row exists that no payment granted, and
+    // none was resurrected from REVOKED.
+    const records = await h.payments.listEntitlements('family-a');
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every((r) => r.status === 'ACTIVE')).toBe(true);
+    expect(records.every((r) => r.validUntil?.getTime() === graceEnd.getTime())).toBe(true);
+  });
+
+  it('never SHORTENS a window the household has already paid for', async () => {
+    // The mirror, and the reason the extension is monotonic: a household paid
+    // well beyond the grace window, whose charge then fails, must not be cut
+    // back to «seven days from now».
+    const h = harness();
+    h.payments.linkFamily('APPLE_IAP', 'apple-account-family-a', 'family-a');
+    const subscriptionId = h.billing.createSubscriptionFor('family-a');
+    const farEnd = new Date(t0.getTime() + 60 * DAY);
+
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_RENEW', {
+        uuid: 'u-buy-long',
+        signedDate: t0.getTime(),
+        txn: transaction({ purchaseDate: t0.getTime(), expiresDate: farEnd.getTime() }),
+      }),
+      headers: {},
+    });
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_FAIL_TO_RENEW', {
+        uuid: 'u-grace-long',
+        subtype: 'GRACE_PERIOD',
+        signedDate: t0.getTime() + DAY,
+      }),
+      headers: {},
+    });
+
+    const graceEnd = h.payments.subscriptionState(subscriptionId)?.gracePeriodEndsAt as Date;
+    expect(graceEnd.getTime()).toBeLessThan(farEnd.getTime());
+    const records = await h.payments.listEntitlements('family-a');
+    expect(records.every((r) => r.validUntil?.getTime() === farEnd.getTime())).toBe(true);
+    expect(
+      await h.entitlements.hasFeature('family-a', 'ai_diagnostics', new Date(graceEnd.getTime() + DAY)),
+    ).toBe(true);
+  });
+
+  it('a REVOKED household is not resurrected by a grace period', async () => {
+    // A refund revokes; a grace-period callback arriving afterwards must not
+    // hand access back. Revocation is a DECISION, so the extension reaches
+    // ACTIVE rows only.
+    const { h } = await householdWhoseCardFailedAtPeriodEnd();
+    await h.entitlements.revokeAll('family-a', 'refund', new Date(periodEnd.getTime() + DAY));
+
+    await h.webhooks.ingest('APPLE_IAP', {
+      rawBody: appleNotification('DID_FAIL_TO_RENEW', {
+        uuid: 'u-grace-again',
+        subtype: 'GRACE_PERIOD',
+        signedDate: periodEnd.getTime() + 2 * DAY,
+      }),
+      headers: {},
+    });
+
+    expect(
+      await h.entitlements.hasFeature('family-a', 'ai_diagnostics', new Date(periodEnd.getTime() + 3 * DAY)),
+    ).toBe(false);
+    const records = await h.payments.listEntitlements('family-a');
+    expect(records.every((r) => r.status === 'REVOKED')).toBe(true);
+  });
+});
+
+/**
  * SPRINT F1 — WHICH WEBHOOK KINDS OWE THE PARENT `PAYMENT_FAILED`.
  *
  * `notification-class.ts:277` said «(no producer yet.) The billing module

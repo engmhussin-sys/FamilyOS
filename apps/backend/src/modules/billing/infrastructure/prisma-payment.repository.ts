@@ -407,6 +407,24 @@ export class PrismaPaymentRepository implements IPaymentRepository {
    * is why» is exactly the question a support ticket asks, and a DELETE makes
    * it unanswerable.
    */
+  /**
+   * THE GRACE WINDOW, APPLIED TO THE ROWS THAT DECIDE ACCESS.
+   *
+   * `valid_until: { lt: validUntil }` is the monotonic rule stated as a WHERE
+   * clause rather than a read-then-write: a row already covered further out is
+   * not in the update set at all, so a late or redelivered grace callback
+   * cannot shorten a window the household paid for. `status: 'ACTIVE'` is what
+   * keeps a refund refunded, and `valid_until: { not: null }` leaves an
+   * open-ended manual grant open-ended.
+   */
+  async extendEntitlements(familyId: string, validUntil: Date): Promise<number> {
+    const result = await this.prisma.entitlement.updateMany({
+      where: { familyId, status: 'ACTIVE', validUntil: { not: null, lt: validUntil } },
+      data: { validUntil },
+    });
+    return result.count as number;
+  }
+
   async revokeEntitlements(familyId: string, reason: string, at: Date): Promise<number> {
     const result = await this.prisma.entitlement.updateMany({
       where: { familyId, status: 'ACTIVE' },

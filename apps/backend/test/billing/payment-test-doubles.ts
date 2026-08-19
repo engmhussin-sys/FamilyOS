@@ -415,6 +415,23 @@ export class InMemoryPaymentRepository implements IPaymentRepository {
     return record;
   }
 
+  async extendEntitlements(familyId: string, validUntil: Date): Promise<number> {
+    // The same WHERE the real `updateMany` uses: ACTIVE rows with a bounded
+    // window that ends EARLIER than the new one. A refund stays refunded, an
+    // open-ended manual grant stays open-ended, and a longer paid window is
+    // never shortened.
+    let count = 0;
+    for (let i = 0; i < this.entitlements.length; i += 1) {
+      const row = this.entitlements[i];
+      if (row.familyId !== familyId) continue;
+      if (row.status !== 'ACTIVE') continue;
+      if (row.validUntil === null || row.validUntil.getTime() >= validUntil.getTime()) continue;
+      this.entitlements[i] = { ...row, validUntil };
+      count += 1;
+    }
+    return count;
+  }
+
   async revokeEntitlements(familyId: string, reason: string, at: Date): Promise<number> {
     let count = 0;
     for (let i = 0; i < this.entitlements.length; i += 1) {
