@@ -55,16 +55,27 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
  * of the application layer and fails on a provider literal, so this stays true
  * after everyone who wrote it has moved on.
  *
- * ========================= TWO ENTITLEMENT SERVICES =========================
+ * ================= ONE ENTITLEMENT SERVICE (SPRINT F1, P0) =================
  *
- * `EntitlementsService` (PLURAL, Sprint 8) computes access live from
- * `subscription.status` + `PlanDefinition.features`.
- * `EntitlementService` (SINGULAR, Phase D) reads the materialised
- * `entitlements` table and falls back to that same computation for families
- * that predate Phase D. Both are exported during the transition; new code
- * calls the singular one. Stated here rather than left for a reader to
- * discover, because two similarly-named services is precisely the thing that
- * quietly becomes two sources of truth.
+ * This comment used to say there were TWO, and that «new code calls the
+ * singular one» — which is a warning, not a constraint, and the warning was
+ * correct: they disagreed. `EntitlementsService` said `{TRIALING, ACTIVE}` and
+ * `EntitlementService` said `{TRIALING, ACTIVE, GRACE_PERIOD}` while reading the
+ * `entitlements` table, so a paying household in its 7-day grace window was
+ * refused on four surfaces and a REFUNDED household kept them.
+ *
+ * `EntitlementService` (SINGULAR) is now the only implementation of
+ * `hasFeature` in `src/`: it reads the materialised `entitlements` table, and
+ * falls back — for families that predate Phase D and for every family that
+ * subscribed through `SubscriptionService`, which writes no entitlement row —
+ * to a computation whose status set is `ENTITLEMENT_STATUS_LEDGER` in
+ * `domain/subscription-status.ts`, stated once, per status, with reasons.
+ *
+ * `EntitlementsService` (PLURAL) is a zero-logic delegate to it, kept only as
+ * the DI token four modules already inject. Both are still exported for that
+ * reason; only one of them decides anything, and
+ * `test/authz/entitlement-single-authority.guard.spec.ts` fails the build if a
+ * second implementation reappears anywhere under `src/`.
  */
 @Module({
   // PHASE D (GROWTH). The CAPTURE half only, which imports nothing — the five

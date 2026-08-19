@@ -7,6 +7,7 @@ import {
 } from '../ports/payment.repository.port';
 import { BILLING_REPOSITORY, type IBillingRepository } from '../ports/billing.repository.port';
 import type { EntitlementKey, PaymentProviderValue, SubscriptionPlanTier } from '../../domain/billing.types';
+import { isEntitlementBearing, toCanonicalStatus } from '../../domain/subscription-status';
 
 /**
  * PHASE D — THE ENTITLEMENT SERVICE. THE ONLY ANSWER TO «AM I ALLOWED?».
@@ -40,15 +41,35 @@ import type { EntitlementKey, PaymentProviderValue, SubscriptionPlanTier } from 
  * unchanged — so «what does Premium include» stays one editable list and does
  * not fork per provider.
  *
- * ==================== WHY THE OLD SERVICE STAYS ====================
+ * ================ SPRINT F1 (P0) — THERE IS NOW ONE OF THESE ================
  *
- * `EntitlementsService` (Sprint 8, plural) computes entitlement live from
- * `subscription.status` + `PlanDefinition.features`. It is kept and still
- * works; this service is the MATERIALISED, auditable form, and
- * `hasFeature` here falls back to that computation when a family has no
- * entitlement rows yet — every family that subscribed before Phase D. A
- * migration that back-filled entitlement rows from inferred state would be
- * inventing financial history, so it was not done.
+ * `EntitlementsService` (Sprint 8, PLURAL) used to be a SECOND implementation
+ * of `hasFeature` that computed access live from `subscription.status` +
+ * `PlanDefinition.features` with its own inline `{TRIALING, ACTIVE}` set. The
+ * two answers disagreed in both directions and both were live:
+ *
+ *   · A GRACE_PERIOD household — a household that HAS PAID, whose card failed
+ *     on renewal — was refused a second child, a second device, priority
+ *     support and insights, against schema.prisma's own promise of full access
+ *     for seven days.
+ *   · A household whose entitlements had been REVOKED (refund, chargeback,
+ *     expiry) kept all four whenever `revokeAll` ran without the subscription
+ *     row also moving — which `PaymentWebhookService` does on the
+ *     EXPIRED/REVOKED and refund paths, where `applySubscriptionStateIfNewer`
+ *     may legitimately drop a stale, out-of-order event and `revokeAll` runs
+ *     anyway.
+ *
+ * That service is now a ZERO-LOGIC DELEGATE to this one; this file is the only
+ * place in `src/` where the question is answered, and
+ * `test/authz/entitlement-single-authority.guard.spec.ts` fails the build if a
+ * second implementation reappears. The compatibility computation below is that
+ * old service's logic, absorbed — not deleted, because every family that
+ * subscribed before Phase D still has no entitlement rows, and a migration that
+ * back-filled them from inferred state would be inventing financial history.
+ * It differs from what the plural did in exactly one respect: the status set is
+ * no longer written here at all. It is read from `ENTITLEMENT_STATUS_LEDGER`,
+ * which carries a decision and a REASON for all eight statuses and cannot
+ * silently omit a ninth.
  */
 @Injectable()
 export class EntitlementService {
@@ -77,11 +98,18 @@ export class EntitlementService {
     if (entitlement) return isLive(entitlement, now);
 
     // COMPATIBILITY PATH. No row exists for this feature at all — either the
-    // family predates Phase D, or it is on the free tier.
+    // family predates Phase D, or it never bought anything, or it subscribed
+    // through the Sprint 8 path (`SubscriptionService.subscribe` /
+    // `startTrial`), which writes a `subscriptions` row and no entitlement row.
+    //
+    // THE STATUS SET IS NOT WRITTEN HERE. `ENTITLEMENT_STATUS_LEDGER` in
+    // `domain/subscription-status.ts` decides, per status, with the reason
+    // beside it. Duplicating three strings into this file is precisely the
+    // defect this merge closed.
     const subscription = await this.billing.findSubscriptionByFamily(familyId);
     const tier: SubscriptionPlanTier = subscription?.planTier ?? 'FREE';
-    const entitledStatuses = new Set(['TRIALING', 'ACTIVE', 'GRACE_PERIOD']);
-    const effectiveTier = subscription && !entitledStatuses.has(subscription.status) ? 'FREE' : tier;
+    const effectiveTier =
+      subscription && !isEntitlementBearing(toCanonicalStatus(subscription.status)) ? 'FREE' : tier;
     const plan = await this.billing.findPlanByTier(effectiveTier);
     return plan?.features.includes(feature) ?? false;
   }
@@ -199,9 +227,37 @@ export class EntitlementService {
   }
 }
 
-/** A grant is live when it is ACTIVE and `now` is inside its window. */
+/**
+ * THE OTHER HALF OF THE ANSWER, AS DATA — the three states an `entitlements`
+ * ROW can be in, each with the reason it does or does not grant access.
+ *
+ * `ENTITLEMENT_STATUS_LEDGER` (domain/subscription-status.ts) decides what a
+ * SUBSCRIPTION status means; this decides what a GRANT means, and a family that
+ * has rows is answered here FIRST. Keyed by the record's own status union, so a
+ * fourth row state cannot be added to `IEntitlementRecord` without an entry —
+ * the same compile-time promise, for the same reason.
+ */
+export const ENTITLEMENT_ROW_LEDGER: Readonly<
+  Record<IEntitlementRecord['status'], { readonly live: boolean; readonly because: string }>
+> = {
+  ACTIVE: {
+    live: true,
+    because: 'A verified payment granted it and nothing has withdrawn it. Still subject to the window below.',
+  },
+  REVOKED: {
+    live: false,
+    because:
+      '`revokeAll` ran — a refund, a chargeback, a provider REVOKED/EXPIRED event, or the end of a grace period. Revocation is a DECISION; falling back to a computation from `subscriptions` here would undo every refund the moment a stale status row disagreed.',
+  },
+  EXPIRED: {
+    live: false,
+    because: 'The paid window closed and no renewal extended it. Same rule as REVOKED: a decision, not a fall-through.',
+  },
+};
+
+/** A grant is live when its row state says so and `now` is inside its window. */
 function isLive(record: IEntitlementRecord, now: Date): boolean {
-  if (record.status !== 'ACTIVE') return false;
+  if (!ENTITLEMENT_ROW_LEDGER[record.status].live) return false;
   if (record.validFrom > now) return false;
   if (record.validUntil && record.validUntil <= now) return false;
   return true;

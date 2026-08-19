@@ -84,20 +84,91 @@ export function toCanonicalStatus(status: PersistedSubscriptionStatus): Canonica
 /**
  * THE STATES THAT GRANT ACCESS — stated once, here, and nowhere else.
  *
- * `TRIAL`, `ACTIVE` and `GRACE_PERIOD` all mean "this household may use what it
- * paid for". `GRACE_PERIOD` in particular is deliberately INSIDE this set:
- * `00-Company-Response.md` Q17 specifies full permissions during the 7-day
- * window with a clear, non-frightening notice, and CONTEXT.md §3.7 forbids
- * punitive UX. Downgrading a family at the instant a card fails would violate
- * both.
+ * ===========================================================================
+ * SPRINT F1 (P0) — WHY THIS IS A LEDGER AND NOT A LIST OF THREE WORDS.
+ * ===========================================================================
  *
- * `PENDING` is deliberately OUTSIDE it. Fawry's model is a payment reference
- * the customer settles at a kiosk hours or days later; granting access on the
- * strength of an unpaid reference is giving the product away.
+ * Two services used to answer «is this family entitled to feature X?» and they
+ * disagreed, because each carried its OWN inline status set:
+ * `EntitlementsService` said `{TRIALING, ACTIVE}` and `EntitlementService` said
+ * `{TRIALING, ACTIVE, GRACE_PERIOD}`. A household in the grace window — one
+ * that HAS PAID, whose card failed on RENEWAL — was refused a second child, a
+ * second device, priority support and insights by the first while the second
+ * considered it fully entitled. Neither set was written where a reader would
+ * look, and neither had a reason attached to any member.
+ *
+ * So the answer is not «three strings in a Set» but A DECISION PER STATUS WITH
+ * ITS REASON BESIDE IT, keyed by `Record<CanonicalSubscriptionStatus, …>`. That
+ * type is what makes the promise: a NINTH status cannot be added to
+ * `CanonicalSubscriptionStatus` without an entry here, because the object stops
+ * compiling. A future status therefore cannot be SILENTLY ABSENT — the way
+ * `GRACE_PERIOD` was silently absent from `EntitlementsService` for the whole
+ * sprint after migration 0013 introduced it.
+ *
+ * `ENTITLEMENT_BEARING_STATUSES` below is DERIVED from this ledger rather than
+ * typed out a second time, so the two cannot drift.
+ *
+ * SCOPE. This ledger decides what a SUBSCRIPTION STATUS means. It is half the
+ * question: a family with materialised `entitlements` rows is answered by those
+ * rows FIRST, and their own three-state ledger lives beside `isLive` in
+ * `entitlement.service.ts`. A refunded family is refused there — because
+ * `revokeAll` ran — as well as here.
  */
+export interface EntitlementStatusRule {
+  /** Whether a household in this status may use what its plan includes. */
+  readonly entitled: boolean;
+  /** Why. Not decoration: the next person to change the line needs it. */
+  readonly because: string;
+}
+
+export const ENTITLEMENT_STATUS_LEDGER: Readonly<Record<CanonicalSubscriptionStatus, EntitlementStatusRule>> = {
+  TRIAL: {
+    entitled: true,
+    because:
+      'A trial is the product given deliberately. It ends by BECOMING a charge; withholding features during it would make the trial worthless.',
+  },
+  ACTIVE: {
+    entitled: true,
+    because: 'The ordinary paid state. Listed anyway, because a ledger with a hole in it is a list.',
+  },
+  GRACE_PERIOD: {
+    entitled: true,
+    because:
+      'schema.prisma states the household keeps FULL access for a configured window (Q17: 7 days) after a failed renewal, and CONTEXT.md §3.7 forbids punitive UX. The subscription was paid; only the RENEWAL failed. Downgrading at the instant a card declines violates both.',
+  },
+  PENDING: {
+    entitled: false,
+    because:
+      'Fawry’s model is a payment REFERENCE the customer settles at a kiosk hours or days later. Nothing has been charged; granting on an unpaid reference gives the product away to anyone who taps subscribe.',
+  },
+  PAST_DUE: {
+    entitled: false,
+    because:
+      'Payment failed and the provider is retrying WITHOUT a grace window (Apple billing retry, Google account hold). `PaymentWebhookService` revokes entitlement on the way into this state, so access has already stopped.',
+  },
+  CANCELLED: {
+    entitled: false,
+    because:
+      'Auto-renewal was stopped. The household keeps what it already paid for until the period ends, but that access comes from the `entitlements` row’s `valid_until` — NOT from this status. Treating the status as entitlement-bearing would extend access past the period the customer bought.',
+  },
+  EXPIRED: {
+    entitled: false,
+    because: 'The period is over and nothing renews. The calendar already made this decision.',
+  },
+  REFUNDED: {
+    entitled: false,
+    because:
+      'Terminal (`TERMINAL_STATUSES`). The money went back and access went with it: `EntitlementService.revokeAll` runs on the same path that writes this status.',
+  },
+};
+
 export const ENTITLEMENT_BEARING_STATUSES: ReadonlySet<CanonicalSubscriptionStatus> = new Set<
   CanonicalSubscriptionStatus
->(['TRIAL', 'ACTIVE', 'GRACE_PERIOD']);
+>(
+  (Object.keys(ENTITLEMENT_STATUS_LEDGER) as CanonicalSubscriptionStatus[]).filter(
+    (status) => ENTITLEMENT_STATUS_LEDGER[status].entitled,
+  ),
+);
 
 export function isEntitlementBearing(status: CanonicalSubscriptionStatus): boolean {
   return ENTITLEMENT_BEARING_STATUSES.has(status);
