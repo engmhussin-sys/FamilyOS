@@ -175,3 +175,95 @@ export function distressParentAlert(childFirstName: string): { title: string; bo
 
 /** `ai_memory_entries.category` for the stored signal. Code and time only. */
 export const DISTRESS_MEMORY_CATEGORY = 'DISTRESS_SIGNAL';
+
+// ===========================================================================
+// THE `ai_alerts` ROW — THE DURABLE, PARENT-READABLE RECORD OF THE SAME EVENT
+// ===========================================================================
+
+/**
+ * `ai_alerts.source_module`. Names the subsystem, not the classifier's verdict.
+ */
+export const DISTRESS_ALERT_SOURCE_MODULE = 'ai-core.distress-escalation';
+
+/**
+ * ONE CATEGORY AND ONE SEVERITY FOR ALL FIVE CODES, AND THE CHOICE IS THE
+ * PRIVACY CONTROL — read this before "improving" it into a severity ladder.
+ *
+ * The tempting design is a mapping: SELF_HARM ⇒ CRITICAL, BULLYING ⇒ HIGH,
+ * SEVERE_SADNESS ⇒ MEDIUM, and a category per code. It was written, measured
+ * against §11.4, and REJECTED — because `(category, severity)` would then be a
+ * BIJECTION onto `DistressCode`. A parent reading two enum values off the alert
+ * list would recover the exact classification, which is the diagnosis §11.4
+ * forbids this product from delivering («the parent is not told our severity
+ * judgement», already asserted in `distress-escalation.spec.ts` about the
+ * notification copy). A row nobody can reverse-read is worth more than a
+ * severity ladder nobody asked for.
+ *
+ * SO: CRITICAL, ALWAYS. It is also the honest reading of the rule on the other
+ * end of this table — `GrowthAlertsService.aiSafetyIncident`: «AN AI SAFETY
+ * INCIDENT IS NOT A THRESHOLD. One is one too many, so this rule has no
+ * configurable count.» A distress signal that arrived at CRITICAL is the one
+ * that rule was written to see; anything lower would have made the reader
+ * dormant a second time, in a subtler way.
+ *
+ * THE COST IS STATED RATHER THAN HIDDEN. §11.4 tunes the classifier for RECALL,
+ * so ordinary teenage hyperbole reaches this line and is written CRITICAL too.
+ * That is the same trade §11.4 already made and already priced: a false
+ * positive costs a parent one gentle notification and an operator one page; a
+ * false negative costs something this project is not willing to price.
+ *
+ * HEALTH, and not the other four. `DIGITAL_SAFETY` would be a lie — nothing
+ * digital was monitored; a child volunteered how they feel on a check-in
+ * screen. `BEHAVIOR` would frame a child who wrote «يضربني» as the one
+ * behaving. `EDUCATION` and `LOCATION` are unrelated. `HEALTH` is this enum's
+ * wellbeing bucket and it is where a parent looks for this.
+ */
+export const DISTRESS_ALERT_CATEGORY = 'HEALTH';
+export const DISTRESS_ALERT_SEVERITY = 'CRITICAL';
+
+/**
+ * THE ROW'S PARENT-FACING TEXT. Human-written, Arabic-first, frozen, and
+ * IDENTICAL for every `DistressCode` — for the same reason
+ * `DISTRESS_RESPONSE_CARD` and `distressParentAlert` are.
+ *
+ * IT CARRIES NO CHILD'S NAME EITHER, and that is a second decision rather than
+ * an oversight: `ai_alerts.child_id` already identifies the child, the read
+ * side resolves the first name through the `child` relation at query time, and
+ * copying a name into a text column would spread a child's PII into a third
+ * table for no gain. The last sentence tells the parent, in the alert itself,
+ * that this product is not going to show them what their child wrote.
+ */
+export const DISTRESS_ALERT_COPY = Object.freeze({
+  title: 'إشارة تستحق اطمئنانك اليوم',
+  description:
+    'ظهرت إشارة من طفلك اليوم تستحق انتباهك. اجلس معه وقتًا قصيرًا واسأله كيف كان يومه. ' +
+    'لا يعرض هذا التنبيه ما كتبه طفلك.',
+});
+
+/**
+ * `ai_alerts.source_event_id` — what makes this alert THE SAME ALERT.
+ *
+ * ONE ALERT PER CHILD PER FAMILY BUSINESS DAY. The same discriminator the
+ * parent notification already uses, and for the identical product reason
+ * stated at that call site: a second signal on the same day is the same
+ * conversation, and telling a parent twice in one evening adds pressure
+ * without adding information.
+ *
+ * IT IS A CALENDAR DAY AND NOT A FIVE-MINUTE BUCKET. `forRecurringSignal`'s own
+ * docstring is honest that a bucket boundary is not a sliding window — two
+ * identical signals thirty seconds apart on opposite sides of an edge produce
+ * two keys. For a transient notification that is an acceptable backstop; for a
+ * DURABLE row a parent scrolls through it would be visible duplication. The
+ * family's business date, resolved through `FamilyDateService`, has no edge a
+ * replay can land on.
+ *
+ * THE CODE IS NOT IN THE KEY. It would be the one place the classification
+ * survived into a stored column, and `growth_alerts`' own message says it in
+ * Arabic: «لا تُنقل أي تفاصيل عن الطفل إلى هذا الجدول». The consequence is
+ * accepted and named: a day whose first signal was BULLYING and whose second is
+ * SELF_HARM produces ONE row, and because every code is written CRITICAL the
+ * severity of that row is already the severity the second signal deserves.
+ */
+export function distressAlertSourceEventId(childId: string, businessDate: string): string {
+  return `distress:${childId}:${businessDate}`;
+}

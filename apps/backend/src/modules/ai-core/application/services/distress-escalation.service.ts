@@ -8,13 +8,19 @@ import { forRecurringSignal } from '../../../../shared/notifications/notificatio
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import {
+  DISTRESS_ALERT_CATEGORY,
+  DISTRESS_ALERT_COPY,
+  DISTRESS_ALERT_SEVERITY,
+  DISTRESS_ALERT_SOURCE_MODULE,
   DISTRESS_MEMORY_CATEGORY,
   DISTRESS_RESPONSE_CARD,
   classifyDistress,
+  distressAlertSourceEventId,
   distressParentAlert,
   type DistressCode,
   type DistressResponseCard,
 } from '../../domain/distress';
+import { AI_ALERT_REPOSITORY, type IAiAlertRepository } from '../../domain/ai-alert.types';
 import { AI_MEMORY_REPOSITORY, type IAiMemoryRepository } from '../../domain/memory.types';
 
 export interface DistressCheckinResult {
@@ -28,6 +34,19 @@ export interface DistressCheckinResult {
    * already existed inside the dedupe window, which is a success, not a
    * failure — see `PrismaRuntimeAlertRepository.createForFamilyOwner`. */
   readonly parentAlerted: boolean;
+  /**
+   * Whether an `ai_alerts` ROW was written — the durable record, as opposed to
+   * the transient notification above. `false` means
+   * `ai_alerts (family_id, source_event_id)` refused a replay of the same
+   * detection, which is the constraint doing its job.
+   *
+   * IT IS NOT RETURNED TO THE CHILD. `ChildCoachController.checkin` shapes the
+   * child's response from `escalated` and `card` only; this field exists for
+   * the same reason `parentAlerted` does — so a test and a caller can tell
+   * «alerted» from «already alerted» — and telling a child whether their parent
+   * was notified is not something §11.4 does.
+   */
+  readonly alertRecorded: boolean;
 }
 
 /**
@@ -41,7 +60,7 @@ export interface DistressCheckinResult {
  * child in distress will improvise, and improvisation is precisely what §11.4
  * forbids.
  *
- * THE FIVE PROPERTIES, EACH TESTED:
+ * THE SIX PROPERTIES, EACH TESTED:
  *
  *   1. NO PROVIDER CALL, EVER. `distress-escalation.spec.ts` injects a
  *      counting provider into the whole module and asserts zero calls across
@@ -59,8 +78,26 @@ export interface DistressCheckinResult {
  *   5. IT WRITES THROUGH THE ONE NOTIFICATION WRITER. `ai-core` does not touch
  *      `notifications` itself — it calls `RUNTIME_ALERT_REPOSITORY`, the single
  *      writer B9 established, which owns dedupe, the `(family_id,
- *      source_event_id, user_id)` constraint and the push. The AI's two
- *      writable tables stay two.
+ *      source_event_id, user_id)` constraint and the push.
+ *   6. IT WRITES THE DURABLE RECORD, `ai_alerts` — and until this was added,
+ *      NOTHING IN `src/` DID. That is the whole reason property 6 exists and it
+ *      is worth stating as a defect rather than as a feature: the table
+ *      `schema.prisma` describes as «the AI layer's output contract» had
+ *      readers and no writer, so `GrowthAlertsService.aiSafetyIncident` —
+ *      «one is one too many» — scanned an empty table on every tick and the
+ *      most important alerting path in a child-safety product could not fire.
+ *      A notification is transient: it is dismissed, it ages out of an inbox,
+ *      and it is deleted with the retention sweep. The alert row is what a
+ *      parent can still find tomorrow and what an operator's page is counted
+ *      from.
+ *
+ * WHY THE AI'S WRITABLE TABLES ARE NOW THREE AND NOT TWO. The previous version
+ * of this docstring ended property 5 with «the AI's two writable tables stay
+ * two», and that sentence was doing real work — it is how this module resists
+ * growing a write surface. It is amended rather than deleted: the third table
+ * is `ai_alerts`, it is the one the schema declares to be this layer's OUTPUT,
+ * it is written through a port with no field capable of holding a child's text,
+ * and its writer holds no other model. Two remains the rule for anything else.
  *
  * RECALL OVER PRECISION, DELIBERATELY (§11.4). The keyword list will fire on
  * ordinary teenage hyperbole. The cost of that is one gentle parent
@@ -80,6 +117,7 @@ export class DistressEscalationService {
   constructor(
     @Inject(AI_MEMORY_REPOSITORY) private readonly memory: IAiMemoryRepository,
     @Inject(RUNTIME_ALERT_REPOSITORY) private readonly alerts: IRuntimeAlertRepository,
+    @Inject(AI_ALERT_REPOSITORY) private readonly aiAlerts: IAiAlertRepository,
     private readonly children: ChildrenService,
     private readonly familyDate: FamilyDateService,
   ) {}
@@ -94,7 +132,7 @@ export class DistressEscalationService {
     const verdict = classifyDistress(freeText);
 
     if (!verdict.detected) {
-      return { escalated: false, card: null, code: null, parentAlerted: false };
+      return { escalated: false, card: null, code: null, parentAlerted: false, alertRecorded: false };
     }
 
     // The business date is the family's, not UTC's — a check-in at 00:30 in
@@ -129,6 +167,41 @@ export class DistressEscalationService {
       // up when someone adds "context" to an alert six months from now.
     });
 
+    /**
+     * THE DURABLE RECORD. `ai_alerts` is what `schema.prisma` calls this
+     * layer's output contract, and until this call existed nothing in `src/`
+     * wrote a row into it — so a detection reached a push notification and
+     * reached nothing a parent could come back to, or an operator could count.
+     *
+     * WHAT IS PASSED, AND WHAT CANNOT BE. `IRecordAiAlertInput` has no field
+     * for `freeText`, for a substring of it, or for a JSON payload, so this
+     * call site could not leak the child's words even by mistake. The copy is
+     * `DISTRESS_ALERT_COPY` — human-written, frozen, and identical for every
+     * `DistressCode` — and `verdict.code` is deliberately NOT among the
+     * arguments: it stays in this method, exactly as it does for the card and
+     * the notification.
+     *
+     * WRITTEN AFTER THE NOTIFICATION, ON PURPOSE. If this insert throws, the
+     * parent has already been told; the reverse order would risk a durable row
+     * with nobody alerted. Neither is a transaction with the other because they
+     * are two different failure domains (a push transport and a table), and a
+     * transaction spanning them would mean a push failure could roll back the
+     * record of a safety incident.
+     */
+    const alertRecorded = await this.aiAlerts.record({
+      childId,
+      category: DISTRESS_ALERT_CATEGORY,
+      severity: DISTRESS_ALERT_SEVERITY,
+      title: DISTRESS_ALERT_COPY.title,
+      description: DISTRESS_ALERT_COPY.description,
+      sourceModule: DISTRESS_ALERT_SOURCE_MODULE,
+      // ONE ALERT PER CHILD PER FAMILY BUSINESS DAY, held by
+      // `ai_alerts (family_id, source_event_id)` UNIQUE — not by a read before
+      // the write. See `distressAlertSourceEventId` for why the day and not a
+      // five-minute bucket, and why the code is not in the key.
+      sourceEventId: distressAlertSourceEventId(childId, businessDate),
+    });
+
     // Metrics only. The code, never the text — and never the child's full id.
     this.logger.warn(
       JSON.stringify({
@@ -136,9 +209,16 @@ export class DistressEscalationService {
         code: verdict.code,
         childRef: childId.slice(0, 8),
         parentAlerted,
+        alertRecorded,
       }),
     );
 
-    return { escalated: true, card: DISTRESS_RESPONSE_CARD, code: verdict.code, parentAlerted };
+    return {
+      escalated: true,
+      card: DISTRESS_RESPONSE_CARD,
+      code: verdict.code,
+      parentAlerted,
+      alertRecorded,
+    };
   }
 }

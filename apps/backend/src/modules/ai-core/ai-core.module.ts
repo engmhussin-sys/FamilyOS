@@ -14,6 +14,7 @@ import { DecisionEngineService } from './application/services/decision-engine.se
 import { SafetyEngineService } from './application/services/safety-engine.service';
 import { RecommendationEngineService } from './application/services/recommendation-engine.service';
 import { BehavioralIntelligenceEngineService } from './application/services/behavioral-intelligence-engine.service';
+import { AiAlertsController } from './presentation/controllers/ai-alerts.controller';
 import { AiCoreController } from './presentation/controllers/ai-core.controller';
 import { AiPlatformController } from './presentation/controllers/ai-platform.controller';
 import { AnthropicAIProvider } from './infrastructure/anthropic-ai-provider';
@@ -30,8 +31,10 @@ import { ChildCoachController } from './presentation/controllers/child-coach.con
 import { COACH_SIGNAL_PROVIDER } from './domain/coach.types';
 import { AiCostCalculator } from './infrastructure/ai-cost-calculator';
 import { AiUsageTrackingService } from './infrastructure/ai-usage-tracking.service';
+import { PrismaAiAlertRepository } from './infrastructure/prisma-ai-alert.repository';
 import { PrismaAiMemoryRepository } from './infrastructure/prisma-ai-memory.repository';
 import { AI_PROVIDER, AI_PROVIDER_PRIMARY, AI_PROVIDER_SECONDARY } from './domain/ai-provider.port';
+import { AI_ALERT_REPOSITORY } from './domain/ai-alert.types';
 import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
 
 /**
@@ -49,7 +52,13 @@ import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
  */
 @Module({
   imports: [ChildrenModule, ScreenTimeModule, PairingModule, GrowthCaptureModule],
-  controllers: [AiCoreController, AiPlatformController, ParentCoachController, ChildCoachController],
+  controllers: [
+    AiCoreController,
+    AiPlatformController,
+    ParentCoachController,
+    ChildCoachController,
+    AiAlertsController,
+  ],
   providers: [
     AiContextManagerService,
     AiCoreOrchestratorService,
@@ -80,6 +89,11 @@ import { AI_MEMORY_REPOSITORY } from './domain/memory.types';
     AiUsageTrackingService,
     AiBudgetService,
     { provide: AI_MEMORY_REPOSITORY, useClass: PrismaAiMemoryRepository },
+    // THE ONE WRITER OF `ai_alerts`, and the parent's reader. Bound here rather
+    // than exported as a class so that `ai-core` keeps its «engines depend on
+    // ports» shape: `DistressEscalationService` injects the SYMBOL and has no
+    // idea Prisma is behind it.
+    { provide: AI_ALERT_REPOSITORY, useClass: PrismaAiAlertRepository },
     // B8 — the coach. READ-ONLY by construction: `PrismaCoachSignalRepository`
     // contains no write operation on any model, and `ai-boundary.spec.ts`
     // enforces that across every file under this module.
