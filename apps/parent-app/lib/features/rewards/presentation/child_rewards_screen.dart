@@ -38,7 +38,6 @@ class ChildRewardsScreen extends ConsumerWidget {
     final t = locale.t;
     final state = ref.watch(childRewardsControllerProvider(childId));
     final controller = ref.read(childRewardsControllerProvider(childId).notifier);
-    final now = DateTime.now();
 
     return Scaffold(
       appBar: AppBar(
@@ -100,10 +99,17 @@ class ChildRewardsScreen extends ConsumerWidget {
               DsSectionHeader(
                 title: t('childRewards.screenTimeSection'),
                 subtitle: t('childRewards.screenTimeHint'),
+                // THE SERVER'S TOTAL. Not a sum of the rows below: those are
+                // the full history and this is the live figure the child's own
+                // screen and the Screen-Time tab already show.
                 trailing: DsBadge(
-                  label: t('childRewards.activeBonus',
-                      options: {'count': snapshot.activeBonusMinutes(now)}),
-                  color: DsColor.accent,
+                  label: snapshot.bonusMinutes == null
+                      ? t('childRewards.bonusUnavailable')
+                      : t('childRewards.activeBonus',
+                          options: {'count': snapshot.bonusMinutes!}),
+                  color: snapshot.bonusMinutes == null
+                      ? DsColor.stateMuted
+                      : DsColor.accent,
                 ),
               ),
               if (snapshot.grants.isEmpty)
@@ -112,7 +118,7 @@ class ChildRewardsScreen extends ConsumerWidget {
                 for (final grant in snapshot.grants)
                   _GrantCard(
                     grant: grant,
-                    now: now,
+                    standing: snapshot.standingOf(grant),
                     busy: state.busyGrantId == grant.id,
                     onRevoke: () => _confirmRevoke(context, t, controller, grant.id),
                   ),
@@ -235,20 +241,23 @@ class ChildRewardsScreen extends ConsumerWidget {
 class _GrantCard extends ConsumerWidget {
   const _GrantCard({
     required this.grant,
-    required this.now,
+    required this.standing,
     required this.busy,
     required this.onRevoke,
   });
 
   final ScreenTimeGrant grant;
-  final DateTime now;
+
+  /// Handed in, never computed here. The device clock has no vote on whether
+  /// a grant is live — see [ChildRewardsSnapshot.standingOf].
+  final GrantStanding standing;
   final bool busy;
   final VoidCallback onRevoke;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = ref.watch(localeControllerProvider.notifier).t;
-    final active = grant.isActiveAt(now);
+    final active = standing == GrantStanding.active;
     return DsCard(
       accent: active ? DsColor.stateSuccess : DsColor.stateMuted,
       child: Column(
@@ -262,14 +271,18 @@ class _GrantCard extends ConsumerWidget {
                   style: DsText.cardTitle(context),
                 ),
               ),
-              DsBadge(
-                label: grant.isRevoked
-                    ? t('childRewards.grantRevoked')
-                    : active
-                        ? t('childRewards.grantActive')
-                        : t('childRewards.grantExpired'),
-                color: active ? DsColor.stateSuccess : DsColor.stateMuted,
-              ),
+              // NO BADGE when the standing is unknown: the effective-policy
+              // call failed, and «فعّالة» or «منتهية» would both be a claim
+              // this screen cannot back.
+              if (standing != GrantStanding.unknown)
+                DsBadge(
+                  label: standing == GrantStanding.revoked
+                      ? t('childRewards.grantRevoked')
+                      : active
+                          ? t('childRewards.grantActive')
+                          : t('childRewards.grantExpired'),
+                  color: active ? DsColor.stateSuccess : DsColor.stateMuted,
+                ),
             ],
           ),
           if (grant.expiresAt != null) ...[
@@ -280,7 +293,11 @@ class _GrantCard extends ConsumerWidget {
               style: DsText.caption(context),
             ),
           ],
-          if (active) ...[
+          // Offered while the grant is live and while the standing is unknown
+          // — withdrawing is the parent's decision and a failed read of the
+          // effective policy must not take the control away.
+          if (standing == GrantStanding.active ||
+              standing == GrantStanding.unknown) ...[
             DsSpace.gapMd,
             DsSecondaryButton(
               label: t('childRewards.revoke'),

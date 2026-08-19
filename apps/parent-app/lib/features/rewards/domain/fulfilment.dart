@@ -77,6 +77,16 @@ class RewardFulfilment {
       );
 }
 
+/// Where one grant stands, as the SERVER sees it. Never computed from
+/// `DateTime.now()` on the handset: [ChildRewardsSnapshot.standingOf] reads
+/// `revokedAt` (a stored fact) and otherwise defers to the set of ids the
+/// effective-policy route says are live right now.
+///
+/// [unknown] is a real answer, not a default: it is what the screen has when
+/// the effective-policy call failed, and it renders as no badge at all rather
+/// than as a status the app cannot support.
+enum GrantStanding { active, ended, revoked, unknown }
+
 /// A bounded, expiring, revocable grant of extra screen-time minutes.
 /// Note what this is NOT: an edit to the child's screen-time policy. The
 /// base policy row is untouched and this expires on its own.
@@ -99,14 +109,12 @@ class ScreenTimeGrant {
   final DateTime? revokedAt;
   final String? achievementId;
 
+  /// A STORED SERVER FACT — a timestamp the server wrote — not a comparison
+  /// against this handset's clock. That is why it survives while
+  /// `isActiveAt(now)` and `isExpiredAt(now)` were deleted: those asked the
+  /// device to re-decide something the server had already decided, and the
+  /// answer differed from the server's whenever the two clocks did.
   bool get isRevoked => revokedAt != null;
-
-  /// Presentation-only: a grant past its `expiresAt` is already inert
-  /// server-side (`activeBonusMinutes` filters on `expiresAt > now`); this
-  /// only decides whether to grey the row.
-  bool isExpiredAt(DateTime now) => expiresAt != null && !expiresAt!.isAfter(now);
-
-  bool isActiveAt(DateTime now) => !isRevoked && !isExpiredAt(now);
 
   factory ScreenTimeGrant.fromJson(Map<String, dynamic> json) => ScreenTimeGrant(
         id: json['id']?.toString() ?? '',

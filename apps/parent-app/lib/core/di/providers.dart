@@ -255,7 +255,14 @@ final fulfilmentsControllerProvider =
 
 final childRewardsControllerProvider = StateNotifierProvider.autoDispose
     .family<ChildRewardsController, ChildRewardsState, String>(
-  (ref, childId) => ChildRewardsController(ref.watch(rewardProgramsRepositoryProvider), childId),
+  (ref, childId) => ChildRewardsController(
+    ref.watch(rewardProgramsRepositoryProvider),
+    // The bonus-minutes total and the set of live grants are the SERVER's,
+    // read from the same effective-policy route the Screen-Time tab renders,
+    // so the two parent tabs cannot show one child two different numbers.
+    ref.watch(screenTimeRepositoryProvider),
+    childId,
+  ),
 );
 
 final suggestionsControllerProvider = StateNotifierProvider.autoDispose

@@ -46,6 +46,7 @@ import 'package:parent_app/features/rewards/presentation/pending_achievements_sc
 import 'package:parent_app/features/rewards/presentation/program_detail_screen.dart';
 import 'package:parent_app/features/rewards/presentation/programs_list_screen.dart';
 import 'package:parent_app/features/rewards/presentation/suggestions_screen.dart';
+import 'package:parent_app/features/screen_time/domain/screen_time_policy.dart';
 
 import '../../support/reward_test_harness.dart';
 
@@ -398,6 +399,102 @@ void main() {
       await tester.pump();
 
       expect(find.byType(DsErrorState), findsNothing);
+    });
+
+    // -----------------------------------------------------------------------
+    // THE REGRESSION GUARD FOR THE DUPLICATE BONUS TOTAL.
+    //
+    // This screen used to sum the grant rows itself, against the handset's
+    // `DateTime.now()`, while the Screen-Time tab and the child's own screen
+    // rendered the server's `bonusMinutes`. Same child, same second, two
+    // numbers. The three tests below fail if anything ever re-derives that
+    // total or that per-row standing locally again — they are written so that
+    // a local computation gives a DIFFERENT answer from the server's, which is
+    // the only way a test can tell the two apart.
+    // -----------------------------------------------------------------------
+    testWidgets('renders the SERVER bonus total, not the sum of the rows',
+        (tester) async {
+      await pumpRewardScreen(
+        tester,
+        const ChildRewardsScreen(childId: 'child_1'),
+        repository: FakeRewardProgramsRepository(
+          onLoadAccount: () async =>
+              const RewardsAccount(xp: 120, coins: 30, level: 2),
+          // Three rows of 15 sum to 45 on the device. The server counts one.
+          onListScreenTimeGrants: () async => [
+            testGrant(id: 'g_live', minutes: 15),
+            testGrant(id: 'g_gone', minutes: 15),
+            testGrant(id: 'g_revoked', minutes: 15, revokedAt: DateTime.utc(2026)),
+          ],
+          onListFulfilments: () async => const <RewardFulfilment>[],
+          onListAchievementsForChild: () async => const <AchievementRequest>[],
+          onGetStreaks: () async => const <String, int>{},
+        ),
+        onEffectivePolicy: () async =>
+            serverBonus(bonusMinutes: 15, activeGrantIds: const ['g_live']),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text(ar('childRewards.activeBonus', options: {'count': 15})),
+          findsOneWidget);
+      expect(find.text(ar('childRewards.activeBonus', options: {'count': 45})),
+          findsNothing);
+    });
+
+    testWidgets(
+        'a row the SERVER still counts reads «فعّالة» even when its expiry is '
+        'already in the past on this device', (tester) async {
+      await pumpRewardScreen(
+        tester,
+        const ChildRewardsScreen(childId: 'child_1'),
+        repository: FakeRewardProgramsRepository(
+          onLoadAccount: () async =>
+              const RewardsAccount(xp: 10, coins: 0, level: 1),
+          onListScreenTimeGrants: () async => [
+            // A handset whose clock runs fast — or a page open across the
+            // expiry — used to draw this row as «منتهية» while the server was
+            // still counting its minutes.
+            testGrant(id: 'g_live', minutes: 20, expiresAt: DateTime.utc(2020)),
+          ],
+          onListFulfilments: () async => const <RewardFulfilment>[],
+          onListAchievementsForChild: () async => const <AchievementRequest>[],
+          onGetStreaks: () async => const <String, int>{},
+        ),
+        onEffectivePolicy: () async =>
+            serverBonus(bonusMinutes: 20, activeGrantIds: const ['g_live']),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text(ar('childRewards.grantActive')), findsOneWidget);
+      expect(find.text(ar('childRewards.grantExpired')), findsNothing);
+    });
+
+    testWidgets('says the total could not be read rather than showing a zero '
+        'it invented, when the effective-policy call fails', (tester) async {
+      await pumpRewardScreen(
+        tester,
+        const ChildRewardsScreen(childId: 'child_1'),
+        repository: FakeRewardProgramsRepository(
+          onLoadAccount: () async =>
+              const RewardsAccount(xp: 10, coins: 0, level: 1),
+          onListScreenTimeGrants: () async => [testGrant(minutes: 15)],
+          onListFulfilments: () async => const <RewardFulfilment>[],
+          onListAchievementsForChild: () async => const <AchievementRequest>[],
+          onGetStreaks: () async => const <String, int>{},
+        ),
+        onEffectivePolicy: () => failing<EffectiveScreenTimePolicy>(),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text(ar('childRewards.bonusUnavailable')), findsOneWidget);
+      expect(find.text(ar('childRewards.activeBonus', options: {'count': 0})),
+          findsNothing);
+      // No standing it cannot back: neither badge is claimed.
+      expect(find.text(ar('childRewards.grantActive')), findsNothing);
+      expect(find.text(ar('childRewards.grantExpired')), findsNothing);
     });
   });
 

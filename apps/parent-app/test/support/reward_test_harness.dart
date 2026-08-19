@@ -37,6 +37,9 @@ import 'package:parent_app/features/rewards/data/reward_programs_repository.dart
 import 'package:parent_app/features/rewards/domain/achievement.dart';
 import 'package:parent_app/features/rewards/domain/fulfilment.dart';
 import 'package:parent_app/features/rewards/domain/reward_program.dart';
+import 'package:parent_app/features/screen_time/domain/screen_time_policy.dart';
+
+import 'screen_time_test_harness.dart' show FakeScreenTimeRepository;
 
 /// A repository whose every method is a slot a test fills in.
 ///
@@ -218,6 +221,26 @@ RewardFulfilment testFulfilment({
       status: status,
     );
 
+/// One row of the child's grant HISTORY, exactly as
+/// `GET /reward-programs/screen-time-grants/:childId` returns it — that route
+/// filters nothing, so revoked and long-expired rows arrive here too. Whether
+/// a row is live is not this fixture's business and not the screen's: it is
+/// the server's, via the effective-policy response.
+ScreenTimeGrant testGrant({
+  String id = 'grant_1',
+  int minutes = 15,
+  DateTime? expiresAt,
+  DateTime? revokedAt,
+}) =>
+    ScreenTimeGrant(
+      id: id,
+      childId: 'child_1',
+      minutes: minutes,
+      grantedAt: DateTime.utc(2026, 1, 1, 9),
+      expiresAt: expiresAt,
+      revokedAt: revokedAt,
+    );
+
 ProgramSuggestion testSuggestion({String id = 'sug_1'}) => ProgramSuggestion(
       suggestionId: id,
       previewAr: 'قراءة عشر صفحات كل يوم',
@@ -234,11 +257,42 @@ ProgramSuggestion testSuggestion({String id = 'sug_1'}) => ProgramSuggestion(
 ///
 /// [locale] defaults to Arabic: it is the product's first language
 /// (CONTEXT §1), so it is the default the tests assert against.
+/// The effective policy every reward-screen test gets unless it says
+/// otherwise: no bonus at all, no live grants. `ChildRewardsScreen` reads the
+/// SERVER's bonus total from this route rather than re-summing the grant rows
+/// it lists, so a screen test has to supply it — and a default of «nothing
+/// earned» keeps the other screens' assertions unchanged.
+EffectiveScreenTimePolicy noBonus() => const EffectiveScreenTimePolicy(
+      baseDailyLimitMinutes: 120,
+      effectiveDailyLimitMinutes: 120,
+      bonusMinutes: 0,
+      bonusGrants: <ScreenTimeBonusGrant>[],
+    );
+
+/// The server's answer to «how many bonus minutes does this child hold right
+/// now», with the ids it counts as live. [ChildRewardsScreen] must render
+/// [bonusMinutes] verbatim; deriving it from the grant list is the defect this
+/// argument exists to catch.
+EffectiveScreenTimePolicy serverBonus({
+  required int bonusMinutes,
+  List<String> activeGrantIds = const [],
+}) =>
+    EffectiveScreenTimePolicy(
+      baseDailyLimitMinutes: 120,
+      effectiveDailyLimitMinutes: 120 + bonusMinutes,
+      bonusMinutes: bonusMinutes,
+      bonusGrants: [
+        for (final id in activeGrantIds)
+          ScreenTimeBonusGrant(id: id, minutes: bonusMinutes),
+      ],
+    );
+
 Future<void> pumpRewardScreen(
   WidgetTester tester,
   Widget screen, {
   required FakeRewardProgramsRepository repository,
   AppLocale locale = AppLocale.ar,
+  Future<EffectiveScreenTimePolicy> Function()? onEffectivePolicy,
   List<Override> extraOverrides = const [],
 }) async {
   // No network in `flutter test`. Without this, google_fonts attempts an HTTP
@@ -250,6 +304,12 @@ Future<void> pumpRewardScreen(
     ProviderScope(
       overrides: [
         rewardProgramsRepositoryProvider.overrideWithValue(repository),
+        screenTimeRepositoryProvider.overrideWithValue(
+          FakeScreenTimeRepository(
+            onGetEffectivePolicy:
+                onEffectivePolicy ?? () async => noBonus(),
+          ),
+        ),
         // InMemoryLocaleStorage exists in locale_controller.dart precisely so
         // a widget test never has to fake the SharedPreferences channel.
         localeControllerProvider.overrideWith(

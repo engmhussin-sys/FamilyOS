@@ -2,11 +2,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/errors/api_failure.dart';
 import '../../../core/state/ui_state.dart';
+import '../../screen_time/data/screen_time_repository.dart';
 import '../data/reward_programs_repository.dart';
 import '../domain/achievement.dart';
 import '../domain/fulfilment.dart';
 
-/// What one child has EARNED, assembled from three real endpoints.
+/// What one child has EARNED, assembled from four real endpoints.
 class ChildRewardsSnapshot {
   const ChildRewardsSnapshot({
     required this.account,
@@ -14,6 +15,8 @@ class ChildRewardsSnapshot {
     required this.fulfilments,
     this.achievements = const [],
     this.streaks = const {},
+    this.bonusMinutes,
+    this.activeGrantIds,
   });
 
   /// From the pre-existing ledger endpoint. `xp` IS the product's «نقطة»
@@ -37,12 +40,43 @@ class ChildRewardsSnapshot {
   /// B5: the same five buckets the child sees.
   final Map<String, int> streaks;
 
+  /// THE SERVER'S NUMBER, NOT A SUM OF THE LIST ABOVE.
+  ///
+  /// `GET …/screen-time-policy/effective` computes it in
+  /// `ScreenTimeService.getEffectivePolicy` from grants the database filtered
+  /// on `revokedAt: null, expiresAt: { gt: now }` at the SERVER's `now`. This
+  /// screen used to re-sum [grants] against `DateTime.now()` on the handset,
+  /// which is a second implementation of the same rule running on a different
+  /// clock: a skewed phone, or an expiry crossing while the page was open, and
+  /// the Rewards tab said «٤٥ دقيقة إضافية» while the Screen-Time tab and the
+  /// child's own screen said «١٥». One question, one answer, from the one
+  /// place entitled to give it.
+  ///
+  /// `null` means THE CALL FAILED — not «zero». The two are different
+  /// sentences and the screen says so rather than rendering an invented zero.
+  final int? bonusMinutes;
+
+  /// The ids the server currently counts as active, taken from the same
+  /// response's `bonusGrants`. It is what decides whether a row in [grants]
+  /// (which is the FULL history — revoked and expired rows included) is drawn
+  /// as live. Derived on the server, never from the device clock.
+  ///
+  /// `null` for the same reason [bonusMinutes] is: the call failed and the
+  /// rows are drawn without a status they cannot honestly claim.
+  final Set<String>? activeGrantIds;
+
   List<AchievementRequest> get verifiedAchievements =>
       achievements.where((a) => a.isVerified).toList();
 
-  int activeBonusMinutes(DateTime now) => grants
-      .where((g) => g.isActiveAt(now))
-      .fold<int>(0, (sum, g) => sum + g.minutes);
+  /// Revocation is a stored server fact (`revokedAt`), so it is answerable
+  /// without the effective-policy call. Everything else defers to the server's
+  /// active set.
+  GrantStanding standingOf(ScreenTimeGrant grant) {
+    if (grant.isRevoked) return GrantStanding.revoked;
+    final active = activeGrantIds;
+    if (active == null) return GrantStanding.unknown;
+    return active.contains(grant.id) ? GrantStanding.active : GrantStanding.ended;
+  }
 
   bool get isEmpty =>
       account == null && grants.isEmpty && fulfilments.isEmpty && achievements.isEmpty;
@@ -78,16 +112,24 @@ class ChildRewardsState {
 }
 
 /// PARTIAL-FAILURE DISCIPLINE, the same one `dashboard_home_screen.dart`
-/// already applies: the three sources are fetched independently and one
-/// failing does not blank the other two. Only a failure of ALL THREE is an
-/// error state — anything else is data with a hole in it, which is the
-/// truthful rendering.
+/// already applies: the sources are fetched independently and one failing does
+/// not blank the others. Only a failure of the ledger, the grants, the
+/// fulfilments AND the achievements together is an error state — anything else
+/// is data with a hole in it, which is the truthful rendering.
 class ChildRewardsController extends StateNotifier<ChildRewardsState> {
-  ChildRewardsController(this._repository, this.childId) : super(const ChildRewardsState()) {
+  ChildRewardsController(this._repository, this._screenTime, this.childId)
+      : super(const ChildRewardsState()) {
     load();
   }
 
   final RewardProgramsRepository _repository;
+
+  /// READ, NOT RE-DERIVED. The bonus-minutes total and the set of grants that
+  /// are live right now both come from `…/screen-time-policy/effective` — the
+  /// same route `screen_time_overview_screen.dart` renders — so the two parent
+  /// tabs cannot disagree with each other or with the child's own screen.
+  final ScreenTimeRepository _screenTime;
+
   final String childId;
 
   Future<void> load() async {
@@ -136,6 +178,20 @@ class ChildRewardsController extends StateNotifier<ChildRewardsState> {
       // Best-effort; streaks are a nice-to-have next to the ledger.
     }
 
+    // The server's bonus total and its active set. A failure here leaves both
+    // null — «we could not read it», which the screen states — rather than
+    // falling back to a local sum, which is the defect this call replaced.
+    int? bonusMinutes;
+    Set<String>? activeGrantIds;
+    try {
+      final effective = await _screenTime.getEffectivePolicy(childId);
+      bonusMinutes = effective.bonusMinutes;
+      activeGrantIds = {for (final g in effective.bonusGrants) g.id};
+    } on ApiFailure catch (_) {
+      // Deliberately not promoted to an error state: the ledger, the grant
+      // history and the completed goals on this screen are all still true.
+    }
+
     if (accountFailure != null &&
         grantsFailure != null &&
         fulfilmentsFailure != null &&
@@ -150,6 +206,8 @@ class ChildRewardsController extends StateNotifier<ChildRewardsState> {
       fulfilments: fulfilments,
       achievements: achievements,
       streaks: streaks,
+      bonusMinutes: bonusMinutes,
+      activeGrantIds: activeGrantIds,
     );
     state = state.copyWith(
       snapshot: snapshot.isEmpty
