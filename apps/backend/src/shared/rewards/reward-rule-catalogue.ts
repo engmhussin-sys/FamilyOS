@@ -564,88 +564,205 @@ export interface CrossingTrigger {
   readonly payload: Readonly<Record<string, string | number | boolean>>;
 }
 
+/**
+ * ONE CODE PATH THAT FIRES A CROSSING, AND THE TRIGGERS IT FIRES.
+ *
+ * WHY A CROSSING NEEDED MORE THAN ONE OF THESE, MEASURED. `producer` used to be
+ * a single string, and every entry named the DIRECT one — the engine method the
+ * app's own button calls. That left `crossingCollisions()` structurally blind to
+ * the OUTBOX producers: `POST /events/batch` writes a domain event, the relay
+ * delivers it, and a CONSUMER fires the same crossing from a different file. The
+ * habit streak crossing has exactly that shape — `HabitEngineService`
+ * `.completeHabit` and `StreakDetectionConsumer.handle` both decide «this child
+ * reached seven days» — and this table could not say so, so no check built on it
+ * could either. The measurement: 15 + 15 COINS for one seven-day streak, and
+ * 10 + 10 XP for the habit tick under it.
+ *
+ * The triggers now hang off the PRODUCER rather than the crossing, because two
+ * producers of one crossing do not always fire the same names or the same
+ * payload shape: the streak consumer emits a `CompletionEvent` whose streak
+ * facts live under `metadata`, so a rule conditioned on `{metric: 'habits'}`
+ * would match the direct door and NOT the outbox door. That asymmetry is a fact
+ * about this system, and it belongs here rather than in a ledger nobody reads
+ * until a parent complains.
+ */
+export interface CrossingProducer {
+  /** `file#method` — where the triggers below are fired. */
+  readonly file: string;
+  /** `DIRECT` = an engine method behind an HTTP route the app calls.
+   *  `OUTBOX` = a consumer reacting to a delivered domain event. */
+  readonly door: 'DIRECT' | 'OUTBOX';
+  readonly triggers: readonly CrossingTrigger[];
+}
+
 export interface ProducerCrossing {
   /** The real-world fact, in one phrase. */
   readonly crossing: string;
-  /** `file#method` — where the triggers below are fired. */
-  readonly producer: string;
+  /** EVERY code path that fires it — never only the direct one. */
+  readonly producers: readonly CrossingProducer[];
   readonly engine: RuleEngine;
-  readonly triggers: readonly CrossingTrigger[];
+}
+
+/** Every trigger a crossing fires, across ALL of its producers. */
+export function crossingTriggers(crossing: ProducerCrossing): readonly CrossingTrigger[] {
+  return crossing.producers.flatMap((p) => p.triggers);
 }
 
 export const PRODUCER_CROSSINGS: readonly ProducerCrossing[] = [
   {
     crossing: 'a child ticks one habit',
-    producer: 'habit-engine.service.ts#completeHabit',
     engine: 'habit-builder',
-    triggers: [
-      { type: 'habit_completed', payload: {} },
-      { type: 'HABIT_COMPLETED', payload: {} },
+    producers: [
+      {
+        file: 'habit-engine.service.ts#completeHabit',
+        door: 'DIRECT',
+        triggers: [
+          { type: 'habit_completed', payload: {} },
+          { type: 'HABIT_COMPLETED', payload: {} },
+        ],
+      },
+      {
+        // THE DOOR THIS TABLE COULD NOT SEE. The same tick, aggregated on the
+        // device and posted to `POST /events/batch`, reaches the Rewards Engine
+        // through `RewardsCompletionConsumer` — a different file, the same
+        // crossing, the same `default:habit:completed` rule. Both doors now
+        // compose the key with `composeIdempotencyKey('HABIT_COMPLETED', …)`,
+        // which is what makes the ledger's unique constraint able to refuse the
+        // second grant instead of storing two legitimate rows.
+        file: 'event-ingestion.service.ts -> RewardsCompletionConsumer',
+        door: 'OUTBOX',
+        triggers: [{ type: 'HABIT_COMPLETED', payload: {} }],
+      },
     ],
   },
   {
     crossing: 'a habit streak milestone is reached',
-    producer: 'habit-engine.service.ts#completeHabit',
     engine: 'habit-builder',
-    triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'habits' } }],
+    producers: [
+      {
+        file: 'habit-engine.service.ts#completeHabit',
+        door: 'DIRECT',
+        triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'habits' } }],
+      },
+      {
+        // THE OUTBOX HALF OF THE SAME MILESTONE. `StreakDetectionConsumer`
+        // recomputes the streak from the SAME completion rows and fires the
+        // SAME name — and its `CompletionEvent` payload carries the streak
+        // facts under `metadata`, not as `metric`, which is why its trigger is
+        // recorded with an empty payload rather than copied from the line above.
+        file: 'streak-detection.consumer.ts#handle',
+        door: 'OUTBOX',
+        triggers: [{ type: 'STREAK_ACHIEVED', payload: {} }],
+      },
+    ],
   },
   {
     crossing: "a child crosses today's hydration target",
-    producer: 'health-engine.service.ts#logHydration',
     engine: 'health',
-    triggers: [
-      { type: 'hydration_event', payload: { metric: 'hydration_target_reached' } },
-      { type: 'DAILY_GOAL_COMPLETED', payload: { metric: 'hydration' } },
-      { type: 'HYDRATION_GOAL_COMPLETED', payload: { metric: 'hydration' } },
+    producers: [
+      {
+        file: 'health-engine.service.ts#logHydration',
+        door: 'DIRECT',
+        triggers: [
+          { type: 'hydration_event', payload: { metric: 'hydration_target_reached' } },
+          { type: 'DAILY_GOAL_COMPLETED', payload: { metric: 'hydration' } },
+          { type: 'HYDRATION_GOAL_COMPLETED', payload: { metric: 'hydration' } },
+        ],
+      },
+      {
+        file: 'event-ingestion.service.ts -> RewardsCompletionConsumer',
+        door: 'OUTBOX',
+        triggers: [{ type: 'HYDRATION_GOAL_COMPLETED', payload: {} }],
+      },
     ],
   },
   {
     crossing: "a child crosses today's 60-minute activity target",
-    producer: 'health-engine.service.ts#logActivity',
     engine: 'health',
-    triggers: [
-      { type: 'DAILY_GOAL_COMPLETED', payload: { metric: 'activity' } },
-      { type: 'ACTIVITY_GOAL_COMPLETED', payload: { metric: 'activity' } },
+    producers: [
+      {
+        file: 'health-engine.service.ts#logActivity',
+        door: 'DIRECT',
+        triggers: [
+          { type: 'DAILY_GOAL_COMPLETED', payload: { metric: 'activity' } },
+          { type: 'ACTIVITY_GOAL_COMPLETED', payload: { metric: 'activity' } },
+        ],
+      },
+      {
+        file: 'event-ingestion.service.ts -> RewardsCompletionConsumer',
+        door: 'OUTBOX',
+        triggers: [{ type: 'ACTIVITY_GOAL_COMPLETED', payload: {} }],
+      },
     ],
   },
   {
     crossing: 'a health streak milestone is reached',
-    producer: 'health-engine.service.ts#logHydration / #logActivity',
     engine: 'health',
-    triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'hydration' } }],
+    producers: [
+      {
+        file: 'health-engine.service.ts#logHydration / #logActivity',
+        door: 'DIRECT',
+        triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'hydration' } }],
+      },
+    ],
   },
   {
     crossing: 'a child logs one faith practice',
-    producer: 'faith-engine.service.ts#logPractice',
     engine: 'faith',
-    triggers: [
-      { type: 'practice_logged', payload: {} },
-      { type: 'FAITH_PRACTICE_COMPLETED', payload: {} },
+    producers: [
+      {
+        file: 'faith-engine.service.ts#logPractice',
+        door: 'DIRECT',
+        triggers: [
+          { type: 'practice_logged', payload: {} },
+          { type: 'FAITH_PRACTICE_COMPLETED', payload: {} },
+        ],
+      },
     ],
   },
   {
     crossing: 'a child logs one learning session',
-    producer: 'learning-engine.service.ts#logSession',
     engine: 'learning',
-    triggers: [{ type: 'EDUCATION_TASK_COMPLETED', payload: {} }],
+    producers: [
+      {
+        file: 'learning-engine.service.ts#logSession',
+        door: 'DIRECT',
+        triggers: [{ type: 'EDUCATION_TASK_COMPLETED', payload: {} }],
+      },
+    ],
   },
   {
     crossing: 'a learning goal is completed',
-    producer: 'learning-engine.service.ts#completeGoal',
     engine: 'learning',
-    triggers: [{ type: 'LEARNING_GOAL_ACHIEVED', payload: {} }],
+    producers: [
+      {
+        file: 'learning-engine.service.ts#completeGoal',
+        door: 'DIRECT',
+        triggers: [{ type: 'LEARNING_GOAL_ACHIEVED', payload: {} }],
+      },
+    ],
   },
   {
     crossing: 'a learning streak milestone is reached',
-    producer: 'learning-engine.service.ts#logSession',
     engine: 'learning',
-    triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'education' } }],
+    producers: [
+      {
+        file: 'learning-engine.service.ts#logSession',
+        door: 'DIRECT',
+        triggers: [{ type: 'STREAK_ACHIEVED', payload: { metric: 'education' } }],
+      },
+    ],
   },
   {
     crossing: 'a device-aggregated daily goal arrives through POST /events/batch',
-    producer: 'event-ingestion.service.ts -> RewardsCompletionConsumer',
     engine: 'habit-builder',
-    triggers: [{ type: 'DAILY_GOAL_COMPLETED', payload: {} }],
+    producers: [
+      {
+        file: 'event-ingestion.service.ts -> RewardsCompletionConsumer',
+        door: 'OUTBOX',
+        triggers: [{ type: 'DAILY_GOAL_COMPLETED', payload: {} }],
+      },
+    ],
   },
 ];
 
@@ -668,13 +785,16 @@ export function ruleMatchesTrigger(
 }
 
 /** Every seeded rule that can be granted for one crossing, across all of the
- * triggers that crossing fires. */
+ * triggers EVERY producer of that crossing fires — the direct engine method and
+ * the outbox consumer alike. Reading only the direct producer's triggers is the
+ * blind spot that let a habit streak be paid twice. */
 export function rulesPayingCrossing(
   crossing: ProducerCrossing,
   rules: readonly RewardRuleDefault[] = PLATFORM_DEFAULT_REWARD_RULES,
 ): RewardRuleDefault[] {
+  const triggers = crossingTriggers(crossing);
   return rules.filter((rule) =>
-    crossing.triggers.some((trigger) => ruleMatchesTrigger(rule, crossing.engine, trigger)),
+    triggers.some((trigger) => ruleMatchesTrigger(rule, crossing.engine, trigger)),
   );
 }
 
@@ -705,7 +825,10 @@ export function rulesPayingCrossing(
  */
 export interface CrossingCollision {
   readonly crossing: string;
-  readonly producer: string;
+  /** EVERY file that fires this crossing, in table order. A report naming only
+   *  the direct producer sends the next reader to the wrong file half the time,
+   *  which is exactly how the outbox half of a double payment stays unfound. */
+  readonly producers: readonly string[];
   /** `'XP'`, `'COINS'`, or `badge:<key>`. */
   readonly paidTwiceAs: string;
   readonly ruleKeys: readonly string[];
@@ -732,7 +855,7 @@ export function crossingCollisions(
       if (ruleKeys.length > 1) {
         collisions.push({
           crossing: crossing.crossing,
-          producer: crossing.producer,
+          producers: crossing.producers.map((p) => p.file),
           paidTwiceAs,
           ruleKeys: [...ruleKeys].sort(),
         });

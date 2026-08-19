@@ -4,21 +4,13 @@ import { HabitEngineService } from '../../../life-intelligence/application/servi
 import type { CompletionEvent } from '../../../../shared/events/completion-event';
 import { isCompletionEventPayload } from '../../../../shared/events/completion-event';
 import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
+import { isStreakMilestone } from '../../../../shared/rewards/streak-milestones';
 import type { DomainEventEnvelope } from '../../../../shared/events/event-envelope';
 import { EVENT_SUBSCRIBER, type IEventSubscriber } from '../../domain/event-bus.port';
 import { ConsumerIdempotency } from './consumer-idempotency.service';
 import { OutboxWriter } from '../outbox.writer';
 
 export const STREAK_DETECTION_CONSUMER = 'StreakDetectionConsumer';
-
-/**
- * The milestones `HabitEngineService.completeHabit` already uses. Duplicated as
- * a constant rather than exported from that service on purpose: exporting it
- * would mean editing a frozen engine, and the brief asks for the minimum change
- * to existing code. If they ever diverge the streak consumer simply celebrates
- * different numbers than the in-app path — no correctness consequence.
- */
-const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100];
 
 /**
  * Streaks, wired as a CONSUMER.
@@ -65,7 +57,7 @@ export class StreakDetectionConsumer implements OnModuleInit {
       const breakdown = await this.habits.getScoreBreakdown(completion.childId, envelope.familyId);
       const streakDays = breakdown.streakDays;
 
-      if (!STREAK_MILESTONES.includes(streakDays)) return;
+      if (!isStreakMilestone(streakDays)) return;
 
       const idempotencyKey = composeIdempotencyKey('STREAK_ACHIEVED', {
         childId: completion.childId,

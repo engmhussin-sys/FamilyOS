@@ -22,6 +22,7 @@ import type { DailyGoalCause } from '../../../notifications/domain/engine/notifi
 import { computeHydrationTargetMl } from './health-rules';
 import { computeCurrentStreak } from './streak-calculator';
 import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
+import { isStreakMilestone } from '../../../../shared/rewards/streak-milestones';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessDayRange, isBusinessDate } from '../../../../common/time/family-date';
 
@@ -215,14 +216,30 @@ export class HealthEngineService {
         const dailyTotals = await this.repository.getDailyHydrationTotals(childId, since, timeZone);
         const qualifyingDays = [...dailyTotals.entries()].filter(([, ml]) => ml >= target).map(([d]) => d);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
-        if ([3, 7, 14, 30].includes(streakDays)) {
+        // ONE LIST, `shared/rewards/streak-milestones.ts`. This was an INLINE
+        // array literal, and it was a SHORTER copy of the one the habit engine
+        // used — it stopped at thirty days. `STREAK_ACHIEVED` pays, so a child
+        // who kept a hydration or activity streak for sixty or a hundred days
+        // was told nothing and paid nothing, while the same length in habits
+        // paid COINS. See `test/rewards/streak-milestones.spec.ts`.
+        if (isStreakMilestone(streakDays)) {
           // Sprint 16.1: idempotencyKey is childId+metric+streakDays —
           // reaching the same milestone twice must grant it once.
           await this.rewardTrigger.trigger(childId, familyId, {
             engine: 'health',
             type: 'STREAK_ACHIEVED',
             payload: { metric: 'hydration', streakDays },
-            idempotencyKey: `streak:${childId}:hydration:${streakDays}`,
+            // ONE HOME FOR THE KEY. This was a hand-written template beside
+            // `composeIdempotencyKey`'s own `STREAK_ACHIEVED` shape — the second
+            // implementation of one concept that let the HABIT streak be paid
+            // twice once a second producer appeared. There is no second producer
+            // of a hydration streak today; there was no second producer of a
+            // habit streak either, until there was.
+            idempotencyKey: composeIdempotencyKey('STREAK_ACHIEVED', {
+              childId,
+              kind: 'hydration',
+              milestone: streakDays,
+            }),
           });
         }
       } catch {
@@ -385,12 +402,23 @@ export class HealthEngineService {
         const dailyTotals = await this.repository.getDailyActivityTotals(childId, since);
         const qualifyingDays = [...dailyTotals.entries()].filter(([, min]) => min >= activityTargetMinutes).map(([d]) => d);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
-        if ([3, 7, 14, 30].includes(streakDays)) {
+        // ONE LIST, `shared/rewards/streak-milestones.ts`. This was an INLINE
+        // array literal, and it was a SHORTER copy of the one the habit engine
+        // used — it stopped at thirty days. `STREAK_ACHIEVED` pays, so a child
+        // who kept a hydration or activity streak for sixty or a hundred days
+        // was told nothing and paid nothing, while the same length in habits
+        // paid COINS. See `test/rewards/streak-milestones.spec.ts`.
+        if (isStreakMilestone(streakDays)) {
           await this.rewardTrigger.trigger(childId, familyId, {
             engine: 'health',
             type: 'STREAK_ACHIEVED',
             payload: { metric: 'activity', streakDays },
-            idempotencyKey: `streak:${childId}:activity:${streakDays}`,
+            // Same one home as `logHydration`'s streak key above.
+            idempotencyKey: composeIdempotencyKey('STREAK_ACHIEVED', {
+              childId,
+              kind: 'activity',
+              milestone: streakDays,
+            }),
           });
         }
       } catch {

@@ -8,12 +8,13 @@ import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { REWARD_TRIGGER_WRITER, IRewardTriggerWriter } from '../../domain/reward-trigger.types';
 import { IHabit, IHabitCompletion, IHabitScoreBreakdown, ICreateHabitInput } from '../../domain/habit.types';
 import { computeCurrentStreak } from './streak-calculator';
+import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
+import { isStreakMilestone } from '../../../../shared/rewards/streak-milestones';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, getBusinessTimeHHMM, isBusinessDate } from '../../../../common/time/family-date';
 
 const SCORE_WINDOW_DAYS = 30;
 const STREAK_LOOKBACK_DAYS = 30;
-const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100];
 
 /**
  * Architecture 1.0 §3/§5: the static, parent-defined habit list —
@@ -209,10 +210,23 @@ export class HabitEngineService {
         // evidence. Nothing else in the payload can be mistaken for a
         // verification claim, and the child cannot set this field.
         payload: { habitId, category: habit.category, isShared: habit.isShared, status, verifiedBy: actor === 'PARENT' ? 'PARENT' : 'SELF' },
-        // B1: `businessDate` is a SERVER output — `Family.timezone` applied to
-        // the server clock, or a parent-authorised back-fill inside a bounded
-        // window. It is never the raw string a device sent.
-        idempotencyKey: `habit-completion:${habitId}:${businessDate}`,
+        /**
+         * B1: `businessDate` is a SERVER output — `Family.timezone` applied to
+         * the server clock, or a parent-authorised back-fill inside a bounded
+         * window. It is never the raw string a device sent.
+         *
+         * AND THE SHAPE IS `composeIdempotencyKey`, for the same reason as the
+         * streak key below. This was `habit-completion:{habitId}:{day}` while
+         * `EventIngestionService` composed `child:{c}:habit:{habitId}:{day}`
+         * for the SAME tick of the SAME habit on the SAME day. Measured against
+         * real PostgreSQL: 10 + 10 XP under rule
+         * `00000000-0000-4b40-8000-000000000000`, one habit, one day.
+         */
+        idempotencyKey: composeIdempotencyKey('HABIT_COMPLETED', {
+          childId,
+          sourceId: habitId,
+          localDate: businessDate,
+        }),
       });
 
       const since = this.daysAgo(STREAK_LOOKBACK_DAYS, timeZone);
@@ -225,16 +239,39 @@ export class HabitEngineService {
       if (dailyCompletions > 0) {
         const qualifyingDays = await this.getQualifyingCompletionDays(childId, since);
         const streakDays = computeCurrentStreak(qualifyingDays, todayStr);
-        if (STREAK_MILESTONES.includes(streakDays)) {
-          // Sprint 16.1: idempotencyKey is childId+metric+streakDays
-          // — reaching the SAME milestone (e.g. "7-day streak")
-          // twice (e.g. two completions logged the same day, or a
-          // retry) must grant this milestone reward exactly once.
+        if (isStreakMilestone(streakDays)) {
+          /**
+           * ONE MILESTONE, ONE KEY — AND THE KEY IS `composeIdempotencyKey`.
+           *
+           * WHAT WAS HERE: `streak:${childId}:habits:${streakDays}`, hand
+           * written. It was not the only producer of this crossing.
+           * `StreakDetectionConsumer` derives the SAME milestone from the SAME
+           * completion rows for a device-ingested `HABIT_COMPLETED`, and it
+           * composed `child:{short}:streak:habits:{n}`. Both resolve to
+           * `engine: 'habit-builder'` + `STREAK_ACHIEVED`, so both matched the
+           * single seeded rule `default:habit:streak` — and
+           * `rewards_ledger_entries (child_id, idempotency_key)` could not help,
+           * because two key SHAPES are two different keys and two legitimate
+           * rows. Measured against real PostgreSQL: 15 + 15 COINS for one
+           * seven-day streak. The same defect shape migration 0030 ended on the
+           * hydration crossing, on a different one.
+           *
+           * The survivor is the composed form for the same reason 0030 kept
+           * `HYDRATION_GOAL_COMPLETED`: it is the shape `docs/04 §5.3` records,
+           * it is what the other door already writes, and it is composed by the
+           * one function so a third door cannot invent a third shape.
+           * `test/life-intelligence/habit-streak-one-payment.e2e.spec.ts` drives
+           * both doors, both orders, and counts the ROWS.
+           */
           await this.rewardTrigger.trigger(childId, familyId, {
             engine: 'habit-builder',
             type: 'STREAK_ACHIEVED',
             payload: { metric: 'habits', streakDays },
-            idempotencyKey: `streak:${childId}:habits:${streakDays}`,
+            idempotencyKey: composeIdempotencyKey('STREAK_ACHIEVED', {
+              childId,
+              kind: 'habits',
+              milestone: streakDays,
+            }),
           });
         }
       }

@@ -28,6 +28,9 @@
  * §3 MUTATES the catalogue and proves the check reports the mutation. A guard
  * that has never been seen to fail is a guard nobody has tested.
  */
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
 import {
   PLATFORM_DEFAULT_REWARD_RULES,
   PRODUCER_CROSSINGS,
@@ -35,8 +38,12 @@ import {
   RULE_EVENT_TYPES,
   RewardRuleDefault,
   crossingCollisions,
+  crossingTriggers,
   rulesPayingCrossing,
 } from '../../src/shared/rewards/reward-rule-catalogue';
+
+/** The tree the source-scanning checks in §2 read. */
+const SRC = join(__dirname, '..', '..', 'src');
 
 describe('the seeded reward catalogue can never pay one crossing twice', () => {
   // ==========================================================================
@@ -122,7 +129,7 @@ describe('the seeded reward catalogue can never pay one crossing twice', () => {
   it('2.1 every listed trigger is a real rule event type or a known keyless legacy name', () => {
     const KEYLESS_LEGACY = ['habit_completed', 'hydration_event', 'practice_logged'];
     for (const crossing of PRODUCER_CROSSINGS) {
-      for (const trigger of crossing.triggers) {
+      for (const trigger of crossingTriggers(crossing)) {
         const known =
           (RULE_EVENT_TYPES as readonly string[]).includes(trigger.type) ||
           KEYLESS_LEGACY.includes(trigger.type);
@@ -144,7 +151,7 @@ describe('the seeded reward catalogue can never pay one crossing twice', () => {
    */
   it('2.2 the legacy keyless triggers match no seeded rule at all', () => {
     for (const crossing of PRODUCER_CROSSINGS) {
-      for (const trigger of crossing.triggers) {
+      for (const trigger of crossingTriggers(crossing)) {
         if ((RULE_EVENT_TYPES as readonly string[]).includes(trigger.type)) continue;
         const paying = PLATFORM_DEFAULT_REWARD_RULES.filter(
           (r) => r.triggerEngine === crossing.engine && r.eventType === trigger.type,
@@ -166,6 +173,104 @@ describe('the seeded reward catalogue can never pay one crossing twice', () => {
   it('2.3 the crossings table has no duplicate crossing', () => {
     const names = PRODUCER_CROSSINGS.map((c) => c.crossing);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  /**
+   * EVERY PRODUCER NAMED IN THE TABLE IS A FILE THAT EXISTS. A crossing whose
+   * producer is a stale path is a crossing nobody can check against `src/`, and
+   * the whole table then decays into prose.
+   */
+  it('2.4 every producer names a file that exists in src/', () => {
+    const files = new Set<string>();
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (entry.endsWith('.ts')) files.add(entry);
+      }
+    };
+    walk(SRC);
+
+    for (const crossing of PRODUCER_CROSSINGS) {
+      for (const producer of crossing.producers) {
+        // `file` is `a.ts#method` or `a.ts -> ConsumerName`; only the head is a path.
+        const fileName = producer.file.split(/[#\s]/)[0];
+        expect({ crossing: crossing.crossing, file: fileName, exists: files.has(fileName) }).toEqual({
+          crossing: crossing.crossing,
+          file: fileName,
+          exists: true,
+        });
+      }
+    }
+  });
+
+  /**
+   * ===========================================================================
+   * 2.5 THE BLIND SPOT ITSELF, AS AN ASSERTION.
+   * ===========================================================================
+   *
+   * WHAT WAS MEASURED. `STREAK_ACHIEVED` has TWO producers —
+   * `HabitEngineService.completeHabit` (direct) and `StreakDetectionConsumer`
+   * (outbox) — and this table named only the first. It could not, therefore,
+   * say the thing that mattered: that one crossing is fired from two files, and
+   * that both must compose the SAME idempotency key or the ledger's unique
+   * constraint has nothing to catch. It caught nothing: 15 + 15 COINS for one
+   * seven-day streak, and 10 + 10 XP for the tick under it, on real PostgreSQL.
+   *
+   * This is the assertion that keeps the table honest about that, named by
+   * crossing rather than counted, so deleting a producer trips it by name.
+   */
+  it('2.5 the crossings with two doors name BOTH of them', () => {
+    const doorsOf = (name: string): string[] => {
+      const crossing = PRODUCER_CROSSINGS.find((c) => c.crossing === name);
+      expect(crossing).toBeDefined();
+      return crossing!.producers.map((p) => `${p.door}:${p.file}`).sort();
+    };
+
+    expect(doorsOf('a habit streak milestone is reached')).toEqual([
+      'DIRECT:habit-engine.service.ts#completeHabit',
+      'OUTBOX:streak-detection.consumer.ts#handle',
+    ]);
+    expect(doorsOf('a child ticks one habit')).toEqual([
+      'DIRECT:habit-engine.service.ts#completeHabit',
+      'OUTBOX:event-ingestion.service.ts -> RewardsCompletionConsumer',
+    ]);
+  });
+
+  /**
+   * ===========================================================================
+   * 2.6 NO SECOND WAY TO SPELL A STREAK KEY.
+   * ===========================================================================
+   *
+   * The defect was not a typo — it was TWO IMPLEMENTATIONS of one concept, both
+   * of which compiled. `composeIdempotencyKey('STREAK_ACHIEVED', …)` is the one
+   * home; a hand-written `streak:${childId}:…` template is the retired copy, and
+   * a retired copy that still compiles gets called again.
+   *
+   * This scans `src/` rather than trusting a review, because the whole lesson of
+   * this defect is that a reviewer read the direct producer and stopped.
+   */
+  it('2.6 no file in src/ hand-composes a STREAK_ACHIEVED idempotency key', () => {
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (entry.endsWith('.ts')) {
+          readFileSync(full, 'utf8')
+            .split('\n')
+            .forEach((line, i) => {
+              // An `idempotencyKey:` ASSIGNMENT whose value begins `streak:` —
+              // the exact shape `habit-engine.service.ts` used to write. Prose
+              // that quotes the retired shape is left alone on purpose: the
+              // comments recording what went wrong must survive this check.
+              if (/idempotencyKey:\s*[`'"]streak:/.test(line)) offenders.push(`${full}:${i + 1}`);
+            });
+        }
+      }
+    };
+    walk(SRC);
+    expect(offenders).toEqual([]);
   });
 
   // ==========================================================================
@@ -197,7 +302,11 @@ describe('the seeded reward catalogue can never pay one crossing twice', () => {
     expect(collisions).toEqual([
       {
         crossing: "a child crosses today's hydration target",
-        producer: 'health-engine.service.ts#logHydration',
+        // BOTH doors are named, because both of them would pay it.
+        producers: [
+          'health-engine.service.ts#logHydration',
+          'event-ingestion.service.ts -> RewardsCompletionConsumer',
+        ],
         paidTwiceAs: 'XP',
         ruleKeys: ['default:health:daily-goal-hydration', 'default:hydration:goal'],
       },

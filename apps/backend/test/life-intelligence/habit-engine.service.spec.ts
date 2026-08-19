@@ -8,6 +8,7 @@ import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
 import { familyDateProvider } from '../common/family-date.testing';
 import { addBusinessDays, getBusinessDate } from '../../src/common/time/family-date';
+import { composeIdempotencyKey } from '../../src/shared/events/idempotency';
 import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 describe('HabitEngineService', () => {
@@ -140,15 +141,30 @@ describe('HabitEngineService', () => {
         await service.completeHabit('habit-1', childId, familyId, forged, 'DEVICE');
       }
 
-      // Every reward trigger carried the SAME key, so the ledger's unique
-      // constraint has one row to collide on rather than 200 to fill.
+      /**
+       * Every reward trigger carried the SAME key, so the ledger's unique
+       * constraint has one row to collide on rather than 200 to fill.
+       *
+       * THE EXPECTED KEY IS `composeIdempotencyKey`, NOT A LITERAL. This line
+       * used to pin `habit-completion:habit-1:{day}` — the shape this service
+       * hand-wrote while `POST /events/batch` composed
+       * `child:{c}:habit:{habitId}:{day}` for the SAME tick, which paid one
+       * habit 10 + 10 XP against real PostgreSQL. The literal was pinning the
+       * retired shape; the 200-forged-dates invariant this test exists for is
+       * unchanged and still asserted below.
+       */
+      const expectedKey = composeIdempotencyKey('HABIT_COMPLETED', {
+        childId,
+        sourceId: 'habit-1',
+        localDate: getBusinessDate(new Date(), 'UTC'),
+      });
       const keys = new Set(
         rewardTriggerMock.trigger.mock.calls
           .map((c: unknown[]) => (c[2] as { idempotencyKey?: string }).idempotencyKey)
-          .filter((k: string | undefined): k is string => typeof k === 'string' && k.startsWith('habit-completion:')),
+          .filter((k: string | undefined): k is string => typeof k === 'string' && k.includes(':habit:')),
       );
       expect(keys.size).toBe(1);
-      expect([...keys][0]).toBe(`habit-completion:habit-1:${getBusinessDate(new Date(), 'UTC')}`);
+      expect([...keys][0]).toBe(expectedKey);
     });
 
     it('B1 (PA-B-004): a PARENT may back-date, but never into the future and never past the window', async () => {

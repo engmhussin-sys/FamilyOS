@@ -105,6 +105,8 @@ import {
   PLATFORM_DEFAULT_REWARD_RULES,
   ruleRewardValue,
 } from '../../src/shared/rewards/reward-rule-catalogue';
+import { composeIdempotencyKey } from '../../src/shared/events/idempotency';
+import { getBusinessDate } from '../../src/common/time/family-date';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 import { freezeGoldenClock, GOLDEN_NOON } from '../golden/golden-world';
 
@@ -198,6 +200,19 @@ describeIfDb('THE BADGE CHAIN — goal → badge → points → child → parent
   // the readers — every assertion below goes through one of these, so "what the
   // database holds" is one vocabulary rather than a query per test.
   // -------------------------------------------------------------------------
+
+  /**
+   * THE COMPLETION'S OWN IDEMPOTENCY KEY, composed the way both doors compose
+   * it. Derived — never typed as a literal — from the child, the habit and the
+   * family's business day, so this file cannot go on asserting a key shape that
+   * `src/` has stopped writing.
+   */
+  const completionKeyFor = (): string =>
+    composeIdempotencyKey('HABIT_COMPLETED', {
+      childId: T.childId,
+      sourceId: T.habitId,
+      localDate: getBusinessDate(new Date(), 'Africa/Cairo'),
+    });
 
   const habitCompletions = (): Promise<any[]> =>
     sys('habit completions', () =>
@@ -465,10 +480,20 @@ describeIfDb('THE BADGE CHAIN — goal → badge → points → child → parent
       expect(xp.delta).toBe(HABIT_XP);
       expect(badge.amount).toBe(1);
 
-      // Both rows carry the completion's own key, which is what makes the
-      // replay in §7 a database question rather than a code question.
-      expect(xp.idempotencyKey).toContain(`habit-completion:${T.habitId}:`);
-      expect(badge.idempotencyKey).toContain(`habit-completion:${T.habitId}:`);
+      /**
+       * Both rows carry the completion's own key, which is what makes the
+       * replay in §7 a database question rather than a code question.
+       *
+       * ASSERTED AGAINST `composeIdempotencyKey`, NOT AGAINST A LITERAL. These
+       * two lines used to pin `habit-completion:{habitId}:{day}` — the shape
+       * `completeHabit` hand-wrote while `POST /events/batch` composed
+       * `child:{c}:habit:{habitId}:{day}` for the SAME tick of the SAME habit on
+       * the SAME day, and paid it 10 + 10 XP. The literal was pinning the wrong
+       * number; the composed call is the invariant.
+       */
+      const completionKey = completionKeyFor();
+      expect(xp.idempotencyKey).toContain(`${completionKey}:`);
+      expect(badge.idempotencyKey).toContain(`${completionKey}:`);
       expect(xp.idempotencyKey).not.toBe(badge.idempotencyKey);
       // Every EARN row belongs to a family day, so the caps count the day the
       // grant actually belongs to.
@@ -637,7 +662,7 @@ describeIfDb('THE BADGE CHAIN — goal → badge → points → child → parent
       const rows = await timeline();
       const reward = rows.filter((e: any) => e.eventType === 'reward_granted');
       expect(reward).toHaveLength(1);
-      expect(reward[0].metadata?.sourceKey).toContain(`habit-completion:${T.habitId}:`);
+      expect(reward[0].metadata?.sourceKey).toContain(completionKeyFor());
       expect(reward[0].metadata?.grantCount).toBe(2);
     });
 

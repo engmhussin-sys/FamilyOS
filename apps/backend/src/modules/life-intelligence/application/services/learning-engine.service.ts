@@ -7,11 +7,12 @@ import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-tim
 import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
 import { ICreateLearningGoalInput, ICreateLearningSessionInput, ILearningGoal, ILearningProgressSummary, ILearningSession } from '../../domain/learning.types';
 import { computeCurrentStreak } from './streak-calculator';
+import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
+import { isStreakMilestone } from '../../../../shared/rewards/streak-milestones';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
 import { getBusinessDate, isBusinessDate } from '../../../../common/time/family-date';
 
 const PROGRESS_WINDOW_DAYS = 30;
-const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100];
 /** B4 — the verification bar for `completeGoal`. Two real, separately-logged,
  * separately-idempotent sessions. One would make "log a session, complete the
  * goal" a two-tap payout; three would make a short goal unfinishable. */
@@ -238,12 +239,18 @@ export class LearningEngineService {
       const since = this.daysAgo(30, timeZone);
       const sessionDates = await this.repository.findDistinctSessionDates(childId, since);
       const streakDays = computeCurrentStreak(sessionDates, todayStr);
-      if (STREAK_MILESTONES.includes(streakDays)) {
+      if (isStreakMilestone(streakDays)) {
         await this.rewardTrigger.trigger(childId, familyId, {
           engine: 'learning',
           type: 'STREAK_ACHIEVED',
           payload: { metric: 'education', streakDays },
-          idempotencyKey: `streak:${childId}:education:${streakDays}`,
+          // ONE HOME FOR THE KEY — see `habit-engine.service.ts`'s own streak
+          // trigger for the measurement that made this non-negotiable.
+          idempotencyKey: composeIdempotencyKey('STREAK_ACHIEVED', {
+            childId,
+            kind: 'education',
+            milestone: streakDays,
+          }),
         });
       }
     } catch {
