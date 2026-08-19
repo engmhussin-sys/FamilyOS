@@ -1,0 +1,67 @@
+-- ============================================================================
+-- THE COLUMN THE OPERATOR DECISION VIEW FILTERS ON, AND THE ONLY ONE
+-- `notification_decisions` HAD NO LEADING INDEX FOR.
+--
+-- WHAT WAS BROKEN. Migration 0018 gave this table five indexes and every one
+-- of them leads with a DIMENSION and carries `business_date` second:
+--
+--   notification_decisions_family_created_idx   (family_id, created_at DESC)
+--   notification_decisions_decision_date_idx    (decision, business_date)
+--   notification_decisions_category_date_idx    (category, business_date)
+--   notification_decisions_country_date_idx     (country_code, business_date)
+--   notification_decisions_type_date_idx        (notification_type, business_date)
+--
+-- That shape answers «this category, over this window». It cannot answer «this
+-- WINDOW, over every category», because a btree cannot range-scan on its
+-- second column. And the platform decision surface — `GET
+-- /system/notifications/analytics` and the operator breakdown added beside it
+-- in `GET /system/notifications/decision-breakdown` — filters on
+-- `business_date` and NOTHING ELSE by default: the country, age band, audience
+-- and category filters are all optional and are all absent on the first load
+-- of the page. Every one of those queries was a sequential scan of the whole
+-- ledger, a table that gains a row for every notification decision this
+-- product ever makes, while the answer is only ever about a bounded window of
+-- it (the route caps the window at 92 days).
+--
+-- MEASURED, NOT ASSUMED. 500,000 decisions spread over 730 business dates,
+-- PostgreSQL 16, built from this file's own column list in a scratch database,
+-- ANALYZEd, three runs each, median reported. The window queried is 30 days
+-- (20,521 rows, 4.1% of the table):
+--
+--   breakdown roll-up (GROUPING SETS)   137.6 ms  ->  28.5 ms
+--                                       Parallel Seq Scan -> Bitmap Heap Scan
+--   top causes (GROUP BY event_type)     93.7 ms  ->  18.0 ms
+--
+-- The index is 3,544 kB against a 126 MB table.
+--
+-- NOT PARTIAL, unlike `devices_last_seen_at_active_idx` (0025). There is no
+-- soft delete on this table and no predicate that every reader shares — the
+-- ledger keeps suppressed, deferred and failed decisions on purpose, and each
+-- of them is the interesting row for some question. A partial index here could
+-- only ever exclude rows some future operator query needs.
+--
+-- SINGLE COLUMN, AND THE TWO COMPOSITE ALTERNATIVES WERE BUILT AND REJECTED.
+-- `(business_date, target_audience)` and `(business_date, decision)` were each
+-- built IN PLACE OF this one on the same 500,000 rows and measured the same
+-- way. Neither moved the roll-up — medians 29.2 ms and 26.6 ms against this
+-- index's 28.5 ms, which is run-to-run noise — and all three measured the same
+-- 3,544 kB. The reason they cannot help is structural: the aggregate reads six
+-- columns (`decision`, `outcome`, `outcome_reason`, `target_audience`,
+-- `trigger`, `provider_id`) and can never be answered index-only whatever the
+-- key is, so the bitmap HEAP scan is the cost and the leading `business_date`
+-- is the only thing that shrinks it. A wider key for no measured gain is a
+-- longer key to maintain on a table INSERTed once per decision on the
+-- notification hot path.
+--
+-- PLAIN `CREATE INDEX`, NOT `CONCURRENTLY`, for 0025's stated reason: every
+-- migration in this directory is applied inside one transaction by
+-- `psql -v ON_ERROR_STOP=1 -f`, and `CREATE INDEX CONCURRENTLY` cannot run in
+-- one.
+--
+-- ROLLBACK IS `DROP INDEX "notification_decisions_business_date_idx"`, and it
+-- is safe: no constraint, no foreign key and no application code names this
+-- index. The operator queries go back to being correct and slow.
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS "notification_decisions_business_date_idx"
+  ON "notification_decisions" ("business_date");

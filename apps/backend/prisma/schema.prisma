@@ -4272,6 +4272,13 @@ model NotificationDecision {
   @@index([category, businessDate])
   @@index([countryCode, businessDate])
   @@index([notificationType, businessDate])
+  /// Migration 0028. The five above all lead with a DIMENSION, so a btree can
+  /// range-scan none of them on `business_date` — and «this window, over every
+  /// dimension» is exactly what the platform operator surface asks by default,
+  /// its other filters all being optional. Measured on 500k rows: the breakdown
+  /// roll-up 137.6 ms -> 28.5 ms, top causes 93.7 ms -> 18.0 ms. The argument,
+  /// the two rejected composites and the rollback are in the migration.
+  @@index([businessDate])
   @@map("notification_decisions")
 }
 
