@@ -136,11 +136,34 @@ bool deepLinkSurfaceTakesId(DeepLinkSurface surface) => switch (surface) {
       DeepLinkSurface.notifications => false,
     };
 
-/// THE SERVER'S OWN DEGRADATION TABLE, copied rather than invented: `goal`
+/// THE SERVER'S OWN DEGRADATION TABLE, COPIED RATHER THAN INVENTED: `goal`
 /// without an id is `goals` in `notification-destination.ts`, `approval` is
 /// `approvals`, `safety` is `screen-time`. `child` has no list form anywhere in
 /// this product — the child app is single-child by construction — so it lands
 /// on the universal fallback like anything else without an answer.
+///
+/// AND A COPY IS WHAT IT IS. These three pairs are the third argument of
+/// `idLink(...)` in that file, transcribed. A transcription does not announce
+/// that the original moved: if the server widens the table, or changes where
+/// one of these degrades to, this app keeps applying yesterday's rule and a
+/// child lands somewhere the server did not send them, with nothing red
+/// anywhere. `test/core/routing/deep_link_degradation_drift_test.dart` reads
+/// `notification-destination.ts` off disk and fails when the two stop
+/// agreeing; it is a DETECTOR, not a fix.
+///
+/// THE FIX IS THE SERVER'S, AND IT SHOULD SHIP THE DEGRADED SURFACE. `idLink`
+/// already computes the degraded link server-side — it returns
+/// `surfaceLink('goals')` itself when the id is missing — so no client needs to
+/// re-derive it. Either keep emitting the already-degraded `abny://goals` (which
+/// is what every producer path does today, making this table dead weight in the
+/// common case) or publish the pairs alongside `DEEP_LINK_SCHEME` so a client
+/// reads them instead of transcribing them. Until then, this switch is a second
+/// implementation of somebody else's rule and is treated as one.
+///
+/// WHAT IS NOT A DEFECT: the two apps route the same link to different places
+/// on purpose — this one has no approval queue, no subscription screen and no
+/// per-child routing. That split is deliberate, documented, and asserted in
+/// `deep_link_test.dart`. Only the DEGRADATION is meant to match.
 DeepLinkSurface _idLessFormOf(DeepLinkSurface surface) => switch (surface) {
       DeepLinkSurface.goal => DeepLinkSurface.goals,
       DeepLinkSurface.approval => DeepLinkSurface.approvals,
