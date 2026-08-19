@@ -160,6 +160,44 @@ describe('PairingOrchestratorService', () => {
       expect(pairingDeviceRepositoryMock.createDevice).not.toHaveBeenCalled();
     });
 
+    /**
+     * F1 — THE SECOND-DEVICE PAYWALL, same defect as `ChildrenService`.
+     *
+     * The thrown string named `unlimited_devices_per_child` — an internal
+     * feature key — and the parent app resolves `messageAr ?? message`, so
+     * with no Arabic it was rendered verbatim on an RTL screen at the upsell
+     * moment. Shape, language and leak are asserted separately below.
+     */
+    it('refuses with the B3 contract — a code and an Arabic upsell sentence, naming no feature flag', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
+        { id: 'existing-device', childId: 'child-1', familyId: 'family-1' },
+      ]);
+      entitlementsMock.hasFeature.mockResolvedValue(false);
+
+      const error: ForbiddenException = await service
+        .registerDevice('child-1', 'family-1', { publicKey: 'pub-key-2', platform: 'ANDROID' })
+        .then(
+          () => {
+            throw new Error('registerDevice resolved — the entitlement gate did not fire.');
+          },
+          (e: unknown) => e as ForbiddenException,
+        );
+
+      const body = error.getResponse() as { code: string; message: string; messageAr: string };
+
+      expect(error.getStatus()).toBe(403);
+      // The SAME code as the add-child paywall: both route to one plans screen.
+      expect(body.code).toBe('PLAN_UPGRADE_REQUIRED');
+      expect(body.messageAr).toBe(
+        'باقتك الحالية تكفي لجهاز واحد لكل طفل. طوّر باقتك لتربط جهازًا إضافيًا لنفس الطفل وتتابعه على الجهازين.',
+      );
+
+      const whole = JSON.stringify(body);
+      expect(whole).not.toContain('unlimited_devices_per_child');
+      expect(whole).not.toContain('feature');
+      expect(body.messageAr).not.toMatch(/[A-Za-z0-9]/);
+    });
+
     it('does NOT block a device for a DIFFERENT child in the same family — the limit is per-child, not per-family', async () => {
       pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
         { id: 'existing-device', childId: 'some-other-child', familyId: 'family-1' },

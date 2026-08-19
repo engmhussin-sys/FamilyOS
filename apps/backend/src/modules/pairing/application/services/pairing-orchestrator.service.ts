@@ -104,7 +104,14 @@ export class PairingOrchestratorService {
    * has existed as a plan feature since Sprint 8 with zero enforcement
    * anywhere. The first device for any given child is always free —
    * only a SECOND device for the SAME child requires the entitlement
-   * (a family with two phones for the same kid, not two different kids). */
+   * (a family with two phones for the same kid, not two different kids).
+   *
+   * F1 — THE REFUSAL IS AN UPSELL, AND IT IS READ IN ARABIC. Same defect, same
+   * fix, as `ChildrenService.createChild`: a bare English string that named
+   * `unlimited_devices_per_child` — an internal feature key — and reached the
+   * parent verbatim, because the app resolves `messageAr ?? message`. It now
+   * carries the B3 `{ code, messageAr }` contract with the same
+   * `PLAN_UPGRADE_REQUIRED` code, so both paywalls route to one plans screen. */
   async registerDevice(
     childId: string,
     familyId: string,
@@ -130,7 +137,12 @@ export class PairingOrchestratorService {
     if (existingDevicesForThisChild.length >= 1) {
       const entitled = await this.entitlements.hasFeature(familyId, 'unlimited_devices_per_child');
       if (!entitled) {
-        throw new ForbiddenException('Pairing a second device for the same child requires a plan with the unlimited_devices_per_child feature.');
+        throw new ForbiddenException({
+          code: 'PLAN_UPGRADE_REQUIRED',
+          message: 'Pairing another device for the same child requires a plan upgrade.',
+          messageAr:
+            'باقتك الحالية تكفي لجهاز واحد لكل طفل. طوّر باقتك لتربط جهازًا إضافيًا لنفس الطفل وتتابعه على الجهازين.',
+        });
       }
     }
 

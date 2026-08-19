@@ -49,13 +49,28 @@ export class ChildrenService {
    * has existed as a plan feature since Sprint 8 with zero enforcement
    * anywhere. The first child is always free on every tier — only the
    * SECOND-and-beyond child requires the entitlement. Fails closed,
-   * matching every other authorization check in this codebase. */
+   * matching every other authorization check in this codebase.
+   *
+   * F1 — THE REFUSAL IS AN UPSELL, AND IT IS READ IN ARABIC. What was thrown
+   * here was a bare English string naming `multiple_children` — a row in our
+   * feature table — and the parent app renders `messageAr ?? message`, so with
+   * no Arabic that exact sentence, internal flag and all, was what an Arabic
+   * parent saw on the add-child screen at the one moment they were being asked
+   * to pay. It now carries the B3 `{ code, messageAr }` contract: a machine-
+   * readable code the app can route to the plans screen on, and a sentence that
+   * says what the current plan allows and what to do next. No flag name, no
+   * enum, no «ممنوع» (CONTEXT §3 principle 7). */
   async createChild(familyId: string, input: ICreateChildInput): Promise<IChildView> {
     const existingChildren = await this.childRepository.findManyByFamily(familyId);
     if (existingChildren.length >= 1) {
       const entitled = await this.entitlements.hasFeature(familyId, 'multiple_children');
       if (!entitled) {
-        throw new ForbiddenException('Adding more than one child requires a plan with the multiple_children feature.');
+        throw new ForbiddenException({
+          code: 'PLAN_UPGRADE_REQUIRED',
+          message: 'Adding another child requires a plan upgrade.',
+          messageAr:
+            'باقتك الحالية تكفي لطفل واحد. طوّر باقتك لتضيف بقية أطفالك وتتابعهم جميعًا من مكان واحد.',
+        });
       }
     }
     const child = await this.childRepository.create(familyId, input);
