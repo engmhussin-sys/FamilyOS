@@ -68,7 +68,8 @@ class _CelebrationViewState extends ConsumerState<CelebrationView> {
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
     final outcome = widget.outcome;
     final goal = widget.goal;
 
@@ -144,7 +145,14 @@ class _CelebrationViewState extends ConsumerState<CelebrationView> {
                       ? t('goalDetail.bonusMinutes')
                       : goal.reward.isPoints
                           ? t('goalDetail.points')
-                          : t('rewardType.${goal.reward.type}'),
+                          // A key assembled from a backend enum needs
+                          // `tOrElse`; a bare `t` renders the key itself, and
+                          // «rewardType.BADGE» under a celebration is the
+                          // worst place in the app to show one.
+                          : locale.tOrElse(
+                              'rewardType.${goal.reward.type}',
+                              t('rewardType.unknown'),
+                            ),
                   icon: Icons.star_rounded,
                   color: KidColor.highlight,
                 ),

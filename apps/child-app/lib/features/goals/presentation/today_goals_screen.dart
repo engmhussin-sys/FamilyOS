@@ -226,7 +226,15 @@ class GoalCard extends ConsumerWidget {
                     ? t('today.pointsReward', options: {'count': goal.reward.amount})
                     : goal.reward.isScreenTime
                         ? t('today.screenTimeReward', options: {'count': goal.reward.amount})
-                        : t('rewardType.${goal.reward.type}'),
+                        // `tOrElse`, for the same reason the title above uses
+                        // it: `reward.type` is a backend enum this app renders
+                        // by assembling a key from it, and a bare `t` on a
+                        // value it has not been taught puts «rewardType.BADGE»
+                        // on a badge in front of a child.
+                        : locale.tOrElse(
+                            'rewardType.${goal.reward.type}',
+                            t('rewardType.unknown'),
+                          ),
                 icon: Icons.star_rounded,
                 color: KidColor.highlight,
               ),

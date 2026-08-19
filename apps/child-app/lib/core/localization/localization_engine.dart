@@ -133,6 +133,14 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'progress.streaksSection': 'My streaks',
     'progress.streaksUnavailable': 'Your streaks aren\'t showing right now.',
     'progress.title': 'My progress',
+    // THE WHOLE `RewardType` ENUM, and it was not whole before. The backend's
+    // enum has nine values; this map had six of them plus `POINTS` (which the
+    // F4 reward shape uses). `XP`, `COINS` and `BADGE` were missing, so a
+    // fulfilment or a program reward of any of those three rendered the KEY —
+    // «rewardType.BADGE» — to a child. See `tOrElse` at both call sites for the
+    // tenth value the backend adds next.
+    'rewardType.BADGE': 'A badge',
+    'rewardType.COINS': 'Coins',
     'rewardType.CUSTOM_REWARD': 'Something you choose',
     'rewardType.DIGITAL_REWARD': 'A digital gift',
     'rewardType.PARENT_APPROVAL_REWARD': 'Parent approval',
@@ -140,6 +148,8 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'rewardType.POINTS': 'Points',
     'rewardType.PRIVILEGE': 'A privilege',
     'rewardType.SCREEN_TIME': 'Extra screen time',
+    'rewardType.XP': 'Experience points',
+    'rewardType.unknown': 'A reward',
     'session.done': 'I\'m done!',
     'session.foregroundNote': 'The timer only counts while this app is open.',
     'session.notNowTitle': 'Not right now',
@@ -230,6 +240,10 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'verifyForKid.QUIZ': 'A few quick questions at the end.',
     'verifyForKid.RECITATION_SUBMISSION': 'You recite, and a grown-up listens.',
     'verifyForKid.SELF_CHECK': 'You tell us when you finish.',
+    // The fallback for a goal whose `verificationLevel` is missing or is a
+    // method this app has not been taught. Says the true thing — someone
+    // checks — without naming a mechanism it does not know.
+    'verifyForKid.unknown': 'When you finish, this gets checked.',
     'common.error': 'Something went wrong.',
     'common.retry': 'Try Again',
     'common.done': 'Done!',
@@ -582,6 +596,8 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'progress.streaksSection': 'تتابعي',
     'progress.streaksUnavailable': 'التتابع مش ظاهر دلوقتي.',
     'progress.title': 'تقدّمي',
+    'rewardType.BADGE': 'شارة',
+    'rewardType.COINS': 'كوينز',
     'rewardType.CUSTOM_REWARD': 'مكافأة تختارها',
     'rewardType.DIGITAL_REWARD': 'مكافأة رقمية',
     'rewardType.PARENT_APPROVAL_REWARD': 'موافقة خاصة',
@@ -589,6 +605,8 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'rewardType.POINTS': 'نقاط',
     'rewardType.PRIVILEGE': 'امتياز',
     'rewardType.SCREEN_TIME': 'وقت شاشة إضافي',
+    'rewardType.XP': 'نقاط خبرة',
+    'rewardType.unknown': 'مكافأة',
     'session.done': 'خلّصت!',
     'session.foregroundNote': 'الوقت بيعدّ وإنت فاتح التطبيق بس.',
     'session.notNowTitle': 'مش دلوقتي',
@@ -667,6 +685,7 @@ const Map<AppLocale, Map<String, String>> _resources = {
     'verifyForKid.QUIZ': 'كام سؤال صغيرين في الآخر.',
     'verifyForKid.RECITATION_SUBMISSION': 'إنت تسمّع، وحد كبير يسمعك.',
     'verifyForKid.SELF_CHECK': 'إنت اللي هتقول لنا خلّصت.',
+    'verifyForKid.unknown': 'أول ما تخلّص، هتتراجع.',
     'common.error': 'حصل خطأ.',
     'common.retry': 'حاول تاني',
     'common.done': 'تمام!',

@@ -98,8 +98,16 @@ class MyRewardsScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
+                        // A prize with no description is named by its TYPE, and
+                        // the type is a backend enum. `t` alone would render
+                        // «rewardType.BADGE» — the key itself — for any of the
+                        // three `RewardType` values this app had no sentence
+                        // for, and for whatever the enum gains next.
                         prize.description.isEmpty
-                            ? t('rewardType.${prize.rewardType}')
+                            ? locale.tOrElse(
+                                'rewardType.${prize.rewardType}',
+                                t('rewardType.unknown'),
+                              )
                             : prize.description,
                         style: KidText.cardTitle(context),
                       ),

@@ -85,7 +85,10 @@ class GoalDetailScreen extends ConsumerWidget {
                             ? t('goalDetail.bonusMinutes')
                             : goal.reward.isPoints
                                 ? t('goalDetail.points')
-                                : t('rewardType.${goal.reward.type}'),
+                                : locale.tOrElse(
+                                    'rewardType.${goal.reward.type}',
+                                    t('rewardType.unknown'),
+                                  ),
                         icon: Icons.star_rounded,
                         color: KidColor.highlight,
                       ),
@@ -106,7 +109,18 @@ class GoalDetailScreen extends ConsumerWidget {
                     // The child's-eye description of how this will be
                     // checked. Sets the expectation BEFORE the work, which
                     // is the difference between "waiting" and "ignored".
-                    t('verifyForKid.${goal.verificationLevel}'),
+                    //
+                    // `tOrElse` because this key is assembled from the SERVER'S
+                    // `verificationLevel`, and `TodayGoal.fromJson` defaults
+                    // that to the empty string for a row that does not carry
+                    // one — which rendered the bare key «verifyForKid.» on the
+                    // one line that is supposed to explain what happens next.
+                    // All nine of the backend's VERIFICATION_METHODS have a
+                    // sentence here; this covers the empty and the tenth.
+                    locale.tOrElse(
+                      'verifyForKid.${goal.verificationLevel}',
+                      t('verifyForKid.unknown'),
+                    ),
                     style: KidText.body(context),
                   ),
                 ),
