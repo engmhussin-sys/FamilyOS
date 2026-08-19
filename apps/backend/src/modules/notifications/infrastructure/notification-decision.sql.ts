@@ -36,19 +36,27 @@
  * $6 notificationType · $7 category · $8 targetAudience · $9 decision ·
  * $10 priorityBand · $11 score · $12 reason · $13 explanation(jsonb) ·
  * $14 providerId · $15 ageBand · $16 locale · $17 countryCode ·
- * $18 aiRewritten · $19 aiFailed · $20 copyKey · $21 businessDate
+ * $18 aiRewritten · $19 aiFailed · $20 copyKey · $21 businessDate ·
+ * $22 aiAllowed · $23 aiInvoked · $24 aiSafetyRejection
+ *
+ * SPRINT F1 — THE THREE AI COLUMNS ARE APPENDED AT THE END OF THE PARAMETER
+ * LIST rather than inserted beside `ai_rewritten`, so every existing positional
+ * index in this statement keeps its meaning and a reviewer diffing it can see
+ * that nothing was renumbered.
  */
 export const SQL_RECORD_DECISION = `
 INSERT INTO "notification_decisions" (
   "family_id", "child_id", "source_event_id", "trigger", "event_type",
   "notification_type", "category", "target_audience", "decision", "priority_band",
   "score", "reason", "explanation", "provider_id", "age_band", "locale",
-  "country_code", "ai_rewritten", "ai_failed", "copy_key", "business_date"
+  "country_code", "ai_rewritten", "ai_failed", "copy_key", "business_date",
+  "ai_allowed", "ai_invoked", "ai_safety_rejection"
 ) VALUES (
   $1::uuid, $2::uuid, $3::text, $4::text, $5::text,
   $6::text, $7::text, $8::text, $9::text, $10::text,
   $11::smallint, $12::text, $13::jsonb, $14::text, $15::text, $16::text,
-  $17::text, $18::boolean, $19::boolean, $20::text, $21::date
+  $17::text, $18::boolean, $19::boolean, $20::text, $21::date,
+  $22::boolean, $23::boolean, $24::text
 )
 ON CONFLICT ("family_id", "source_event_id", "target_audience") DO NOTHING
 RETURNING "id"`;
@@ -82,6 +90,7 @@ SELECT "id", "child_id", "source_event_id", "trigger", "event_type",
        "notification_type", "category", "target_audience", "decision",
        "priority_band", "score", "reason", "explanation", "provider_id",
        "age_band", "locale", "country_code", "ai_rewritten", "ai_failed",
+       "ai_allowed", "ai_invoked", "ai_safety_rejection",
        "copy_key", "outcome", "outcome_reason", "business_date", "created_at"
   FROM "notification_decisions"
  WHERE "family_id" = $1::uuid

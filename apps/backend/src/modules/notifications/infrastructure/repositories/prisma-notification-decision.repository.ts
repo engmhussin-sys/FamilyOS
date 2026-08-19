@@ -82,6 +82,9 @@ export class PrismaNotificationDecisionRepository implements INotificationDecisi
       input.aiFailed,
       input.copyKey,
       input.businessDate,
+      input.aiAllowed,
+      input.aiInvoked,
+      input.aiSafetyRejection,
     );
     return rows[0]?.id ?? null;
   }
@@ -127,6 +130,9 @@ export class PrismaNotificationDecisionRepository implements INotificationDecisi
       countryCode: r.country_code,
       aiRewritten: Boolean(r.ai_rewritten),
       aiFailed: Boolean(r.ai_failed),
+      aiAllowed: Boolean(r.ai_allowed),
+      aiInvoked: Boolean(r.ai_invoked),
+      aiSafetyRejection: r.ai_safety_rejection ?? null,
       copyKey: r.copy_key,
       outcome: r.outcome,
       outcomeReason: r.outcome_reason,

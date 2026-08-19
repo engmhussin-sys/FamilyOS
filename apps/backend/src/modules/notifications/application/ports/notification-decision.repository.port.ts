@@ -32,6 +32,25 @@ export interface RecordDecisionInput {
   readonly countryCode: string | null;
   readonly aiRewritten: boolean;
   readonly aiFailed: boolean;
+  /**
+   * SPRINT F1 — THE TWO FIELDS THAT MAKE `ai_rewritten = false` READABLE.
+   *
+   * `aiAllowed` is the PERMISSION at the instant of composition (the feature
+   * flag AND a bound provider); `aiInvoked` is whether the model was actually
+   * entered. Both are produced by `NotificationComposerService.compose`, which
+   * has always computed them and until now threw them away — see
+   * `ComposedNotification.aiAllowed` for the four histories that were
+   * indistinguishable without them.
+   */
+  readonly aiAllowed: boolean;
+  readonly aiInvoked: boolean;
+  /**
+   * The safety layer's closed refusal reason, or `null` when nothing was
+   * refused. `ComposedNotification.safetyRejection`, persisted rather than
+   * discarded: it is what separates «the model answered and we said no» from
+   * «the model answered the same sentence back».
+   */
+  readonly aiSafetyRejection: string | null;
   readonly copyKey: string;
   /** The family's own business date — «last month» means the household's month. */
   readonly businessDate: string;
@@ -59,6 +78,9 @@ export interface DecisionLedgerRow {
   readonly countryCode: string | null;
   readonly aiRewritten: boolean;
   readonly aiFailed: boolean;
+  readonly aiAllowed: boolean;
+  readonly aiInvoked: boolean;
+  readonly aiSafetyRejection: string | null;
   readonly copyKey: string;
   readonly outcome: string | null;
   readonly outcomeReason: string | null;

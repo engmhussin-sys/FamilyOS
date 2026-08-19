@@ -4250,6 +4250,29 @@ model NotificationDecision {
 
   aiRewritten Boolean @default(false) @map("ai_rewritten")
   aiFailed    Boolean @default(false) @map("ai_failed")
+
+  /// SPRINT F1 — THE PERMISSION AND THE CALL, which `ai_rewritten` / `ai_failed`
+  /// could not express. Both false on those two columns carried four different
+  /// histories (feature off · model called and refused by safety · model called
+  /// and answered the same sentence back · the TEMPLATE itself failed safety
+  /// before the model was ever offered one), and a run with the model provably
+  /// called zero times produced a byte-identical row to one with it provably
+  /// called.
+  ///
+  /// `aiAllowed`  the flag AND a bound provider, at the instant of composition.
+  /// `aiInvoked`  `IAIProvider.complete` was actually entered — set BEFORE the
+  ///              await, so a timeout still counts as a call.
+  /// Both written by `NotificationComposerService.compose`, which has always
+  /// computed them and until Sprint F1 threw them away.
+  aiAllowed Boolean @default(false) @map("ai_allowed")
+  aiInvoked Boolean @default(false) @map("ai_invoked")
+
+  /// The safety layer's closed refusal reason (`ENUM_OR_PLACEHOLDER_LEAK`,
+  /// `TOO_LONG`, `PARENT_COPY_UNSAFE`, …), or NULL when nothing was refused.
+  /// NULL is a MEANING here rather than a missing writer: it is «the gate had no
+  /// objection». `ComposedNotification.safetyRejection` is its producer.
+  aiSafetyRejection String? @map("ai_safety_rejection") @db.VarChar(40)
+
   copyKey     String  @default("GENERIC") @map("copy_key") @db.VarChar(60)
 
   /// What the PIPELINE did, as opposed to what the ENGINE decided. The two
