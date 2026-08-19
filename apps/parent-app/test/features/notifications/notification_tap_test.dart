@@ -45,6 +45,8 @@ import 'package:parent_app/core/localization/locale_controller.dart';
 import 'package:parent_app/core/localization/localization_engine.dart';
 import 'package:parent_app/core/notifications/push_registration_service.dart';
 import 'package:parent_app/core/routing/app_routes.dart';
+import 'package:parent_app/core/routing/deep_link.dart';
+import 'package:parent_app/core/routing/deep_link_router.dart';
 import 'package:parent_app/core/theme/app_theme.dart';
 import 'package:parent_app/features/family/data/child_profile_repository.dart';
 import 'package:parent_app/features/family/presentation/child_detail_screen.dart';
@@ -225,6 +227,15 @@ Future<void> _pumpInbox(
           // `GET /children` stack and make a failure ambiguous between the
           // router and that screen.
           AppRoutes.screenTime: (_) => const _StubScreen(AppRoutes.screenTime),
+          // STUBS, by the same rule: the assertion is «the router pushed
+          // AppRoutes.progress», and mounting the real `ProgressChildrenScreen`
+          // would drag in the whole `GET /children` stack plus
+          // `ChildRewardsScreen`'s four endpoints, making a failure ambiguous
+          // between the router and those screens. What the real screens do with
+          // a family of none, one and several children is asserted directly in
+          // `test/features/family/child_picker_test.dart`.
+          AppRoutes.progress: (_) => const _StubScreen(AppRoutes.progress),
+          AppRoutes.coach: (_) => const _StubScreen(AppRoutes.coach),
         },
       ),
     ),
@@ -408,22 +419,94 @@ void main() {
     expect(children.requestedChildIds, isEmpty);
   });
 
-  testWidgets('a destination with no screen leaves the parent in the inbox, and says so',
-      (tester) async {
-    // `progress` is a REAL server destination (`REWARD_GRANTED` resolves to it)
-    // whose parent screen cannot be built from a link — see DeepLinkRouter's
-    // header. It must be honest, not silent.
+  testWidgets('THE REWARD NOTIFICATION FINALLY OPENS SOMETHING — `abny://progress` '
+      'navigates instead of apologising', (tester) async {
+    // THE DEFECT THIS TEST WAS INVERTED FOR. `REWARD_GRANTED` («حصل {childName}
+    // على مكافأة جديدة اليوم. افتح التطبيق لرؤية التفاصيل.») and
+    // `BADGE_EARNED_PARENT` are the two most-sent parent notifications in this
+    // product and both resolve to `abny://progress`. This test used to assert
+    // that tapping one left the parent in the inbox under a snackbar — the
+    // behaviour was accurate and the product was broken. Now it asserts the
+    // repair, in the same place, so the two states of this file are the two
+    // states of the product.
     final api = _FakeNotificationsApi(<dynamic>[_row(deepLink: 'abny://progress')]);
     await _pumpInbox(tester, api: api);
 
     await tester.tap(find.text('إشعار'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(seconds: 1));
 
-    expect(find.byType(NotificationsScreen), findsOneWidget);
-    expect(find.text(ar('deepLink.unavailable')), findsOneWidget);
-    // Still marked read: the parent has seen it, whatever the tap could open.
+    expect(find.text(AppRoutes.progress), findsOneWidget);
+    // NOT the apology. Named explicitly: a silent regression here would put the
+    // snackbar back and this assertion is the only thing that would say so.
+    expect(find.text(ar('deepLink.unavailable')), findsNothing);
+    // Still marked read, which is the behaviour navigation was never allowed to
+    // cost.
     expect(api.markedRead, <String>['n_1']);
+  });
+
+  testWidgets('`abny://coach` navigates too — the other surface that used to be '
+      'refused', (tester) async {
+    // Nothing resolves to `coach` on the server today
+    // (`CHILD_WELLBEING_CHECKIN` was moved to `safetyDestination`), so this is
+    // the surface being pinned rather than a live producer. A surface in the
+    // scheme that the app cannot open is the defect; the traffic on it is not
+    // the measure.
+    final api = _FakeNotificationsApi(<dynamic>[_row(deepLink: 'abny://coach')]);
+    await _pumpInbox(tester, api: api);
+
+    await tester.tap(find.text('إشعار'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.text(AppRoutes.coach), findsOneWidget);
+    expect(find.text(ar('deepLink.unavailable')), findsNothing);
+  });
+
+  testWidgets('the honest fallback is STILL LIVE for the one case that still '
+      'means it — and it says so out loud', (tester) async {
+    // No LINK reaches `unavailable` any more: `parseDeepLink` turns a bare
+    // id-bearing surface into the inbox, and the server degrades `goal` to
+    // `goals` itself. The path is reached by a caller constructing a
+    // destination BY HAND with no id, which `ProgramDetailScreen` genuinely
+    // cannot be built from — so it is exercised the way it is reachable, rather
+    // than deleted along with the notification that used to reach it.
+    GoogleFonts.config.allowRuntimeFetching = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('ar'),
+        localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const <Locale>[Locale('ar'), Locale('en')],
+        initialRoute: AppRoutes.notifications,
+        routes: <String, WidgetBuilder>{
+          AppRoutes.notifications: (context) => Scaffold(
+                body: Builder(
+                  builder: (inner) => TextButton(
+                    onPressed: () => DeepLinkRouter.follow(
+                      inner,
+                      const DeepLinkDestination(DeepLinkSurface.goal),
+                      t: ar,
+                    ),
+                    child: const Text('go'),
+                  ),
+                ),
+              ),
+        },
+      ),
+    );
+
+    await tester.tap(find.text('go'));
+    await tester.pump();
+
+    // It did NOT push a second inbox on top of the inbox…
+    expect(find.text('go'), findsOneWidget);
+    // …and it said what happened, in Arabic, from the localisation engine.
+    expect(find.text(ar('deepLink.unavailable')), findsOneWidget);
   });
 
   testWidgets('a row with no link at all falls back to the inbox without throwing',

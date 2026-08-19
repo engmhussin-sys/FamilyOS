@@ -155,44 +155,88 @@ void main() {
     });
   });
 
-  group('DeepLinkRouter.resolve — the surfaces with no screen say so', () {
-    // TWO REMAIN, not five. `safety`, `child` and `screen-time` are now open.
+  group('DeepLinkRouter.resolve — NO SURFACE is refused any more', () {
+    // THIS GROUP USED TO LIST TWO. It listed five before that.
     //
-    // `progress` and `coach` stay unavailable for a reason that is a PRODUCT
-    // decision rather than a missing screen: their screens exist and both need
-    // `childId` AND `childName`, which no `abny://` link carries — the server
-    // pins `notifications.data` identifier-free on purpose. `ChildDetailScreen`
-    // is now the natural HOST for both, but hosting is not opening: `resolve`
-    // is a pure function of the DESTINATION, and a destination with no id names
-    // no child. Choosing one here would be this client deciding something the
-    // server declined to say.
-    const unopenable = <String>[
-      'abny://progress',
-      'abny://coach',
-    ];
+    // `progress` was the expensive one: `REWARD_GRANTED` and
+    // `BADGE_EARNED_PARENT` — the two most-sent parent notifications in this
+    // product — both resolve to `abny://progress`, and both sentences tell the
+    // parent to open the app. Answering that with `unavailable()` put them back
+    // in the inbox they were already in.
+    //
+    // The reason it was refused was not wrong, only its conclusion was:
+    // `ChildRewardsScreen` and `CoachingScreen` do need a `childId` no
+    // `abny://` link carries, and `resolve` must not pick a child the server
+    // declined to name. `ProgressChildrenScreen` and `CoachChildrenScreen` do
+    // not pick — they ASK the family's own data, exactly as
+    // `ScreenTimeChildrenScreen` already did for `abny://screen-time`.
 
-    test('each one resolves to unavailable — never a null builder, never a throw', () {
-      for (final link in unopenable) {
-        final route = DeepLinkRouter.resolveLink(link);
-        expect(route.kind, DeepLinkRouteKind.unavailable, reason: link);
-        expect(route.routeName, isNull, reason: link);
-        expect(route.pageBuilder, isNull, reason: link);
+    test('progress lands on the progress surface — the dead tap on the two '
+        'most-sent parent notifications, closed', () {
+      final route = DeepLinkRouter.resolveLink('abny://progress');
+      expect(route.kind, DeepLinkRouteKind.named);
+      expect(route.routeName, AppRoutes.progress);
+      expect(route.pageBuilder, isNull);
+    });
+
+    test('coach lands on the coaching surface', () {
+      final route = DeepLinkRouter.resolveLink('abny://coach');
+      expect(route.kind, DeepLinkRouteKind.named);
+      expect(route.routeName, AppRoutes.coach);
+      expect(route.pageBuilder, isNull);
+    });
+
+    test('EVERY surface in the scheme is openable from a real link', () {
+      // The claim the two tests above are instances of, made once over the
+      // whole enum: a link this server can actually EMIT never resolves to
+      // `unavailable`. `parseDeepLink` is in the loop on purpose — it is the
+      // only path a notification takes.
+      for (final surface in DeepLinkSurface.values) {
+        final destination = deepLinkSurfaceTakesId(surface)
+            ? DeepLinkDestination(surface, id: _uuid)
+            : DeepLinkDestination(surface);
+        expect(
+          DeepLinkRouter.resolveLink(destination.uri).kind,
+          isNot(DeepLinkRouteKind.unavailable),
+          reason: destination.uri,
+        );
       }
     });
 
-    test('the three that used to be here are not unavailable any more', () {
+    test('the five that used to be here are not unavailable any more', () {
       // Pinned in the POSITIVE direction as well, so a later edit that quietly
       // re-broke one of them fails here rather than on a parent's phone.
       for (final link in <String>[
         'abny://screen-time',
         'abny://safety/$_uuid',
         'abny://child/$_uuid',
+        'abny://progress',
+        'abny://coach',
       ]) {
         expect(
           DeepLinkRouter.resolveLink(link).kind,
           isNot(DeepLinkRouteKind.unavailable),
           reason: link,
         );
+      }
+    });
+
+    test('`unavailable` is still LIVE CODE, for the one case that still means '
+        'it: an id-bearing destination built by hand with no id', () {
+      // Unreachable from a notification — `parseDeepLink` turns a bare
+      // id-bearing surface into the inbox, and the server degrades `goal` to
+      // `goals` itself — but reachable from any caller constructing a
+      // destination, and `ProgramDetailScreen` genuinely cannot be built
+      // without a programId. The snackbar path must not rot.
+      for (final surface in <DeepLinkSurface>[
+        DeepLinkSurface.goal,
+        DeepLinkSurface.approval,
+        DeepLinkSurface.child,
+      ]) {
+        final route = DeepLinkRouter.resolve(DeepLinkDestination(surface));
+        expect(route.kind, DeepLinkRouteKind.unavailable, reason: '$surface');
+        expect(route.routeName, isNull, reason: '$surface');
+        expect(route.pageBuilder, isNull, reason: '$surface');
       }
     });
   });
