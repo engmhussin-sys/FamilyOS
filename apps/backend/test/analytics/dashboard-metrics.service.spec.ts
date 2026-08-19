@@ -6,7 +6,7 @@ import { PrismaService } from '../../src/common/prisma/prisma.service';
 describe('DashboardMetricsService', () => {
   const prismaMock = {
     family: { count: jest.fn() },
-    device: { count: jest.fn(), findMany: jest.fn() },
+    device: { count: jest.fn() },
     /**
      * PHASE D (GROWTH). The denominator moved from `subscriptions` to
      * `trials`, and that is the POINT of the change rather than a detail of
@@ -29,12 +29,14 @@ describe('DashboardMetricsService', () => {
   });
 
   it('computes all metrics from real counts, including the new support queue depth (proactive business review)', async () => {
-    prismaMock.family.count.mockResolvedValue(100);
+    // 100 registered families; 2 of them had a device heartbeat in the window.
+    // The second `family.count` IS the active-family number now — it used to be
+    // `device.findMany({ distinct }).length` de-duplicated in JavaScript.
+    prismaMock.family.count.mockResolvedValueOnce(100).mockResolvedValueOnce(2);
     prismaMock.device.count.mockResolvedValueOnce(150).mockResolvedValueOnce(80);
     // 50 trials have ENDED; 30 of them converted.
     prismaMock.trial.count.mockResolvedValueOnce(50).mockResolvedValueOnce(30);
     prismaMock.supportRequest.count.mockResolvedValue(7);
-    prismaMock.device.findMany.mockResolvedValue([{ familyId: 'f1' }, { familyId: 'f2' }]);
 
     const result = await service.getMetrics();
 
@@ -52,7 +54,6 @@ describe('DashboardMetricsService', () => {
     prismaMock.family.count.mockResolvedValue(0);
     prismaMock.device.count.mockResolvedValue(0);
     prismaMock.trial.count.mockResolvedValue(0);
-    prismaMock.device.findMany.mockResolvedValue([]);
     prismaMock.supportRequest.count.mockResolvedValue(3);
 
     await service.getMetrics();
@@ -66,7 +67,6 @@ describe('DashboardMetricsService', () => {
     prismaMock.family.count.mockResolvedValue(0);
     prismaMock.device.count.mockResolvedValue(0);
     prismaMock.trial.count.mockResolvedValue(0);
-    prismaMock.device.findMany.mockResolvedValue([]);
     prismaMock.supportRequest.count.mockResolvedValue(0);
 
     const result = await service.getMetrics();

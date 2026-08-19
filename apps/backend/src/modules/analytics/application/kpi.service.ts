@@ -447,20 +447,42 @@ export class KpiService {
     });
     if (size === 0) return { retained: null, size: 0 };
 
-    const retainedRows = await this.prisma.device.findMany({
+    /**
+     * COUNTED IN SQL, NOT IN NODE — the SECOND site of the construct
+     * `activeFamilies()` above already fixed and explains. It was
+     * `device.findMany({ distinct: ['familyId'] }).length`, and under Prisma
+     * 5.20 without `nativeDistinct` that `distinct` runs CLIENT-SIDE: one row
+     * per matching DEVICE crossed the wire so JavaScript could de-duplicate
+     * them into a number. The retention numerator is the worst place for it —
+     * D30 is asked once per cohort day, and the cost grows with the fleet
+     * rather than with the cohort.
+     *
+     * THE PREDICATE IS IDENTICAL, term for term: a family created inside the
+     * cohort day, in the country filter, with at least one non-deleted device
+     * whose heartbeat lands inside the target day. The `family: {...}` filter
+     * that was a RELATION filter on `device` is now the outer `where`, and
+     * the device filter that was the outer `where` is now the `some`.
+     *
+     * `deletedAt: null` on the family is deliberately NOT added, even though
+     * `size` above carries it: aligning the two is a real question (it is what
+     * would guarantee `retained <= size`) and it is a behavioural change to a
+     * published KPI, not part of a performance fix. Today it changes nothing —
+     * nothing in `src/` writes `families.deleted_at`.
+     */
+    const retained = await this.prisma.family.count({
       where: {
-        deletedAt: null,
-        lastSeenAt: { gte: targetRange.start, lt: targetRange.endExclusive },
-        family: {
-          createdAt: { gte: cohortRange.start, lt: cohortRange.endExclusive },
-          ...countryFilter,
+        createdAt: { gte: cohortRange.start, lt: cohortRange.endExclusive },
+        ...countryFilter,
+        devices: {
+          some: {
+            deletedAt: null,
+            lastSeenAt: { gte: targetRange.start, lt: targetRange.endExclusive },
+          },
         },
       },
-      distinct: ['familyId'],
-      select: { familyId: true },
     });
 
-    return { retained: retainedRows.length, size };
+    return { retained, size };
   }
 
   /**
