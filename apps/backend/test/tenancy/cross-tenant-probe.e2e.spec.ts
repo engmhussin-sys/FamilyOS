@@ -864,12 +864,23 @@ describeIfDb('R8 — generated cross-tenant probe suite against the real applica
   }
 
   const CROSS_TENANT_DEFECT_LEDGER: readonly LedgerEntry[] = Object.freeze([
-    {
-      what: 'POST /organizations/invitations/:invitationId/accept',
-      evidence: 'src/modules/organization/application/services/organization.service.ts:181-196',
-      detail:
-        'acceptInvitation looks the invitation up with no membership check first: an unknown id answers 404 "Invitation …not found", while an invitation belonging to an organization the caller has nothing to do with answers 403 "sent to a different email address" — and 400 once it is expired or already accepted. Any authenticated parent can therefore test invitation ids for existence, and read back the status and expiry of other organizations’ invitations, before the email check that was supposed to be the whole control.',
-    },
+    // EMPTY, AND THAT IS THE POINT OF THE RATCHET.
+    //
+    // This ledger held one entry: `POST /organizations/invitations/:invitationId
+    // /accept` answered 404 for an unknown id but 403/400 for a real one, so any
+    // authenticated parent could enumerate invitation ids platform-wide and read
+    // back their status — an existence oracle sitting in front of the email check
+    // that was supposed to be the whole control.
+    //
+    // It was found by WIDENING this suite, not by reading the module: the probe
+    // used to filter to routes whose every param was in a six-name whitelist and
+    // then assert only `fillable.length >= 20`, which excluded collection routes
+    // entirely and covered roughly a third of the id surface. The route is now
+    // fixed (`organization.service.ts` checks the recipient FIRST and answers one
+    // constant refusal for "unknown" and "not yours" alike, issuing both lookups
+    // unconditionally so the two are one timing class), and the entry is deleted
+    // in the same breath — because an `it.failing` that is left behind after its
+    // defect is closed turns a ratchet back into a scoreboard.
   ]);
 
   const ledgerNames = new Set(CROSS_TENANT_DEFECT_LEDGER.map((e) => e.what));
