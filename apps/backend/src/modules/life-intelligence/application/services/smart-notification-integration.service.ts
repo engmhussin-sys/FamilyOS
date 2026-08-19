@@ -354,14 +354,14 @@ export class SmartNotificationIntegrationService {
    * own inbox — `notifications` for PARENT, unchanged, and `child_messages`
    * restricted to `source_event_id IS NOT NULL` for CHILD.
    *
-   * THE TWO LAYERS SHOULD SHARE ONE IMPLEMENTATION AND CANNOT TODAY: the
-   * assembler is in `modules/notification-engine`, this service is in
-   * `modules/life-intelligence`, and neither module may own the other — the
-   * shared home for that query is a port in `shared/notifications`. Rather than
-   * invent a second, subtly different notion of «history», the CHILD branch
-   * delegates to `PrismaCommunicationRepository.findRecentNotificationsForChild`,
-   * whose docstring states the correspondence with `readChildInbox` clause by
-   * clause and names it as the definition this must not drift from.
+   * AND THE TWO LAYERS NOW SHARE ONE IMPLEMENTATION.
+   * `readChildInboxHistory` in `shared/notifications/child-inbox-history.ts` is
+   * the single definition of «the child's own notification history»; the
+   * assembler calls it and so, through
+   * `PrismaCommunicationRepository.findRecentNotificationsForChild`, does this.
+   * Its `until` is REQUIRED, so the upper bound at `now` — the one this branch
+   * used to apply in memory — is now a `created_at <= $until` in PostgreSQL
+   * that no caller can forget.
    *
    * NO CAP CONSTANT MOVED, deliberately, and for the reason `fb988c4` gave:
    * `dailyMax = 6` and `categoryDailyMax = 2` are Sprint 16's numbers, chosen
@@ -382,10 +382,11 @@ export class SmartNotificationIntegrationService {
     const since = new Date(now.getTime() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000);
 
     if (audience === 'CHILD') {
-      const rows = await this.childMessages.findRecentNotificationsForChild(childId, since);
-      return rows
-        .filter((m) => m.createdAt.getTime() <= now.getTime())
-        .map((m) => ({
+      // BOTH BOUNDS ARE THE QUERY'S. `until: now` is required by the shared
+      // module, so the «history is what already happened» rule is enforced in
+      // SQL rather than by a `.filter` this method used to carry.
+      const rows = await this.childMessages.findRecentNotificationsForChild(childId, since, now);
+      return rows.map((m) => ({
         type: m.type,
         // `child_messages` HAS NO PRIORITY COLUMN, stated rather than guessed:
         // a child's message surface has never had a loudness axis. Nothing

@@ -484,21 +484,22 @@ export class QuietHoursReleaseService {
     // including rows addressed to a CHILD — whose notifications are
     // `child_messages` and are not in `notifications` in any form. So a child's
     // deferred reward, released in the morning, was capped and cooled down
-    // against the PARENT'S day and its own day was never counted. Same defect,
-    // same fix and the same single definition as
-    // `SmartNotificationIntegrationService.fetchHistory`; that method's
-    // docstring carries the argument and names the layer above that it must
-    // stay identical to.
+    // against the PARENT'S day and its own day was never counted.
+    //
+    // ONE DEFINITION, SHARED: the CHILD branch reaches
+    // `readChildInboxHistory` (`shared/notifications/child-inbox-history.ts`)
+    // through the repository, which is the same function the assembler and
+    // `SmartNotificationIntegrationService.fetchHistory` call. `until` is
+    // REQUIRED there, so the upper bound at the RELEASE instant is applied by
+    // PostgreSQL rather than by a filter here.
     if (audience === 'CHILD') {
-      const rows = await this.childMessages.findRecentNotificationsForChild(childId, since);
-      return rows
-        .filter((m) => m.createdAt.getTime() <= now.getTime())
-        .map((m) => ({
-          type: m.type,
-          priority: 'NORMAL' as const,
-          createdAt: m.createdAt,
-          sourceEventId: m.sourceEventId,
-        }));
+      const rows = await this.childMessages.findRecentNotificationsForChild(childId, since, now);
+      return rows.map((m) => ({
+        type: m.type,
+        priority: 'NORMAL' as const,
+        createdAt: m.createdAt,
+        sourceEventId: m.sourceEventId,
+      }));
     }
 
     const raw = (await this.notifications.findRecentForChild(childId, since)).filter(

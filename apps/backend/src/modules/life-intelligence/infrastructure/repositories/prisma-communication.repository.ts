@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
+import {
+  readChildInboxHistory,
+  type ChildInboxHistoryFact,
+} from '../../../../shared/notifications/child-inbox-history';
 import { IChildMessage, ISendChildMessageInput } from '../../domain/communication.types';
 import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
@@ -98,53 +102,30 @@ export class PrismaCommunicationRepository {
    * `notifications` at all, so the parent's stream was both the wrong denominator
    * and, for the child, an empty one.
    *
-   * THIS IS THE SAME QUESTION `NotificationContextAssembler.readChildInbox`
-   * ASKS, DELIBERATELY WORDED IDENTICALLY: same table, same window predicate,
-   * same `source_event_id IS NOT NULL` test, same `category`-as-type mapping.
-   * The two layers should share ONE implementation and they cannot today — the
-   * assembler lives in `modules/notification-engine` and this repository in
-   * `modules/life-intelligence`, and neither module may own the other. The
-   * shared home is a port in `shared/notifications`, which is a change that
-   * touches a file this module does not own; until it exists, the two are kept
-   * word-for-word identical and this comment is the pointer between them.
+   * THE QUERY IS NOT HERE ANY MORE, AND THAT IS THE POINT.
+   * `readChildInboxHistory` in `shared/notifications/child-inbox-history.ts` is
+   * the ONE definition of this question, and it is the same function
+   * `NotificationContextAssembler.readChildInbox` calls. What used to keep the
+   * two copies aligned was a paragraph in each of them naming the other; a
+   * comment cannot fail a build, and the two had already drifted once — one
+   * side gained an upper bound at `now` and the other did not. This method is
+   * now the tenant-extended Prisma delegate plus a name, and
+   * `test/notifications/child-inbox-history.spec.ts` pins every clause of the
+   * `where`, the `select` and the `orderBy`.
    *
-   * `source_event_id IS NOT NULL` IS THE «IS THIS A NOTIFICATION?» TEST, and it
-   * is the table's own: the column is documented NULLABLE precisely because
-   * this table ALSO holds PARENT-AUTHORED messages, and NULL there means «a
-   * human wrote this». A parent typing «أحسنت» to their child is a
-   * conversation, not a notification, and counting it towards a fatigue cap
-   * would let a warm parent mute the product's own feedback loop.
-   *
-   * TWO COLUMNS, not the row: no title, no body, no `data`. A cap needs to know
-   * that a message happened, what kind it was and when; it has never needed to
-   * know what it said.
+   * `until` IS REQUIRED, by the shared module's design rather than this
+   * method's preference: a row stamped AFTER the instant being evaluated is not
+   * history, and an open-ended window counts it — `now - createdAt` is
+   * NEGATIVE, smaller than any window, so a future row reads as «two seconds
+   * ago» to every rule that measures age. The bound is now PostgreSQL's
+   * (`created_at <= $until`) instead of a filter each caller had to remember.
    */
   async findRecentNotificationsForChild(
     childId: string,
     since: Date,
-  ): Promise<Array<{ type: string; createdAt: Date; sourceEventId: string | null }>> {
-    const rows = await this.prisma.childMessage.findMany({
-      where: { childId, createdAt: { gte: since }, sourceEventId: { not: null } },
-      select: { category: true, createdAt: true, sourceEventId: true },
-      orderBy: { createdAt: 'desc' },
-    });
-    // `category` HOLDS THE NOTIFICATION TYPE on this path —
-    // `SmartNotificationIntegrationService.deliverNow` passes `candidate.type`
-    // into `draftAiMessageIfAbsent`'s `category` parameter — so it is the same
-    // vocabulary `IRecentNotification.type` carries on the parent branch, and
-    // the guard's per-type cooldown and category cap read the same strings for
-    // both audiences.
-    return rows.map((row) => ({
-      type: row.category,
-      createdAt: row.createdAt,
-      // THE KEY AS PERSISTED, `:child`-faceted, and deliberately NOT un-faceted
-      // here: the fatigue guard composes the candidate's key forwards with the
-      // same `forAudience` the writer used, so the two strings are comparable
-      // by construction. An inverse would have to guess what a 200-character
-      // clamp did to the suffix. Same technique, same sentence, as
-      // `NotificationContextAssembler.readChildInbox`.
-      sourceEventId: row.sourceEventId,
-    }));
+    until: Date,
+  ): Promise<ChildInboxHistoryFact[]> {
+    return readChildInboxHistory(this.prisma.childMessage, { childId, since, until });
   }
 
   /** Only DELIVERED messages are visible to the child — a PENDING

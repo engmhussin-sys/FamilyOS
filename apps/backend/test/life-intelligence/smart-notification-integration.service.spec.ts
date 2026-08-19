@@ -345,10 +345,23 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
       expect(childMessagesRepoMock.findRecentNotificationsForChild).toHaveBeenCalledTimes(1);
       expect(notificationRepoMock.findRecentForChild).not.toHaveBeenCalled();
 
+      // AND IT ASKS FOR A CLOSED WINDOW. `readChildInboxHistory` makes `until`
+      // REQUIRED so that «history is what already happened» is enforced in SQL
+      // instead of by a filter each caller has to remember; this pins that the
+      // instant handed over is the one being EVALUATED — the same `now` the
+      // window's lower bound is measured back from — and not the wall clock.
+      const now = new Date('2026-08-10T15:00:00');
+      const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      expect(childMessagesRepoMock.findRecentNotificationsForChild).toHaveBeenCalledWith(
+        childId,
+        since,
+        now,
+      );
+
       jest.clearAllMocks();
       notificationRepoMock.findRecentForChild.mockResolvedValue([]);
       childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
-    policyRepoMock.readSettings.mockResolvedValue({});
+      policyRepoMock.readSettings.mockResolvedValue({});
       familyCommunicationMock.draftAiMessageIfAbsent.mockResolvedValue({ id: 'msg-1' });
       runtimeAlertRepoMock.createForFamilyOwner.mockResolvedValue(true);
 

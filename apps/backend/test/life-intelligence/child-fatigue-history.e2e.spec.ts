@@ -146,10 +146,21 @@ describeIfDb('THE CHILD IS NOT THE PARENT — fatigue history is the recipient\'
     }));
   };
 
-  /** THE POST-FIX INPUT for a CHILD candidate: the child's own inbox. */
+  /**
+   * THE POST-FIX INPUT for a CHILD candidate: the child's own inbox, over the
+   * window the decision is actually being made in.
+   *
+   * BOTH BOUNDS ARE THE QUERY'S. `until: NOW` is required by
+   * `readChildInboxHistory`, the one shared definition of this question, so a
+   * row stamped after the instant under test is excluded by PostgreSQL — which
+   * is why §3's «six seeded and not five» note below is about the row the real
+   * service wrote with the DATABASE's clock.
+   */
   const historyAsPostFix = async (): Promise<IRecentNotification[]> => {
     const since = new Date(NOW.getTime() - HISTORY_WINDOW_HOURS * 3_600_000);
-    const raws = await asFamily(() => childInbox.findRecentNotificationsForChild(childId, since));
+    const raws = await asFamily(() =>
+      childInbox.findRecentNotificationsForChild(childId, since, NOW),
+    );
     return raws.map((m) => ({ type: m.type, priority: 'NORMAL' as const, createdAt: m.createdAt }));
   };
 
