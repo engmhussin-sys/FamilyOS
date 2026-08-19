@@ -3,12 +3,18 @@ import { Test } from '@nestjs/testing';
 import { AI_PROVIDER } from '../../src/modules/ai-core/domain/ai-provider.port';
 import { AI_MEMORY_REPOSITORY } from '../../src/modules/ai-core/domain/memory.types';
 import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
+import { AI_ALERT_REPOSITORY } from '../../src/modules/ai-core/domain/ai-alert.types';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { FamilyDateService } from '../../src/common/time/family-date.service';
 import { DistressEscalationService } from '../../src/modules/ai-core/application/services/distress-escalation.service';
 import {
+  DISTRESS_ALERT_CATEGORY,
+  DISTRESS_ALERT_COPY,
+  DISTRESS_ALERT_SEVERITY,
+  DISTRESS_ALERT_SOURCE_MODULE,
   DISTRESS_RESPONSE_CARD,
   classifyDistress,
+  distressAlertSourceEventId,
   distressParentAlert,
 } from '../../src/modules/ai-core/domain/distress';
 
@@ -128,6 +134,7 @@ describe('DistressEscalationService', () => {
   let service: DistressEscalationService;
   const memory = { record: jest.fn(), upsert: jest.fn(), find: jest.fn(), findAllByCategory: jest.fn(), countByCategorySince: jest.fn() };
   const alerts = { createForFamilyOwner: jest.fn(), listForUser: jest.fn() };
+  const aiAlerts = { record: jest.fn(), listForFamily: jest.fn() };
   const children = { getChildOrThrow: jest.fn() };
   const familyDate = { getBusinessDate: jest.fn() };
   const provider = { complete: jest.fn() };
@@ -137,12 +144,14 @@ describe('DistressEscalationService', () => {
     children.getChildOrThrow.mockResolvedValue({ firstName: 'يوسف', dateOfBirth: new Date('2015-04-01') });
     familyDate.getBusinessDate.mockResolvedValue('2026-08-15');
     alerts.createForFamilyOwner.mockResolvedValue(true);
+    aiAlerts.record.mockResolvedValue(true);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         DistressEscalationService,
         { provide: AI_MEMORY_REPOSITORY, useValue: memory },
         { provide: RUNTIME_ALERT_REPOSITORY, useValue: alerts },
+        { provide: AI_ALERT_REPOSITORY, useValue: aiAlerts },
         { provide: ChildrenService, useValue: children },
         { provide: FamilyDateService, useValue: familyDate },
         // Present in the module ONLY so that a future edit adding a provider
@@ -211,9 +220,16 @@ describe('DistressEscalationService', () => {
   it('an ORDINARY check-in writes nothing, alerts nobody, and still calls no provider', async () => {
     const result = await service.checkin('c1', 'f1', 'اليوم كان جيدًا وأنهيت واجبي');
 
-    expect(result).toEqual({ escalated: false, card: null, code: null, parentAlerted: false });
+    expect(result).toEqual({
+      escalated: false,
+      card: null,
+      code: null,
+      parentAlerted: false,
+      alertRecorded: false,
+    });
     expect(memory.record).not.toHaveBeenCalled();
     expect(alerts.createForFamilyOwner).not.toHaveBeenCalled();
+    expect(aiAlerts.record).not.toHaveBeenCalled();
     expect(provider.complete).not.toHaveBeenCalled();
   });
 
@@ -229,5 +245,96 @@ describe('DistressEscalationService', () => {
     await expect(service.checkin('other', 'f1', SECRET)).rejects.toThrow('CHILD_NOT_FOUND');
     expect(memory.record).not.toHaveBeenCalled();
     expect(alerts.createForFamilyOwner).not.toHaveBeenCalled();
+    expect(aiAlerts.record).not.toHaveBeenCalled();
+  });
+
+  // =========================================================================
+  // THE DURABLE RECORD — `ai_alerts`, WHICH HAD READERS AND NO WRITER
+  // =========================================================================
+
+  it('writes an ai_alerts row, and passes NOTHING that could carry the child’s words', async () => {
+    await service.checkin('c1', 'f1', SECRET);
+
+    expect(aiAlerts.record).toHaveBeenCalledTimes(1);
+    const input = aiAlerts.record.mock.calls[0][0];
+
+    expect(input.childId).toBe('c1');
+    // The enums `GrowthAlertsService.aiSafetyIncident` keys on.
+    expect(input.severity).toBe(DISTRESS_ALERT_SEVERITY);
+    expect(input.severity).toBe('CRITICAL');
+    expect(input.category).toBe(DISTRESS_ALERT_CATEGORY);
+    expect(input.sourceModule).toBe(DISTRESS_ALERT_SOURCE_MODULE);
+    // Human-written copy, not a template a model filled in.
+    expect(input.title).toBe(DISTRESS_ALERT_COPY.title);
+    expect(input.description).toBe(DISTRESS_ALERT_COPY.description);
+
+    // THE PRIVACY ASSERTIONS, on the whole argument object: not the text, not a
+    // fragment of it, and not the classification.
+    const serialised = JSON.stringify(input);
+    expect(serialised).not.toContain(SECRET);
+    expect(serialised).not.toContain('أموت');
+    expect(serialised).not.toContain('SELF_HARM');
+    // And the input type has no room for one: no `data`, no `metadata`, no
+    // `excerpt`. Asserting the KEY SET is what makes this survive the next
+    // person who adds a field.
+    expect(Object.keys(input).sort()).toEqual([
+      'category',
+      'childId',
+      'description',
+      'severity',
+      'sourceEventId',
+      'sourceModule',
+      'title',
+    ]);
+  });
+
+  it('the alert’s dedupe key is ONE PER CHILD PER FAMILY BUSINESS DAY', async () => {
+    await service.checkin('c1', 'f1', SECRET);
+    const input = aiAlerts.record.mock.calls[0][0];
+    expect(input.sourceEventId).toBe(distressAlertSourceEventId('c1', '2026-08-15'));
+    // No five-minute bucket in it: a durable row a parent scrolls through must
+    // not be able to appear twice on one day at a window boundary.
+    expect(input.sourceEventId).not.toMatch(/:w\d+$/);
+  });
+
+  it('every DistressCode produces the SAME row — the classification never reaches the table', async () => {
+    const byCode: Record<string, unknown> = {};
+    for (const [code, text] of [
+      ['SELF_HARM', 'أريد أن أموت'],
+      ['ABUSE_OR_FEAR', 'أبي يضربني'],
+      ['HOPELESSNESS', 'أكره نفسي'],
+      ['BULLYING', 'يتنمرون علي في المدرسة'],
+      ['SEVERE_SADNESS', 'أبكي كل ليلة'],
+    ] as const) {
+      aiAlerts.record.mockClear();
+      const result = await service.checkin('c1', 'f1', text);
+      expect(result.code).toBe(code);
+      const { childId: _childId, sourceEventId: _key, ...rest } = aiAlerts.record.mock.calls[0][0];
+      byCode[code] = JSON.stringify(rest);
+    }
+    // Five codes, ONE distinct row shape. A parent cannot reverse-read the
+    // classification out of `(category, severity, title, description)`.
+    expect(new Set(Object.values(byCode)).size).toBe(1);
+  });
+
+  it('reports alertRecorded=false when the UNIQUE constraint refused a replay', async () => {
+    aiAlerts.record.mockResolvedValue(false);
+    const result = await service.checkin('c1', 'f1', SECRET);
+    expect(result.escalated).toBe(true);
+    expect(result.alertRecorded).toBe(false);
+  });
+
+  it('the parent is notified BEFORE the row is written — a table error never silences the alert', async () => {
+    const order: string[] = [];
+    alerts.createForFamilyOwner.mockImplementation(async () => {
+      order.push('notify');
+      return true;
+    });
+    aiAlerts.record.mockImplementation(async () => {
+      order.push('record');
+      return true;
+    });
+    await service.checkin('c1', 'f1', SECRET);
+    expect(order).toEqual(['notify', 'record']);
   });
 });

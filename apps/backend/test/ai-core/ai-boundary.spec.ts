@@ -25,7 +25,37 @@ const SRC_DIR = join(REPO_ROOT, 'src');
  * only version of this claim worth making about a safety boundary.
  */
 
-const AI_WRITE_ALLOWLIST = ['aiUsageLog', 'aiMemoryEntry'];
+/**
+ * THE THREE TABLES `ai-core` MAY WRITE.
+ *
+ * `aiAlert` IS THE THIRD, AND IT WAS ADDED THE WAY THIS FILE INTENDS: BY
+ * FAILING. Phase A measured two, and the two-entry list stood until a
+ * schema-liveness audit found that `ai_alerts` — described in
+ * `prisma/schema.prisma` as «the AI layer's output contract — parents see
+ * alerts, never raw monitored content» — HAD READERS AND NO WRITER.
+ * `GrowthAlertsService.aiSafetyIncident` scanned it for un-reviewed CRITICAL
+ * rows under a comment reading «one is one too many» and scanned an empty table
+ * on every tick, so the offline child-safety classifier could fire and no
+ * parent would ever get a durable alert. The fix is a writer, and a writer
+ * needed this line.
+ *
+ * WHY WIDENING IS SAFE HERE, STATED RATHER THAN ASSUMED. E5's rule is that the
+ * AI is a DATA PRODUCT and not a privileged client: it must not be able to
+ * grant a reward, move a limit, change a setting, or approve anything.
+ * `ai_alerts` is none of those — it is the AI's own OUTPUT, the table the schema
+ * declares to be this layer's product, and a row in it changes no entitlement,
+ * no policy and no balance. It is written through `IRecordAiAlertInput`, which
+ * has no field capable of holding a child's text, and the `aiAlert` writes are
+ * pinned to ONE file by the test below, so this entry cannot quietly become a
+ * licence for the rest of the module.
+ *
+ * The list is still a ratchet. A FOURTH entry must fail here first, for the
+ * same reason this third one did.
+ */
+const AI_WRITE_ALLOWLIST = ['aiUsageLog', 'aiMemoryEntry', 'aiAlert'];
+
+/** `aiAlert` writes are permitted in exactly one file — the single writer. */
+const AI_ALERT_WRITER = 'src/modules/ai-core/infrastructure/prisma-ai-alert.repository.ts';
 
 const WRITE_OPERATIONS = [
   'create',
@@ -112,8 +142,8 @@ describe('AI SAFETY BOUNDARY — the AI is a data product, not a privileged clie
     ).toEqual([]);
   });
 
-  it('the allow-list is exactly the two tables Phase A measured — widening it fails here first', () => {
-    expect(AI_WRITE_ALLOWLIST).toEqual(['aiUsageLog', 'aiMemoryEntry']);
+  it('the allow-list is exactly three tables — widening it fails here first', () => {
+    expect(AI_WRITE_ALLOWLIST).toEqual(['aiUsageLog', 'aiMemoryEntry', 'aiAlert']);
 
     const writes = scanPrismaWrites(aiCoreFiles);
     const modelsWritten = [...new Set(writes.map((w) => w.model))].sort();
@@ -122,6 +152,25 @@ describe('AI SAFETY BOUNDARY — the AI is a data product, not a privileged clie
     for (const model of modelsWritten) {
       expect(AI_WRITE_ALLOWLIST).toContain(model);
     }
+  });
+
+  /**
+   * THE THIRD ENTRY IS NOT A GENERAL LICENCE.
+   *
+   * `ai_alerts` is the AI's output contract, so exactly one class may write it:
+   * `PrismaAiAlertRepository`, whose input type cannot express a child's text.
+   * An engine, a controller or a coach service reaching the table directly
+   * would bypass that type — and the copy, the enums and the dedupe key it
+   * fixes — so the allow-list entry is scoped to the one file rather than to
+   * the module.
+   */
+  it('`aiAlert` is written from ONE file — the allow-list entry is scoped, not blanket', () => {
+    const writes = scanPrismaWrites(aiCoreFiles).filter((w) => w.model === 'aiAlert');
+
+    // The writer exists and really does write — a scoped rule that matches
+    // nothing is a rule that passes forever.
+    expect(writes.length).toBeGreaterThan(0);
+    expect([...new Set(writes.map((w) => w.file.split('\\').join('/')))]).toEqual([AI_ALERT_WRITER]);
   });
 
   it('the AI module never uses raw SQL — a raw statement is a hole straight through the allow-list', () => {
