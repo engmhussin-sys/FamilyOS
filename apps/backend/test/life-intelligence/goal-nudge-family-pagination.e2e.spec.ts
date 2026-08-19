@@ -65,9 +65,15 @@ import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/common/prisma/prisma.service';
 import { createTenantExtension } from '../../src/common/tenancy/tenant.extension';
 import { runAsSystemAsync } from '../../src/common/tenancy/system-context';
+import { runWithTenant } from '../../src/common/tenancy/tenant-context';
 import { GoalNudgeService } from '../../src/modules/life-intelligence/application/services/goal-nudge.service';
 import { GoalNudgeSweepTruncatedError } from '../../src/modules/life-intelligence/domain/goal-nudge.types';
 import { SQL_LIST_FAMILIES_WITH_GOAL_CANDIDATES_PAGE } from '../../src/modules/life-intelligence/infrastructure/goal-nudge.sql';
+import {
+  NOTIFICATION_DELIVERY_REPOSITORY,
+  type INotificationDeliveryRepository,
+} from '../../src/modules/notifications/application/ports/notification-delivery.repository.port';
+import { RELEASE_DEFAULTS } from '../../src/modules/notifications/domain/notification-delivery.types';
 import { integrationDatabaseUrl } from '../tenancy/prisma-test-client';
 
 const describeIfDb = integrationDatabaseUrl() ? describe : describe.skip;
@@ -138,6 +144,7 @@ describeIfDb('THE 501st HOUSEHOLD — the goal-nudge fan-out is paged (real Post
   let app: INestApplication;
   let prisma: any;
   let producer: GoalNudgeService;
+  let deliveries: INotificationDeliveryRepository;
 
   const stamp = Date.now();
   const createdFamilies: string[] = [];
@@ -151,6 +158,9 @@ describeIfDb('THE 501st HOUSEHOLD — the goal-nudge fan-out is paged (real Post
 
   const raw = <T>(sql: string, ...params: unknown[]): Promise<T> =>
     sys('raw sql', () => prisma.$queryRawUnsafe(sql, ...params)) as Promise<T>;
+
+  const runWithTenantId = <T>(familyId: string, fn: () => Promise<T>): Promise<T> =>
+    runWithTenant({ familyId, actorType: 'SYSTEM', actorId: 'gn-pagination-test' }, fn);
 
   // -- the walk --------------------------------------------------------------
 
@@ -345,6 +355,7 @@ describeIfDb('THE 501st HOUSEHOLD — the goal-nudge fan-out is paged (real Post
 
     prisma = app.get(PrismaService);
     producer = app.get(GoalNudgeService);
+    deliveries = app.get(NOTIFICATION_DELIVERY_REPOSITORY);
 
     for (let i = 0; i < COHORT_A_SIZE; i += 1) {
       cohortA.push(await createCandidateHousehold(`a${i}`, LOCAL_DATE_A));
@@ -723,6 +734,81 @@ describeIfDb('THE 501st HOUSEHOLD — the goal-nudge fan-out is paged (real Post
       expect(badIds).toHaveLength(2 * (COHORT_A_SIZE - 1) + 1);
       expect(new Set(badIds).size).toBeLessThan(badIds.length);
       expect(badIds.length).toBeGreaterThan(COHORT_A_SIZE);
+    }, 300_000);
+  });
+
+  // ==========================================================================
+  /**
+   * 6. THE OTHER SWEEP IN THIS MODULE, AND WHY ITS BOUND IS NOT THE SAME BUG.
+   *
+   * `QuietHoursReleaseService.sweep` calls `familiesWithDueDeliveries(now,
+   * RELEASE_DEFAULTS.familyBatchSize)` ONCE, with no loop — the same SHAPE as
+   * the defect §1-§5 fix. It is NOT the same defect, and the difference is one
+   * property that has to be EXECUTED rather than read: the enumeration is
+   * SELF-DRAINING. `SQL_LIST_FAMILIES_WITH_DUE_DELIVERIES` selects `state =
+   * 'PENDING'`, and `SQL_CLAIM_DUE_DELIVERIES` moves the rows it claims to
+   * `DELIVERING`, so a household that has been swept is GONE from the next
+   * tick's enumeration and the tail advances every 300 seconds. That makes the
+   * bound a THROUGHPUT CAP — «at most 100 households per tick» — and not a
+   * skip.
+   *
+   * The goal-nudge fan-out had no such property, which is exactly why it needed
+   * a cursor: its candidate set is a ±1-day window on `achievement_requests`
+   * that NOTHING removes a household from, so the same first 500 came back
+   * every tick.
+   *
+   * ASSERTED HERE RATHER THAN ASSUMED, because «the claim drains the queue» is
+   * the entire safety argument for leaving that sweep un-looped, and it is a
+   * statement about two SQL statements agreeing with each other.
+   */
+  describe('6. THE RELEASE SWEEP IS SELF-DRAINING — a throughput cap, not a skip', () => {
+    const RELEASE_INSTANT = new Date('2029-06-01T12:00:00.000Z');
+
+    it('a claimed household leaves the enumeration, so the next tick reaches the next households', async () => {
+      // Three of this suite's households get a due deferred notification. A
+      // generous limit, so «is this family enumerated?» is a question about
+      // STATE and never about the LIMIT.
+      const queued = [...cohortA].sort().slice(0, 3);
+      for (const familyId of queued) {
+        await runWithTenantId(familyId, () =>
+          deliveries.enqueue({
+            familyId,
+            childId: null,
+            type: 'REWARD_GRANTED',
+            category: 'REWARD',
+            priority: 'NORMAL',
+            targetAudience: 'PARENT',
+            title: 'مكافأة',
+            body: 'مكافأة جديدة',
+            sourceEventId: `gnpage:drain:${familyId}:${stamp}`,
+            deferReason: 'QUIET_HOURS',
+            scheduledFor: new Date(RELEASE_INSTANT.getTime() - 60_000),
+            businessDate: '2029-06-01',
+          }),
+        );
+      }
+
+      const first = await sys('enumerate due families', () =>
+        deliveries.familiesWithDueDeliveries(RELEASE_INSTANT, 5_000),
+      );
+      for (const familyId of queued) expect(first).toContain(familyId);
+
+      // CLAIM one of them, exactly as `releaseForFamily` does.
+      const claimed = await runWithTenantId(queued[0], () =>
+        deliveries.claimDue(queued[0], `drain-test-${stamp}`, RELEASE_INSTANT, RELEASE_DEFAULTS.perFamilyLimit),
+      );
+      expect(claimed).toHaveLength(1);
+
+      const second = await sys('enumerate due families again', () =>
+        deliveries.familiesWithDueDeliveries(RELEASE_INSTANT, 5_000),
+      );
+
+      // THE PROPERTY: the claimed household is GONE, and the others are not.
+      // That is what makes «100 per tick» a rate rather than a ceiling — and it
+      // is the property the goal-nudge fan-out did not have.
+      expect(second).not.toContain(queued[0]);
+      expect(second).toContain(queued[1]);
+      expect(second).toContain(queued[2]);
     }, 300_000);
   });
 });
