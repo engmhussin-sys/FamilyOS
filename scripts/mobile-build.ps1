@@ -9,9 +9,14 @@
 
         flutter pub get -> flutter analyze -> flutter test -> flutter build apk --debug
 
-    and with -Release, two more:
+    and with -Release, a PREFLIGHT and two more stages:
 
-        flutter build apk --release -> flutter build appbundle --release
+        RELEASE PREFLIGHT (signing.properties + keystore + Firebase, per app)
+          -> flutter build apk --release -> flutter build appbundle --release
+
+    The release preflight runs BEFORE the first `flutter pub get`, because
+    every one of its blockers is readable from a committed file and none of
+    them should cost the operator a fifteen-minute build to discover.
 
     FAIL-FAST, AND THAT IS WHY THIS FILE EXISTS SEPARATELY FROM CI.
     `.github/workflows/build-apk.yml` is deliberately DIAGNOSTIC — it runs
@@ -52,6 +57,14 @@
 .PARAMETER SkipTests
     Skip `flutter test`. A deliberate reduction in confidence, reported as such.
 
+.PARAMETER AllowReleaseWithoutPush
+    Downgrade the RELEASE PREFLIGHT's missing-google-services.json blocker to a
+    warning, for the one legitimate case: a release-signed QA sideload build on
+    a machine that has the keystore but no Firebase project yet. It does not
+    make push work; it makes the absence explicit and consented-to. The signing
+    blockers are NOT downgradable — a release build without a key produces
+    nothing at all.
+
 .PARAMETER LogDir
     Where stage logs are written. Defaults to build-logs\<timestamp>.
 
@@ -62,13 +75,22 @@
     .\scripts\mobile-build.ps1 -App both -Release
 
 .NOTES
-    STATUS: NOT TESTED. This file has never been executed — the authoring
-    environment has no PowerShell (`pwsh` and `powershell` are both absent) and
-    no Flutter SDK. Its bash twin, `scripts/mobile-build.sh`, HAS been executed:
-    its BLOCKED preflight, its first-failing-stage stop and its artifact
-    reporting were all exercised and are recorded in the Phase G ship report.
-    This file mirrors that script's behaviour, but the first run on a real
-    Windows machine is the first measurement of THIS file.
+    STATUS: STATIC VERIFIED, NOT BUILD VERIFIED, NEVER EXECUTED.
+
+    This file has never been run — the authoring environment has no PowerShell
+    (`pwsh` and `powershell` are both absent) and no Flutter SDK. Every path,
+    filename and property name in it has been checked BY READING against
+    apps/*/android/app/build.gradle, apps/*/android/signing.properties.example,
+    apps/*/android/.gitignore, apps/*/pubspec.yaml and
+    .github/workflows/build-apk.yml. That is STATIC VERIFIED; it is not a run,
+    and nothing here may be described as BUILD VERIFIED until a Windows machine
+    produces an artifact.
+
+    ITS BASH TWIN IS NOW BEHIND. `scripts/mobile-build.sh` HAS been executed
+    (its BLOCKED preflight and first-failing-stage stop are recorded in the
+    Phase G ship report). It does NOT have the RELEASE PREFLIGHT added here and
+    it still names `key.properties` in its closing note; whoever owns the .sh
+    needs the same two corrections.
 #>
 
 [CmdletBinding()]
@@ -80,6 +102,7 @@ param(
     [ValidateSet('true', 'false')]
     [string] $EnablePush,
     [switch] $SkipTests,
+    [switch] $AllowReleaseWithoutPush,
     [string] $LogDir,
     [string] $RepoRoot
 )
@@ -183,6 +206,11 @@ function Invoke-Stage {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     Push-Location -LiteralPath $WorkDir
+    # Pre-set so the read below cannot hit `Set-StrictMode -Version Latest`'s
+    # "variable is not set" on a session where no native command has run yet
+    # (`$LASTEXITCODE` is an automatic variable that does not exist until one
+    # has). The invocation on the next line always overwrites it.
+    $global:LASTEXITCODE = 0
     try {
         $output = & flutter @CmdArgs 2>&1 | ForEach-Object {
             $line = $_.ToString()
@@ -281,6 +309,135 @@ if (Get-Command flutter -ErrorAction SilentlyContinue) {
     exit 1
 }
 
+# ---- RELEASE PREFLIGHT: fail HERE, not fifteen minutes into Gradle --------
+#
+# WHY THIS BLOCK EXISTS. Without it, `-Release` ran `flutter pub get`,
+# `flutter analyze`, `flutter test` and a full debug APK build — several
+# minutes each — and only then reached `flutter build apk --release`, where
+# app/build.gradle's task-graph guard stopped everything with "signing.properties
+# is MISSING". The information was available before the first stage started,
+# from two committed files. A build script that spends fifteen minutes to tell
+# you something it could have said immediately is not fail-fast.
+#
+# AND THE FIREBASE HALF IS WORSE, because it does NOT stop the build. The
+# gradle default is `-Pabny.firebase=auto`, which WARNS and continues when
+# google-services.json is absent, so `-Release` on the parent app currently
+# produces a perfectly valid, perfectly signed AAB whose every push
+# notification silently never arrives. `.github/workflows/build-apk.yml` treats
+# exactly that state as an error for the parent app's release job
+# ("RELEASE BUILD REQUESTED FOR THE PARENT APP WITHOUT FIREBASE"); this script
+# now agrees with CI instead of shipping the false green.
+#
+# NOTHING HERE IS FABRICATED AND NOTHING IS DEFAULTED: each branch names the
+# exact file, the exact directory, and the exact command that produces it.
+if ($Release) {
+    Write-Head 'RELEASE PREFLIGHT'
+    $releaseBlockers = New-Object System.Collections.ArrayList
+
+    foreach ($appName in $appDirs) {
+        $androidDir  = Join-Path $RepoRoot "apps\$appName\android"
+        $signProps   = Join-Path $androidDir 'signing.properties'
+        $signExample = Join-Path $androidDir 'signing.properties.example'
+
+        # The keystore filename and alias come from the COMMITTED TEMPLATE, so
+        # this script never invents key material or a name for it.
+        $exampleKeystore = Get-FirstMatch $signExample '(?m)^\s*storeFile\s*=\s*(.+)$'
+        $exampleAlias    = Get-FirstMatch $signExample '(?m)^\s*keyAlias\s*=\s*(.+)$'
+        $shortName = $appName -replace '-app$', ''
+        if (-not $exampleKeystore) { $exampleKeystore = "abny-$shortName-upload.jks" }
+        if (-not $exampleAlias)    { $exampleAlias    = "abny-$shortName-upload" }
+        $keytoolCmd = ("keytool -genkeypair -v -keystore $exampleKeystore -alias $exampleAlias " +
+                       '-keyalg RSA -keysize 4096 -validity 10000 -storetype PKCS12')
+
+        if (-not (Test-Path -LiteralPath $signProps)) {
+            [void]$releaseBlockers.Add(
+                "$appName : android\signing.properties is MISSING.`n" +
+                "            app\build.gradle stops every release task rather than falling back to the debug key.`n" +
+                "            Fix, in apps\$appName\android\ :`n" +
+                "              $keytoolCmd`n" +
+                "              copy signing.properties.example signing.properties`n" +
+                "            then fill storeFile / storePassword / keyAlias / keyPassword.`n" +
+                "            Both signing.properties and *.jks are gitignored — never commit either.")
+        } else {
+            $text = Get-Content -LiteralPath $signProps -Raw
+            $missing = @()
+            foreach ($k in @('storeFile', 'storePassword', 'keyAlias', 'keyPassword')) {
+                if ($text -notmatch "(?m)^\s*$k\s*=\s*\S") { $missing += $k }
+            }
+            if ($missing.Count -gt 0) {
+                [void]$releaseBlockers.Add(
+                    "$appName : android\signing.properties is INCOMPLETE — missing or empty: $($missing -join ', ').`n" +
+                    "            All four are required. A partial signing config is not signed 'less', it is not signed.")
+            } else {
+                $storeRel = [regex]::Match($text, '(?m)^\s*storeFile\s*=\s*(.+)$').Groups[1].Value.Trim()
+                $storeAbs = Join-Path $androidDir $storeRel
+                if (-not ((Test-Path -LiteralPath $storeAbs) -or (Test-Path -LiteralPath $storeRel))) {
+                    [void]$releaseBlockers.Add(
+                        "$appName : the keystore named by signing.properties does not exist: '$storeRel'.`n" +
+                        "            storeFile is resolved relative to apps\$appName\android\. Generate it there with:`n" +
+                        "              $keytoolCmd")
+                } else {
+                    Write-Good "$appName : signing.properties complete, keystore present"
+                }
+            }
+        }
+
+        # Firebase, required only of the app that actually declares it.
+        $pubspecText  = ''
+        $pubspecPath  = Join-Path $RepoRoot "apps\$appName\pubspec.yaml"
+        if (Test-Path -LiteralPath $pubspecPath) { $pubspecText = Get-Content -LiteralPath $pubspecPath -Raw }
+        $usesFirebase = $pubspecText -match '(?m)^\s*(firebase_messaging|firebase_core)\s*:'
+        $gs = Join-Path $RepoRoot "apps\$appName\android\app\google-services.json"
+        $appId = Get-FirstMatch (Join-Path $androidDir 'app\build.gradle') 'applicationId\s+"([^"]+)"'
+        if (-not $usesFirebase) {
+            Write-Info "$appName : declares no Firebase dependency — google-services.json is not required."
+        } elseif (Test-Path -LiteralPath $gs) {
+            Write-Good "$appName : google-services.json present"
+        } else {
+            [void]$releaseBlockers.Add(
+                "$appName : android\app\google-services.json is MISSING, and this app DEPENDS on firebase_messaging.`n" +
+                "            THE BUILD WOULD SUCCEED ANYWAY — the gradle default -Pabny.firebase=auto only warns — and`n" +
+                "            produce a signed AAB in which every push notification silently never arrives.`n" +
+                "            Only you can supply it: create the Firebase Android app for applicationId`n" +
+                "              $appId`n" +
+                "            download google-services.json and place it at`n" +
+                "              apps\$appName\android\app\google-services.json`n" +
+                "            See docs\release\FIREBASE_SETUP.md. Nothing in this repository can generate it, and a`n" +
+                "            placeholder is worse than an absence: it builds and then fails silently at runtime.`n" +
+                "            To build a release WITHOUT push on purpose, say so: -AllowReleaseWithoutPush.")
+        }
+    }
+
+    if ($AllowReleaseWithoutPush) {
+        $kept = @($releaseBlockers | Where-Object { $_ -notmatch 'google-services\.json is MISSING' })
+        $dropped = $releaseBlockers.Count - $kept.Count
+        if ($dropped -gt 0) {
+            Write-Warn "-AllowReleaseWithoutPush: $dropped Firebase blocker(s) DOWNGRADED by explicit request."
+            Write-Warn 'The artifact this run produces has NO push notifications. Do not upload it to a store.'
+        }
+        $releaseBlockers = $kept
+    }
+
+    if ($releaseBlockers.Count -gt 0) {
+        Write-Host ''
+        Write-Host ('=' * 78) -ForegroundColor Red
+        Write-Host '  RELEASE PREFLIGHT BLOCKED' -ForegroundColor Red
+        Write-Host ('=' * 78) -ForegroundColor Red
+        foreach ($b in $releaseBlockers) { Write-Host "  [BLOCKED] $b" -ForegroundColor Red; Write-Host '' }
+        Write-Host '  No stage was run and no artifact was produced. Every line above names a file'
+        Write-Host '  you must create; none of them has a default this script is willing to invent.'
+        Write-Host ''
+        Write-Host '  Diagnose the whole machine at once with:'
+        Write-Host '      powershell -ExecutionPolicy Bypass -File scripts\release-doctor.ps1'
+        Write-Host ''
+        Write-Host '  Or build the debug artifact, which needs none of this:'
+        Write-Host "      .\scripts\mobile-build.ps1 -App $App"
+        Write-Host ''
+        exit 1
+    }
+    Write-Good 'release preflight passed — every precondition the release build needs is in place.'
+}
+
 # ---- STAGES ---------------------------------------------------------------
 $artifacts = New-Object System.Collections.ArrayList
 
@@ -363,8 +520,13 @@ foreach ($a in $artifacts) {
 Write-Host ''
 Write-Host "  logs: $LogDir"
 if ($Release) {
-    Write-Host '  Release artifacts are SIGNED ONLY IF android\key.properties resolved a real keystore.' -ForegroundColor Yellow
-    Write-Host '  Verify before uploading:  python3 scripts\verify_release_signing.py'
+    # `key.properties` was the name here and it is not the file the gradle
+    # reads: app/build.gradle reads `rootProject.file("signing.properties")`,
+    # and android/.gitignore ignores that name. The RELEASE PREFLIGHT above
+    # already proved it resolved a real keystore, so this line now says what
+    # is true rather than what a template once called it.
+    Write-Host '  Release artifacts were signed from apps\<app>\android\signing.properties (checked in PREFLIGHT).' -ForegroundColor Yellow
+    Write-Host '  Verify the signature before uploading:  python3 scripts\verify_release_signing.py'
 }
 Write-Host ''
 Write-Host '  ALL STAGES PASSED.' -ForegroundColor Green

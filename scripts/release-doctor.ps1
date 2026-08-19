@@ -31,12 +31,36 @@
       compileSdk / targetSdk / minSdk / applicationId
                        apps/*/android/app/build.gradle
       Dart constraint  apps/*/pubspec.yaml               environment.sdk
+      App version      apps/*/pubspec.yaml               version: <name>+<code>
+      Signing shape    apps/*/android/signing.properties.example
+      Firebase need    apps/*/pubspec.yaml + settings.gradle + app/build.gradle
+      Deep-link scheme apps/backend/src/modules/notifications/domain/engine/
+                       notification-destination.ts       DEEP_LINK_SCHEME
 
     The two apps are parsed independently and COMPARED; a disagreement on a
     shared toolchain pin is a hard stop, not a pick-one.
 
     build-tools is NOT declared by either app. It is DERIVED as
     "<compileSdk>.0.0" and the derivation is printed so it can be challenged.
+
+    THE DOCTOR MUST CHECK EVERY PRECONDITION THE BUILD DEPENDS ON, and three
+    of them were wrong or absent until the audit that produced this note:
+
+      * SIGNING. It checked `android/key.properties`. Both apps'
+        `android/app/build.gradle` read `signing.properties`; both
+        `android/.gitignore`s ignore `signing.properties`; the CI workflow
+        writes `android/signing.properties`. The doctor could therefore PASS a
+        machine whose release build stops in the gradle task-graph guard —
+        which is exactly the defect a doctor exists to prevent.
+      * FIREBASE. It demanded google-services.json from BOTH apps and BLOCKED
+        a release on the child app's absent one. apps/child-app declares no
+        firebase_core / firebase_messaging, its settings.gradle carries no
+        google-services plugin and its build.gradle never applies one, so
+        nothing in the child build has ever read that file. The requirement is
+        now DERIVED per app rather than assumed for both.
+      * VERSION and DEEP-LINK SCHEME had no rows at all. The first is a
+        release-stopping gradle guard readable from a committed file; the
+        second is the one client/server contract no other check here sees.
 
 .PARAMETER Profile
     release (default) grades readiness for a SIGNED store artifact, so signing
@@ -54,13 +78,24 @@
     .\scripts\release-doctor.ps1 -Profile debug
 
 .NOTES
-    STATUS: NOT TESTED. This file has never been executed. The authoring
-    environment has no PowerShell at all (`pwsh`, `powershell` both absent),
-    in addition to having no Flutter, no Dart and no Android SDK. Its bash
-    twin, `scripts/release-doctor.sh`, HAS been executed and its BLOCKED
-    output is recorded in the Phase G ship report; this file mirrors that
-    script's logic row for row, but the first run on a real Windows machine is
-    the first measurement of THIS file.
+    STATUS: STATIC VERIFIED, NOT BUILD VERIFIED, NEVER EXECUTED.
+
+    This file has never been run. The authoring environment has no PowerShell
+    at all (`pwsh`, `powershell` both absent), no Flutter, no Dart and no
+    Android SDK. Every claim it makes has been checked BY READING against the
+    files named above — the two pubspecs, the two app/build.gradle files, the
+    two settings.gradle files, the two gradle-wrapper.properties, the two
+    AndroidManifest.xml files, the two android/.gitignore files, the two
+    signing.properties.example templates and .github/workflows/build-apk.yml —
+    and every number and filename here now matches them. That is STATIC
+    VERIFIED. It is not a run.
+
+    ITS BASH TWIN IS NOW BEHIND. `scripts/release-doctor.sh` HAS been executed
+    (5 PASS / 0 WARN / 14 BLOCKED in the authoring container, exit 1) and it
+    still carries the `key.properties` and both-apps-need-Firebase defects
+    corrected here, plus neither of the two new rows. The two files are no
+    longer row-for-row; the .sh needs the same three corrections from whoever
+    owns it.
 #>
 
 [CmdletBinding()]
@@ -195,17 +230,61 @@ function Test-Have([string]$Exe) {
     return [bool](Get-Command $Exe -ErrorAction SilentlyContinue)
 }
 
+# The exit code of the LAST command Get-ExeOutput ran.
+#
+# A script variable and not `$LASTEXITCODE`, for a reason that bit this file.
+# `$LASTEXITCODE` is an AUTOMATIC variable that DOES NOT EXIST until some
+# native command has run in the session, and `Set-StrictMode -Version Latest`
+# above makes reading an unset variable a TERMINATING error under
+# `$ErrorActionPreference = 'Stop'`. On the machine this script exists for — a
+# fresh Windows box with no flutter, no dart and no java on PATH — none of the
+# rows above it would have run a native command, so the first `$LASTEXITCODE`
+# read killed the doctor with a PowerShell error instead of printing the
+# fourteen BLOCKED rows it exists to print. Initialised here; set by every call.
+$script:LastExeExit = 0
+
 function Get-ExeOutput {
     param([string]$Exe, [string[]]$CmdArgs)
+    $script:LastExeExit = 0
     try {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         $out = & $Exe @CmdArgs 2>&1 | Out-String
+        if ($null -ne $global:LASTEXITCODE) { $script:LastExeExit = $global:LASTEXITCODE }
         $ErrorActionPreference = $prev
         return $out
     } catch {
+        $script:LastExeExit = 1
         return ''
     }
+}
+
+# Reads an app's own Firebase posture OUT OF THE REPOSITORY instead of assuming
+# both apps have one.
+#
+# WHAT THIS ROW USED TO GET WRONG. It demanded google-services.json for BOTH
+# apps and graded a missing one BLOCKED under -Profile release. apps/child-app
+# declares no firebase_core and no firebase_messaging in pubspec.yaml, its
+# android/settings.gradle does not carry the `com.google.gms.google-services`
+# plugin, and its app/build.gradle never applies it — so no build of the child
+# app has ever read that file, and blocking a release on it was a manufactured
+# requirement in the one script whose whole job is to name real ones.
+#
+# Derived rather than hardcoded so the day child-app gains firebase_messaging
+# the requirement appears here with no edit to this file.
+function Test-AppUsesFirebase {
+    param([string]$Root, [string]$App)
+    $pubspec  = Join-Path $Root "apps\$App\pubspec.yaml"
+    $settings = Join-Path $Root "apps\$App\android\settings.gradle"
+    $appGr    = Join-Path $Root "apps\$App\android\app\build.gradle"
+    # EVERY PATTERN CARRIES A CAPTURE GROUP ON PURPOSE. `Get-FirstMatch`
+    # returns `$m.Groups[1].Value`, which on a group-less pattern is the EMPTY
+    # STRING even when the pattern matched — so a group-less test here would
+    # read as "no Firebase" on an app that has it.
+    $dep = Get-FirstMatch $pubspec  '(?m)^\s*(firebase_messaging|firebase_core)\s*:'
+    $plg = Get-FirstMatch $settings '(id\s+"com\.google\.gms\.google-services")'
+    $apl = Get-FirstMatch $appGr    '(?m)^\s*(apply\s+plugin:\s*"com\.google\.gms\.google-services")'
+    return [bool]($dep -or $plg -or $apl)
 }
 
 # Returns $true when $Got satisfies a Dart-style constraint ">=3.3.0 <4.0.0",
@@ -395,7 +474,7 @@ if (-not $wrapperOk) {
 # ---- 6. git status --------------------------------------------------------
 if (Test-Have 'git') {
     $inRepo = (Get-ExeOutput 'git' @('-C', $RepoRoot, 'rev-parse', '--git-dir'))
-    if ($LASTEXITCODE -eq 0 -and $inRepo -notmatch 'fatal') {
+    if ($script:LastExeExit -eq 0 -and $inRepo -notmatch 'fatal') {
         $branch = (Get-ExeOutput 'git' @('-C', $RepoRoot, 'branch', '--show-current')).Trim()
         $porcelain = (Get-ExeOutput 'git' @('-C', $RepoRoot, 'status', '--porcelain')).Trim()
         $dirty = if ($porcelain) { ($porcelain -split "`n").Count } else { 0 }
@@ -426,9 +505,30 @@ foreach ($app in @('parent-app', 'child-app')) {
 }
 
 # ---- 8. Firebase configuration -------------------------------------------
+#
+# GRADED PER APP, FROM WHAT THE APP ACTUALLY DECLARES. Only apps/parent-app
+# depends on firebase_core / firebase_messaging and only its settings.gradle
+# carries the google-services plugin, so only its build ever reads
+# google-services.json. This row used to demand the file from BOTH apps and
+# BLOCK a release on the child app's absent one — a requirement the repository
+# does not have, invented by the one script whose job is to name the real ones.
 foreach ($app in @('parent-app', 'child-app')) {
     $gs = Join-Path $RepoRoot "apps\$app\android\app\google-services.json"
     $expectId = if ($app -eq 'parent-app') { $pins.ParentApplicationId } else { $pins.ChildApplicationId }
+    $usesFirebase = Test-AppUsesFirebase -Root $RepoRoot -App $app
+
+    if (-not $usesFirebase) {
+        if (Test-Path -LiteralPath $gs) {
+            Add-Row WARN "Firebase config ($app)" 'google-services.json present but NOTHING READS IT' `
+                ("apps\$app declares no firebase_core/firebase_messaging in pubspec.yaml, its android\settings.gradle does not carry " +
+                 "com.google.gms.google-services and app\build.gradle never applies it, so this file is inert. Either add the Firebase " +
+                 "dependencies (and re-run this doctor, which will then require the file) or delete it so it does not read as configured push.")
+        } else {
+            Add-Row PASS "Firebase config ($app)" 'not required — this app declares no Firebase dependency' ''
+        }
+        continue
+    }
+
     if (Test-Path -LiteralPath $gs) {
         if ((Get-Content -LiteralPath $gs -Raw) -match [regex]::Escape($expectId)) {
             Add-Row PASS "Firebase config ($app)" "google-services.json present for $expectId" ''
@@ -438,9 +538,11 @@ foreach ($app in @('parent-app', 'child-app')) {
         }
     } elseif ($Profile -eq 'release') {
         Add-Row BLOCKED "Firebase config ($app)" 'google-services.json absent' `
-            ("See docs\release\FIREBASE_SETUP.md: create the Firebase Android app for $expectId and place google-services.json at apps\$app\android\app\. " +
-             'The build SUCCEEDS without it (abny.firebase=auto only warns) but the artifact has no push notifications at all — ' +
-             'a store release in that state ships an invisible notification engine.')
+            ("OPERATOR MUST SUPPLY. Create the Firebase Android app for applicationId $expectId, download google-services.json and place it at " +
+             "apps\$app\android\app\google-services.json (CI reads it from the GOOGLE_SERVICES_JSON repository secret instead). " +
+             'Nothing in this repository can generate it. The build SUCCEEDS without it — the default -Pabny.firebase=auto only warns — ' +
+             'so a release in that state ships an artifact whose every push notification silently never arrives. ' +
+             'See docs\release\FIREBASE_SETUP.md.')
     } else {
         Add-Row WARN "Firebase config ($app)" 'google-services.json absent (debug profile)' `
             'Debug builds proceed: abny.firebase=auto only warns, and PushRegistrationService catches the init failure. No push notification can be delivered by this artifact.'
@@ -459,34 +561,165 @@ if (Test-Path -LiteralPath $firebaseOptions) {
 }
 
 # ---- 9. Signing configuration --------------------------------------------
+#
+# THE FILE THE GRADLE ACTUALLY READS IS `signing.properties`, NOT
+# `key.properties`.
+#
+# This row checked `android\key.properties` — Flutter's template name — while
+# both apps' `android/app/build.gradle` read
+# `rootProject.file("signing.properties")`, both `android/.gitignore`s ignore
+# `signing.properties` (and commit `signing.properties.example` by negation),
+# and `.github/workflows/build-apk.yml` writes `android/signing.properties`
+# before its release build. So the doctor could PASS an operator who had
+# created key.properties, and the release build would then stop in the
+# task-graph guard with "signing.properties is MISSING" — the doctor passing
+# something the build fails on, which is the one defect a doctor must not have.
+#
+# The four key names ARE the same in both files, so the parsing below is
+# unchanged; only the filename, the action lines and the keytool invocation
+# (taken from android/signing.properties.example rather than typed from
+# memory) moved.
 foreach ($app in @('parent-app', 'child-app')) {
-    $keyProps = Join-Path $RepoRoot "apps\$app\android\key.properties"
-    if (Test-Path -LiteralPath $keyProps) {
-        $text = Get-Content -LiteralPath $keyProps -Raw
+    $androidDir  = Join-Path $RepoRoot "apps\$app\android"
+    $signProps   = Join-Path $androidDir 'signing.properties'
+    $signExample = Join-Path $androidDir 'signing.properties.example'
+
+    # The template is the operator's instructions and carries the keytool
+    # command. Its absence is not a build blocker, but it IS the reason the
+    # action lines below can name a keystore filename rather than invent one.
+    $exampleKeystore = Get-FirstMatch $signExample '(?m)^\s*storeFile\s*=\s*(.+)$'
+    $exampleAlias    = Get-FirstMatch $signExample '(?m)^\s*keyAlias\s*=\s*(.+)$'
+    if (-not (Test-Path -LiteralPath $signExample)) {
+        Add-Row WARN "Signing template ($app)" 'android\signing.properties.example is missing' `
+            "It is the committed template and holds the full keytool invocation. Restore it from git: 'git checkout -- apps/$app/android/signing.properties.example'."
+    }
+    # Fallbacks cover BOTH "the template is gone" and "the template is there but
+    # its storeFile/keyAlias line was edited away". A keytool command with an
+    # empty -keystore would be worse than no command at all.
+    $shortName = $app -replace '-app$', ''
+    if (-not $exampleKeystore) { $exampleKeystore = "abny-$shortName-upload.jks" }
+    if (-not $exampleAlias)    { $exampleAlias    = "abny-$shortName-upload" }
+    $keytoolCmd = ("keytool -genkeypair -v -keystore $exampleKeystore -alias $exampleAlias " +
+                   '-keyalg RSA -keysize 4096 -validity 10000 -storetype PKCS12')
+
+    if (Test-Path -LiteralPath $signProps) {
+        $text = Get-Content -LiteralPath $signProps -Raw
         $missing = @()
         foreach ($k in @('storeFile', 'storePassword', 'keyAlias', 'keyPassword')) {
-            if ($text -notmatch "(?m)^\s*$k\s*=") { $missing += $k }
+            # The gradle treats present-but-EMPTY as missing, so this must too —
+            # otherwise the doctor passes a file the task-graph guard rejects.
+            if ($text -notmatch "(?m)^\s*$k\s*=\s*\S") { $missing += $k }
         }
         if ($missing.Count -gt 0) {
-            Add-Row BLOCKED "Signing ($app)" "key.properties present but missing: $($missing -join ' ')" `
-                "app\build.gradle fails the release build unless all four of storeFile, storePassword, keyAlias, keyPassword are set. Add them to apps\$app\android\key.properties."
+            Add-Row BLOCKED "Signing ($app)" "signing.properties present but missing/empty: $($missing -join ' ')" `
+                ("apps\$app\android\app\build.gradle stops any release task unless all four of storeFile, storePassword, keyAlias, " +
+                 "keyPassword are set and non-empty. Fill them in apps\$app\android\signing.properties — see signing.properties.example.")
         } else {
             $storeRel = [regex]::Match($text, '(?m)^\s*storeFile\s*=\s*(.+)$').Groups[1].Value.Trim()
-            $storeAbs = Join-Path (Join-Path $RepoRoot "apps\$app\android") $storeRel
-            if ((Test-Path -LiteralPath $storeRel) -or (Test-Path -LiteralPath $storeAbs)) {
-                Add-Row PASS "Signing ($app)" 'key.properties complete, keystore found' ''
-            } else {
+            $storeAbs = Join-Path $androidDir $storeRel
+            $resolved = if (Test-Path -LiteralPath $storeAbs) { $storeAbs } elseif (Test-Path -LiteralPath $storeRel) { (Resolve-Path -LiteralPath $storeRel).Path } else { $null }
+            if (-not $resolved) {
                 Add-Row BLOCKED "Signing ($app)" "keystore not found at '$storeRel'" `
-                    "storeFile resolves relative to apps\$app\android\. Place the .jks there or correct the path; the release build refuses to fall back to the debug key (verified by scripts\verify_release_signing.py)."
+                    ("storeFile is resolved RELATIVE TO apps\$app\android\ by app\build.gradle. Place the .jks there, use an absolute path, " +
+                     "or generate one: cd apps\$app\android; $keytoolCmd")
+            } else {
+                # L3, mirrored. The gradle refuses a release whose keystore looks
+                # like the debug one; a doctor that passed it would send the
+                # operator into a build that stops ten minutes later.
+                $leaf = (Split-Path -Leaf $resolved).ToLower()
+                $norm = $resolved.Replace('\', '/').ToLower()
+                if ($leaf -eq 'debug.keystore' -or $leaf -eq 'debug.jks' -or $norm -match '/\.android/debug') {
+                    Add-Row BLOCKED "Signing ($app)" "storeFile points at what looks like a DEBUG keystore: $resolved" `
+                        ("app\build.gradle's L3 identity assertion fails this build by name. The debug key is a well-known machine-local " +
+                         "throwaway; an artifact signed with it can never be uploaded and never updated. Generate a real upload key: $keytoolCmd")
+                } else {
+                    Add-Row PASS "Signing ($app)" "signing.properties complete, keystore $leaf found" ''
+                }
             }
         }
     } elseif ($Profile -eq 'release') {
-        Add-Row BLOCKED "Signing ($app)" 'android\key.properties absent' `
-            ("No release keystore = no store artifact. Create it ('keytool -genkeypair -v -keystore abny-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias abny'), " +
-             "place it under apps\$app\android\, and write the four properties into apps\$app\android\key.properties (git-ignored). Debug builds are unaffected.")
+        Add-Row BLOCKED "Signing ($app)" 'android\signing.properties absent' `
+            ("OPERATOR MUST SUPPLY. No release keystore = no store artifact, and app\build.gradle will NOT fall back to the debug key — " +
+             "it stops the release task with a named message. Do exactly this: cd apps\$app\android; $keytoolCmd; " +
+             "copy signing.properties.example signing.properties; then fill storeFile / storePassword / keyAlias / keyPassword. " +
+             "signing.properties and *.jks are BOTH gitignored (apps\$app\android\.gitignore) — never commit either. Debug builds are unaffected.")
     } else {
-        Add-Row WARN "Signing ($app)" 'android\key.properties absent (debug profile)' `
-            'Debug builds use the debug key and are unaffected. A release build will refuse.'
+        Add-Row WARN "Signing ($app)" 'android\signing.properties absent (debug profile)' `
+            'Debug builds use the debug key and are unaffected. A release build stops in the task-graph guard rather than falling back.'
+    }
+
+    # A signing file that is NOT ignored is key material one `git add` away from
+    # the history. The gitignore is committed, so this is checkable statically.
+    $gitignore = Join-Path $androidDir '.gitignore'
+    if (Test-Path -LiteralPath $gitignore) {
+        $gi = Get-Content -LiteralPath $gitignore -Raw
+        $unignored = @()
+        if ($gi -notmatch '(?m)^\s*signing\.properties\s*$') { $unignored += 'signing.properties' }
+        if ($gi -notmatch '(?m)^\s*\*\.jks\s*$')             { $unignored += '*.jks' }
+        if ($unignored.Count -gt 0) {
+            Add-Row BLOCKED "Signing gitignore ($app)" "not ignored: $($unignored -join ' ')" `
+                "apps\$app\android\.gitignore must ignore signing.properties and *.jks (and keep !signing.properties.example). Key material one 'git add' from the history is key material already lost."
+        } else {
+            Add-Row PASS "Signing gitignore ($app)" 'signing.properties and *.jks are gitignored' ''
+        }
+    } else {
+        Add-Row BLOCKED "Signing gitignore ($app)" "apps\$app\android\.gitignore is missing" `
+            'Without it the keystore and its three passwords are committable by accident. Restore it from git.'
+    }
+}
+
+# ---- 9b. The version the release AAB will carry ---------------------------
+#
+# app/build.gradle REFUSES to package a release on a fallback version, and the
+# single source of both halves is pubspec.yaml's `version: <name>+<code>` line
+# (flutter build copies it into android/local.properties). A pubspec with no
+# `+<code>` builds debug happily and stops the release — which is a build
+# failure the doctor can predict from a committed file, so it should.
+foreach ($app in @('parent-app', 'child-app')) {
+    $pubspec = Join-Path $RepoRoot "apps\$app\pubspec.yaml"
+    $version = Get-FirstMatch $pubspec '(?m)^version:\s*(\S+)\s*$'
+    if (-not $version) {
+        Add-Row BLOCKED "App version ($app)" 'pubspec.yaml declares no version:' `
+            "Add 'version: <name>+<code>' to apps\$app\pubspec.yaml. app\build.gradle stops any release task on a fallback version, because Play accepts versionCode 1 exactly once and then blocks every later upload."
+    } elseif ($version -notmatch '^\d+\.\d+\.\d+\+\d+$') {
+        Add-Row BLOCKED "App version ($app)" "pubspec version '$version' has no +<versionCode>" `
+            "app\build.gradle's release guard refuses a FALLBACK versionCode. Write it as '<name>+<code>', e.g. '0.1.0+1'. CI overrides the CODE half per upload via ORG_GRADLE_PROJECT_abnyVersionCode."
+    } else {
+        Add-Row PASS "App version ($app)" "$version (versionName+versionCode, single source)" ''
+    }
+}
+
+# ---- 9c. The deep-link scheme, in both manifests --------------------------
+#
+# The scheme is READ FROM THE SERVER'S REGISTRY, never typed here: the backend
+# is authoritative for `abny://<surface>` and both clients route on what it
+# emits. If the two ever disagree, every notification tap in the product lands
+# nowhere and no other check in this file would see it.
+$destRegistry = Join-Path $RepoRoot 'apps\backend\src\modules\notifications\domain\engine\notification-destination.ts'
+$scheme = Get-FirstMatch $destRegistry "DEEP_LINK_SCHEME\s*=\s*'([a-z][a-z0-9+.-]*)'"
+if (-not $scheme) {
+    Add-Row WARN 'Deep-link scheme' 'could not read DEEP_LINK_SCHEME from the notification registry' `
+        "Expected at apps\backend\src\modules\notifications\domain\engine\notification-destination.ts. Fix this check rather than guessing the scheme."
+} else {
+    foreach ($app in @('parent-app', 'child-app')) {
+        $manifest = Join-Path $RepoRoot "apps\$app\android\app\src\main\AndroidManifest.xml"
+        if (-not (Test-Path -LiteralPath $manifest)) { continue }
+        $mtext = Get-Content -LiteralPath $manifest -Raw
+        if ($mtext -match "android:scheme\s*=\s*`"$([regex]::Escape($scheme))`"") {
+            Add-Row PASS "Deep-link scheme ($app)" "$scheme:// declared in an intent-filter" ''
+        } else {
+            # WARN and not BLOCKED, and the distinction is the whole point of
+            # the grading scale. Nothing about the BUILD depends on this, and
+            # the notification tap that the product actually ships works
+            # without it: FCM delivers `data.deepLink` INSIDE the app and the
+            # Dart routers parse the string themselves. What is missing is the
+            # OS-level registration — a `$scheme://…` link tapped in a browser,
+            # a message or an e-mail resolves to no app on the device.
+            Add-Row WARN "Deep-link scheme ($app)" "no <data android:scheme=`"$scheme`"> intent-filter" `
+                ("apps\$app\android\app\src\main\AndroidManifest.xml declares no intent-filter for $scheme://, so the OS cannot resolve such a " +
+                 "link to this app. In-app notification taps are UNAFFECTED (the link travels on the FCM data payload and is routed in Dart), " +
+                 "which is why this is WARN. It becomes a defect the moment a $scheme:// link is put anywhere outside the app.")
+        }
     }
 }
 
@@ -526,7 +759,7 @@ foreach ($app in @('parent-app', 'child-app')) {
 $notifChecker = Join-Path $PSScriptRoot 'verify_notification_permission.py'
 if ((Test-Path -LiteralPath $notifChecker) -and (Test-Have 'python3')) {
     $null = Get-ExeOutput 'python3' @($notifChecker)
-    if ($LASTEXITCODE -eq 0) {
+    if ($script:LastExeExit -eq 0) {
         Add-Row PASS 'POST_NOTIFICATIONS request' 'every declaring app also requests it at runtime' ''
     } else {
         Add-Row BLOCKED 'POST_NOTIFICATIONS request' 'declared but never requested in at least one app' `

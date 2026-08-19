@@ -294,6 +294,12 @@ function Invoke-Logged {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     Push-Location -LiteralPath $WorkDir
+    # Pre-set so the read below cannot hit `Set-StrictMode -Version Latest`'s
+    # "variable is not set" on a session where no native command has run yet
+    # (`$LASTEXITCODE` is an automatic variable that does not exist until one
+    # has). A stale 0 is impossible: the invocation on the next line always
+    # overwrites it.
+    $global:LASTEXITCODE = 0
     try {
         $output = & $Exe @CmdArgs 2>&1 | ForEach-Object {
             $line = $_.ToString()
