@@ -24,7 +24,7 @@ import { computeCurrentStreak } from './streak-calculator';
 import { composeIdempotencyKey } from '../../../../shared/events/idempotency';
 import { isStreakMilestone } from '../../../../shared/rewards/streak-milestones';
 import { FamilyDateService } from '../../../../common/time/family-date.service';
-import { getBusinessDate, getBusinessDayRange, isBusinessDate } from '../../../../common/time/family-date';
+import { businessAgeInYears, getBusinessDate, getBusinessDayRange, isBusinessDate } from '../../../../common/time/family-date';
 
 /**
  * PHASE C (`PC-B-003`) \u2014 how far back a PARENT may back-fill an activity log.
@@ -58,6 +58,23 @@ const ACTIVITY_STREAK_WINDOW_DAYS = 30;
  * it counted against the NEXT day's target, so today's goal never closed and
  * tomorrow's opened three hours early. Every one of those decisions is now made
  * on the family's calendar.
+ *
+ * AND SO IS THE CHILD'S AGE, WHICH THIS FILE USED TO ANSWER FOR ITSELF.
+ * `private ageYears(dob)` was `Math.floor((Date.now() - dob) / (365.25 days))`.
+ * That is not a calendar. Nine calendar years spanning only two leap days is
+ * 3287 days, and 3287 / 365.25 = 8.9993 — EIGHT — while `businessAgeInYears`
+ * says nine; adding twelve hours to the same instant flips it back to nine, so
+ * the answer moved with the hour the question was asked. Both forms fed
+ * `computeHydrationTargetMl`, so on a child's ninth birthday this file set a
+ * 1700 ml target while `ChildSignalService` — which asks `businessAgeInYears` —
+ * set 2100. `getDailyProgress` said «goal reached», the nudge kept nudging, and
+ * `HYDRATION_GOAL_COMPLETED` and its reward fired 400 ml early.
+ *
+ * Scanned over a year of «today» values for ages 3–18, the two forms disagreed
+ * on 3,600 (today, DOB) pairs at 00:00 UTC, 730 of them across a hydration band
+ * boundary. `businessAgeInYears` is the one answer and `ageYears` is deleted;
+ * `test/life-intelligence/hydration-target-one-age.e2e.spec.ts` drives a real
+ * ninth birthday through the Child App's own button and reads the rows.
  */
 @Injectable()
 export class HealthEngineService {
@@ -103,7 +120,7 @@ export class HealthEngineService {
     const todayStr = getBusinessDate(new Date(), timeZone);
     const { start: dayStart, endExclusive: dayEnd } = getBusinessDayRange(todayStr, timeZone);
     const totalToday = await this.repository.sumHydrationMlOnDate(childId, dayStart, dayEnd);
-    const target = computeHydrationTargetMl(this.ageYears(child.dateOfBirth));
+    const target = computeHydrationTargetMl(businessAgeInYears(child.dateOfBirth, todayStr, timeZone));
 
     // Milestone: reaching the daily target for the first time TODAY
     // (crossing the line exactly this log, not already past it before).
@@ -445,7 +462,9 @@ export class HealthEngineService {
     const date = FamilyDateService.toDateColumn(dateStrBusiness);
     const { start: dayStart, endExclusive: dayEnd } = getBusinessDayRange(dateStrBusiness, timeZone);
 
-    const target = computeHydrationTargetMl(this.ageYears(child.dateOfBirth));
+    const target = computeHydrationTargetMl(
+      businessAgeInYears(child.dateOfBirth, dateStrBusiness, timeZone),
+    );
 
     // FIXING A REAL PERFORMANCE GAP (found in this session's own
     // review): these four reads are fully independent of one another
@@ -500,7 +519,7 @@ export class HealthEngineService {
     const dateStr = getBusinessDate(new Date(), timeZone);
     const date = FamilyDateService.toDateColumn(dateStr);
     const { start: dayStart, endExclusive: dayEnd } = getBusinessDayRange(dateStr, timeZone);
-    const target = computeHydrationTargetMl(this.ageYears(child.dateOfBirth));
+    const target = computeHydrationTargetMl(businessAgeInYears(child.dateOfBirth, dateStr, timeZone));
     const activityTargetMinutes = 60; // same pediatric-guideline baseline as computeAndStoreHealthScore's own activityRatio
 
     const STREAK_WINDOW_DAYS = 30; // enough real history for a meaningful streak without an unbounded query
@@ -577,11 +596,6 @@ export class HealthEngineService {
     return FamilyDateService.toDateColumn(
       FamilyDateService.addDays(getBusinessDate(new Date(), timeZone), -days),
     );
-  }
-
-  private ageYears(dateOfBirth: Date | string): number {
-    const diffMs = Date.now() - new Date(dateOfBirth).getTime();
-    return Math.floor(diffMs / (365.25 * 24 * 3600 * 1000));
   }
 
   /**
