@@ -62,16 +62,39 @@ void main() {
       expect(route.routeName, AppRoutes.notifications);
     });
 
-    test('screen-time lands on the safety surface — the SERVER calls it that', () {
-      // NOT a reinterpretation by this client. `safetyDestination` in
-      // `notification-destination.ts` is literally
-      // `idLink('safety', alertId, surfaceLink('screen-time'))`, so the server
-      // itself defines `abny://screen-time` as the ID-LESS FORM OF `safety` —
-      // and since no producer carries an `alertId` today, it is the ONLY form
-      // any of the four device alerts is ever emitted as.
+    test('screen-time lands on the SCREEN-TIME surface, which now exists', () {
+      // RETARGETED, and this assertion moved with it deliberately rather than
+      // being deleted.
+      //
+      // It used to assert `AppRoutes.safety`, and the argument for that was
+      // sound at the time: `safetyDestination` in `notification-destination.ts`
+      // is literally `idLink('safety', alertId, surfaceLink('screen-time'))`,
+      // so the server does treat the id-less form as `safety`. But the REASON
+      // it landed there was that the parent app had no screen-time screen at
+      // all — the backend had served the API for several sprints and
+      // `features/screen_time/` did not exist. Sending a link named
+      // `screen-time` to a safety feed was the best available answer to a
+      // missing screen.
+      //
+      // The screen exists now, so the surface the link is NAMED for is the
+      // truthful landing — and it is also where `DAILY_GOAL_COMPLETED` and
+      // `HYDRATION_REMINDER`, which name `screen-time` directly and have
+      // nothing to do with safety, were always trying to go.
       final route = DeepLinkRouter.resolveLink('abny://screen-time');
       expect(route.kind, DeepLinkRouteKind.named);
-      expect(route.routeName, AppRoutes.safety);
+      expect(route.routeName, AppRoutes.screenTime);
+    });
+
+    test('the safety surface did not lose its own bare route to the change', () {
+      // The other half of the retarget above: nothing that was reachable
+      // stopped being reachable. Pinned so a later edit cannot quietly fold
+      // `safety` into `screen-time` on the way past.
+      const handBuilt = DeepLinkDestination(DeepLinkSurface.safety);
+      expect(DeepLinkRouter.resolve(handBuilt).routeName, AppRoutes.safety);
+      expect(
+        DeepLinkRouter.resolveLink('abny://screen-time').routeName,
+        isNot(AppRoutes.safety),
+      );
     });
 
     test('a bare safety destination lands on the same surface, not the inbox', () {

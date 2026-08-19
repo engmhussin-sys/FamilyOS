@@ -93,10 +93,15 @@ void main() {
 
     // The name is the server's, rendered as it arrived.
     expect(find.text('محمد'), findsWidgets);
-    // The three onward screens this host exists to supply arguments for.
+    // The four onward screens this host exists to supply arguments for.
     expect(find.text(ar('learningProgress.title')), findsOneWidget);
     expect(find.text(ar('coaching.title')), findsOneWidget);
     expect(find.text(ar('wellbeing.title')), findsOneWidget);
+    // The fourth is the screen-time surface, which had NO entry point in this
+    // app at all until it was built — the backend had served its API for
+    // several sprints. `wellbeing` READS how the device was used; this one
+    // WRITES what the device enforces, so they are two tiles, not one.
+    expect(find.text(ar('screenTime.title')), findsOneWidget);
     // A date of birth is NEVER rendered — only an age.
     expect(find.textContaining('2015'), findsNothing);
   });

@@ -219,6 +219,12 @@ Future<void> _pumpInbox(
           AppRoutes.subscription: (_) => const _StubScreen(AppRoutes.subscription),
           // THE REAL SCREEN, for the reason given above `_FakeSafetyRepository`.
           AppRoutes.safety: (_) => const SafetyScreen(),
+          // A STUB, per the header's rule for named routes: the assertion is
+          // «the router pushed AppRoutes.screenTime», and pulling in the real
+          // `ScreenTimeChildrenScreen` would additionally require the whole
+          // `GET /children` stack and make a failure ambiguous between the
+          // router and that screen.
+          AppRoutes.screenTime: (_) => const _StubScreen(AppRoutes.screenTime),
         },
       ),
     ),
@@ -304,13 +310,17 @@ void main() {
     expect(review.achievementId, _uuid);
   });
 
-  testWidgets('a SAFETY-class notification now reaches the safety screen, not the inbox',
+  testWidgets('an id-less screen-time link reaches the screen-time surface, not the inbox',
       (tester) async {
-    // THE TAP THIS WHOLE SURFACE EXISTS FOR. `PROTECTION_BYPASS_ATTEMPT`,
+    // THE TAP THIS WHOLE SURFACE EXISTS FOR, and the assertion moved with the
+    // retarget rather than being dropped. `PROTECTION_BYPASS_ATTEMPT`,
     // `ACCESSIBILITY_DISABLED` and `POLICY_VIOLATION` all resolve server-side
     // through `safetyDestination`, which degrades to `abny://screen-time`
-    // because no producer carries an `alertId` — so this link is what a parent
-    // actually receives today, and it used to land back in the inbox.
+    // because no producer carries an `alertId`; `DAILY_GOAL_COMPLETED` and
+    // `HYDRATION_REMINDER` name the same link directly. So this string is what
+    // a parent actually receives today — it used to land back in the inbox,
+    // then on the safety feed while no screen-time screen existed, and now on
+    // the surface it is named for.
     final api = _FakeNotificationsApi(<dynamic>[
       _row(title: 'محاولة تعطيل الحماية', deepLink: 'abny://screen-time'),
     ]);
@@ -320,7 +330,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.byType(SafetyScreen), findsOneWidget);
+    expect(find.text(AppRoutes.screenTime), findsOneWidget);
     // And it is NOT the honest-fallback path any more.
     expect(find.text(ar('deepLink.unavailable')), findsNothing);
     // The row is still marked read — the behaviour navigation was never allowed
