@@ -7,6 +7,7 @@ import {
   type INotificationDeliveryRepository,
 } from '../../../notifications/application/ports/notification-delivery.repository.port';
 import { childSafeNotificationPayload } from '../../../notifications/domain/engine/notification-destination';
+import { PrismaCommunicationRepository } from '../../infrastructure/repositories/prisma-communication.repository';
 import { FamilyCommunicationService } from './family-communication.service';
 import { evaluateSmartNotificationCandidates, type ISmartNotificationSignals } from './smart-notification-decision-engine';
 import {
@@ -137,6 +138,11 @@ export class SmartNotificationIntegrationService {
     private readonly deferralRepository: INotificationDeliveryRepository,
     @Inject(RUNTIME_ALERT_REPOSITORY) private readonly runtimeAlertRepository: IRuntimeAlertRepository,
     private readonly familyCommunication: FamilyCommunicationService,
+    /** THE CHILD'S OWN INBOX, for the CHILD branch of `fetchHistory` and for
+     * nothing else. This service still writes child messages through
+     * `FamilyCommunicationService` — the approval gate — and never through this
+     * repository; what it needs here is a READ the gate does not expose. */
+    private readonly childMessages: PrismaCommunicationRepository,
     private readonly familyDate: FamilyDateService,
   ) {}
 
@@ -153,7 +159,26 @@ export class SmartNotificationIntegrationService {
     // anchored to it too, so «the last 24 hours» means the last 24 hours
     // before the instant being evaluated.
     const now = new Date();
-    const history = await this.fetchHistory(childId, now);
+
+    /**
+     * ONE HISTORY PER AUDIENCE, read at most once each and read LAZILY.
+     *
+     * A batch is not single-audience: `evaluateSmartNotificationCandidates` can
+     * produce a child's hydration reminder and a parent's alert in the same
+     * call, and after this fix they are counted against two different inboxes.
+     * Lazy because a batch that turns out to be all-CHILD must not pay for a
+     * read of the parent's `notifications`, and vice versa — the old code paid
+     * for exactly one read, and this must not become two.
+     */
+    const historyByAudience = new Map<'PARENT' | 'CHILD', IRecentNotification[]>();
+    const historyFor = async (audience: 'PARENT' | 'CHILD'): Promise<IRecentNotification[]> => {
+      const cached = historyByAudience.get(audience);
+      if (cached) return cached;
+      const fetched = await this.fetchHistory(childId, now, audience);
+      historyByAudience.set(audience, fetched);
+      return fetched;
+    };
+
     const outcomes: INotificationOutcome[] = [];
 
     for (const candidate of candidates) {
@@ -169,12 +194,15 @@ export class SmartNotificationIntegrationService {
         ...candidate,
         sourceEventId: forRecurringSignal('signal', childId, candidate.type, now),
       };
+      const history = await historyFor(candidate.targetAudience);
       const outcome = await this.evaluateAndDeliver(childId, familyId, deliverable, history, now);
       outcomes.push(outcome);
       // Feeds back into the SAME history array used by subsequent
       // candidates in this same batch — two candidates matching in
       // one call must each be correctly counted against
-      // dailyMax/categoryMax for the other.
+      // dailyMax/categoryMax for the other. AUDIENCE-SCOPED NOW: a child
+      // message sent in this batch counts against the child's next candidate
+      // and not against the parent's, which is the whole point of the fix.
       if (outcome.decision === 'SEND') {
         history.unshift({ type: candidate.type, priority: candidate.priority, createdAt: new Date() });
       }
@@ -209,16 +237,82 @@ export class SmartNotificationIntegrationService {
      */
     now: Date = new Date(),
   ): Promise<INotificationOutcome> {
-    const history = await this.fetchHistory(childId, now);
+    // THE CANDIDATE'S OWN AUDIENCE, not the child it is about. See
+    // `fetchHistory`.
+    const history = await this.fetchHistory(childId, now, candidate.targetAudience);
     return this.evaluateAndDeliver(childId, familyId, candidate, history, now);
   }
 
-  /** PHASE D (`PD-N-003`): the window is anchored to the `now` being evaluated,
+  /**
+   * THE RECIPIENT'S OWN RECENT NOTIFICATIONS — and «the recipient» is the
+   * AUDIENCE the candidate is addressed to, not the child it is about.
+   *
+   * WHAT WAS WRONG. This method read `notifications` — the PARENT's inbox —
+   * for every candidate, then handed the result to `evaluateFatigue`, whose
+   * `dailyMax`, `categoryDailyMax`, `hourlyMax`, `DUPLICATE` and per-type
+   * COOLDOWN all count over it. So a message addressed to a CHILD was capped
+   * and cooled down against THE PARENT'S DAY. `notification-class.ts` forbids
+   * that in so many words on `REWARD_GRANTED_CHILD`'s own `why`: «a parent at
+   * their daily maximum must not be able to silence the child's own news about
+   * their own work». The damage runs in both directions and both are real:
+   *
+   *   THE CHILD IS SILENCED BY THE PARENT. Six parent notifications today and
+   *   the child's `DAILY_MAX` is exhausted before the child has been told
+   *   anything. Two parent `REWARD_GRANTED` rows and the child's
+   *   `CATEGORY_MAX` for its own reward is gone.
+   *
+   *   AND THE CHILD'S OWN CAP DID NOT APPLY AT ALL. A child's notifications
+   *   live in `child_messages` and are not in `notifications` in any form, so
+   *   nothing the child had already received was ever counted. The cap meant to
+   *   protect the child was measuring somebody else entirely.
+   *
+   * THE FIX IS THE ONE THAT LANDED ONE LAYER UP, in
+   * `NotificationContextAssembler.readHistory` (`fb988c4`): read the AUDIENCE's
+   * own inbox — `notifications` for PARENT, unchanged, and `child_messages`
+   * restricted to `source_event_id IS NOT NULL` for CHILD.
+   *
+   * THE TWO LAYERS SHOULD SHARE ONE IMPLEMENTATION AND CANNOT TODAY: the
+   * assembler is in `modules/notification-engine`, this service is in
+   * `modules/life-intelligence`, and neither module may own the other — the
+   * shared home for that query is a port in `shared/notifications`. Rather than
+   * invent a second, subtly different notion of «history», the CHILD branch
+   * delegates to `PrismaCommunicationRepository.findRecentNotificationsForChild`,
+   * whose docstring states the correspondence with `readChildInbox` clause by
+   * clause and names it as the definition this must not drift from.
+   *
+   * NO CAP CONSTANT MOVED, deliberately, and for the reason `fb988c4` gave:
+   * `dailyMax = 6` and `categoryDailyMax = 2` are Sprint 16's numbers, chosen
+   * while this array was the PARENT branch. The parent branch is unchanged, so
+   * they still mean what they were calibrated to mean; the child now has its
+   * own count of them, which is the first time the child has had one at all.
+   *
+   * PHASE D (`PD-N-003`): the window is anchored to the `now` being evaluated,
    * not to the wall clock. The two agree in production and disagree in every
    * test and every replayed instant, which is precisely where a cap silently
-   * stops applying. */
-  private async fetchHistory(childId: string, now: Date): Promise<IRecentNotification[]> {
+   * stops applying.
+   */
+  private async fetchHistory(
+    childId: string,
+    now: Date,
+    audience: 'PARENT' | 'CHILD',
+  ): Promise<IRecentNotification[]> {
     const since = new Date(now.getTime() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000);
+
+    if (audience === 'CHILD') {
+      const rows = await this.childMessages.findRecentNotificationsForChild(childId, since);
+      return rows.map((m) => ({
+        type: m.type,
+        // `child_messages` HAS NO PRIORITY COLUMN, stated rather than guessed:
+        // a child's message surface has never had a loudness axis. Nothing
+        // `evaluateFatigue` does reads `priority` off a HISTORY row — it counts
+        // them, buckets them by type and measures their age — so this is an
+        // honest filler for a required field and not a value any decision turns
+        // on. The assembler's own child branch says the same thing.
+        priority: 'NORMAL' as const,
+        createdAt: m.createdAt,
+      }));
+    }
+
     const rawHistory = await this.notificationRepository.findRecentForChild(childId, since);
     // Safe narrowing: every writer of Notification.priority uses this
     // exact union (schema's own open-string design means TypeScript

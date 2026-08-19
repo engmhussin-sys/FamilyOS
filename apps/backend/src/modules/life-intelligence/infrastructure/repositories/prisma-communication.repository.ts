@@ -84,6 +84,59 @@ export class PrismaCommunicationRepository {
     await this.prisma.childMessage.update({ where: { id: messageId }, data: { approvalStatus: 'REJECTED' } });
   }
 
+  /**
+   * THE CHILD'S OWN INBOX, READ AS NOTIFICATION HISTORY — the CHILD-audience
+   * counterpart of `INotificationRepository.findRecentForChild`.
+   *
+   * WHY IT EXISTS. `evaluateFatigue` decides «has this recipient had enough
+   * today» from a history array, and every caller in this module was building
+   * that array from `notifications` — the PARENT's inbox — even for a candidate
+   * addressed to the CHILD. `notification-class.ts` forbids exactly that in its
+   * own words on `REWARD_GRANTED_CHILD`: «a parent at their daily maximum must
+   * not be able to silence the child's own news about their own work». The
+   * child's notifications are `child_messages` rows; they are not in
+   * `notifications` at all, so the parent's stream was both the wrong denominator
+   * and, for the child, an empty one.
+   *
+   * THIS IS THE SAME QUESTION `NotificationContextAssembler.readChildInbox`
+   * ASKS, DELIBERATELY WORDED IDENTICALLY: same table, same window predicate,
+   * same `source_event_id IS NOT NULL` test, same `category`-as-type mapping.
+   * The two layers should share ONE implementation and they cannot today — the
+   * assembler lives in `modules/notification-engine` and this repository in
+   * `modules/life-intelligence`, and neither module may own the other. The
+   * shared home is a port in `shared/notifications`, which is a change that
+   * touches a file this module does not own; until it exists, the two are kept
+   * word-for-word identical and this comment is the pointer between them.
+   *
+   * `source_event_id IS NOT NULL` IS THE «IS THIS A NOTIFICATION?» TEST, and it
+   * is the table's own: the column is documented NULLABLE precisely because
+   * this table ALSO holds PARENT-AUTHORED messages, and NULL there means «a
+   * human wrote this». A parent typing «أحسنت» to their child is a
+   * conversation, not a notification, and counting it towards a fatigue cap
+   * would let a warm parent mute the product's own feedback loop.
+   *
+   * TWO COLUMNS, not the row: no title, no body, no `data`. A cap needs to know
+   * that a message happened, what kind it was and when; it has never needed to
+   * know what it said.
+   */
+  async findRecentNotificationsForChild(
+    childId: string,
+    since: Date,
+  ): Promise<Array<{ type: string; createdAt: Date }>> {
+    const rows = await this.prisma.childMessage.findMany({
+      where: { childId, createdAt: { gte: since }, sourceEventId: { not: null } },
+      select: { category: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    // `category` HOLDS THE NOTIFICATION TYPE on this path —
+    // `SmartNotificationIntegrationService.deliverNow` passes `candidate.type`
+    // into `draftAiMessageIfAbsent`'s `category` parameter — so it is the same
+    // vocabulary `IRecentNotification.type` carries on the parent branch, and
+    // the guard's per-type cooldown and category cap read the same strings for
+    // both audiences.
+    return rows.map((row) => ({ type: row.category, createdAt: row.createdAt }));
+  }
+
   /** Only DELIVERED messages are visible to the child — a PENDING
    * AI-drafted message must never appear in the child's inbox before
    * a parent approves it. */

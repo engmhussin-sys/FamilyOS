@@ -35,6 +35,7 @@ import {
   evaluateFatigue,
   type IRecentNotification,
 } from './notification-fatigue-guard';
+import { PrismaCommunicationRepository } from '../../infrastructure/repositories/prisma-communication.repository';
 import { SmartNotificationIntegrationService } from './smart-notification-integration.service';
 
 /** What one sweep did. Counts only — this object becomes `job_runs.details`,
@@ -118,6 +119,10 @@ export class QuietHoursReleaseService {
     @Inject(RUNTIME_ALERT_REPOSITORY)
     private readonly runtimeAlerts: IRuntimeAlertRepository,
     private readonly integration: SmartNotificationIntegrationService,
+    /** The CHILD's own inbox, for the CHILD branch of `historyFor`. Reads only:
+     * every write to `child_messages` on this path still goes through
+     * `SmartNotificationIntegrationService.deliverNow` and the approval gate. */
+    private readonly childMessages: PrismaCommunicationRepository,
     private readonly familyDate: FamilyDateService,
   ) {}
 
@@ -239,11 +244,22 @@ export class QuietHoursReleaseService {
     // NEW day, not the one the notification was deferred on. That is the whole
     // difference between «the cap was checked when it was queued» and «the cap
     // is true when it arrives».
+    //
+    // KEYED BY (CHILD, AUDIENCE), not by child. A deferred queue released at
+    // 07:00 routinely holds BOTH audiences for one child — every reward and
+    // every badge enqueues two rows with two faceted keys — and a CHILD row
+    // scored against the parent's `notifications` is the same defect
+    // `NotificationContextAssembler.readHistory` was fixed for one layer up.
+    // See `historyFor`.
     const businessDayStart = getStartOfBusinessDay(now, timeZone);
-    const childIds = [...new Set(rows.map((r) => r.childId).filter((c): c is string => c !== null))];
-    const historyByChild = new Map<string, IRecentNotification[]>();
-    for (const childId of childIds) {
-      historyByChild.set(childId, await this.historyFor(childId, now));
+    const historyByRecipient = new Map<string, IRecentNotification[]>();
+    const recipientKey = (childId: string, audience: 'PARENT' | 'CHILD'): string =>
+      `${childId}|${audience}`;
+    for (const row of plan.deliver) {
+      if (!row.childId) continue;
+      const key = recipientKey(row.childId, row.targetAudience);
+      if (historyByRecipient.has(key)) continue;
+      historyByRecipient.set(key, await this.historyFor(row.childId, now, row.targetAudience));
     }
 
     let delivered = 0;
@@ -252,7 +268,9 @@ export class QuietHoursReleaseService {
     let dead = 0;
 
     for (const row of plan.deliver) {
-      const history = row.childId ? (historyByChild.get(row.childId) ?? []) : [];
+      const history = row.childId
+        ? (historyByRecipient.get(recipientKey(row.childId, row.targetAudience)) ?? [])
+        : [];
       const decision = evaluateFatigue(
         {
           type: row.type,
@@ -360,9 +378,11 @@ export class QuietHoursReleaseService {
         await this.deliveries.markDelivered(row.id);
         delivered += 1;
         // Feeds the SAME history array the next row is evaluated against, so
-        // two releases in one sweep each count against the other's cap.
+        // two releases in one sweep each count against the other's cap — and,
+        // since that array is now per (child, audience), the child's released
+        // message counts against the child's next one rather than the parent's.
         if (row.childId) {
-          historyByChild.get(row.childId)?.unshift({
+          historyByRecipient.get(recipientKey(row.childId, row.targetAudience))?.unshift({
             type: row.type,
             priority: row.priority,
             createdAt: new Date(now),
@@ -447,8 +467,27 @@ export class QuietHoursReleaseService {
    * The suite's own «caps at delivery time» case measured it: a cap that was
    * exhausted returned an EMPTY history and the notification went out.
    */
-  private async historyFor(childId: string, now: Date): Promise<IRecentNotification[]> {
+  private async historyFor(
+    childId: string,
+    now: Date,
+    audience: 'PARENT' | 'CHILD',
+  ): Promise<IRecentNotification[]> {
     const since = new Date(now.getTime() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000);
+
+    // THE RECIPIENT'S OWN INBOX. This read was `notifications` for every row,
+    // including rows addressed to a CHILD — whose notifications are
+    // `child_messages` and are not in `notifications` in any form. So a child's
+    // deferred reward, released in the morning, was capped and cooled down
+    // against the PARENT'S day and its own day was never counted. Same defect,
+    // same fix and the same single definition as
+    // `SmartNotificationIntegrationService.fetchHistory`; that method's
+    // docstring carries the argument and names the layer above that it must
+    // stay identical to.
+    if (audience === 'CHILD') {
+      const rows = await this.childMessages.findRecentNotificationsForChild(childId, since);
+      return rows.map((m) => ({ type: m.type, priority: 'NORMAL' as const, createdAt: m.createdAt }));
+    }
+
     const raw = await this.notifications.findRecentForChild(childId, since);
     return raw.map((n) => ({
       type: n.type,

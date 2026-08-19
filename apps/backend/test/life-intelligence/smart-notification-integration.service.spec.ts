@@ -5,11 +5,24 @@ import { NOTIFICATION_REPOSITORY } from '../../src/modules/notifications/applica
 import { NOTIFICATION_DELIVERY_REPOSITORY } from '../../src/modules/notifications/application/ports/notification-delivery.repository.port';
 import { RUNTIME_ALERT_REPOSITORY } from '../../src/modules/pairing/application/ports/runtime-alert.repository.port';
 import { FamilyCommunicationService } from '../../src/modules/life-intelligence/application/services/family-communication.service';
+import { PrismaCommunicationRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-communication.repository';
 import type { ISmartNotificationSignals } from '../../src/modules/life-intelligence/application/services/smart-notification-decision-engine';
 import { familyDateProvider } from '../common/family-date.testing';
 
 describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A REAL GAP: the pure decision engines had zero real caller before this)', () => {
   const notificationRepoMock = { findRecentForChild: jest.fn() };
+  /**
+   * THE CHILD'S OWN INBOX — the read `fetchHistory` now makes for a
+   * CHILD-audience candidate, and the reason this mock exists at all.
+   *
+   * Before the fix there was ONE history read for every candidate and it was
+   * `findRecentForChild`, i.e. the PARENT's `notifications`. A child's messages
+   * are `child_messages` rows and are not in `notifications` in any form, so
+   * the caps meant to protect the child were counting the parent's day and the
+   * child's own day was never counted at all. Two mocks, because there are two
+   * inboxes and the whole defect was that there was one.
+   */
+  const childMessagesRepoMock = { findRecentNotificationsForChild: jest.fn() };
   const runtimeAlertRepoMock = { createForFamilyOwner: jest.fn() };
   // B9 — the delivery layer now calls `draftAiMessageIfAbsent`, which returns
   // the drafted message or `null` when
@@ -39,6 +52,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
   beforeEach(async () => {
     jest.clearAllMocks();
     notificationRepoMock.findRecentForChild.mockResolvedValue([]);
+    childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
     // B9 — `true`/a message means «a row was written». `false`/`null` now
     // means «the constraint or the window said this already exists», which the
     // service reports as SUPPRESS/ALREADY_NOTIFIED.
@@ -55,6 +69,7 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
         { provide: NOTIFICATION_DELIVERY_REPOSITORY, useValue: deferralRepoMock },
         { provide: RUNTIME_ALERT_REPOSITORY, useValue: runtimeAlertRepoMock },
         { provide: FamilyCommunicationService, useValue: familyCommunicationMock },
+        { provide: PrismaCommunicationRepository, useValue: childMessagesRepoMock },
         // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
         familyDateProvider()
       ],
@@ -75,6 +90,9 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
 
     expect(result).toEqual([]);
     expect(notificationRepoMock.findRecentForChild).not.toHaveBeenCalled();
+    // AND NEITHER INBOX IS READ. The history read is lazy and per audience:
+    // no candidate means no audience, which means no query of either table.
+    expect(childMessagesRepoMock.findRecentNotificationsForChild).not.toHaveBeenCalled();
     expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
     expect(familyCommunicationMock.draftAiMessageIfAbsent).not.toHaveBeenCalled();
   });
@@ -131,14 +149,148 @@ describe('SmartNotificationIntegrationService (Sprint 16.1 Phase 3 — CLOSES A 
   describe('SUPPRESS', () => {
     it('a candidate blocked by cooldown is SUPPRESSed with the real reason, and never delivered', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
-      notificationRepoMock.findRecentForChild.mockResolvedValue([
-        { type: 'HYDRATION_REMINDER', priority: 'NORMAL', createdAt: new Date('2026-08-10T14:50:00') },
+      // TEN MINUTES AGO, IN THE CHILD'S OWN INBOX. `HYDRATION_REMINDER` is a
+      // CHILD-audience type, so its 120-minute cooldown is a statement about
+      // what THIS CHILD has already been told — and this row is where that is
+      // recorded. Seeded here rather than on `findRecentForChild`, which is the
+      // parent's inbox and, for this candidate, the wrong table.
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([
+        { type: 'HYDRATION_REMINDER', createdAt: new Date('2026-08-10T14:50:00') },
       ]);
 
       const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
 
       expect(result).toEqual([{ type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'SUPPRESS', reason: 'COOLDOWN' }]);
       expect(familyCommunicationMock.draftAiMessageIfAbsent).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * THE AUDIENCE'S OWN INBOX — the defect, in the smallest terms that can hold
+   * it.
+   *
+   * `fetchHistory` read `notifications` for EVERY candidate, so a CHILD's
+   * message was counted, capped and cooled down against THE PARENT'S DAY.
+   * `notification-class.ts` forbids it on `REWARD_GRANTED_CHILD`'s own `why`:
+   * «a parent at their daily maximum must not be able to silence the child's
+   * own news about their own work». These four cases are that sentence as
+   * assertions, and each one FAILS against the pre-fix code:
+   *
+   *   1  the parent's stream does not silence the child
+   *   2  the child's own stream still does
+   *   3  the parent's own cap is untouched
+   *   4  each audience is asked for its own table, and only its own
+   */
+  describe('THE AUDIENCE OWNS ITS OWN HISTORY — a parent at their cap cannot silence the child', () => {
+    /**
+     * SIX NOTIFICATIONS EARLIER TODAY — `dailyMax` is 6, so this recipient is
+     * exactly at their daily maximum.
+     *
+     * Deliberately spread across the afternoon and all more than five minutes
+     * before the instant under test, so the guard reaches the CAP rather than
+     * short-circuiting on `DUPLICATE`: this block is about WHOSE day is being
+     * counted, and a duplicate refusal would answer a different question.
+     */
+    const sixToday = [
+      { type: 'REWARD_GRANTED', priority: 'NORMAL' as const, createdAt: new Date('2026-08-10T09:00:00') },
+      { type: 'REWARD_GRANTED', priority: 'NORMAL' as const, createdAt: new Date('2026-08-10T10:00:00') },
+      { type: 'BADGE_EARNED', priority: 'NORMAL' as const, createdAt: new Date('2026-08-10T11:00:00') },
+      { type: 'BADGE_EARNED', priority: 'NORMAL' as const, createdAt: new Date('2026-08-10T12:00:00') },
+      { type: 'LEVEL_UP', priority: 'NORMAL' as const, createdAt: new Date('2026-08-10T13:00:00') },
+      { type: 'LEVEL_UP', priority: 'NORMAL' as const, createdAt: new Date('2026-08-10T14:00:00') },
+    ];
+
+    it('THE DEFECT: a parent at their daily maximum does NOT silence the child', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+      notificationRepoMock.findRecentForChild.mockResolvedValue(sixToday);
+      // The child has been told nothing today.
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+
+      const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
+
+      // Pre-fix this was `SUPPRESS` / `DAILY_MAX`: six rows in the PARENT's
+      // inbox, counted against a message addressed to the CHILD.
+      expect(result).toEqual([
+        { type: 'HYDRATION_REMINDER', targetAudience: 'CHILD', decision: 'SEND' },
+      ]);
+      expect(familyCommunicationMock.draftAiMessageIfAbsent).toHaveBeenCalledTimes(1);
+    });
+
+    it('AND THE CHILD IS STILL CAPPED — by the child\'s own inbox', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+      // The parent has had nothing at all...
+      notificationRepoMock.findRecentForChild.mockResolvedValue([]);
+      // ...and the CHILD is at `dailyMax`. The fix is not «the child is
+      // exempt», it is «the child is measured».
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue(
+        sixToday.map((n) => ({ type: n.type, createdAt: n.createdAt })),
+      );
+
+      const result = await service.processSignals(childId, familyId, hydrationTriggerSignals);
+
+      expect(result).toEqual([
+        {
+          type: 'HYDRATION_REMINDER',
+          targetAudience: 'CHILD',
+          decision: 'SUPPRESS',
+          reason: 'DAILY_MAX',
+        },
+      ]);
+      expect(familyCommunicationMock.draftAiMessageIfAbsent).not.toHaveBeenCalled();
+    });
+
+    it('THE PARENT BRANCH IS UNCHANGED — a parent at their cap is still capped', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+      notificationRepoMock.findRecentForChild.mockResolvedValue(sixToday);
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+
+      const outcome = await service.notifyEvent(childId, familyId, {
+        type: 'BADGE_EARNED',
+        priority: 'NORMAL',
+        title: 't',
+        body: 'b',
+        targetAudience: 'PARENT',
+        sourceEventId: 'badge:child-1:badge-9',
+      });
+
+      // No cap constant moved: `dailyMax = 6` still means what it meant when it
+      // was calibrated, on the stream it was calibrated against.
+      expect(outcome).toEqual({
+        type: 'BADGE_EARNED',
+        targetAudience: 'PARENT',
+        decision: 'SUPPRESS',
+        reason: 'DAILY_MAX',
+      });
+      expect(runtimeAlertRepoMock.createForFamilyOwner).not.toHaveBeenCalled();
+    });
+
+    it('EACH AUDIENCE IS ASKED FOR ITS OWN TABLE, AND ONLY ITS OWN', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T15:00:00'));
+
+      // A CHILD candidate reads the child's inbox and does not touch the
+      // parent's — the read is lazy per audience, so a single-audience batch
+      // still costs exactly one query, as it did before the fix.
+      await service.processSignals(childId, familyId, hydrationTriggerSignals);
+      expect(childMessagesRepoMock.findRecentNotificationsForChild).toHaveBeenCalledTimes(1);
+      expect(notificationRepoMock.findRecentForChild).not.toHaveBeenCalled();
+
+      jest.clearAllMocks();
+      notificationRepoMock.findRecentForChild.mockResolvedValue([]);
+      childMessagesRepoMock.findRecentNotificationsForChild.mockResolvedValue([]);
+      familyCommunicationMock.draftAiMessageIfAbsent.mockResolvedValue({ id: 'msg-1' });
+      runtimeAlertRepoMock.createForFamilyOwner.mockResolvedValue(true);
+
+      // And a PARENT candidate the other way round.
+      await service.notifyEvent(childId, familyId, {
+        type: 'BADGE_EARNED',
+        priority: 'NORMAL',
+        title: 't',
+        body: 'b',
+        targetAudience: 'PARENT',
+        sourceEventId: 'badge:child-1:badge-10',
+      });
+      expect(notificationRepoMock.findRecentForChild).toHaveBeenCalledTimes(1);
+      expect(childMessagesRepoMock.findRecentNotificationsForChild).not.toHaveBeenCalled();
     });
   });
 
