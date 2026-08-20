@@ -54,7 +54,7 @@ Every gate below is **executable**: a command you can run, or a named external a
 |---|---|---|---|
 | 22 | **Pilot cohort** | `HUMAN DECISION` | `pilot_invites` exists and the demo seed uses cohort `demo-pilot-2026`. Decide the real cohort id, the market split (EG / SA), and how many households |
 | 23 | **Operator key** | `HUMAN DECISION` | `openssl rand -hex 32` → `INTERNAL_ADMIN_API_KEY` in the backend `.env`, same value pasted into the dashboard. Held in memory only; re-entered after every page refresh, deliberately |
-| 24 | **Staging URL** | `BLOCKED` | No Railway project exists. `docker compose up -d` runs the whole stack locally today |
+| 24 | **Staging URL** | `BLOCKED` | **Corrected 2026-08-20 — the earlier "no Railway project exists" was wrong.** Discovery found a live Railway deployment and confirmed it over HTTPS: `https://familyos-production-74ca.up.railway.app` answers `{"status":"ok","database":true,"redis":true}` with PostgreSQL and Redis attached. The owner confirms **that host is PRODUCTION**. A separate staging service exists; its name and URL have not been supplied yet, and the deploy workflow now refuses to run until they name a target that is provably not production |
 | 25 | **Rotate a leaked test account** | `HUMAN DECISION` | `test1@example.com` / `SecurePass123!` were hardcoded in `scripts/verification-script*.ps1`. Removed; the scripts now take `-BaseUrl`/`-Email`/`-Password` with no defaults. **History was not rewritten — rotate the account** |
 
 ---
