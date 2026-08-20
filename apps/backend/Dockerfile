@@ -24,6 +24,25 @@
 # last edited in has no Docker daemon. Every COPY source was checked to exist
 # at the path written. `.github/workflows/ci.yml` builds it on every push —
 # that job, not this comment, is the proof.
+#
+# -----------------------------------------------------------------------------
+# OBSERVED ON A REAL RAILWAY BUILD, 2026-08-20 — READ BEFORE "FIXING" A COPY
+# -----------------------------------------------------------------------------
+# A Railway build died with:
+#
+#     failed to compute cache key: "/apps/backend/src": not found
+#
+# The cause was NOT this file. The service's **Root Directory** was still
+# `apps/backend`, left from an earlier deployment. With that setting Railway
+# never reads the root `railway.json` at all — it auto-detects THIS file as a
+# bare `Dockerfile`, builds with `apps/backend/` as the context, and every COPY
+# above misses by exactly one path segment. The error names the symptom, not
+# the cause.
+#
+# The fix is the Root Directory setting: set it to `/`. Do NOT rewrite the COPY
+# paths to match a subdirectory context — that would break `railway.json`,
+# `render.yaml`, `docker-compose.yml` and the CI build simultaneously, and the
+# next person would face four broken things instead of one setting.
 # =============================================================================
 
 FROM node:20-alpine AS builder

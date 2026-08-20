@@ -325,6 +325,32 @@ Before you press enter, confirm all three: the URL is staging and **not** the pr
 
 ---
 
+## §7b — TROUBLESHOOTING: build failures seen on a real Railway build
+
+### `failed to compute cache key: "/apps/backend/src": not found`
+
+**Observed on a real Railway build, 2026-08-20.** The build reaches the builder stage, copies a few files, then dies on this. It reads like a missing source file. It is not — every path in that Dockerfile exists.
+
+**Cause: the service's Root Directory is `apps/backend`, not `/`.**
+
+With Root Directory set to a subdirectory, Railway never reads the root `railway.json` at all. It falls back to auto-detection, finds `apps/backend/Dockerfile`, and builds it with `apps/backend/` as the build **context**. Every `COPY apps/backend/…` line in that file is written for a **repository-root** context, so each one misses by exactly one path segment. `src` is simply the first one the builder reports.
+
+**Fix — one setting, no code change:**
+
+1. Railway → your service → **Settings → Source**
+2. Set **Root Directory** to `/` (or clear it entirely)
+3. Redeploy
+
+Then confirm Railway is now reading the right config: the build log should use `apps/backend/Dockerfile` **and** honour `railway.json`'s `preDeployCommand` (`npx prisma migrate deploy`). **If no migration step runs, the Root Directory is still wrong** — the build may succeed while the schema is never applied, which is worse than a clean failure.
+
+**Do not "fix" this by rewriting the COPY paths.** One build context is named in four files that all agree — `apps/backend/Dockerfile`, `railway.json`, `render.yaml`, `docker-compose.yml` — plus the CI build. Reshaping the Dockerfile for a subdirectory context breaks all of them, and turns one wrong setting into four broken things.
+
+### Which service did that build run against?
+
+The build log does not name the service. **Before redeploying, confirm the target** — §3 above is how to prove it is not production (`familyos-production-74ca.up.railway.app`). A failed build is harmless: nothing deployed, no migration ran, the live host kept serving. But the next attempt will succeed, and it should succeed against staging.
+
+---
+
 ## §8 — What is still unknown until a real deploy runs
 
 Stated plainly, because the rest of this document is confident and this part is not.

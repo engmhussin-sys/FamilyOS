@@ -74,13 +74,31 @@ describe('TrialManager', () => {
       await expect(manager.extendTrial('family-1', 30)).rejects.toThrow('No subscription found');
     });
 
+    /**
+     * MID-TRIAL MEANS *STILL RUNNING*, SO THE FIXTURE MUST BE IN THE FUTURE OF
+     * THE RUN, NOT OF THE AUTHOR.
+     *
+     * This test used to pin `2026-08-20T00:00:00Z` and expect `2026-08-30`.
+     * That is not a fixture, it is a fuse: the suite passed until that instant
+     * arrived, and from then on failed forever — because `extendTrial` was
+     * doing exactly the right thing, rebasing a trial that had already ended
+     * onto today rather than handing the family a date in the past.
+     *
+     * It went red on 2026-08-20 and blocked CI. Anchoring the fixture to the
+     * run's own clock keeps the assertion — «extending mid-trial adds to the
+     * remaining time, it does not truncate it» — and removes the fuse.
+     */
     it('extends from the CURRENT trialEndsAt when still mid-trial, never shortening the real remaining time', async () => {
-      const currentEnd = new Date('2026-08-20T00:00:00Z');
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const currentEnd = new Date(Date.now() + 3 * DAY_MS);
       repositoryMock.findSubscriptionByFamily.mockResolvedValue({ id: 'sub-1', trialEndsAt: currentEnd });
 
       const result = await manager.extendTrial('family-1', 10);
 
-      expect(result.toISOString()).toBe('2026-08-30T00:00:00.000Z');
+      // 13 days out: the 3 that remained plus the 10 granted. Asserted as an
+      // exact offset from the fixture, so a service that silently rebased onto
+      // `now` — the truncation this test exists to catch — reads as 10, not 13.
+      expect(result.getTime()).toBe(currentEnd.getTime() + 10 * DAY_MS);
       expect(repositoryMock.updateSubscriptionStatus).toHaveBeenCalledWith('sub-1', 'TRIALING', { trialEndsAt: result });
     });
 
