@@ -1,0 +1,24 @@
+ABNY — DELIVERY MANIFEST
+range   : 1512457..HEAD
+head    : 1e8eec8165d104be9e89c4ab66ed54c66ed12436
+branch  : abny/sprint-f1-unblock
+files   : 5 changed, 0 to delete
+
+HOW TO APPLY
+  1. Run _DELIVERY/DELETE.ps1 (Windows) or DELETE.sh — ONLY if it lists files.
+  2. Extract this zip over the project root. Choose Replace when asked.
+     The paths inside are repo-relative: apps/... lands on apps/...
+  3. Delete the _DELIVERY folder. It is notes, not source.
+
+CHANGED (extract these)
+A	CONVENTIONS.md
+M	DEPLOY_STAGING.md
+M	apps/backend/Dockerfile
+M	apps/backend/test/billing/trial-manager.service.spec.ts
+A	scripts/make-delivery-zip.sh
+
+DELETED — none. Nothing to remove for this delivery.
+
+COMMITS
+1e8eec8 chore: code is delivered as a zip with paths intact — the rule, and the tool
+bf57047 fix(ci): a fixture that was a fuse, and the Railway setting that failed the build
