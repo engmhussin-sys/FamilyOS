@@ -107,6 +107,36 @@ COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 COPY --from=builder /app/dist ./dist
 
+# -----------------------------------------------------------------------------
+# THE BUILD STAMP. WHY IT EXISTS AND WHY IT IS THIS EXACT NAME.
+#
+# The live host was observed reporting `"commit": null` from
+# GET /api/v1/system/diagnostics, which means nobody could tell which build was
+# running — the single most useful fact while a deploy is in progress.
+#
+# THIS IS NOT A NEW MECHANISM. `SystemDiagnosticsController` already reads
+# `process.env.GIT_COMMIT_SHA` and reports it, honestly, as `null` when it is
+# absent (see its own comment, which anticipates exactly this build argument).
+# Nothing in `apps/backend/src/` is touched to make this work; the frozen module
+# already had the hook and nobody was passing the value.
+#
+# Declared in the RUNTIME stage, because that is the stage whose environment the
+# running process actually sees. Default empty: an unstamped build must report
+# `null` rather than a stale or invented sha.
+#
+# HOW EACH HOST SUPPLIES IT:
+#   * `docker build --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) ...`
+#     — CI and any direct build. Baked into the image, so the image is
+#     self-describing even if nothing sets it at runtime.
+#   * Railway: `railway up` has no build-arg flag, so the deploy workflow sets
+#     GIT_COMMIT_SHA as a SERVICE variable instead. That is a runtime env var,
+#     it overrides the baked ENV below, and it arrives at the same
+#     `process.env.GIT_COMMIT_SHA` lookup. One mechanism, two ways in.
+#   * Render: set it in the service's environment, same effect.
+# -----------------------------------------------------------------------------
+ARG GIT_COMMIT_SHA=""
+ENV GIT_COMMIT_SHA=$GIT_COMMIT_SHA
+
 # Runs as a non-root user — a compromised Node process should not have
 # root inside its own container, one more layer per Sprint 9's Security
 # Hardening even though the container itself is already isolated.
@@ -139,6 +169,19 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 # the signal directly.
 #
 # MIGRATIONS ARE NOT RUN HERE. See railway.json / render.yaml and
-# DEPLOY_STAGING.md §5 for where `prisma migrate deploy` runs and why it must
+# DEPLOY_STAGING.md §4 for where `prisma migrate deploy` runs and why it must
 # not be in this line.
-CMD ["sh", "-c", "if [ -f dist/main.js ]; then exec node dist/main.js; else exec node dist/src/main.js; fi"]
+#
+# `unset GIT_COMMIT_SHA` WHEN IT IS EMPTY, AND WHY THAT ONE WORD MATTERS.
+# `ENV GIT_COMMIT_SHA=$GIT_COMMIT_SHA` above always DEFINES the variable — an
+# unstamped build defines it as the EMPTY STRING, not as absent. The reader is
+# `process.env.GIT_COMMIT_SHA ?? null`, and `??` only falls through on
+# null/undefined, so an empty string would be reported verbatim: a build with
+# no stamp would answer `"commit": ""` instead of `"commit": null`.
+#
+# That would be a quieter lie than the problem this stamp was added to fix —
+# `null` says "nobody told me", `""` says "the sha is the empty string". So an
+# empty value is unset here, at start, and the frozen controller keeps
+# answering exactly `null` for an unstamped build. No file under
+# `apps/backend/src/` is touched to achieve that.
+CMD ["sh", "-c", "[ -n \"${GIT_COMMIT_SHA:-}\" ] || unset GIT_COMMIT_SHA; if [ -f dist/main.js ]; then exec node dist/main.js; else exec node dist/src/main.js; fi"]

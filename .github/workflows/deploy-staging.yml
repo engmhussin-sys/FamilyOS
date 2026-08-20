@@ -22,14 +22,66 @@ name: Deploy — staging
 # SECRETS ARE NAMED, NEVER VALUED. Every name used here is documented in
 # `.env.staging.example` §7, and the `contract` job below fails the run if that
 # stops being true.
+#
+# -----------------------------------------------------------------------------
+# THE PRODUCTION INTERLOCK — READ THIS BEFORE CHANGING ANY JOB ORDER.
+#
+# A REAL PRODUCTION SERVICE EXISTS AND IS SERVING REAL TRAFFIC. Discovery on
+# 2026-08-20 confirmed `familyos-production-74ca.up.railway.app` answers
+# `/health/ready` with `database: true, redis: true` and had been up ~40 h. The
+# owner has confirmed that host is PRODUCTION.
+#
+# This workflow deploys whatever `vars.RAILWAY_SERVICE_NAME` names and probes
+# whatever `vars.STAGING_HEALTH_URL` points at. Neither is validated by GitHub.
+# A repository variable edited in the wrong box, an environment-scoped variable
+# inherited from somewhere else, or a value copied between two projects, and
+# this workflow would push 285 commits and run `prisma migrate deploy` against
+# a live production database. There is no undo for that.
+#
+# So the `interlock` job below runs FIRST — before `contract`, before `ci`,
+# before the image is built, before `railway up`, and therefore before
+# `railway.json`'s `preDeployCommand` can run a single migration. It decides
+# from the VALUES THEMSELVES, not from a job name or a branch.
+# -----------------------------------------------------------------------------
 # =============================================================================
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type "staging" to confirm you intend to deploy.'
+        description: 'Type "staging" to confirm you intend to deploy to staging.'
         required: true
+        default: ''
+      override_production_interlock:
+        # DELIBERATELY AWKWARD, AND HERE IS WHY.
+        #
+        # A genuine production deploy has to be possible one day, or someone
+        # will eventually delete the interlock to get their job done — and an
+        # interlock that gets deleted protects nothing. So there is an exit.
+        #
+        # It is built so it cannot be taken by accident, by habit, or by
+        # copy-paste:
+        #
+        #   * It has NO default. An empty box is the only resting state, so no
+        #     saved form, no re-run of a previous run, and no inherited setting
+        #     can carry it.
+        #   * The phrase is NOT generic. It must contain the exact hostname
+        #     this run is about to deploy onto, taken from STAGING_HEALTH_URL.
+        #     A phrase copied from a colleague, from this comment, or from a
+        #     previous run against a different target will NOT match. You have
+        #     to read the host you are about to overwrite and type it out.
+        #   * It is case-sensitive and whitespace-exact.
+        #   * It is not enough on its own: `confirm` must simultaneously say
+        #     `production` rather than `staging`. Two boxes have to agree that
+        #     this is not a staging deploy.
+        #   * Supplying it when nothing was actually blocked is itself a
+        #     failure, so it can never be left in the box "just in case".
+        #
+        # The awkwardness IS the feature. This box should be uncomfortable to
+        # fill in, and it should be impossible to fill in without knowing
+        # exactly which host you are pointing at.
+        description: 'LEAVE EMPTY for staging. To deploy to a blocked/production target, type: DEPLOY TO PRODUCTION <the exact hostname from STAGING_HEALTH_URL>'
+        required: false
         default: ''
 
 concurrency:
@@ -41,21 +93,233 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  confirm:
-    name: Confirm intent
+  # JOB 1. NOTHING RUNS BEFORE THIS.
+  #
+  # It answers one question: are the two values this run would act on the
+  # PRODUCTION service and the PRODUCTION host? It refuses on any doubt, and it
+  # names which rule fired.
+  #
+  # It carries no `environment:` on purpose — see the deploy job's first step
+  # for the second half of that argument.
+  # ---------------------------------------------------------------------------
+  interlock:
+    name: Production interlock
     runs-on: ubuntu-latest
+    outputs:
+      # The exact values this job APPROVED, normalised. The deploy job asserts
+      # that what it can see is identical to what was approved here.
+      approved_service: ${{ steps.check.outputs.approved_service }}
+      approved_host: ${{ steps.check.outputs.approved_host }}
     steps:
-      - name: The input must literally say "staging"
+      - name: Refuse to deploy to production
+        id: check
+        # Every value is passed through `env:` and never interpolated into the
+        # script body. `${{ }}` inside a `run:` is string substitution BEFORE
+        # the shell parses the line, so a variable containing a quote or a
+        # semicolon would otherwise be executable text, and the interlock would
+        # be defeatable by the very field it is inspecting.
+        env:
+          SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME }}
+          HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+          CONFIRM: ${{ inputs.confirm }}
+          OVERRIDE: ${{ inputs.override_production_interlock }}
         run: |
-          if [ "${{ inputs.confirm }}" != "staging" ]; then
-            echo "::error::Refusing: the confirmation input must be the literal word 'staging'."
-            exit 1
-          fi
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, sys
+          from urllib.parse import urlsplit
+
+          # ===================== THE PRODUCTION FINGERPRINT =====================
+          # Measured, not assumed. Confirmed live over HTTPS on 2026-08-20 and
+          # confirmed as PRODUCTION by the owner.
+          #
+          # Two constants, because a host can be renamed but the deployment it
+          # points at cannot be renamed out from under the DNS name that is
+          # currently serving production traffic.
+          KNOWN_PRODUCTION_HOST = 'familyos-production-74ca.up.railway.app'
+          # The first DNS label on its own, so that attaching a CUSTOM DOMAIN or
+          # a different suffix to the same generated deployment is still caught.
+          KNOWN_PRODUCTION_LABEL = 'familyos-production-74ca'
+
+          service_raw = (os.environ.get('SERVICE_NAME') or '').strip()
+          url_raw     = (os.environ.get('HEALTH_URL') or '').strip()
+          confirm     = (os.environ.get('CONFIRM') or '').strip()
+          override    = os.environ.get('OVERRIDE') or ''
+          override    = override.strip()
+
+          refusals = []
+          def refuse(code, why):
+              refusals.append((code, why))
+
+          # --- RULE 0. ABSENCE IS NOT INNOCENCE. --------------------------------
+          # An unset or blank variable must never be read as "well, it is not
+          # production then". A blank service name makes `railway up` fall back
+          # to whatever the linked/default service is, which on a project whose
+          # only long-lived service is production is precisely the accident this
+          # file exists to prevent. Blank is a refusal, not a pass.
+          if not service_raw:
+              refuse('EMPTY_SERVICE',
+                     'vars.RAILWAY_SERVICE_NAME is unset or blank. A blank service name lets '
+                     '`railway up` pick the project default, which cannot be checked in advance.')
+          if not url_raw:
+              refuse('EMPTY_HEALTH_URL',
+                     'vars.STAGING_HEALTH_URL is unset or blank. Without it this run cannot '
+                     'identify the host it is about to deploy onto, so it cannot prove it is not production.')
+
+          # --- NORMALISATION ----------------------------------------------------
+          # Everything below compares NORMALISED forms, so that case, a trailing
+          # slash, a trailing dot on the FQDN, a port, or surrounding whitespace
+          # cannot be used to slip a value past a comparison.
+          host = ''
+          if url_raw:
+              parts = urlsplit(url_raw)
+              if parts.scheme not in ('http', 'https') or not parts.hostname:
+                  refuse('UNPARSEABLE_HEALTH_URL',
+                         'vars.STAGING_HEALTH_URL is not an absolute http(s) URL with a hostname: '
+                         f'{url_raw!r}. It must look like https://<host>/health/live.')
+              else:
+                  # .hostname already lowercases and strips any :port and userinfo.
+                  host = parts.hostname.strip().rstrip('.').lower()
+
+          # The first DNS label — on Railway's generated domains this is the part
+          # derived from the service and environment, i.e. the identifying part.
+          label = host.split('.')[0] if host else ''
+
+          # Slugify the service name the same way a hostname label is shaped, so
+          # "ABNY Backend Staging" and "abny-backend-staging" compare equal.
+          svc = re.sub(r'[^a-z0-9]+', '-', service_raw.lower()).strip('-')
+
+          # --- RULE 1. IDENTITY. THE PART A RENAME CANNOT DEFEAT. ---------------
+          # This does not ask what anything is CALLED. It asks whether the host
+          # this run would probe is the host that is currently serving
+          # production. Renaming the Railway service changes neither the DNS
+          # name below nor the deployment behind it.
+          if host and host == KNOWN_PRODUCTION_HOST:
+              refuse('KNOWN_PRODUCTION_HOST',
+                     f'STAGING_HEALTH_URL resolves to {host!r}, which IS the known production host '
+                     f'({KNOWN_PRODUCTION_HOST}). Confirmed live and confirmed as production on 2026-08-20.')
+
+          if label and label == KNOWN_PRODUCTION_LABEL:
+              refuse('KNOWN_PRODUCTION_LABEL',
+                     f'STAGING_HEALTH_URL host {host!r} carries the production deployment label '
+                     f'{KNOWN_PRODUCTION_LABEL!r}. A different domain suffix in front of the same '
+                     'deployment is still the same deployment.')
+
+          if svc and KNOWN_PRODUCTION_LABEL in svc:
+              refuse('SERVICE_IS_PRODUCTION',
+                     f'RAILWAY_SERVICE_NAME {service_raw!r} contains the production deployment label '
+                     f'{KNOWN_PRODUCTION_LABEL!r}.')
+
+          # --- RULE 2. THE WORD. AN ADDITIONAL SIGNAL, NEVER THE ONLY ONE. ------
+          # Rule 1 above is the one that actually identifies production; this is
+          # a second, weaker net for a production service that is NOT the one
+          # discovered above — a second project, a new environment, a host that
+          # did not exist when this file was written. It is deliberately
+          # placed after Rule 1 so that deleting it would not disable the
+          # identity check, and Rule 1 is deliberately not expressed as a word
+          # match so that renaming cannot disable that.
+          #
+          # Whole-token matching only: "liveops" and "production-notes" are not
+          # matches, "prod", "-prod-", "production" and "live" are.
+          WORD = re.compile(r'(?:^|[^a-z0-9])(prod|prd|production|live)(?:[^a-z0-9]|$)')
+          if svc and WORD.search(svc):
+              refuse('PRODUCTION_WORD_IN_SERVICE',
+                     f'RAILWAY_SERVICE_NAME {service_raw!r} contains the token '
+                     f'{WORD.search(svc).group(1)!r}. A staging service must not be named like a production one.')
+          if label and WORD.search(label):
+              refuse('PRODUCTION_WORD_IN_HEALTH_URL',
+                     f'STAGING_HEALTH_URL host label {label!r} contains the token '
+                     f'{WORD.search(label).group(1)!r}. NOTE: Railway names its DEFAULT environment '
+                     '"production" even for a service you think of as staging, and that is exactly why '
+                     'this refuses — the two are indistinguishable from here. The fix is a Railway '
+                     'environment named `staging` (or a staging domain), NOT the override.')
+
+          # --- RULE 3. THE TWO VALUES MUST DESCRIBE THE SAME TARGET. ------------
+          # Deploying to service A while health-checking host B means the run
+          # can report a green probe for a deployment it did not make. It also
+          # means each value is only ever checked against itself: a production
+          # service name paired with a fresh staging URL would otherwise pass
+          # Rule 1 outright. They must agree.
+          if svc and label:
+              agree = (svc in label or label in svc) and min(len(svc), len(label)) >= 4
+              if not agree:
+                  refuse('TARGET_MISMATCH',
+                         f'RAILWAY_SERVICE_NAME slug {svc!r} does not appear in the STAGING_HEALTH_URL '
+                         f'host label {label!r}. This run would deploy one target and health-check '
+                         'another, so a green probe would prove nothing. Point STAGING_HEALTH_URL at '
+                         "the staging service's own generated *.up.railway.app domain.")
+
+          # ======================= THE AWKWARD EXIT =============================
+          # Formed from the host THIS RUN is pointed at, so it cannot be typed
+          # without reading that host, and cannot be reused against another one.
+          required_phrase = f'DEPLOY TO PRODUCTION {host}' if host else None
+
+          def die(msg):
+              print(f'::error::{msg}')
+              sys.exit(1)
+
+          if override:
+              if required_phrase is None:
+                  die('The interlock override was supplied, but STAGING_HEALTH_URL does not yield a '
+                      'hostname, so there is no target to name. Refusing. Fix the URL first — an '
+                      'override for an unidentifiable target is exactly what must never be possible.')
+              if override != required_phrase:
+                  # The expected phrase is echoed because the hostname is not a
+                  # secret; it is public DNS. Nothing secret is printed anywhere
+                  # in this job.
+                  die('The interlock override does not match. It must be, character for character:\n'
+                      f'    DEPLOY TO PRODUCTION {host}\n'
+                      'It is case-sensitive, it must name THIS run\'s host, and it cannot be copied '
+                      'from another run.')
+              if confirm != 'production':
+                  die('The interlock override was given but the confirmation box still says '
+                      f'{confirm!r}. To deploy to a blocked target, `confirm` must say `production`. '
+                      'Two boxes have to agree that this is not a staging deploy.')
+              if not refusals:
+                  die('The interlock override was supplied, but NOTHING WAS BLOCKED — this target '
+                      'already looks like staging. Refusing so that the override can never be left '
+                      'sitting in the box from a previous run. Clear it and re-run.')
+
+              print('::warning::PRODUCTION INTERLOCK OVERRIDDEN BY A HUMAN.')
+              for code, why in refusals:
+                  print(f'::warning::  overridden [{code}] {why}')
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as fh:
+                  fh.write('## :rotating_light: Production interlock OVERRIDDEN\n\n')
+                  fh.write(f'A human typed the override phrase naming `{host}` and set `confirm` to '
+                           '`production`. The rules that were overridden:\n\n')
+                  for code, why in refusals:
+                      fh.write(f'- **{code}** — {why}\n')
+                  fh.write('\nThis run is NOT a staging deploy.\n')
+          else:
+              # The ordinary path. `confirm` must literally say `staging`.
+              if confirm != 'staging':
+                  die(f'The confirmation input must be the literal word `staging`; got {confirm!r}.')
+              if refusals:
+                  print('::error::PRODUCTION INTERLOCK: refusing to deploy. '
+                        f'{len(refusals)} rule(s) matched.')
+                  for code, why in refusals:
+                      print(f'::error::  [{code}] {why}')
+                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as fh:
+                      fh.write('## :no_entry: Production interlock refused this run\n\n')
+                      fh.write('| rule | why it stopped |\n|---|---|\n')
+                      for code, why in refusals:
+                          fh.write(f'| `{code}` | {why} |\n')
+                      fh.write('\nNothing was built, nothing was deployed, no migration ran.\n')
+                  sys.exit(1)
+
+          # Approved. Publish exactly what was approved, so the deploy job can
+          # prove it is acting on the same two values and not on some other pair.
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+              fh.write(f'approved_service={service_raw}\n')
+              fh.write(f'approved_host={host}\n')
+
+          print(f'Interlock passed. service={service_raw!r} host={host!r}')
+          PY
 
   # ---------------------------------------------------------------------------
   contract:
     name: Deploy contract (names documented, no secret literals)
-    needs: confirm
+    needs: interlock
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -105,6 +369,17 @@ jobs:
           if 'prisma migrate deploy' not in web.get('preDeployCommand', ''):
               problems.append('render.yaml no longer runs the migration before traffic')
 
+          # The build stamp must stay wired end to end: the Dockerfile has to
+          # accept the argument and surface it under the name the application
+          # actually reads (`process.env.GIT_COMMIT_SHA`, read by
+          # SystemDiagnosticsController). If either half is dropped, the live
+          # host goes back to reporting `commit: null` silently.
+          dockerfile_text = open('apps/backend/Dockerfile').read()
+          if 'ARG GIT_COMMIT_SHA' not in dockerfile_text:
+              problems.append('apps/backend/Dockerfile no longer accepts the GIT_COMMIT_SHA build argument')
+          if 'ENV GIT_COMMIT_SHA' not in dockerfile_text:
+              problems.append('apps/backend/Dockerfile no longer surfaces GIT_COMMIT_SHA as a runtime env var')
+
           for p in problems:
               print(f'::error::{p}')
           sys.exit(1 if problems else 0)
@@ -123,7 +398,7 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy to Railway (staging)
-    needs: [ci]
+    needs: [interlock, ci]
     # `always()` is deliberately NOT used here: if `ci` did not conclude
     # `success`, this job must not run at all.
     if: ${{ needs.ci.result == 'success' }}
@@ -138,19 +413,123 @@ jobs:
         with:
           node-version: "20"
 
+      # -----------------------------------------------------------------------
+      # THE SECOND HALF OF THE INTERLOCK, AND THE REASON IT EXISTS.
+      #
+      # This job declares `environment: staging`. The `interlock` job does not.
+      # In GitHub Actions an ENVIRONMENT CAN DEFINE ITS OWN VARIABLES THAT
+      # SHADOW THE REPOSITORY-LEVEL ONES OF THE SAME NAME. So the
+      # `vars.RAILWAY_SERVICE_NAME` the interlock inspected and the
+      # `vars.RAILWAY_SERVICE_NAME` this job is about to deploy with ARE NOT
+      # GUARANTEED TO BE THE SAME STRING.
+      #
+      # That is not a hypothetical: an environment-scoped variable is exactly
+      # how a production value gets into a workflow that was checked against a
+      # staging one, and the interlock would have passed on a value that never
+      # reached `railway up`.
+      #
+      # So this asserts equality against what was actually approved. Any
+      # difference at all — including a value that appears only here — stops
+      # the run before the CLI is invoked, before the image is built on
+      # Railway, and therefore before `railway.json`'s `preDeployCommand` runs
+      # `prisma migrate deploy` against anything.
+      # -----------------------------------------------------------------------
+      - name: The values in THIS job are the values the interlock approved
+        env:
+          APPROVED_SERVICE: ${{ needs.interlock.outputs.approved_service }}
+          APPROVED_HOST: ${{ needs.interlock.outputs.approved_host }}
+          SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME }}
+          HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, sys
+          from urllib.parse import urlsplit
+
+          approved_service = os.environ.get('APPROVED_SERVICE') or ''
+          approved_host    = os.environ.get('APPROVED_HOST') or ''
+          service          = (os.environ.get('SERVICE_NAME') or '').strip()
+          url_raw          = (os.environ.get('HEALTH_URL') or '').strip()
+
+          host = ''
+          if url_raw:
+              parts = urlsplit(url_raw)
+              if parts.scheme in ('http', 'https') and parts.hostname:
+                  host = parts.hostname.strip().rstrip('.').lower()
+
+          problems = []
+          if not approved_service or not approved_host:
+              problems.append('The interlock job published no approved values. It must run and pass '
+                              'before this job; a missing output means the gate did not actually happen.')
+          if service != approved_service:
+              problems.append(f'RAILWAY_SERVICE_NAME differs inside `environment: staging`. '
+                              f'Approved {approved_service!r}, this job sees {service!r}. An '
+                              'environment-scoped variable is shadowing the checked one.')
+          if host != approved_host:
+              problems.append(f'STAGING_HEALTH_URL host differs inside `environment: staging`. '
+                              f'Approved {approved_host!r}, this job sees {host!r}.')
+
+          if problems:
+              print('::error::PRODUCTION INTERLOCK (scope check): refusing to deploy.')
+              for p in problems:
+                  print(f'::error::  {p}')
+              sys.exit(1)
+          print(f'Scope check passed: service={service!r} host={host!r}')
+          PY
+
       - name: Refuse to deploy without the credentials this needs
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME }}
         run: |
           missing=0
-          [ -n "$RAILWAY_TOKEN" ] || { echo "::error::Secret RAILWAY_TOKEN is not set. See .env.staging.example §7."; missing=1; }
-          [ -n "$RAILWAY_SERVICE_NAME" ] || { echo "::error::Variable RAILWAY_SERVICE_NAME is not set. See .env.staging.example §7."; missing=1; }
+          [ -n "${RAILWAY_TOKEN:-}" ] || { echo "::error::Secret RAILWAY_TOKEN is not set. See .env.staging.example §7."; missing=1; }
+          [ -n "${RAILWAY_SERVICE_NAME:-}" ] || { echo "::error::Variable RAILWAY_SERVICE_NAME is not set. See .env.staging.example §7."; missing=1; }
           exit $missing
+
+      # -----------------------------------------------------------------------
+      # THE BUILD STAMP. The live host reported `commit: null`, which means
+      # nobody could tell which build was running.
+      #
+      # `SystemDiagnosticsController` reads `process.env.GIT_COMMIT_SHA` — a
+      # RUNTIME environment variable. The Dockerfile now accepts it as a build
+      # argument and bakes it in with `ENV`, which is what stamps the image for
+      # any host that can pass a build arg (CI's own `docker build`, Render).
+      #
+      # `railway up` has no build-arg flag, so on Railway the same variable is
+      # set on the SERVICE instead. That reaches the app through the identical
+      # `process.env.GIT_COMMIT_SHA` lookup and, being a runtime value, wins
+      # over the image's baked `ENV` — one mechanism, two ways in, no second
+      # invented field.
+      #
+      # NOT FATAL ON PURPOSE. A deploy must not be lost because a diagnostic
+      # label could not be written; the failure is reported loudly and the
+      # deploy continues, and `/system/diagnostics` will report the previous
+      # sha or null, which is the honest outcome.
+      # -----------------------------------------------------------------------
+      - name: Stamp the commit sha onto the service (best effort, never fatal)
+        continue-on-error: true
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          if npx -y @railway/cli@latest variables \
+               --service "$RAILWAY_SERVICE_NAME" \
+               --set "GIT_COMMIT_SHA=$COMMIT_SHA" --skip-deploys; then
+            echo "GIT_COMMIT_SHA set to $COMMIT_SHA on $RAILWAY_SERVICE_NAME."
+          else
+            echo "::warning::Could not set GIT_COMMIT_SHA on the service (the CLI may not support \
+          \`variables --set\` in this version). The deploy continues; \
+          GET /api/v1/system/diagnostics will keep reporting the previous value or null. \
+          Set GIT_COMMIT_SHA by hand in the Railway service variables if you need the stamp."
+          fi
 
       - name: Deploy the repository root as the build context
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME }}
         run: |
           # `railway up` uploads this checkout and builds it with the
           # Dockerfile named in railway.json, from the repository root — the
@@ -158,14 +537,19 @@ jobs:
           # (railway.json's preDeployCommand) and the health check all happen
           # on Railway; `--detach` returns once the deployment is accepted,
           # which is why the verification step below is not optional.
-          npx -y @railway/cli@latest up --service "${{ vars.RAILWAY_SERVICE_NAME }}" --detach
+          #
+          # By the time this line runs, the interlock has passed twice: once on
+          # the repository-scoped values, once on the values visible inside
+          # `environment: staging`. This is the first command in the whole
+          # workflow that can change anything on a server.
+          npx -y @railway/cli@latest up --service "$RAILWAY_SERVICE_NAME" --detach
 
       - name: Wait for staging to answer its own liveness probe
         env:
           HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
         run: |
           set -uo pipefail
-          if [ -z "${HEALTH_URL}" ]; then
+          if [ -z "${HEALTH_URL:-}" ]; then
             echo "::error::Variable STAGING_HEALTH_URL is not set — this run cannot prove anything about the deployment it just made."
             exit 1
           fi
@@ -185,11 +569,16 @@ jobs:
 
       - name: What this run did and did not prove
         if: always()
+        env:
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           {
             echo "## Staging deploy"
             echo ""
-            echo "PROVEN by this run: every CI gate passed; the image built on Railway;"
+            echo "Commit deployed: \`$COMMIT_SHA\`"
+            echo ""
+            echo "PROVEN by this run: the production interlock passed on both the repository-scoped"
+            echo "and the environment-scoped values; every CI gate passed; the image built on Railway;"
             echo "the pre-deploy migration exited zero; and the deployment answered 200 on"
             echo "\`/health/live\`."
             echo ""
