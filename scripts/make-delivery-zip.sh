@@ -64,12 +64,12 @@ trap 'rm -rf "$STAGE"' EXIT
 # --- what changed, split by what the receiving side must DO with it ----------
 # A = added, M = modified, R = renamed (new name), C = copied  -> ship the file
 # D = deleted, and the OLD name of a rename                    -> must be removed
-CHANGED="$(git diff --name-only --diff-filter=ACMRT "$RANGE" || true)"
-REMOVED="$(git diff --name-only --diff-filter=D "$RANGE" || true)"
+CHANGED="$(git -c core.quotePath=false diff --name-only --diff-filter=ACMRT "$RANGE" || true)"
+REMOVED="$(git -c core.quotePath=false diff --name-only --diff-filter=D "$RANGE" || true)"
 
 # A rename removes its old path too. --diff-filter=D misses that, so ask again
 # in a form that reports both sides.
-RENAMED_OLD="$(git diff --name-status --diff-filter=R "$RANGE" | awk -F'\t' '{print $2}' || true)"
+RENAMED_OLD="$(git -c core.quotePath=false diff --name-status --diff-filter=R "$RANGE" | awk -F'\t' '{print $2}' || true)"
 if [ -n "$RENAMED_OLD" ]; then
   REMOVED="$(printf '%s\n%s\n' "$REMOVED" "$RENAMED_OLD" | sed '/^$/d' | sort -u)"
 fi
@@ -84,8 +84,12 @@ COUNT=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   if [ ! -f "$f" ]; then
-    echo "WARN: '$f' changed in range but is absent from the worktree; skipping." >&2
-    continue
+    echo "" >&2
+    echo "FATAL: '$f' is in the change set but not in the worktree." >&2
+    echo "  A delivery that quietly omits a file is worse than no delivery:" >&2
+    echo "  the receiving side gets a folder that looks complete and is not." >&2
+    echo "  Refusing to write a partial zip." >&2
+    exit 1
   fi
   mkdir -p "$STAGE/$(dirname "$f")"
   cp -p "$f" "$STAGE/$f"
@@ -109,7 +113,7 @@ mkdir -p "$STAGE/_DELIVERY"
   echo "  3. Delete the _DELIVERY folder. It is notes, not source."
   echo
   echo "CHANGED (extract these)"
-  git diff --name-status --diff-filter=ACMRT "$RANGE" || true
+  git -c core.quotePath=false diff --name-status --diff-filter=ACMRT "$RANGE" || true
   echo
   if [ -n "$(printf '%s' "$REMOVED" | sed '/^$/d')" ]; then
     echo "DELETED (a zip cannot remove these — run the DELETE script)"
