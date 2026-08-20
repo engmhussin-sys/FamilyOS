@@ -44,10 +44,42 @@ export class PrismaNotificationRepository implements INotificationRepository {
     return this.prisma.notification.count({ where: { userId, readAt: null } });
   }
 
-  async findRecentForChild(childId: string, since: Date): Promise<Array<{ type: string; priority: string; createdAt: Date }>> {
+  async findRecentForChild(
+    childId: string,
+    since: Date,
+    until?: Date,
+  ): Promise<Array<{ type: string; priority: string; createdAt: Date; sourceEventId: string }>> {
+    /**
+     * SPRINT F1 (BILLING) — «NO CHILD» IS AN ANSWER, NOT A QUERY.
+     *
+     * `SmartNotificationIntegrationService.notifyEvent` takes `childId: string`
+     * and every caller that has no child passes the empty string — the
+     * convention `quiet-hours-release.service.ts:418` already uses
+     * (`digestOf[0].childId ?? ''`). Reaching PostgreSQL with it raises
+     * `22P02 invalid input syntax for type uuid: ""`, and the surrounding
+     * `try` reported the whole notification as `DELIVERY_ERROR`. So every
+     * HOUSEHOLD-level notification — a payment failure, a renewal notice, a
+     * digest whose first held row had no child — died here, with a message
+     * that named a uuid rather than the absent child.
+     *
+     * A household-level notification has no per-child fatigue history BY
+     * CONSTRUCTION, so the honest reading of the empty id is «there is nothing
+     * to compare against», which is exactly what an empty list means to every
+     * caller. It is answered without a query rather than by a query that
+     * cannot parse.
+     */
+    if (!childId) return [];
+
     const rows = await this.prisma.notification.findMany({
-      where: { childId, createdAt: { gte: since } },
-      select: { type: true, priority: true, createdAt: true },
+      // BOUNDED ABOVE WHEN THE CALLER NAMED AN INSTANT — see the port for the
+      // whole argument. `lte` rather than `lt`: a row written AT `now` is a row
+      // that has already happened, and the two bounds must be the same kind so
+      // an in-memory re-application of the filter cannot disagree with the SQL.
+      where: { childId, createdAt: until ? { gte: since, lte: until } : { gte: since } },
+      // `source_event_id` is the CAUSAL KEY — see the port. Four columns, still
+      // no title and no body: the scorer needs to know THAT a notification
+      // happened, of what kind, when and FOR WHICH CAUSE, never what it said.
+      select: { type: true, priority: true, createdAt: true, sourceEventId: true },
       orderBy: { createdAt: 'desc' },
     });
     return rows;

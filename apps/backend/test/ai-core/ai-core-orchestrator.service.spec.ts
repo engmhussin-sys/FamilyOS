@@ -4,6 +4,7 @@ import { AiContextManagerService } from '../../src/modules/ai-core/application/s
 import { AI_PROVIDER } from '../../src/modules/ai-core/domain/ai-provider.port';
 import { AiCoreUnavailableException } from '../../src/modules/ai-core/domain/ai-core.errors';
 import { ChildNotFoundException } from '../../src/modules/children/domain/child.errors';
+import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 describe('AiCoreOrchestratorService', () => {
   const contextManagerMock = { buildChildContext: jest.fn() };
@@ -18,6 +19,11 @@ describe('AiCoreOrchestratorService', () => {
         AiCoreOrchestratorService,
         { provide: AiContextManagerService, useValue: contextManagerMock },
         { provide: AI_PROVIDER, useValue: aiProviderMock },
+        // PHASE D (GROWTH). `GrowthEventEmitter.emit` never throws by contract
+        // (see its class docstring: analytics must never be able to fail a
+        // reward, a habit or an AI answer), so a resolving double is a faithful
+        // stand-in and these suites stay about the business path.
+        { provide: GrowthEventEmitter, useValue: { emit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = moduleRef.get(AiCoreOrchestratorService);

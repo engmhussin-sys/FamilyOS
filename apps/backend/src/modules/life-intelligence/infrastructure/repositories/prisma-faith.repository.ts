@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IFaithPractice, IFaithPracticeLog, ICreateFaithPracticeInput } from '../../domain/faith.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaFaithRepository {
@@ -10,7 +11,7 @@ export class PrismaFaithRepository {
 
   async createPractice(input: ICreateFaithPracticeInput): Promise<IFaithPractice> {
     const row = await this.prisma.faithPractice.create({
-      data: { childId: input.childId, type: input.type, title: input.title, config: (input.config ?? undefined) as Prisma.InputJsonValue | undefined },
+      data: { familyId: tenantIdForWrite(), childId: input.childId, type: input.type, title: input.title, config: (input.config ?? undefined) as Prisma.InputJsonValue | undefined },
     });
     // A just-created practice cannot have a log yet — false is certain.
     return this.toDomainPractice(row, false);
@@ -23,24 +24,19 @@ export class PrismaFaithRepository {
     return row ? this.toDomainPractice(row, false) : null;
   }
 
-  async listActivePractices(childId: string): Promise<IFaithPractice[]> {
+  /** B2: `todayDate` is the FAMILY's business day (see PrismaHabitRepository
+   * for the full reasoning). */
+  async listActivePractices(childId: string, todayDate: Date): Promise<IFaithPractice[]> {
     const [rows, todaysLogs] = await Promise.all([
       this.prisma.faithPractice.findMany({ where: { childId, isActive: true } }),
       // One query for all of today's logs, not one per practice.
       this.prisma.faithPracticeLog.findMany({
-        where: { childId, date: this.todayDateOnly() },
+        where: { childId, date: todayDate },
         select: { practiceId: true },
       }),
     ]);
     const completedPracticeIds = new Set(todaysLogs.map((l: { practiceId: string }) => l.practiceId));
     return rows.map((row: { id: string }) => this.toDomainPractice(row as any, completedPracticeIds.has(row.id)));
-  }
-
-  /** Matches FaithEngineService.today()'s own UTC-midnight convention
-   * exactly, so "today" here and "today" at write time always agree. */
-  private todayDateOnly(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   }
 
   async countActivePractices(childId: string): Promise<number> {
@@ -50,7 +46,7 @@ export class PrismaFaithRepository {
   async recordLog(practiceId: string, childId: string, date: Date, progress?: Record<string, unknown>): Promise<IFaithPracticeLog> {
     const row = await this.prisma.faithPracticeLog.upsert({
       where: { practiceId_date: { practiceId, date } },
-      create: { practiceId, childId, date, progress: (progress ?? undefined) as Prisma.InputJsonValue | undefined },
+      create: { familyId: tenantIdForWrite(), practiceId, childId, date, progress: (progress ?? undefined) as Prisma.InputJsonValue | undefined },
       update: { progress: (progress ?? undefined) as Prisma.InputJsonValue | undefined },
     });
     return {

@@ -18,7 +18,7 @@ describe('FamilyInsightService', () => {
   const familyId = 'family-1';
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
     const moduleRef = await Test.createTestingModule({
       providers: [
         FamilyInsightService,

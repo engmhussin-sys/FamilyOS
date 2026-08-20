@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IHabit, IHabitCompletion, ICreateHabitInput, HabitCompletionStatus } from '../../domain/habit.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
+import { HabitCompletionClient, recordHabitCompletion } from './habit-completion.recorder';
 
 @Injectable()
 export class PrismaHabitRepository {
@@ -10,6 +12,7 @@ export class PrismaHabitRepository {
   async create(input: ICreateHabitInput): Promise<IHabit> {
     const row = await this.prisma.habit.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         title: input.title,
         category: input.category,
@@ -38,7 +41,11 @@ export class PrismaHabitRepository {
     return row ? this.toDomain(row, false) : null;
   }
 
-  async listActiveForChild(childId: string): Promise<IHabit[]> {
+  /** B2: `todayDate` is the FAMILY's business day, anchored to the UTC midnight
+   * the `@db.Date` column stores it at. It is a parameter rather than something
+   * this repository computes, because a repository has no family context and
+   * the previous private `todayDateOnly()` therefore answered in UTC. */
+  async listActiveForChild(childId: string, todayDate: Date): Promise<IHabit[]> {
     const [rows, todaysCompletions] = await Promise.all([
       this.prisma.habit.findMany({
         where: { childId, isActive: true, deletedAt: null },
@@ -47,20 +54,12 @@ export class PrismaHabitRepository {
       // One query for ALL of today's completions for this child, not
       // one query per habit — avoids the N+1 this could otherwise be.
       this.prisma.habitCompletion.findMany({
-        where: { childId, date: this.todayDateOnly() },
+        where: { childId, date: todayDate },
         select: { habitId: true },
       }),
     ]);
     const completedHabitIds = new Set(todaysCompletions.map((c: { habitId: string }) => c.habitId));
     return rows.map((row: any) => this.toDomain(row, completedHabitIds.has(row.id)));
-  }
-
-  /** Matches completeHabit's own date-normalization exactly (UTC
-   * midnight) — the same convention HabitEngineService.today() uses,
-   * so "today" here and "today" at write time always agree. */
-  private todayDateOnly(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   }
 
   /** Upsert-by-day semantics: completing an already-completed habit for
@@ -71,19 +70,20 @@ export class PrismaHabitRepository {
    * default, or COMPLETED_LATE when the caller determines the
    * scheduled window already passed). */
   async recordCompletion(habitId: string, childId: string, date: Date, status: HabitCompletionStatus = 'COMPLETED'): Promise<IHabitCompletion> {
-    const row = await this.prisma.habitCompletion.upsert({
-      where: { habitId_date: { habitId, date } },
-      create: { habitId, childId, date, status },
-      update: { status },
+    // ONE WRITER. The statement lives in `habit-completion.recorder.ts` because
+    // `EventIngestionService` writes the same row inside a `$transaction` with
+    // the outbox message and therefore needs the TRANSACTION client, which a
+    // method bound to `this.prisma` cannot be handed. Its `update: {}` was the
+    // divergence: a rollover-written `MISSED` row survived the real completion
+    // that disproved it, so the reward was paid for a day the streak could not
+    // see.
+    return recordHabitCompletion(this.prisma as unknown as HabitCompletionClient, {
+      familyId: tenantIdForWrite(),
+      habitId,
+      childId,
+      date,
+      status,
     });
-    return {
-      id: row.id,
-      habitId: row.habitId,
-      childId: row.childId,
-      date: row.date,
-      completedAt: row.completedAt,
-      status: row.status as HabitCompletionStatus,
-    };
   }
 
   /** Sprint 16 — CLOSES A REAL GAP (Missed Habit tracking, explicitly
@@ -106,7 +106,7 @@ export class PrismaHabitRepository {
     if (missedHabitIds.length === 0) return 0;
 
     await this.prisma.habitCompletion.createMany({
-      data: missedHabitIds.map((habitId: string) => ({ habitId, childId, date, status: 'MISSED' })),
+      data: missedHabitIds.map((habitId: string) => ({ familyId: tenantIdForWrite(), habitId, childId, date, status: 'MISSED' as const })),
       skipDuplicates: true, // defense-in-depth against a race with a real completion landing between the two reads above
     });
     return missedHabitIds.length;
@@ -151,6 +151,12 @@ export class PrismaHabitRepository {
       select: { date: true },
       distinct: ['date'],
     });
+    // B2, DELIBERATELY LEFT AS-IS: `HabitCompletion.date` is a `@db.Date`
+    // column that ALREADY holds a business date (the engine decided which day
+    // it was, on the family calendar, before writing it). Re-projecting it
+    // through a timezone here would shift every stored day by one for any
+    // family east of UTC. `toISOString().slice(0, 10)` is the correct way to
+    // read a `@db.Date` back, not a UTC "today" calculation.
     return rows.map((r: { date: Date }) => r.date.toISOString().slice(0, 10));
   }
 

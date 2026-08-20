@@ -1,0 +1,34 @@
+-- ============================================================================
+-- 0019 — THE DEFAULT LANGUAGE OF AN ABNY HOUSEHOLD IS ARABIC.
+-- ============================================================================
+--
+-- PHASE F (`F6-009`, defect `PF-E-002`). `users.locale` defaulted to `'en'`,
+-- and `PrismaUserRepository.createParentWithFamily` repeated that default in
+-- code as `input.locale ?? 'en'`.
+--
+-- WHY THAT IS A DEFECT AND NOT A PREFERENCE. CONTEXT §1 is a LOCKED decision,
+-- not an opinion: «الأسواق الأولى: مصر ثم السعودية. اللغة الأولى: العربية (RTL
+-- حقيقي، لا ترجمة)». The Smart Notification Engine reads this exact column —
+-- `NotificationContextAssembler.readLocale`, the OWNER's `users.locale` — to
+-- pick the column of `COPY_CATALOGUE` every sentence a family receives is
+-- rendered from. So an English default meant that a household registered
+-- through `/auth/register` without explicitly sending `locale` received
+-- ENGLISH notifications, in Egypt, about a Quran goal.
+--
+-- MEASURED, NOT INFERRED. `test/golden/e2e-05-parent-smart-notification.golden.spec.ts`
+-- registered a household exactly as the mobile app does and drove the engine's
+-- real entry point; the sentence produced was:
+--
+--     "محمد completed the سورة الملك goal — time number 3rd this week"
+--
+-- Every engine test that came before seeded `users.locale = 'ar'` directly,
+-- which is precisely why six phases of green notification tests never saw it.
+--
+-- WHAT THIS MIGRATION DOES *NOT* DO: it does not backfill. Existing rows keep
+-- whatever they hold, because rewriting a stored preference is inventing one,
+-- and a deployment that wants its early accounts moved should do that as a
+-- deliberate, dated data change rather than as a side effect of a default.
+-- (No production deployment exists today, so the set is empty in practice.)
+--
+-- Re-runnable: `SET DEFAULT` is idempotent.
+ALTER TABLE "users" ALTER COLUMN "locale" SET DEFAULT 'ar';

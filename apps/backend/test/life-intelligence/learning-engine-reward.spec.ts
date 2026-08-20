@@ -3,7 +3,9 @@ import { Test } from '@nestjs/testing';
 import { LearningEngineService } from '../../src/modules/life-intelligence/application/services/learning-engine.service';
 import { PrismaLearningRepository } from '../../src/modules/life-intelligence/infrastructure/repositories/prisma-learning.repository';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
+import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2, CLOSES A REAL GAP confirmed in Sprint 16.2's own E2E re-audit)", () => {
   const repositoryMock = {
@@ -23,7 +25,7 @@ describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2,
   const sessionInput = { subject: 'math', durationMinutes: 30, date: '2026-08-10' };
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
     repositoryMock.createSession.mockResolvedValue({ id: 's1', childId, subject: 'math', durationMinutes: 30, date: new Date('2026-08-10'), goalId: null, progressNote: null });
     repositoryMock.findDistinctSessionDates.mockResolvedValue([]);
     rewardTriggerMock.trigger.mockResolvedValue(1);
@@ -34,6 +36,12 @@ describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2,
         { provide: PrismaLearningRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        // B4: `completeGoal` writes the goal completion to the SAME Unified
+        // Timeline every other engine writes to — the existing
+        // LIFE_TIMELINE_WRITER token, not a new one.
+        { provide: LIFE_TIMELINE_WRITER, useValue: { record: jest.fn() } },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(LearningEngineService);
@@ -79,7 +87,7 @@ describe("LearningEngineService — Education to Reward (Sprint 16.3 Priority 2,
   describe('streak milestone', () => {
     it('fires STREAK_ACHIEVED at a real milestone (7 days)', async () => {
       const sevenDays = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date('2026-08-10');
+        const d = new Date(); // the REAL current date, matching the service's own this.daysAgo(0)
         d.setUTCDate(d.getUTCDate() - i);
         return d.toISOString().slice(0, 10);
       });

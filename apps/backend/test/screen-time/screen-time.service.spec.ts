@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ScreenTimeService } from '../../src/modules/screen-time/application/services/screen-time.service';
-import { APP_BLOCK_RULE_REPOSITORY, SCREEN_TIME_POLICY_REPOSITORY } from '../../src/modules/screen-time/application/ports/screen-time.repository.port';
+import { APP_BLOCK_RULE_REPOSITORY, SCREEN_TIME_BONUS_REPOSITORY, SCREEN_TIME_POLICY_REPOSITORY } from '../../src/modules/screen-time/application/ports/screen-time.repository.port';
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { ChildNotFoundException } from '../../src/modules/children/domain/child.errors';
 import { AuditService } from '../../src/modules/audit/application/audit.service';
@@ -18,6 +18,9 @@ describe('ScreenTimeService', () => {
     listActiveByChild: jest.fn(),
     deactivate: jest.fn(),
   };
+  // F4: the earned-bonus port. Defaults to "no grants", so every pre-existing
+  // assertion in this file keeps measuring exactly what it measured before.
+  const bonusRepositoryMock = { listActiveGrants: jest.fn().mockResolvedValue([]) };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
   const auditServiceMock = { record: jest.fn() };
 
@@ -25,11 +28,13 @@ describe('ScreenTimeService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    bonusRepositoryMock.listActiveGrants.mockResolvedValue([]);
     const moduleRef = await Test.createTestingModule({
       providers: [
         ScreenTimeService,
         { provide: SCREEN_TIME_POLICY_REPOSITORY, useValue: policyRepositoryMock },
         { provide: APP_BLOCK_RULE_REPOSITORY, useValue: appBlockRuleRepositoryMock },
+        { provide: SCREEN_TIME_BONUS_REPOSITORY, useValue: bonusRepositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: AuditService, useValue: auditServiceMock },
       ],
@@ -223,5 +228,90 @@ describe('ScreenTimeService', () => {
       const result = await service.getBlockedPackageNames('child-1');
       expect(result).toEqual([]);
     });
+  });
+});
+
+/**
+ * F4 — `getEffectivePolicy`: the read where a SCREEN_TIME reward becomes real
+ * minutes. Unit level here; the end-to-end proof (a real grant written by the
+ * reward engine, then read back through this method) is in
+ * `test/rewards/reward-engine.e2e.spec.ts`.
+ */
+describe('ScreenTimeService.getEffectivePolicy (F4)', () => {
+  const policyRepositoryMock = { create: jest.fn(), findActiveByChild: jest.fn(), deactivate: jest.fn() };
+  const appBlockRuleRepositoryMock = { create: jest.fn(), findById: jest.fn(), listActiveByChild: jest.fn(), deactivate: jest.fn() };
+  const bonusRepositoryMock = { listActiveGrants: jest.fn() };
+  const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
+  const auditServiceMock = { record: jest.fn() };
+
+  let service: ScreenTimeService;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    childrenServiceMock.assertChildBelongsToFamily.mockResolvedValue(undefined);
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        ScreenTimeService,
+        { provide: SCREEN_TIME_POLICY_REPOSITORY, useValue: policyRepositoryMock },
+        { provide: APP_BLOCK_RULE_REPOSITORY, useValue: appBlockRuleRepositoryMock },
+        { provide: SCREEN_TIME_BONUS_REPOSITORY, useValue: bonusRepositoryMock },
+        { provide: ChildrenService, useValue: childrenServiceMock },
+        { provide: AuditService, useValue: auditServiceMock },
+      ],
+    }).compile();
+    service = moduleRef.get(ScreenTimeService);
+  });
+
+  it('adds active bonus minutes to the base limit WITHOUT editing the policy row', async () => {
+    const policy = { id: 'p1', dailyLimitMinutes: 90 };
+    policyRepositoryMock.findActiveByChild.mockResolvedValue(policy);
+    bonusRepositoryMock.listActiveGrants.mockResolvedValue([
+      { id: 'g1', minutes: 20, grantedAt: new Date(), expiresAt: new Date() },
+      { id: 'g2', minutes: 10, grantedAt: new Date(), expiresAt: new Date() },
+    ]);
+
+    const result = await service.getEffectivePolicy('child-1', 'family-1');
+
+    expect(result.baseDailyLimitMinutes).toBe(90);
+    expect(result.bonusMinutes).toBe(30);
+    expect(result.effectiveDailyLimitMinutes).toBe(120);
+    // The base policy object is returned untouched — nothing wrote to it.
+    expect(result.policy).toBe(policy);
+    expect(policyRepositoryMock.create).not.toHaveBeenCalled();
+  });
+
+  it('is the base limit when there are no grants', async () => {
+    policyRepositoryMock.findActiveByChild.mockResolvedValue({ id: 'p1', dailyLimitMinutes: 60 });
+    bonusRepositoryMock.listActiveGrants.mockResolvedValue([]);
+
+    const result = await service.getEffectivePolicy('child-1', 'family-1');
+    expect(result.effectiveDailyLimitMinutes).toBe(60);
+    expect(result.bonusMinutes).toBe(0);
+  });
+
+  it('stays null (unlimited) when the parent set no daily limit — a bonus does not invent a cap', async () => {
+    policyRepositoryMock.findActiveByChild.mockResolvedValue({ id: 'p1', dailyLimitMinutes: null });
+    bonusRepositoryMock.listActiveGrants.mockResolvedValue([
+      { id: 'g1', minutes: 30, grantedAt: new Date(), expiresAt: new Date() },
+    ]);
+
+    const result = await service.getEffectivePolicy('child-1', 'family-1');
+    expect(result.effectiveDailyLimitMinutes).toBeNull();
+    expect(result.bonusMinutes).toBe(30);
+  });
+
+  it('answers nothing at all when the child is not in the caller family', async () => {
+    childrenServiceMock.assertChildBelongsToFamily.mockRejectedValue(new ChildNotFoundException('child-x'));
+    await expect(service.getEffectivePolicy('child-x', 'family-1')).rejects.toBeInstanceOf(ChildNotFoundException);
+    expect(bonusRepositoryMock.listActiveGrants).not.toHaveBeenCalled();
+  });
+
+  it('passes the caller clock through, so expiry is decided at READ time', async () => {
+    policyRepositoryMock.findActiveByChild.mockResolvedValue({ id: 'p1', dailyLimitMinutes: 60 });
+    bonusRepositoryMock.listActiveGrants.mockResolvedValue([]);
+    const now = new Date('2026-06-15T12:00:00Z');
+
+    await service.getEffectivePolicy('child-1', 'family-1', now);
+    expect(bonusRepositoryMock.listActiveGrants).toHaveBeenCalledWith('child-1', now);
   });
 });

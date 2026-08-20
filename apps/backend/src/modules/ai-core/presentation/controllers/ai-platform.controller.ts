@@ -8,8 +8,10 @@ import { AiUsageTrackingService } from '../../infrastructure/ai-usage-tracking.s
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { InternalAdminGuard } from '../../../../common/guards/internal-admin.guard';
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { ParentSurface, PlatformAdminSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('ai-core')
 export class AiPlatformController {
@@ -22,6 +24,7 @@ export class AiPlatformController {
   ) {}
 
   @Get('recommendation/:childId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   getRecommendation(
@@ -33,6 +36,7 @@ export class AiPlatformController {
   }
 
   @Get('behavioral-trend/:childId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   getBehavioralTrend(
     @Param('childId') childId: string,
@@ -47,6 +51,7 @@ export class AiPlatformController {
    * for every child-scoped read), not device-ownership — decision
    * history spans devices over the child's lifetime. */
   @Get('decision-history/:childId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   async getDecisionHistory(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     await this.childrenService.getChildOrThrow(childId, user.familyId!);
@@ -58,6 +63,7 @@ export class AiPlatformController {
    * engine of its own; this endpoint is a read-side composition, same
    * as KnowledgeEngineService already is one layer down. */
   @Get('insights/:childId')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   async getInsights(
     @Param('childId') childId: string,
@@ -80,6 +86,8 @@ export class AiPlatformController {
    * logged-in user see the whole business's AI spend. `windowDays`
    * defaults to 30 if not provided. */
   @Get('usage-summary')
+  @PlatformAdminSurface()
+  @SystemRoute('ADMIN_CONSOLE', 'Platform-wide AI cost roll-up; aggregating one family at a time would defeat the purpose of the report.')
   @UseGuards(InternalAdminGuard)
   getUsageSummary(@Query('windowDays') windowDays?: string) {
     const parsed = windowDays ? parseInt(windowDays, 10) : 30;

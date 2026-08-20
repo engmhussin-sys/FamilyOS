@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
+import '../../../core/routing/deep_link_host.dart';
+import '../../../core/routing/deep_link_router.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../authentication/application/auth_controller.dart';
+import '../../family/presentation/child_detail_screen.dart';
 import '../../life_intelligence/presentation/digital_twin_screen.dart';
 import '../../life_intelligence/presentation/life_timeline_screen.dart';
 import '../../life_intelligence/presentation/habit_tracker_screen.dart';
@@ -16,6 +19,10 @@ import '../../life_intelligence/presentation/faith_progress_screen.dart';
 import '../../life_intelligence/presentation/family_store_screen.dart';
 import '../../life_intelligence/presentation/coaching_screen.dart';
 import '../../life_intelligence/presentation/wellbeing_screen.dart';
+import '../../rewards/presentation/child_rewards_screen.dart';
+import '../../rewards/presentation/programs_list_screen.dart';
+import '../../rewards/presentation/suggestions_screen.dart';
+import '../../../core/design_system/design_system.dart';
 
 class DashboardHomeScreen extends ConsumerStatefulWidget {
   const DashboardHomeScreen({super.key});
@@ -29,19 +36,52 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
   List<dynamic>? _devices;
   int _unreadCount = 0;
   int _pendingApprovalsCount = 0;
+  /// B6: the number of ACHIEVEMENTS waiting on this parent — a different
+  /// queue from `_pendingApprovalsCount`, which counts pending MESSAGES
+  /// (`/life-intelligence/communication/pending`). Audit P12 called out
+  /// that the two had been conflated by name.
+  int _pendingGoalReviewCount = 0;
   bool _isLoading = true;
-  String? _errorMessage;
+
+  /// The B3 envelope, not `e.toString()`. The retry-and-explain state was
+  /// already here (an earlier review added it); what was missing is the
+  /// EXPLANATION — it rendered a fixed `t('common.error')` and discarded the
+  /// Arabic sentence the server had already written for this exact failure.
+  ApiFailure? _failure;
 
   @override
   void initState() {
     super.initState();
     _load();
+    // THE COLD-START DEEP LINK, FOLLOWED HERE AND NOWHERE ELSE.
+    //
+    // An `abny://` link that the OS delivered before this parent was known to
+    // be signed in was parked on `pendingDeepLinkProvider` by `DeepLinkHost`.
+    // This screen is the one place both authenticated paths pass through —
+    // splash → dashboard for a live session, login → dashboard for a fresh
+    // one — so draining it here needs no second site and no auth check of its
+    // own: being built IS the proof.
+    //
+    // After the first frame, because the route this screen is on must exist
+    // before anything is pushed on top of it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _followPendingDeepLink());
+  }
+
+  void _followPendingDeepLink() {
+    final link = ref.read(pendingDeepLinkProvider);
+    if (link == null) return;
+    // Cleared BEFORE following: a link is followed exactly once, and a failure
+    // to route must not leave it armed for the next time this screen is built.
+    ref.read(pendingDeepLinkProvider.notifier).state = null;
+    if (!mounted) return;
+    final t = ref.read(localeControllerProvider.notifier).t;
+    DeepLinkRouter.followLink(context, link, t: t);
   }
 
   Future<void> _load() async {
     setState(() {
       _isLoading = true;
-      _errorMessage = null;
+      _failure = null;
     });
     final api = ref.read(dashboardApiProvider);
     try {
@@ -67,7 +107,7 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = e.toString();
+          _failure = ApiFailure.from(e);
         });
       }
       return;
@@ -84,12 +124,23 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
     } catch (_) {
       // Best-effort — the dashboard already rendered successfully above.
     }
+
+    // B6 — same partial-failure discipline: the goal-review count is its own
+    // fetch with its own catch, so an F4 outage cannot blank a dashboard
+    // that has already rendered.
+    try {
+      final reviews = await ref.read(rewardProgramsRepositoryProvider).listPendingAchievements();
+      if (mounted) setState(() => _pendingGoalReviewCount = reviews.length);
+    } catch (_) {
+      // Best-effort.
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider); // registers rebuild dependency — see fix note below
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(
@@ -123,44 +174,184 @@ class _DashboardHomeScreenState extends ConsumerState<DashboardHomeScreen> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null
+          ? const DsSkeletonList(rows: 3, hero: true)
+          : _failure != null
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.wifi_off, size: 40, color: Theme.of(context).colorScheme.error),
-                        const SizedBox(height: 12),
-                        Text(t('common.error'), textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                      ],
+                  child: SingleChildScrollView(
+                    child: DsErrorState(
+                      failure: _failure!,
+                      title: t('common.error'),
+                      retryLabel: t('common.retry'),
+                      requestIdLabel: t('common.requestId'),
+                      arabic: locale.isRtl,
+                      onRetry: _load,
                     ),
                   ),
                 )
               : RefreshIndicator(
               onRefresh: _load,
+              // -------------------------------------------------------------
+              // PHASE E (§6). THE ORDER OF THIS LIST IS THE FIX.
+              //
+              // §6 asks this one screen to answer two questions:
+              //   «هل ابني بخير اليوم؟»  and  «هل هناك شيء يحتاج مني؟»
+              //
+              // BEFORE, the first thing a parent saw was `_FamilySummaryCard`:
+              // how many children, how many DEVICES, how many alerts. That is
+              // an INVENTORY — a monitoring console's opening statistic — and
+              // it answers neither question. Worse, both answers sat below it
+              // and were scattered: "is my child OK" lived in a risk chip
+              // inside the third block, and "does anything need me" was split
+              // across an app-bar badge (pending messages), a button label
+              // inside the goals hub (pending reviews) and an "alerts" tile —
+              // three places, none of them the top of the screen.
+              //
+              // AFTER: the two answers lead, in the order the questions are
+              // asked, and the inventory moves below them. NOTHING IS DELETED
+              // — `_FamilySummaryCard` is byte-identical and still shows every
+              // number it showed before, one scroll lower, where an inventory
+              // belongs.
+              // -------------------------------------------------------------
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(DsSpace.lg),
                 children: [
+                  // Question 2 first, deliberately. A parent who opens this app
+                  // between two errands mostly needs to know whether they can
+                  // close it again; this card answers that in one line.
+                  _NeedsYouCard(
+                    pendingReviews: _pendingGoalReviewCount,
+                    pendingMessages: _pendingApprovalsCount,
+                    t: t,
+                  ),
+                  const SizedBox(height: DsSpace.lg),
+                  // Question 1: one row per child, each carrying a plain
+                  // answer for that child rather than a severity code.
+                  if (_children != null && _children!.isEmpty)
+                    _FirstChildEmptyState(t: t)
+                  else ...[
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: DsSpace.sm),
+                      child: Text(
+                        t('dashboard.childStatusTitle'),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    ...?_children?.map((child) => _ChildCard(child: child, devices: _devices ?? [], t: t)),
+                  ],
+                  const SizedBox(height: DsSpace.lg),
+                  _GoalsHubCard(t: t, pendingReviews: _pendingGoalReviewCount),
+                  const SizedBox(height: DsSpace.lg),
                   _FamilySummaryCard(
                     childrenCount: _children?.length ?? 0,
                     devicesCount: _devices?.length ?? 0,
                     alertsCount: _unreadCount,
                     t: t,
                   ),
-                  const SizedBox(height: 16),
-                  if (_children != null && _children!.isEmpty)
-                    _FirstChildEmptyState(t: t)
-                  else
-                    ...?_children?.map((child) => _ChildCard(child: child, devices: _devices ?? [], t: t)),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: DsSpace.lg),
                   _QuickActions(t: t),
                 ],
               ),
             ),
+    );
+  }
+}
+
+/// PHASE E (§6) — «هل هناك شيء يحتاج مني؟», answered in one block.
+///
+/// Both queues this card reads already existed and were already fetched by
+/// `_load`; what did not exist was a single place that ANSWERS the question.
+/// `_pendingGoalReviewCount` (achievements waiting on this parent) was only
+/// legible as a number inside a button label in the goals hub, and
+/// `_pendingApprovalsCount` (messages waiting on this parent) only as a badge
+/// on an app-bar icon. A parent had to know to look in two places, and to know
+/// that the two counts mean different things — which audit P12 already
+/// recorded as having been conflated once by name.
+///
+/// WHEN BOTH ARE ZERO THIS CARD STILL RENDERS, and says so. "Nothing is
+/// waiting for you" is a real answer to the question and the most common one;
+/// hiding the card would make its absence indistinguishable from a screen that
+/// had not finished loading.
+class _NeedsYouCard extends StatelessWidget {
+  const _NeedsYouCard({
+    required this.pendingReviews,
+    required this.pendingMessages,
+    required this.t,
+  });
+
+  final int pendingReviews;
+  final int pendingMessages;
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = pendingReviews + pendingMessages;
+    final calm = total == 0;
+    final accent = calm ? AppTheme.sage500 : AppTheme.amber500;
+
+    return DsCard(
+      accent: accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(calm ? Icons.check_circle_outline_rounded : Icons.pending_actions_rounded,
+                  color: accent, size: 22),
+              const SizedBox(width: DsSpace.sm),
+              Expanded(
+                child: Text(t('dashboard.needsYouTitle'), style: DsText.sectionTitle(context)),
+              ),
+            ],
+          ),
+          DsSpace.gapSm,
+          if (calm)
+            Text(t('dashboard.needsYouNothing'), style: DsText.caption(context))
+          else ...[
+            if (pendingReviews > 0)
+              _NeedsYouRow(
+                icon: Icons.fact_check_outlined,
+                label: t('dashboard.needsYouReviews', options: {'count': pendingReviews}),
+                onTap: () => Navigator.of(context).pushNamed(AppRoutes.goalReviewQueue),
+              ),
+            if (pendingMessages > 0)
+              _NeedsYouRow(
+                icon: Icons.mark_email_unread_outlined,
+                label: t('dashboard.needsYouMessages', options: {'count': pendingMessages}),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PendingApprovalsScreen()),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NeedsYouRow extends StatelessWidget {
+  const _NeedsYouRow({required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(DsRadius.control),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: DsSpace.sm),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7)),
+            const SizedBox(width: DsSpace.sm),
+            Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyLarge)),
+            // Was a fixed right-pointing chevron.
+            DsIcons.disclosure(context),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -181,14 +372,14 @@ class _FamilySummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(DsSpace.lg),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
           colors: [AppTheme.guardian950, AppTheme.guardian950.withOpacity(0.85)],
         ),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(DsRadius.lg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -197,7 +388,7 @@ class _FamilySummaryCard extends StatelessWidget {
             t('dashboard.familySummary'),
             style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Colors.white),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: DsSpace.lg),
           Row(
             children: [
               _StatTile(icon: Icons.child_care_rounded, value: '$childrenCount', label: t('dashboard.children', count: childrenCount)),
@@ -234,9 +425,9 @@ class _StatTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, color: color, size: 20),
-          const SizedBox(height: 8),
+          const SizedBox(height: DsSpace.sm),
           Text(value, style: Theme.of(context).textTheme.headlineMedium?.copyWith(color: color)),
-          Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white70)),
+          Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: DsColor.onDarkMuted)),
         ],
       ),
     );
@@ -248,7 +439,7 @@ class _StatDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(width: 1, height: 44, color: Colors.white.withOpacity(0.15), margin: const EdgeInsets.symmetric(horizontal: 8));
+    return Container(width: 1, height: 44, color: Colors.white.withOpacity(0.15), margin: const EdgeInsets.symmetric(horizontal: DsSpace.sm));
   }
 }
 
@@ -271,52 +462,61 @@ class _ChildCard extends StatelessWidget {
 
     return Card(
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(DsRadius.card),
         onTap: () => _showChildActions(context, child, t),
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(DsSpace.md),
           child: Row(
             children: [
               Container(
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [AppTheme.sage500, AppTheme.guardian950]),
+                  // `LinearGradient` DEFAULTS to centerLeft -> centerRight,
+                  // and `Alignment` never mirrors, so this avatar lit from
+                  // the same physical side in Arabic as in English.
+                  gradient: const LinearGradient(
+                    begin: AlignmentDirectional.centerStart,
+                    end: AlignmentDirectional.centerEnd,
+                    colors: [AppTheme.sage500, AppTheme.guardian950],
+                  ),
                   shape: BoxShape.circle,
                 ),
                 alignment: Alignment.center,
                 child: Text(
                   firstName.isNotEmpty ? firstName.characters.first : '?',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
+                  // Was an inline `fontSize: 18, w700`.
+                  style: DsText.sectionTitle(context).copyWith(color: DsColor.onDark),
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: DsSpace.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(firstName, style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: DsSpace.xs),
                     Row(
                       children: [
                         Container(
                           width: 8,
                           height: 8,
                           decoration: BoxDecoration(
-                            color: isOnline ? AppTheme.sage500 : Colors.grey.shade400,
+                            color: isOnline ? AppTheme.sage500 : DsColor.stateMuted,
                             shape: BoxShape.circle,
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: DsSpace.xs),
                         Text(isOnline ? t('dashboard.online') : t('dashboard.offline'), style: Theme.of(context).textTheme.bodyMedium),
                       ],
                     ),
                   ],
                 ),
               ),
-              if (childDevice != null) _RiskChip(riskLevel: riskLevel),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right_rounded, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3)),
+              if (childDevice != null) _RiskChip(riskLevel: riskLevel, t: t),
+              const SizedBox(width: DsSpace.xs),
+              // Was a hard right-pointing chevron — wrong direction in Arabic.
+              DsIcons.disclosure(context),
             ],
           ),
         ),
@@ -331,9 +531,67 @@ class _ChildCard extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // F1 — the child page, which is what `abny://child/<childId>` now
+            // opens. It leads the sheet because it is the one entry that
+            // ANSWERS «who is this», and because the three screens it hosts
+            // (progress, coach, screen-time) are the ones no link can name a
+            // child for.
+            ListTile(
+              leading: const Icon(Icons.person_outline_rounded),
+              title: Text(t('childActions.childPage')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => ChildDetailScreen(childId: childId)),
+                );
+              },
+            ),
+            const Divider(height: 1),
+            // B6 — GROWTH FIRST. The two goal entries lead this sheet
+            // deliberately: the product's thesis is that a parent opens this
+            // app to set and reward a goal, and only then to look at a
+            // monitoring surface.
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: Text(t('goalsHub.childGoals')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ProgramsListScreen(childId: childId, childName: childName),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.emoji_events_outlined),
+              title: Text(t('goalsHub.childRewards')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ChildRewardsScreen(childId: childId, childName: childName),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.lightbulb_outline_rounded),
+              title: Text(t('suggestions.title')),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SuggestionsScreen(childId: childId, childName: childName),
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.auto_awesome_outlined),
               title: Text(t('digitalTwin.title')),
@@ -435,14 +693,32 @@ class _ChildCard extends StatelessWidget {
             ),
           ],
         ),
+        ),
       ),
     );
   }
 }
 
+/// PHASE E (§6) — this chip IS the answer to «هل ابني بخير اليوم؟», and it
+/// used to render the backend's raw enum.
+///
+/// `Text(riskLevel ?? 'UNKNOWN')` put `HIGH` / `CRITICAL` / `UNKNOWN` on the
+/// parent's home screen: hardcoded, untranslated, in Latin letters, inside an
+/// Arabic-first product — on the single most important word on the screen. A
+/// parent seeing «CRITICAL» learns a severity code, not whether their child is
+/// all right, and a parent seeing «UNKNOWN» is told nothing at all when the
+/// honest statement is "no data arrived from this device today".
+///
+/// The enum values are unchanged and still come from the backend; only their
+/// PRESENTATION moved into the localization engine, phrased as answers rather
+/// than as levels. An unrecognised value falls back to the same key as
+/// `null` rather than leaking whatever string the server sent.
 class _RiskChip extends StatelessWidget {
-  const _RiskChip({required this.riskLevel});
+  const _RiskChip({required this.riskLevel, required this.t});
   final String? riskLevel;
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  static const _known = {'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'};
 
   Color _colorFor(String? level) {
     switch (level) {
@@ -454,18 +730,19 @@ class _RiskChip extends StatelessWidget {
       case 'LOW':
         return AppTheme.sage500;
       default:
-        return Colors.grey;
+        return DsColor.stateMuted;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final color = _colorFor(riskLevel);
+    final key = _known.contains(riskLevel) ? riskLevel! : 'UNKNOWN';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(20)),
+      padding: const EdgeInsets.symmetric(horizontal: DsSpace.sm, vertical: DsSpace.xs),
+      decoration: BoxDecoration(color: color.withOpacity(0.14), borderRadius: BorderRadius.circular(DsRadius.lg)),
       child: Text(
-        riskLevel ?? 'UNKNOWN',
+        t('riskLevel.$key'),
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color, fontWeight: FontWeight.w600),
       ),
     );
@@ -480,23 +757,23 @@ class _FirstChildEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(28),
+      padding: const EdgeInsets.all(DsSpace.xl),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
           colors: [AppTheme.sage500.withOpacity(0.10), AppTheme.guardian950.withOpacity(0.05)],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(DsRadius.lg),
       ),
       child: Column(
         children: [
           Icon(Icons.family_restroom_rounded, size: 48, color: AppTheme.sage500),
-          const SizedBox(height: 16),
+          const SizedBox(height: DsSpace.lg),
           Text(t('dashboard.firstChildTitle'), style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
-          const SizedBox(height: 8),
+          const SizedBox(height: DsSpace.sm),
           Text(t('dashboard.firstChildBody'), style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
-          const SizedBox(height: 20),
+          const SizedBox(height: DsSpace.lg),
           FilledButton.icon(
             onPressed: () => Navigator.of(context).pushNamed(AppRoutes.createChild),
             icon: const Icon(Icons.add_rounded),
@@ -524,6 +801,14 @@ class _QuickActions extends ConsumerWidget {
           icon: const Icon(Icons.add),
           label: Text(t('dashboard.addChild')),
         ),
+        // F1 — the safety & protection surface. A screen reachable only from a
+        // notification is a screen a parent cannot go and LOOK at, which is
+        // exactly what somebody does the day after an alert.
+        OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).pushNamed(AppRoutes.safety),
+          icon: const Icon(Icons.shield_outlined),
+          label: Text(t('dashboard.openSafety')),
+        ),
         OutlinedButton.icon(
           onPressed: null, // Reports (Sprint 8, backend-real) — mobile screen not built this sprint
           icon: const Icon(Icons.insert_chart_outlined),
@@ -539,6 +824,59 @@ class _QuickActions extends ConsumerWidget {
           child: Text(t('settings.logout')),
         ),
       ],
+    );
+  }
+}
+
+
+/// B6 — THE PRODUCT'S FRONT DOOR ON THE PARENT SIDE.
+///
+/// Before this card, the F4 Smart Reward Engine had no entry point in any
+/// app: 23 live endpoints, zero consumers (audit PA-M-001, ⛔ Critical).
+/// Everything the parent does in the flagship journey starts here —
+/// create a goal, review what a child submitted, hand over a reward.
+///
+/// It is placed directly under the family summary, ABOVE the per-child
+/// monitoring cards, because that ordering is the product's thesis:
+/// growth first, monitoring second.
+class _GoalsHubCard extends StatelessWidget {
+  const _GoalsHubCard({required this.t, required this.pendingReviews});
+
+  final String Function(String, {int? count, Map<String, Object>? options}) t;
+  final int pendingReviews;
+
+  @override
+  Widget build(BuildContext context) {
+    return DsCard(
+      accent: DsColor.accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(t('goalsHub.title'), style: DsText.sectionTitle(context)),
+          DsSpace.gapXs,
+          Text(t('goalsHub.subtitle'), style: DsText.caption(context)),
+          DsSpace.gapLg,
+          DsPrimaryButton(
+            label: t('goalsHub.openGoals'),
+            icon: Icons.flag_outlined,
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.goals),
+          ),
+          DsSpace.gapMd,
+          DsSecondaryButton(
+            label: pendingReviews > 0
+                ? t('goalsHub.reviewQueueWithCount', options: {'count': pendingReviews})
+                : t('goalsHub.reviewQueue'),
+            icon: Icons.fact_check_outlined,
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.goalReviewQueue),
+          ),
+          DsSpace.gapMd,
+          DsSecondaryButton(
+            label: t('goalsHub.fulfilments'),
+            icon: Icons.redeem_outlined,
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.fulfilments),
+          ),
+        ],
+      ),
     );
   }
 }

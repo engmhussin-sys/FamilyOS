@@ -1,7 +1,13 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
+import {
+  readChildInboxHistory,
+  type ChildInboxHistoryFact,
+} from '../../../../shared/notifications/child-inbox-history';
 import { IChildMessage, ISendChildMessageInput } from '../../domain/communication.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaCommunicationRepository {
@@ -10,6 +16,7 @@ export class PrismaCommunicationRepository {
   async create(input: ISendChildMessageInput, approvalStatus: IChildMessage['approvalStatus'], deliveredAt: Date | null): Promise<IChildMessage> {
     const row = await this.prisma.childMessage.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         fromUserId: input.fromUserId,
         authorType: input.authorType,
@@ -18,9 +25,51 @@ export class PrismaCommunicationRepository {
         title: input.title,
         body: input.body,
         deliveredAt: deliveredAt ?? undefined,
+        // B9 — NULL for a parent-authored message, a composed causal key for a
+        // machine-generated one. See `ISendChildMessageInput.sourceEventId`.
+        sourceEventId: input.sourceEventId ?? null,
+        // PHASE F1 — the notification payload: `{ deepLink }` and nothing else,
+        // already narrowed by `childSafeNotificationPayload`. See
+        // `IChildMessage.data`.
+        //
+        // `undefined` RATHER THAN `null` ON THE ABSENT BRANCH, and the
+        // distinction is Prisma's own: on a `Json?` column, `null` writes the
+        // JSON literal `null` INTO the column and `undefined` omits the column
+        // so it stays SQL NULL. «This row has no destination» is the absence of
+        // a value, not a stored JSON `null` a client would then have to
+        // special-case.
+        data: (input.data ?? undefined) as Prisma.InputJsonValue | undefined,
       },
     });
     return this.toDomain(row);
+  }
+
+  /**
+   * B9 (PA-B-007 / PA-B-008) — the child-side counterpart of
+   * `PrismaRuntimeAlertRepository`'s P2002 branch.
+   *
+   * Returns `null` when `child_messages (family_id, source_event_id)` refuses
+   * the insert, which now means exactly one thing: this notification has
+   * already been drafted for this cause in this family. That is a SUCCESS —
+   * a redelivered outbox message did its job the first time — so the caller
+   * reports a suppressed duplicate rather than failing a business transaction
+   * that has already committed.
+   *
+   * Any other error is rethrown: swallowing a genuine write failure would turn
+   * a lost notification into a silent one, which is the other half of
+   * PA-B-009, and this method must not add to it.
+   */
+  async createIfAbsent(
+    input: ISendChildMessageInput,
+    approvalStatus: IChildMessage['approvalStatus'],
+    deliveredAt: Date | null,
+  ): Promise<IChildMessage | null> {
+    try {
+      return await this.create(input, approvalStatus, deliveredAt);
+    } catch (err) {
+      if ((err as { code?: string }).code === 'P2002') return null;
+      throw err;
+    }
   }
 
   async findById(messageId: string): Promise<IChildMessage | null> {
@@ -37,6 +86,46 @@ export class PrismaCommunicationRepository {
 
   async reject(messageId: string): Promise<void> {
     await this.prisma.childMessage.update({ where: { id: messageId }, data: { approvalStatus: 'REJECTED' } });
+  }
+
+  /**
+   * THE CHILD'S OWN INBOX, READ AS NOTIFICATION HISTORY — the CHILD-audience
+   * counterpart of `INotificationRepository.findRecentForChild`.
+   *
+   * WHY IT EXISTS. `evaluateFatigue` decides «has this recipient had enough
+   * today» from a history array, and every caller in this module was building
+   * that array from `notifications` — the PARENT's inbox — even for a candidate
+   * addressed to the CHILD. `notification-class.ts` forbids exactly that in its
+   * own words on `REWARD_GRANTED_CHILD`: «a parent at their daily maximum must
+   * not be able to silence the child's own news about their own work». The
+   * child's notifications are `child_messages` rows; they are not in
+   * `notifications` at all, so the parent's stream was both the wrong denominator
+   * and, for the child, an empty one.
+   *
+   * THE QUERY IS NOT HERE ANY MORE, AND THAT IS THE POINT.
+   * `readChildInboxHistory` in `shared/notifications/child-inbox-history.ts` is
+   * the ONE definition of this question, and it is the same function
+   * `NotificationContextAssembler.readChildInbox` calls. What used to keep the
+   * two copies aligned was a paragraph in each of them naming the other; a
+   * comment cannot fail a build, and the two had already drifted once — one
+   * side gained an upper bound at `now` and the other did not. This method is
+   * now the tenant-extended Prisma delegate plus a name, and
+   * `test/notifications/child-inbox-history.spec.ts` pins every clause of the
+   * `where`, the `select` and the `orderBy`.
+   *
+   * `until` IS REQUIRED, by the shared module's design rather than this
+   * method's preference: a row stamped AFTER the instant being evaluated is not
+   * history, and an open-ended window counts it — `now - createdAt` is
+   * NEGATIVE, smaller than any window, so a future row reads as «two seconds
+   * ago» to every rule that measures age. The bound is now PostgreSQL's
+   * (`created_at <= $until`) instead of a filter each caller had to remember.
+   */
+  async findRecentNotificationsForChild(
+    childId: string,
+    since: Date,
+    until: Date,
+  ): Promise<ChildInboxHistoryFact[]> {
+    return readChildInboxHistory(this.prisma.childMessage, { childId, since, until });
   }
 
   /** Only DELIVERED messages are visible to the child — a PENDING
@@ -79,6 +168,7 @@ export class PrismaCommunicationRepository {
     category: string;
     title: string;
     body: string;
+    data?: unknown;
     deliveredAt: Date | null;
     acknowledgedAt: Date | null;
   }): IChildMessage {
@@ -91,6 +181,18 @@ export class PrismaCommunicationRepository {
       category: row.category,
       title: row.title,
       body: row.body,
+      // PHASE F1 — SERVED, not only stored. This is the field
+      // `GET /life-intelligence/self/messages` puts on the wire and the child
+      // app reads with `deepLinkFromNotification`.
+      //
+      // NORMALISED TO `null` FOR ANYTHING THAT IS NOT AN OBJECT: a SQL NULL, a
+      // stored JSON `null`, and (defensively) a scalar all mean «this row has
+      // no destination», and the client should not have to tell three absences
+      // apart to decide whether a card is tappable.
+      data:
+        row.data !== null && typeof row.data === 'object' && !Array.isArray(row.data)
+          ? (row.data as Record<string, unknown>)
+          : null,
       deliveredAt: row.deliveredAt,
       acknowledgedAt: row.acknowledgedAt,
     };

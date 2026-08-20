@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    English FALLBACK strings for the Parent App's Android layer.
+    Arabic (the product's first language, CONTEXT §1) lives in
+    res/values-ar/strings.xml.
+
+    This app's UI is entirely Flutter, so the native layer owns only the
+    launcher label today. The file exists so that label is localisable
+    and so new native strings have an obvious home.
+-->
+<resources>
+    <string name="app_name">ABNY — Grow Together</string>
+</resources>

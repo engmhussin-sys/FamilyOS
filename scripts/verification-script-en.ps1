@@ -1,9 +1,60 @@
 # Ebni - Full verification script (runs remaining phases 3-5 in one execution)
-# Usage: open PowerShell (not CMD), paste this whole script, press Enter.
+#
+# Usage:
+#   .\scripts\verification-script-en.ps1 -BaseUrl https://<host>/api/v1 -Email you@example.com
+#   (it prompts for the password; or set ABNY_VERIFY_PASSWORD in the environment)
+#
+# WHAT CHANGED AND WHY. This script used to carry a live deployment URL, an
+# account address and its password as literals in the file. Three problems,
+# each independently disqualifying: the credential is in the git history of
+# every clone; anyone who runs the script by accident writes real rows into a
+# real deployment; and a script that knows one environment cannot verify
+# another. All three are now parameters with NO defaults — the script REFUSES
+# to guess a target or a credential rather than acting on a wrong one.
+#
+# IT WRITES. This is not a read-only probe: it logs hydration, creates a faith
+# practice, a learning goal, a session and a parent message. Point it at a test
+# environment, never at production.
+[CmdletBinding()]
+param(
+    [string] $BaseUrl,
+    [string] $Email,
+    [string] $Password
+)
 
 $ErrorActionPreference = "Continue"
-$baseUrl = "https://familyos-production-74ca.up.railway.app/api/v1"
+
+if (-not $BaseUrl)  { $BaseUrl  = $env:ABNY_VERIFY_BASE_URL }
+if (-not $Email)    { $Email    = $env:ABNY_VERIFY_EMAIL }
+if (-not $Password) { $Password = $env:ABNY_VERIFY_PASSWORD }
+
+if (-not $BaseUrl) {
+    Write-Host "verification-script: -BaseUrl was not given and ABNY_VERIFY_BASE_URL is not set." -ForegroundColor Red
+    Write-Host "  There is no default. Pass the API root of the environment you want to verify," -ForegroundColor Red
+    Write-Host "  including the /api/v1 prefix, e.g. -BaseUrl https://<host>/api/v1" -ForegroundColor Red
+    exit 2
+}
+if (-not $Email) {
+    Write-Host "verification-script: -Email was not given and ABNY_VERIFY_EMAIL is not set." -ForegroundColor Red
+    Write-Host "  Supply an account that exists in THAT environment. This script creates no account." -ForegroundColor Red
+    exit 2
+}
+if (-not $Password) {
+    $secure = Read-Host -Prompt "Password for $Email" -AsSecureString
+    $Password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+}
+if (-not $Password) {
+    Write-Host "verification-script: no password supplied. Refusing to attempt a login without one." -ForegroundColor Red
+    exit 2
+}
+
+$baseUrl = $BaseUrl.TrimEnd('/')
 $results = @()
+
+Write-Host "target : $baseUrl" -ForegroundColor Yellow
+Write-Host "actor  : $Email" -ForegroundColor Yellow
+Write-Host "NOTE   : this script WRITES (hydration log, faith practice, goal, session, message)." -ForegroundColor Yellow
 
 function Test-Step {
     param($Name, $ScriptBlock)
@@ -24,7 +75,7 @@ function Test-Step {
 # --- Fresh login (old token likely expired) ---
 $login = Test-Step "0. Fresh login" {
     Invoke-RestMethod -Uri "$baseUrl/auth/login" -Method Post -ContentType "application/json" `
-        -Body '{"email":"test1@example.com","password":"SecurePass123!"}'
+        -Body (@{ email = $Email; password = $Password } | ConvertTo-Json -Compress)
 }
 if (-not $login) { Write-Host "STOPPED - login failed, cannot continue." -ForegroundColor Red; return }
 $token = $login.tokens.accessToken

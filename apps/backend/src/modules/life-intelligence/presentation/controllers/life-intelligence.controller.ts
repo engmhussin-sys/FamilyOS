@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
 import { JwtAuthGuard, DeviceJwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
@@ -24,9 +24,10 @@ import { RecordDailyUsageSummaryDto, RecordCriticalEventDto } from '../../applic
 import { DigitalWellbeingEngineService } from '../../application/services/digital-wellbeing-engine.service';
 import { PairingOrchestratorService } from '../../../pairing/application/services/pairing-orchestrator.service';
 import { ChildrenService } from '../../../children/application/services/children.service';
+import { ChildSurface, ParentSurface } from '../../../../common/authz/roles.decorator';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
 
 @Controller('life-intelligence')
-@UseGuards(JwtAuthGuard)
 export class LifeIntelligenceController {
   constructor(
     private readonly habitEngine: HabitEngineService,
@@ -43,30 +44,43 @@ export class LifeIntelligenceController {
     private readonly pairingOrchestrator: PairingOrchestratorService,
     private readonly childrenService: ChildrenService,
     private readonly digitalWellbeing: DigitalWellbeingEngineService,
+    /** From the `@Global` TimeModule — the ONE reader of `Family.timezone`. */
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   // ---- Habit Builder ----
   @Post('habits/:childId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   createHabit(@Param('childId') childId: string, @Body() dto: CreateHabitDto, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.createHabit(childId, user.familyId!, { ...dto, createdByUserId: user.sub });
   }
 
   @Get('habits/:childId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   listHabits(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.listHabits(childId, user.familyId!);
   }
 
   @Post('habits/:childId/:habitId/complete')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   completeHabit(
     @Param('childId') childId: string,
     @Param('habitId') habitId: string,
     @Body() dto: CompleteHabitDto,
     @CurrentUser() user: IJwtPayload,
   ) {
-    return this.habitEngine.completeHabit(habitId, childId, user.familyId!, dto.date);
+    // B1 (PA-B-004): a PARENT session may back-date a completion — that is a
+    // real product need (logging a day the child forgot to tick). The engine
+    // still bounds it to [today-30, today].
+    return this.habitEngine.completeHabit(habitId, childId, user.familyId!, dto.date, 'PARENT');
   }
 
   @Get('habits/:childId/score')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getHabitScore(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.getScoreBreakdown(childId, user.familyId!);
   }
@@ -77,11 +91,15 @@ export class LifeIntelligenceController {
    * this is callable directly rather than silently assuming a cron
    * that doesn't exist. `date` defaults to yesterday server-side. */
   @Post('habits/:childId/mark-missed')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   markMissedHabits(@Param('childId') childId: string, @Body() dto: { date?: string }, @CurrentUser() user: IJwtPayload) {
     return this.habitEngine.markMissedHabits(childId, user.familyId!, dto?.date);
   }
 
   @Get('habits/:childId/missed')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getMissedHabits(@Param('childId') childId: string, @Query('windowDays') windowDays: string | undefined, @CurrentUser() user: IJwtPayload) {
     const parsed = windowDays ? parseInt(windowDays, 10) : 7;
     const safeWindow = Number.isFinite(parsed) && parsed > 0 && parsed <= 90 ? parsed : 7;
@@ -90,26 +108,38 @@ export class LifeIntelligenceController {
 
   // ---- Health ----
   @Post('health/:childId/nutrition-logs')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   logNutrition(@Param('childId') childId: string, @Body() dto: LogNutritionDto, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.logNutrition(childId, user.familyId!, dto);
   }
 
   @Post('health/:childId/hydration-logs')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   logHydration(@Param('childId') childId: string, @Body() dto: LogHydrationDto, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.logHydration(childId, user.familyId!, dto);
   }
 
   @Post('health/:childId/sleep-logs')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   logSleep(@Param('childId') childId: string, @Body() dto: LogSleepDto, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.logSleep(childId, user.familyId!, dto);
   }
 
   @Post('health/:childId/activity-logs')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   logActivity(@Param('childId') childId: string, @Body() dto: LogActivityDto, @CurrentUser() user: IJwtPayload) {
-    return this.healthEngine.logActivity(childId, user.familyId!, dto);
+    // PC-B-003 — the PARENT actor: keeps the bounded back-fill, the same way
+    // the habit/faith/learning parent routes already do.
+    return this.healthEngine.logActivity(childId, user.familyId!, dto, 'PARENT');
   }
 
   @Get('health/:childId/score')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getHealthScore(@Param('childId') childId: string, @Query('date') date: string | undefined, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.computeAndStoreHealthScore(childId, user.familyId!, date);
   }
@@ -119,59 +149,103 @@ export class LifeIntelligenceController {
    * progress + streaks) previously never existed as a single,
    * directly-consumable endpoint. */
   @Get('health/:childId/progress')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getDailyProgress(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.healthEngine.getDailyProgress(childId, user.familyId!);
   }
 
   // ---- Faith ----
   @Post('faith/:childId/practices')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   createFaithPractice(@Param('childId') childId: string, @Body() dto: CreateFaithPracticeDto, @CurrentUser() user: IJwtPayload) {
     return this.faithEngine.createPractice(childId, user.familyId!, dto);
   }
 
   @Get('faith/:childId/practices')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   listFaithPractices(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.faithEngine.listPractices(childId, user.familyId!);
   }
 
   @Post('faith/:childId/:practiceId/log')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   logFaithPractice(
     @Param('childId') childId: string,
     @Param('practiceId') practiceId: string,
     @Body() dto: LogFaithPracticeDto,
     @CurrentUser() user: IJwtPayload,
   ) {
-    return this.faithEngine.logPractice(practiceId, childId, user.familyId!, dto.date, dto.progress);
+    // PARENT session: `dto.date` is honoured, bounded to [today-30, today] by
+    // the engine — a parent may legitimately back-fill a missed prayer.
+    return this.faithEngine.logPractice(practiceId, childId, user.familyId!, dto.date, dto.progress, 'PARENT');
   }
 
   @Get('faith/:childId/score')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getFaithScore(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.faithEngine.getScoreBreakdown(childId, user.familyId!);
   }
 
   // ---- Learning & Education ----
   @Post('learning/:childId/goals')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   createLearningGoal(@Param('childId') childId: string, @Body() dto: CreateLearningGoalDto, @CurrentUser() user: IJwtPayload) {
     return this.learningEngine.createGoal(childId, user.familyId!, dto);
   }
 
   @Get('learning/:childId/goals')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   listLearningGoals(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.learningEngine.listGoals(childId, user.familyId!);
   }
 
   @Post('learning/:childId/sessions')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   logLearningSession(@Param('childId') childId: string, @Body() dto: LogLearningSessionDto, @CurrentUser() user: IJwtPayload) {
-    return this.learningEngine.logSession(childId, user.familyId!, dto);
+    // B1 (PA-B-004): a parent session may back-date a session log; the engine
+    // bounds it to [today-30, today].
+    return this.learningEngine.logSession(childId, user.familyId!, dto, 'PARENT');
+  }
+
+  /**
+   * B4 — the GOALS chain's trigger, which did not exist before this sprint.
+   *
+   * `JwtAuthGuard` ONLY, and there is deliberately no `/self/*` sibling: the
+   * whole point of the goal payout is that a parent confirms it. The engine
+   * additionally refuses to complete a goal with fewer than two real logged
+   * sessions, so this route cannot be used to mint the 50-COIN default by
+   * pressing a button.
+   */
+  @Post('learning/:childId/goals/:goalId/complete')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
+  completeLearningGoal(
+    @Param('childId') childId: string,
+    @Param('goalId') goalId: string,
+    @CurrentUser() user: IJwtPayload,
+  ) {
+    return this.learningEngine.completeGoal(goalId, childId, user.familyId!);
   }
 
   @Get('learning/:childId/progress')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getLearningProgress(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.learningEngine.getProgressSummary(childId, user.familyId!);
   }
 
   // ---- Smart Tasks ----
   @Post('smart-tasks/:childId/generate')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   generateSmartTasks(@Param('childId') childId: string, @Body() dto: GenerateSmartTasksDto, @CurrentUser() user: IJwtPayload) {
     return this.smartTaskEngine.generateForToday(childId, user.familyId!, dto);
   }
@@ -186,16 +260,22 @@ export class LifeIntelligenceController {
    * docstring for exactly what's computed and the one honest
    * limitation — screenTimeOverLimit — left false). */
   @Post('smart-tasks/:childId/generate-auto')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   generateSmartTasksAuto(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.smartTaskEngine.generateForTodayAuto(childId, user.familyId!);
   }
 
   @Get('smart-tasks/:childId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   listSmartTasksToday(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.smartTaskEngine.listForToday(childId, user.familyId!);
   }
 
   @Post('smart-tasks/:childId/:taskId/decide')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   decideSmartTask(
     @Param('childId') childId: string,
     @Param('taskId') taskId: string,
@@ -207,8 +287,32 @@ export class LifeIntelligenceController {
 
   // ---- Rewards ----
   @Get('rewards/:childId/account')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getRewardsAccount(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.getAccount(childId, user.familyId!);
+  }
+
+  /**
+   * B5 — THE LEDGER READ (`PHASE-A-Backend §13.2`: «لا endpoint يقرأ
+   * `rewards_ledger_entries` إطلاقًا»).
+   *
+   * Placed beside `account` deliberately rather than at the
+   * `/children/:childId/rewards/ledger` path §13.2 sketched: the balance and
+   * the entries that produced it are one surface with one owner
+   * (`RewardsEngineService`), and splitting them across two modules would have
+   * put reward semantics in the children module. The mobile contract matrix in
+   * the B5+B9 report records the path that shipped.
+   */
+  @Get('rewards/:childId/ledger')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
+  getRewardsLedger(
+    @Param('childId') childId: string,
+    @CurrentUser() user: IJwtPayload,
+    @Query('limit') limit?: string,
+  ) {
+    return this.rewardsEngine.getLedger(childId, user.familyId!, limit ? Number(limit) : undefined);
   }
 
   /**
@@ -220,12 +324,16 @@ export class LifeIntelligenceController {
    * tightening, not a fix \u2014 the endpoint was never unprotected.
    */
   @Post('rewards/:childId/trigger')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   triggerRewardEvent(@Param('childId') childId: string, @Body() dto: TriggerRewardEventDto, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.processTriggerEvent(childId, user.familyId!, dto);
   }
 
   @Get('rewards/store/:familyId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getFamilyStore(@Param('familyId') familyId: string, @CurrentUser() user: IJwtPayload) {
     // FIXING A REAL IDOR (found during Sprint 23's audit of every
     // life-intelligence endpoint): this route previously had no
@@ -234,34 +342,50 @@ export class LifeIntelligenceController {
     // user can only ever request their OWN family's store; no
     // repository round-trip needed to prove that, their own verified
     // JWT already settles it.
+    // F2 (A4 \u00a73 row 18 / BA-016): this used to answer 403, which CONFIRMS
+    // the other family's store exists \u2014 an oracle an attacker can enumerate
+    // with. The rest of this codebase already answers 404 for a resource outside
+    // the caller's tenant (getDeviceOrThrowScopedToFamily,
+    // ChildNotFoundException); this route now matches. The cross-tenant probe
+    // suite asserts 404, never 403, for every id-taking route.
     if (user.familyId !== familyId) {
-      throw new ForbiddenException('Cannot view another family\u2019s store');
+      throw new NotFoundException('Store not found.');
     }
     return this.rewardsEngine.listFamilyStore(familyId);
   }
 
   @Post('rewards/:childId/redemptions')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   requestRedemption(@Param('childId') childId: string, @Body() dto: RequestRedemptionDto, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.requestRedemption(childId, user.familyId!, dto.catalogItemId);
   }
 
   @Post('rewards/redemptions/:redemptionId/approve')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   approveRedemption(@Param('redemptionId') redemptionId: string, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.approveRedemption(redemptionId, user.familyId!, user.sub);
   }
 
   @Post('rewards/redemptions/:redemptionId/deny')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   denyRedemption(@Param('redemptionId') redemptionId: string, @CurrentUser() user: IJwtPayload) {
     return this.rewardsEngine.denyRedemption(redemptionId, user.familyId!, user.sub);
   }
 
   // ---- Family Communication ----
   @Post('communication/:childId/parent-message')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   sendParentMessage(@Param('childId') childId: string, @Body() dto: SendParentMessageDto, @CurrentUser() user: IJwtPayload) {
     return this.communication.sendParentMessage(childId, user.familyId!, user.sub, dto.category, dto.title, dto.body);
   }
 
   @Post('communication/:childId/ai-draft')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   draftAiMessage(@Param('childId') childId: string, @Body() dto: DraftAiMessageDto, @CurrentUser() user: IJwtPayload) {
     return this.communication.draftAiMessage(childId, user.familyId!, dto.category, dto.title, dto.body);
   }
@@ -271,16 +395,22 @@ export class LifeIntelligenceController {
    * every Smart Notification targeted at a child (Sprint 16-16.2)
    * was structurally unreachable without this. */
   @Get('communication/pending')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getPendingMessages(@CurrentUser() user: IJwtPayload) {
     return this.communication.getPendingMessages(user.familyId!);
   }
 
   @Post('communication/:childId/:messageId/approve')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   approveMessage(@Param('childId') childId: string, @Param('messageId') messageId: string, @CurrentUser() user: IJwtPayload) {
     return this.communication.approve(messageId, childId, user.familyId!);
   }
 
   @Post('communication/:childId/:messageId/reject')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   rejectMessage(@Param('childId') childId: string, @Param('messageId') messageId: string, @CurrentUser() user: IJwtPayload) {
     return this.communication.reject(messageId, childId, user.familyId!);
   }
@@ -291,6 +421,7 @@ export class LifeIntelligenceController {
    * service verifies the authenticated device's own paired childId
    * matches :childId before returning anything. */
   @Get('communication/child/:childId')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   getChildInbox(@Param('childId') childId: string, @CurrentUser() device: IJwtPayload) {
     return this.communication.getChildInbox(device.sub, childId);
@@ -298,6 +429,8 @@ export class LifeIntelligenceController {
 
   // ---- Coaching ----
   @Get('coaching/:childId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getCoachingRecommendations(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.coachingEngine.getRecommendations(childId, user.familyId!);
   }
@@ -313,6 +446,7 @@ export class LifeIntelligenceController {
    * this ever reaches the response — never trust a client to filter
    * something this sensitive. */
   @Get('self/coaching')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetCoaching(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -322,12 +456,16 @@ export class LifeIntelligenceController {
 
   // ---- Digital Twin ----
   @Get('digital-twin/:childId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getDigitalTwin(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.digitalTwin.refreshAndGet(childId, user.familyId!);
   }
 
   // ---- Family Insight ----
   @Get('insights/:childId/weekly')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getWeeklyInsight(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.familyInsight.getWeeklySummary(childId, user.familyId!);
   }
@@ -348,6 +486,7 @@ export class LifeIntelligenceController {
    * design: returns only firstName, never the full Child record (no
    * dateOfBirth, no other family data a device has no reason to hold). */
   @Get('self/profile')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetProfile(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -356,13 +495,21 @@ export class LifeIntelligenceController {
   }
 
   @Post('self/habits/:habitId/complete')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfCompleteHabit(@Param('habitId') habitId: string, @Body() dto: CompleteHabitDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.habitEngine.completeHabit(habitId, childId, familyId, dto.date);
+    // B1 (PA-B-004). `dto.date` IS NOT PASSED. This route is reached with a
+    // DEVICE token, and the date it carried used to compose the reward
+    // idempotency key — the same exploit as PA-B-003, on a route that does not
+    // even pass through `DeviceEventsThrottlerGuard`. The day is derived from
+    // the family calendar; the field stays on the DTO only so the parent route
+    // above can keep using it.
+    return this.habitEngine.completeHabit(habitId, childId, familyId, undefined, 'DEVICE');
   }
 
   @Get('self/habits')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfListHabits(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -370,6 +517,7 @@ export class LifeIntelligenceController {
   }
 
   @Post('self/health/hydration-logs')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfLogHydration(@Body() dto: LogHydrationDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -382,6 +530,7 @@ export class LifeIntelligenceController {
    * hydration/activity progress at all, which would have blocked
    * this sprint's entire "Today" screen from showing anything real. */
   @Get('self/health/progress')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetDailyProgress(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -389,16 +538,25 @@ export class LifeIntelligenceController {
   }
 
   @Post('self/health/activity-logs')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfLogActivity(@Body() dto: LogActivityDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.healthEngine.logActivity(childId, familyId, dto);
+    // PC-B-003 (PA-B-004, one route late). `dto.date` reached `ActivityLog.date`
+    // verbatim from a DEVICE token, and the activity streak reads that column
+    // verbatim — so a child could back-fill a month of exercise it never did
+    // and collect `streak:{childId}:activity:30`. Measured, then closed. The
+    // `'DEVICE'` actor makes the engine discard the date; it is passed
+    // EXPLICITLY rather than relying on the default so this route states its
+    // own trust level, exactly like the habit, faith and learning routes.
+    return this.healthEngine.logActivity(childId, familyId, dto, 'DEVICE');
   }
 
   /** Sprint 16.4 — CLOSES A REAL GAP: LearningEngineService had zero
    * /self/* consumer at all — Education had no path to the Child App
    * whatsoever before this. */
   @Get('self/learning/progress')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetLearningProgress(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -406,10 +564,12 @@ export class LifeIntelligenceController {
   }
 
   @Post('self/learning/sessions')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfLogLearningSession(@Body() dto: LogLearningSessionDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.learningEngine.logSession(childId, familyId, dto);
+    // B1 (PA-B-004): DEVICE token — `dto.date` is ignored, the day is derived.
+    return this.learningEngine.logSession(childId, familyId, dto, 'DEVICE');
   }
 
   /** CLOSES A REAL GAP: Smart Tasks had zero /self/* endpoint,
@@ -433,6 +593,7 @@ export class LifeIntelligenceController {
    * Timeline write), not worth a DB-level constraint for this
    * unlikely, low-impact case. */
   @Post('self/smart-tasks/generate')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGenerateSmartTasks(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -445,6 +606,7 @@ export class LifeIntelligenceController {
   }
 
   @Get('self/smart-tasks')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfListSmartTasks(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -452,6 +614,7 @@ export class LifeIntelligenceController {
   }
 
   @Post('self/smart-tasks/:taskId/decide')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfDecideSmartTask(@Param('taskId') taskId: string, @Body() dto: DecideSmartTaskDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -459,6 +622,7 @@ export class LifeIntelligenceController {
   }
 
   @Get('self/faith/practices')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfListFaithPractices(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -466,13 +630,20 @@ export class LifeIntelligenceController {
   }
 
   @Post('self/faith/:practiceId/log')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfLogFaithPractice(@Param('practiceId') practiceId: string, @Body() dto: LogFaithPracticeDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
-    return this.faithEngine.logPractice(practiceId, childId, familyId, dto.date, dto.progress);
+    // B4 (PA-B-004, closed here for Faith in the same commit that makes Faith
+    // grant): `dto.date` IS NOT PASSED. This is a DEVICE-token route, and the
+    // date it carried composes the reward idempotency key
+    // `faith-practice:{practiceId}:{day}` — a device that chose the day chose
+    // the key. The day is derived from the family calendar instead.
+    return this.faithEngine.logPractice(practiceId, childId, familyId, undefined, dto.progress, 'DEVICE');
   }
 
   @Get('self/messages')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetMessages(@CurrentUser() device: IJwtPayload) {
     return this.communication.getChildInbox(device.sub, await this.pairingOrchestrator.getChildIdForDevice(device.sub));
@@ -484,6 +655,7 @@ export class LifeIntelligenceController {
    * getChildAndFamilyIdForDevice resolves the caller's REAL child
    * server-side, never trusting a client-supplied id. */
   @Post('self/messages/:messageId/acknowledge')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfAcknowledgeMessage(@Param('messageId') messageId: string, @CurrentUser() device: IJwtPayload) {
     const { childId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -499,6 +671,7 @@ export class LifeIntelligenceController {
   // earns and would spend the balance, could not.
 
   @Get('self/rewards/account')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetRewardsAccount(@CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -506,6 +679,7 @@ export class LifeIntelligenceController {
   }
 
   @Get('self/rewards/store')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfGetRewardsStore(@CurrentUser() device: IJwtPayload) {
     const { familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -513,6 +687,7 @@ export class LifeIntelligenceController {
   }
 
   @Post('self/rewards/redeem/:catalogItemId')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfRequestRedemption(@Param('catalogItemId') catalogItemId: string, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -527,6 +702,7 @@ export class LifeIntelligenceController {
   // per-tap data, message content, keystrokes, or GPS.
 
   @Post('self/wellbeing/daily-summary')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfRecordDailySummary(@Body() dto: RecordDailyUsageSummaryDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -537,6 +713,7 @@ export class LifeIntelligenceController {
    * called within seconds of the triggering event on-device, not
    * batched with the daily summary above. */
   @Post('self/wellbeing/critical-event')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   async selfRecordCriticalEvent(@Body() dto: RecordCriticalEventDto, @CurrentUser() device: IJwtPayload) {
     const { childId, familyId } = await this.pairingOrchestrator.getChildAndFamilyIdForDevice(device.sub);
@@ -544,29 +721,55 @@ export class LifeIntelligenceController {
   }
 
   @Get('wellbeing/:childId/snapshot')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getWellbeingSnapshot(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.digitalWellbeing.getBehavioralSnapshotSummary(childId, user.familyId!);
   }
 
   @Get('wellbeing/:childId/top-apps/:deviceId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getTopApps(@Param('childId') childId: string, @Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
     return this.digitalWellbeing.getTopAppsToday(childId, user.familyId!, deviceId);
   }
 
-  /** Sprint 14 (Behavioral Intelligence Engine) — Parent Insights.
-   * `date` defaults to today if omitted. */
+  /**
+   * Sprint 14 (Behavioral Intelligence Engine) — Parent Insights.
+   * `date` defaults to today if omitted — TODAY ON THE FAMILY'S CALENDAR.
+   *
+   * F1 — THE UTC DEFAULT THIS LINE USED TO BE, AND WHAT IT COST A PARENT.
+   * `new Date().toISOString().split('T')[0]` is the UTC class
+   * `common/time/family-date.ts` says was replaced "and by nothing else". It
+   * survived here because the wrong answer is silent: for a Cairo family
+   * between 00:00 and 03:00 local (02:00 in winter), UTC is still on
+   * YESTERDAY, so a parent opening «رؤى» at 01:00 was served yesterday's
+   * insight — or `null`, where today's row already existed. Three hours of
+   * every night, in both launch markets, on the screen whose whole promise is
+   * "what happened today".
+   *
+   * `DailyBehavioralSnapshot.usageDate` is a `@db.Date` holding a business
+   * date, which is exactly what `FamilyDateService.getBusinessDate` returns —
+   * the same `todayColumn(familyId)` convention `digital-wellbeing-engine`
+   * already uses one layer down. An EXPLICIT `?date=` is untouched: a parent
+   * asking for a specific day gets that day.
+   */
   @Get('wellbeing/:childId/insights')
-  getWellbeingInsight(
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
+  async getWellbeingInsight(
     @Param('childId') childId: string,
     @Query('date') date: string | undefined,
     @CurrentUser() user: IJwtPayload,
   ) {
-    const targetDate = date ?? new Date().toISOString().split('T')[0];
+    const targetDate = date ?? (await this.familyDate.getBusinessDate(user.familyId!));
     return this.digitalWellbeing.getWellbeingInsight(childId, user.familyId!, targetDate);
   }
 
   // ---- Timeline ----
   @Get('timeline/:childId')
+  @ParentSurface()
+  @UseGuards(JwtAuthGuard)
   getTimeline(@Param('childId') childId: string, @Query('category') category: string | undefined, @CurrentUser() user: IJwtPayload) {
     return this.timeline.getTimeline(childId, user.familyId!, category);
   }

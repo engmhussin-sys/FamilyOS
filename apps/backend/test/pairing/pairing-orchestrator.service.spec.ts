@@ -41,12 +41,14 @@ describe('PairingOrchestratorService', () => {
     updateCapabilityProfile: jest.fn(),
     findAllByFamily: jest.fn().mockResolvedValue([]),
     updateTelemetry: jest.fn(),
+    setChildDevicePushToken: jest.fn(),
+    clearDeadChildDevicePushToken: jest.fn(),
   };
   const tokenServiceMock = { issueTokenPair: jest.fn(), revokeAllTokensForDevice: jest.fn() };
   const screenTimeServiceMock = { getPolicy: jest.fn(), getBlockedPackageNames: jest.fn().mockResolvedValue([]) };
   const pairingEventRepositoryMock = { findAllByChild: jest.fn() };
-  const runtimeAlertServiceMock = { evaluateTransition: jest.fn() };
-  const runtimeAlertRepositoryMock = { listForUser: jest.fn() };
+  const runtimeAlertServiceMock = { evaluateTransition: jest.fn(), deviceRevoked: jest.fn() };
+  const runtimeAlertRepositoryMock = { listForUser: jest.fn(), createForFamilyOwner: jest.fn() };
   const entitlementsMock = { hasFeature: jest.fn() };
 
   let service: PairingOrchestratorService;
@@ -156,6 +158,44 @@ describe('PairingOrchestratorService', () => {
 
       expect(entitlementsMock.hasFeature).toHaveBeenCalledWith('family-1', 'unlimited_devices_per_child');
       expect(pairingDeviceRepositoryMock.createDevice).not.toHaveBeenCalled();
+    });
+
+    /**
+     * F1 — THE SECOND-DEVICE PAYWALL, same defect as `ChildrenService`.
+     *
+     * The thrown string named `unlimited_devices_per_child` — an internal
+     * feature key — and the parent app resolves `messageAr ?? message`, so
+     * with no Arabic it was rendered verbatim on an RTL screen at the upsell
+     * moment. Shape, language and leak are asserted separately below.
+     */
+    it('refuses with the B3 contract — a code and an Arabic upsell sentence, naming no feature flag', async () => {
+      pairingDeviceRepositoryMock.findAllByFamily.mockResolvedValue([
+        { id: 'existing-device', childId: 'child-1', familyId: 'family-1' },
+      ]);
+      entitlementsMock.hasFeature.mockResolvedValue(false);
+
+      const error: ForbiddenException = await service
+        .registerDevice('child-1', 'family-1', { publicKey: 'pub-key-2', platform: 'ANDROID' })
+        .then(
+          () => {
+            throw new Error('registerDevice resolved — the entitlement gate did not fire.');
+          },
+          (e: unknown) => e as ForbiddenException,
+        );
+
+      const body = error.getResponse() as { code: string; message: string; messageAr: string };
+
+      expect(error.getStatus()).toBe(403);
+      // The SAME code as the add-child paywall: both route to one plans screen.
+      expect(body.code).toBe('PLAN_UPGRADE_REQUIRED');
+      expect(body.messageAr).toBe(
+        'باقتك الحالية تكفي لجهاز واحد لكل طفل. طوّر باقتك لتربط جهازًا إضافيًا لنفس الطفل وتتابعه على الجهازين.',
+      );
+
+      const whole = JSON.stringify(body);
+      expect(whole).not.toContain('unlimited_devices_per_child');
+      expect(whole).not.toContain('feature');
+      expect(body.messageAr).not.toMatch(/[A-Za-z0-9]/);
     });
 
     it('does NOT block a device for a DIFFERENT child in the same family — the limit is per-child, not per-family', async () => {
@@ -275,6 +315,208 @@ describe('PairingOrchestratorService', () => {
       );
       expect(pairingDeviceRepositoryMock.revokeDevice).toHaveBeenCalledWith('device-1');
       expect(tokenServiceMock.revokeAllTokensForDevice).toHaveBeenCalledWith('device-1');
+    });
+
+    it('tells the household, through this module’s EXISTING alert facade and no new one', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      await service.revoke('device-1', 'family-1', 'user-1', 'wrong phone');
+
+      // `RuntimeAlertService` composes it — the orchestrator does not reach
+      // `createForFamilyOwner` itself, which is what keeps this module to ONE
+      // entry on the notification-engine bypass allow-list.
+      expect(runtimeAlertServiceMock.deviceRevoked).toHaveBeenCalledWith({
+        familyId: 'family-1',
+        childId: 'child-1',
+        deviceId: 'device-1',
+        reason: 'wrong phone',
+      });
+      expect(runtimeAlertRepositoryMock.createForFamilyOwner).not.toHaveBeenCalled();
+    });
+
+    it('a failed notification NEVER un-revokes the device — the security half already happened', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      runtimeAlertServiceMock.deviceRevoked.mockRejectedValueOnce(new Error('notifications table is down'));
+
+      await expect(service.revoke('device-1', 'family-1', 'user-1')).resolves.toBeUndefined();
+
+      expect(pairingDeviceRepositoryMock.revokeDevice).toHaveBeenCalledWith('device-1');
+      expect(tokenServiceMock.revokeAllTokensForDevice).toHaveBeenCalledWith('device-1');
+    });
+
+    it('an ILLEGAL transition leaves the device untouched — nothing is half-revoked', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+      pairingStateMachineMock.transition.mockRejectedValueOnce(new ConflictException('illegal'));
+
+      await expect(service.revoke('device-1', 'family-1', 'user-1')).rejects.toThrow(ConflictException);
+
+      expect(pairingDeviceRepositoryMock.revokeDevice).not.toHaveBeenCalled();
+      expect(tokenServiceMock.revokeAllTokensForDevice).not.toHaveBeenCalled();
+      expect(runtimeAlertServiceMock.deviceRevoked).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * THE DEVICE-SIDE HALF OF REVOCATION. `Device.status = REVOKED` is only worth
+   * what the guards that read it are worth, and until this change THREE of this
+   * module's own device routes did not read it at all: policy sync, heartbeat
+   * and capability reporting all resolved through `getDeviceOrThrow`, which
+   * loads the row and ignores its status. A revoked device therefore kept
+   * pulling its child's screen-time policy and writing telemetry for the whole
+   * remaining life of its last access token — `DeviceJwtStrategy` checks the
+   * JWT's claims and never re-reads the row, and `revoke` kills only the
+   * REFRESH family.
+   */
+  describe('a revoked or lost device cannot keep operating', () => {
+    const terminalStatuses = ['REVOKED', 'LOST'];
+
+    it.each(terminalStatuses)('refuses policy sync for a %s device', async (status) => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status, lastSeenAt: null,
+      });
+
+      await expect(service.getPolicySync('device-1')).rejects.toThrow(ForbiddenException);
+      expect(screenTimeServiceMock.getPolicy).not.toHaveBeenCalled();
+    });
+
+    it.each(terminalStatuses)('refuses a heartbeat from a %s device — no lastSeen, no telemetry', async (status) => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status, lastSeenAt: null,
+      });
+
+      await expect(service.recordHeartbeat('device-1', { batteryPercent: 50 })).rejects.toThrow(ForbiddenException);
+      expect(pairingDeviceRepositoryMock.touchLastSeen).not.toHaveBeenCalled();
+      expect(pairingDeviceRepositoryMock.updateTelemetry).not.toHaveBeenCalled();
+    });
+
+    it.each(terminalStatuses)('refuses a capability report from a %s device', async (status) => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status, lastSeenAt: null,
+      });
+
+      await expect(
+        service.reportCapabilities('device-1', { profileHash: 'h' } as never),
+      ).rejects.toThrow(ForbiddenException);
+      expect(pairingDeviceRepositoryMock.updateCapabilityProfile).not.toHaveBeenCalled();
+    });
+
+    it.each(terminalStatuses)('refuses verification from a %s device', async (status) => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status, lastSeenAt: null,
+      });
+
+      await expect(
+        service.verify('device-1', { riskSignals: NO_RISK_SIGNALS }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(pairingStateMachineMock.transition).not.toHaveBeenCalled();
+    });
+
+    it('what the child READS is a sentence, not an enum or a status code', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'REVOKED', lastSeenAt: null,
+      });
+
+      const error = await service.getPolicySync('device-1').catch((e: ForbiddenException) => e);
+      const body = (error as ForbiddenException).getResponse() as { code: string; messageAr: string };
+
+      expect(body.code).toBe('DEVICE_NOT_ACTIVE');
+      expect(body.messageAr).toBe('تم فصل هذا الجهاز عن حساب العائلة. اطلب من ولي الأمر ربطه من جديد.');
+      expect(body.messageAr).not.toMatch(/REVOKED|LOST|403|Device/);
+    });
+
+    it('but a device MID-PAIRING is not blocked — PENDING_PAIRING is the normal state at verification', async () => {
+      // The distinction that makes this guard usable on the pairing routes at
+      // all: it refuses TERMINAL statuses, it does not demand ACTIVE.
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'PENDING_PAIRING', lastSeenAt: null,
+      });
+      trustEvaluationServiceMock.evaluateAndApply.mockResolvedValue('L2_VERIFIED');
+      riskEvaluationServiceMock.assessAndRecord.mockResolvedValue({ overallLevel: 'LOW' });
+
+      await expect(service.verify('device-1', { riskSignals: NO_RISK_SIGNALS })).resolves.toBeDefined();
+    });
+  });
+
+  /**
+   * GAP 5 — the child's own push token. Before this, `Device.pushToken` had
+   * exactly one writer (`POST /pairing/parent-device/push-token`, parent-only),
+   * so the child half of the Smart Notification Engine had nowhere to deliver.
+   */
+  describe('registerChildDevicePushToken', () => {
+    it('writes the token against the device from the VERIFIED TOKEN, by id', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      await service.registerChildDevicePushToken('device-1', 'fcm-abc');
+
+      // By PRIMARY KEY, so a repeat call writes the same row — idempotent by
+      // construction rather than by a check that could be forgotten.
+      expect(pairingDeviceRepositoryMock.setChildDevicePushToken).toHaveBeenCalledWith('device-1', 'fcm-abc');
+    });
+
+    it('is idempotent: registering the same token twice touches one row, twice', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: 'child-1', familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      await service.registerChildDevicePushToken('device-1', 'fcm-abc');
+      await service.registerChildDevicePushToken('device-1', 'fcm-abc');
+
+      expect(pairingDeviceRepositoryMock.setChildDevicePushToken).toHaveBeenNthCalledWith(1, 'device-1', 'fcm-abc');
+      expect(pairingDeviceRepositoryMock.setChildDevicePushToken).toHaveBeenNthCalledWith(2, 'device-1', 'fcm-abc');
+    });
+
+    it.each(['REVOKED', 'LOST', 'PENDING_PAIRING'])(
+      'a %s device cannot attach a push token and start receiving a child’s notifications',
+      async (status) => {
+        pairingDeviceRepositoryMock.findById.mockResolvedValue({
+          id: 'device-1', childId: 'child-1', familyId: 'family-1', status, lastSeenAt: null,
+        });
+
+        await expect(service.registerChildDevicePushToken('device-1', 'fcm-abc')).rejects.toThrow(ForbiddenException);
+        expect(pairingDeviceRepositoryMock.setChildDevicePushToken).not.toHaveBeenCalled();
+      },
+    );
+
+    it('a device paired to no child is refused', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue({
+        id: 'device-1', childId: null, familyId: 'family-1', status: 'ACTIVE', lastSeenAt: null,
+      });
+
+      await expect(service.registerChildDevicePushToken('device-1', 'fcm-abc')).rejects.toThrow(NotFoundException);
+      expect(pairingDeviceRepositoryMock.setChildDevicePushToken).not.toHaveBeenCalled();
+    });
+
+    it('a device that does not exist is a 404, not a created row', async () => {
+      pairingDeviceRepositoryMock.findById.mockResolvedValue(null);
+
+      await expect(service.registerChildDevicePushToken('nope', 'fcm-abc')).rejects.toThrow(NotFoundException);
+      expect(pairingDeviceRepositoryMock.setChildDevicePushToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('registerPermanentPushFailureForChildToken', () => {
+    it('delegates to the token-keyed clear and reports how many rows it cleared', async () => {
+      // FCM_CONTRACT.md §7's required behaviour for the CHILD path. It
+      // deliberately classifies nothing: `PERMANENT_FCM_CODES` in
+      // PushNotificationService is the one place that decision is made.
+      pairingDeviceRepositoryMock.clearDeadChildDevicePushToken.mockResolvedValue(1);
+
+      await expect(service.registerPermanentPushFailureForChildToken('dead-token')).resolves.toBe(1);
+      expect(pairingDeviceRepositoryMock.clearDeadChildDevicePushToken).toHaveBeenCalledWith('dead-token');
+    });
+
+    it('clearing an already-rotated token is 0, not an error — the onTokenRefresh race', async () => {
+      pairingDeviceRepositoryMock.clearDeadChildDevicePushToken.mockResolvedValue(0);
+
+      await expect(service.registerPermanentPushFailureForChildToken('stale')).resolves.toBe(0);
     });
   });
 

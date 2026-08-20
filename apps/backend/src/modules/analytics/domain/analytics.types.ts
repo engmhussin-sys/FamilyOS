@@ -4,6 +4,22 @@ export interface IAnalyticsEventInput {
   sessionId: string;
   eventName: string;
   payload?: Record<string, unknown>;
+  /**
+   * PHASE F (`F6-004`, closing `PF-E-004`) — THE CAUSE, so a redelivered domain
+   * message counts once.
+   *
+   * Set ONLY by producers that HAVE a durable cause — today that is
+   * `GrowthDomainEventBridge`, which passes `domain_events.id`. Absent for the
+   * open `POST /analytics/track` surface, where there is no cause and
+   * at-least-once is the correct semantics: two page views really are two page
+   * views.
+   *
+   * OPTIONAL RATHER THAN REQUIRED, deliberately. Making it required would force
+   * every ad-hoc caller to invent a value, and an invented idempotency key is
+   * worse than none — it either collides (silently dropping real events) or is
+   * random (deduplicating nothing while claiming to).
+   */
+  sourceEventId?: string;
 }
 
 export interface IDashboardMetrics {

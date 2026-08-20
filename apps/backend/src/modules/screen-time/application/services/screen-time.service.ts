@@ -5,11 +5,25 @@ import { ChildrenService } from '../../../children/application/services/children
 import type { IAppBlockRule, ICreateAppBlockRuleInput, ISetScreenTimePolicyInput } from '../../domain/screen-time.types';
 import {
   APP_BLOCK_RULE_REPOSITORY,
+  SCREEN_TIME_BONUS_REPOSITORY,
   SCREEN_TIME_POLICY_REPOSITORY,
   type IAppBlockRuleRepository,
+  type IScreenTimeBonusGrant,
+  type IScreenTimeBonusRepository,
   type IScreenTimePolicyRepository,
 } from '../ports/screen-time.repository.port';
 import { AuditService } from '../../../audit/application/audit.service';
+
+/** F4. What a device actually enforces: the base policy plus whatever the child
+ * has EARNED and not used up. */
+export interface IEffectiveScreenTimePolicy {
+  policy: ScreenTimePolicy | null;
+  /** `dailyLimitMinutes` + active bonus, or null when there is no base limit. */
+  effectiveDailyLimitMinutes: number | null;
+  baseDailyLimitMinutes: number | null;
+  bonusMinutes: number;
+  bonusGrants: IScreenTimeBonusGrant[];
+}
 
 @Injectable()
 export class ScreenTimeService {
@@ -19,12 +33,49 @@ export class ScreenTimeService {
     private readonly policyRepository: IScreenTimePolicyRepository,
     @Inject(APP_BLOCK_RULE_REPOSITORY)
     private readonly appBlockRuleRepository: IAppBlockRuleRepository,
+    @Inject(SCREEN_TIME_BONUS_REPOSITORY)
+    private readonly bonusRepository: IScreenTimeBonusRepository,
     private readonly auditService: AuditService,
   ) {}
 
   async getPolicy(childId: string, familyId: string): Promise<ScreenTimePolicy | null> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
     return this.policyRepository.findActiveByChild(childId);
+  }
+
+  /**
+   * F4 — WHERE A `SCREEN_TIME` REWARD ACTUALLY BECOMES MINUTES.
+   *
+   * The allowance a device enforces is `base + Σ(active bonus grants)`. Read at
+   * request time, so a grant that expires stops counting on its own, and a
+   * revoked grant stops counting immediately — neither needs a job and neither
+   * leaves a trace in the parent's policy history, because the base policy row
+   * was never touched.
+   *
+   * `null` base limit means the parent set no daily limit at all. Adding bonus
+   * minutes to "unlimited" is meaningless, so it stays `null` rather than
+   * becoming a limit the parent never set — the one case where the reward has
+   * no effect, stated instead of silently inventing a cap.
+   */
+  async getEffectivePolicy(
+    childId: string,
+    familyId: string,
+    now: Date = new Date(),
+  ): Promise<IEffectiveScreenTimePolicy> {
+    await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+
+    const policy = await this.policyRepository.findActiveByChild(childId);
+    const grants = await this.bonusRepository.listActiveGrants(childId, now);
+    const bonusMinutes = grants.reduce((sum, g) => sum + g.minutes, 0);
+    const base = policy?.dailyLimitMinutes ?? null;
+
+    return {
+      policy,
+      baseDailyLimitMinutes: base,
+      bonusMinutes,
+      effectiveDailyLimitMinutes: base === null ? null : base + bonusMinutes,
+      bonusGrants: grants,
+    };
   }
 
   /**

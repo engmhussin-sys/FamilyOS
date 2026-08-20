@@ -1,8 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Accessibility service declaration — the single highest Google Play
+    review risk in this app (audit A3 §4, P1).
+
+    Deliberate choices, each one defensible in a Permissions Declaration:
+
+    * accessibilityEventTypes="typeWindowStateChanged"
+        Only "which app came to the foreground". NOT typeAllMask.
+
+    * canRetrieveWindowContent="false"
+        We never read what is on the screen. This is the strongest single
+        privacy claim this app can make to a reviewer, and it is true.
+
+    * flagRetrieveInteractiveWindows REMOVED (audit MA-021)
+        It requires canRetrieveWindowContent="true" to have any effect, so
+        it did nothing here except widen the review surface for free.
+
+    * isAccessibilityTool="false" — declared EXPLICITLY, not omitted.
+        The honest answer: this service is policy enforcement, not an
+        accessibility aid. Claiming "true" would be a misrepresentation
+        and is exactly what gets parental-control apps removed. Declaring
+        it false routes us through the written Permissions Declaration
+        Form + demo video path, which is the correct path for this app.
+
+    * packageNames intentionally absent — the service must observe every
+        app in order to know which one is in the foreground.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="false"
     android:description="@string/accessibility_service_description"
+    android:isAccessibilityTool="false"
     android:notificationTimeout="100" />

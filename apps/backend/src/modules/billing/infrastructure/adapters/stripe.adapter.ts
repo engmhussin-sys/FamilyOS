@@ -4,9 +4,17 @@ import { ConfigService } from '@nestjs/config';
 import type {
   IChargeInput,
   IChargeResult,
+  IPaymentProvider,
   IPaymentProviderAdapter,
+  ProviderKind,
 } from '../../application/ports/payment-provider.port';
 import { PaymentProviderNotConfiguredException } from '../../domain/billing.errors';
+import {
+  noCapabilities,
+  refusingWebhookParser,
+  refusingWebhookVerifier,
+  unsupportedVerify,
+} from './legacy-provider.mixin';
 
 /**
  * Per the "leave only provider configuration unresolved" directive:
@@ -24,10 +32,28 @@ import { PaymentProviderNotConfiguredException } from '../../domain/billing.erro
  * `AnthropicAIProvider`'s docstring before its key existed).
  */
 @Injectable()
-export class StripeAdapter implements IPaymentProviderAdapter {
+export class StripeAdapter implements IPaymentProvider, IPaymentProviderAdapter {
   readonly providerName = 'STRIPE' as const;
+  /**
+   * PHASE D. Stripe is the INTERNATIONAL provider; Phase D's scope is Egypt
+   * and Saudi Arabia, so this adapter is brought up to the new interface
+   * WITHOUT being rebuilt. Its three Phase D members refuse honestly (see
+   * `legacy-provider.mixin.ts`) rather than pretending to a capability the
+   * class does not have. `StripeWebhookService` — the Sprint 8 HMAC verifier —
+   * is untouched and still handles the two Stripe events it was written for.
+   */
+  readonly kind: ProviderKind = 'GATEWAY';
 
   constructor(private readonly configService: ConfigService) {}
+
+  isConfigured(): boolean {
+    return !!this.configService.get<string>('STRIPE_SECRET_KEY');
+  }
+
+  readonly supports = noCapabilities;
+  readonly verifyPurchase = unsupportedVerify('Stripe');
+  readonly verifyWebhookSignature = refusingWebhookVerifier('Stripe');
+  readonly parseWebhook = refusingWebhookParser('Stripe');
 
   async charge(_input: IChargeInput): Promise<IChargeResult> {
     const apiKey = this.configService.get<string>('STRIPE_SECRET_KEY');

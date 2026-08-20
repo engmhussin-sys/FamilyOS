@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
 import '../../../core/routing/app_routes.dart';
 import '../../../core/theme/app_theme.dart';
@@ -23,12 +25,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isSubmitting = false;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   Future<void> _submit() async {
     setState(() {
       _isSubmitting = true;
-      _errorMessage = null;
+      _failure = null;
     });
 
     final success = await ref
@@ -45,86 +47,96 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ref.read(pushRegistrationServiceProvider).initializeAndRegister();
       Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
     } else {
-      setState(() => _errorMessage = ref.read(authControllerProvider).errorMessage);
+      setState(() => _failure = ref.read(authControllerProvider).failure);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(DsSpace.xl),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 Center(
                   child: Container(
                     width: 72,
                     height: 72,
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
+                        begin: AlignmentDirectional.topStart,
+                        end: AlignmentDirectional.bottomEnd,
                         colors: [AppTheme.guardian950, AppTheme.sage500],
                       ),
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(DsRadius.lg),
                       boxShadow: [BoxShadow(color: AppTheme.guardian950.withOpacity(0.25), blurRadius: 20, offset: const Offset(0, 8))],
                     ),
                     child: const Icon(Icons.shield_rounded, color: Colors.white, size: 36),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 Text(t('auth.loginTitle'), style: Theme.of(context).textTheme.displaySmall, textAlign: TextAlign.center),
-                const SizedBox(height: 8),
+                const SizedBox(height: DsSpace.sm),
                 Text(
                   t('auth.loginTagline'),
                   style: Theme.of(context).textTheme.bodyLarge,
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 36),
+                const SizedBox(height: DsSpace.xxl),
                 TextField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(labelText: t('auth.email'), prefixIcon: const Icon(Icons.mail_outline_rounded)),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 TextField(
                   controller: _passwordController,
                   obscureText: true,
                   decoration: InputDecoration(labelText: t('auth.password'), prefixIcon: const Icon(Icons.lock_outline_rounded)),
                 ),
-                if (_errorMessage != null) ...[
-                  const SizedBox(height: 12),
+                // THE SERVER'S OWN SENTENCE, ARABIC FIRST AND VERBATIM.
+                // This banner used to render `e.toString()` — «ApiException:
+                // Instance of 'DioException'» — which told a parent nothing and
+                // threw away the `messageAr` the B3 envelope already carried.
+                if (_failure != null) ...[
+                  const SizedBox(height: DsSpace.md),
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(DsSpace.md),
                     decoration: BoxDecoration(
                       color: AppTheme.brick500.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(DsRadius.control),
                     ),
                     child: Row(
                       children: [
                         const Icon(Icons.error_outline_rounded, color: AppTheme.brick500, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(child: Text(_errorMessage!, style: const TextStyle(color: AppTheme.brick500))),
+                        const SizedBox(width: DsSpace.sm),
+                        Expanded(
+                          child: Text(
+                            _failure!.displayFor(arabic: locale.isRtl),
+                            style: const TextStyle(color: AppTheme.brick500),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ],
-                const SizedBox(height: 24),
+                const SizedBox(height: DsSpace.xl),
                 FilledButton(
                   onPressed: _isSubmitting ? null : _submit,
                   child: _isSubmitting
                       ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : Text(t('auth.login')),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: DsSpace.lg),
                 TextButton(
                   onPressed: () => Navigator.of(context).pushNamed(AppRoutes.register),
                   child: Text('${t('auth.noAccount')} ${t('auth.createAccount')}'),

@@ -3,30 +3,38 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
 import { ChildrenModule } from '../children/children.module';
+import { GrowthCaptureModule } from '../analytics/growth-capture.module';
+import { SettingsModule } from '../settings/settings.module';
 
 import { AuthController } from './presentation/controllers/auth.controller';
-import { DevicePairingController } from './presentation/controllers/device-pairing.controller';
 import { JwtStrategy } from './presentation/strategies/jwt.strategy';
 import { DeviceJwtStrategy } from './presentation/strategies/device-jwt.strategy';
 
 import { AuthService } from './application/services/auth.service';
 import { TokenService } from './application/services/token.service';
 import { PasswordService } from './application/services/password.service';
-import { PairingService } from './application/services/pairing.service';
 
 import { PrismaUserRepository } from './infrastructure/repositories/prisma-user.repository';
 import { PrismaRefreshTokenRepository } from './infrastructure/repositories/prisma-refresh-token.repository';
-import { PrismaDeviceRepository } from './infrastructure/repositories/prisma-device.repository';
 import {
   USER_REPOSITORY,
   REFRESH_TOKEN_REPOSITORY,
-  DEVICE_REPOSITORY,
 } from './application/ports/auth.repository.ports';
 
 @Module({
   imports: [
     PassportModule,
     ChildrenModule,
+    // PHASE D (GROWTH). The CAPTURE half only — it imports nothing, so this
+    // cannot create the Auth -> Analytics -> Events -> Pairing -> Auth cycle
+    // that importing the full AnalyticsModule would.
+    GrowthCaptureModule,
+    // F1. For `CountryCatalogueService`: registration must accept a country the
+    // SAME way `PATCH /settings` does, or the two surfaces will drift apart the
+    // first time a market opens. `SettingsModule` imports only
+    // `GrowthCaptureModule` (which imports nothing), so this edge is acyclic —
+    // the reasoning is written out in `settings.module.ts`.
+    SettingsModule,
     // JwtModule is registered without global secret/expiry options —
     // TokenService and the two Passport strategies each pass their own
     // secret/expiresIn per call, since access and refresh tokens use
@@ -34,21 +42,19 @@ import {
     // Passport wiring, not shared config.
     JwtModule.register({}),
   ],
-  controllers: [AuthController, DevicePairingController],
+  controllers: [AuthController],
   providers: [
     AuthService,
     TokenService,
     PasswordService,
-    PairingService,
     JwtStrategy,
     DeviceJwtStrategy,
     // Dependency-inversion wiring: application services depend on the
-    // IUserRepository/IRefreshTokenRepository/IDeviceRepository *ports*;
+    // IUserRepository/IRefreshTokenRepository *ports*;
     // these bindings are the only place that knows the concrete
     // implementation is Prisma-based.
     { provide: USER_REPOSITORY, useClass: PrismaUserRepository },
     { provide: REFRESH_TOKEN_REPOSITORY, useClass: PrismaRefreshTokenRepository },
-    { provide: DEVICE_REPOSITORY, useClass: PrismaDeviceRepository },
   ],
   exports: [AuthService, TokenService, PasswordService, USER_REPOSITORY],
 })

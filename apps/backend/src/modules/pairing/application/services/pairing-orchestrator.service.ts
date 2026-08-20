@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { InvitationService } from './invitation.service';
 import { RegistrationTokenService } from './registration-token.service';
@@ -37,6 +37,7 @@ import type {
   IHeartbeatTelemetryInput,
   IPolicySyncResponse,
 } from '../../domain/device-status.types';
+import { runWithTenant } from '../../../../common/tenancy/tenant-context';
 
 export interface IDeviceRegistrationResult {
   deviceId: string;
@@ -70,6 +71,8 @@ export interface IPairingDeviceStatus {
  */
 @Injectable()
 export class PairingOrchestratorService {
+  private readonly logger = new Logger(PairingOrchestratorService.name);
+
   constructor(
     private readonly invitationService: InvitationService,
     private readonly registrationTokenService: RegistrationTokenService,
@@ -101,8 +104,30 @@ export class PairingOrchestratorService {
    * has existed as a plan feature since Sprint 8 with zero enforcement
    * anywhere. The first device for any given child is always free —
    * only a SECOND device for the SAME child requires the entitlement
-   * (a family with two phones for the same kid, not two different kids). */
+   * (a family with two phones for the same kid, not two different kids).
+   *
+   * F1 — THE REFUSAL IS AN UPSELL, AND IT IS READ IN ARABIC. Same defect, same
+   * fix, as `ChildrenService.createChild`: a bare English string that named
+   * `unlimited_devices_per_child` — an internal feature key — and reached the
+   * parent verbatim, because the app resolves `messageAr ?? message`. It now
+   * carries the B3 `{ code, messageAr }` contract with the same
+   * `PLAN_UPGRADE_REQUIRED` code, so both paywalls route to one plans screen. */
   async registerDevice(
+    childId: string,
+    familyId: string,
+    input: Omit<ICreatePairingDeviceInput, 'childId' | 'familyId'>,
+  ): Promise<IDeviceRegistrationResult> {
+    // childId/familyId come from RegistrationTokenGuard's server-issued token
+    // (registration-token.guard.ts), not from the request body. Binding them as
+    // the tenant here converts an AUTH_BOOTSTRAP SystemContext into a real,
+    // narrow tenant scope for the rest of the registration.
+    return runWithTenant(
+      { familyId, actorType: 'DEVICE', actorId: `pairing-register:${childId}` },
+      () => this.registerDeviceScoped(childId, familyId, input),
+    );
+  }
+
+  private async registerDeviceScoped(
     childId: string,
     familyId: string,
     input: Omit<ICreatePairingDeviceInput, 'childId' | 'familyId'>,
@@ -112,7 +137,12 @@ export class PairingOrchestratorService {
     if (existingDevicesForThisChild.length >= 1) {
       const entitled = await this.entitlements.hasFeature(familyId, 'unlimited_devices_per_child');
       if (!entitled) {
-        throw new ForbiddenException('Pairing a second device for the same child requires a plan with the unlimited_devices_per_child feature.');
+        throw new ForbiddenException({
+          code: 'PLAN_UPGRADE_REQUIRED',
+          message: 'Pairing another device for the same child requires a plan upgrade.',
+          messageAr:
+            'باقتك الحالية تكفي لجهاز واحد لكل طفل. طوّر باقتك لتربط جهازًا إضافيًا لنفس الطفل وتتابعه على الجهازين.',
+        });
       }
     }
 
@@ -142,7 +172,7 @@ export class PairingOrchestratorService {
       riskSignals: IRiskSignalInput;
     },
   ): Promise<IDeviceVerificationResult> {
-    const device = await this.getDeviceOrThrow(deviceId);
+    const device = await this.getLiveDeviceOrThrow(deviceId);
 
     // NOTE (honest limitation, flagged not hidden): attestationChain
     // presence alone is treated as "has valid attestation" — the
@@ -183,6 +213,37 @@ export class PairingOrchestratorService {
     return { trustLevel, riskAssessment };
   }
 
+  /**
+   * PARENT CONFIRMATION, ALL THE WAY TO `ACTIVATED`. This is the whole of the
+   * transition table's tail in one call — `PARENT_CONFIRMED(USER)` then
+   * `POLICY_ASSIGNED(SYSTEM)` then `DEVICE_ACTIVATED(SYSTEM)` — and it ends by
+   * writing `Device.status = ACTIVE`, so the pairing state and the row a guard
+   * reads cannot disagree. The two SYSTEM steps are not separate endpoints on
+   * purpose: nothing outside this server is the actor for either of them, and
+   * an endpoint a client must call to finish activating is an activation that
+   * stalls the moment that client crashes.
+   *
+   * A SECOND CONFIRM IS A 409, NOT A NO-OP SUCCESS, and the choice is
+   * deliberate rather than inherited.
+   *
+   * The transition table already answers it: `PARENT_CONFIRMED` is legal only
+   * from `CAPABILITIES_UPLOADED`, so the second call raises
+   * `InvalidPairingTransitionException` (409, and B3-shaped by the global
+   * filter: `code: CONFLICT`, «هذا الإجراء تمّ بالفعل، أو لم يعد متاحًا الآن»).
+   * Swallowing that into a 200 would require this method to decide that
+   * "already ACTIVATED" is the ONLY illegal `from` state worth forgiving —
+   * while `REJECTED`, `REVOKED` and `EXPIRED` are all equally reachable and all
+   * mean something entirely different. It would also have to answer with a
+   * `policyAssignedAt` for an activation that did not happen.
+   *
+   * The 409 is not a failure the parent app has to explain: its Arabic sentence
+   * already reads «this has already been done», the state is exactly what the
+   * caller wanted, and `GET /pairing/devices` shows the device ACTIVE. So the
+   * client contract is «treat 409 on activate as success-already», which is a
+   * one-line client rule, against «the server lies about which call did the
+   * work», which is not recoverable at all. The golden lifecycle spec asserts
+   * the 409 so the choice cannot drift silently.
+   */
   async activate(
     deviceId: string,
     familyId: string,
@@ -250,6 +311,15 @@ export class PairingOrchestratorService {
     });
   }
 
+  /**
+   * REVOCATION, IN THE ORDER THAT MATTERS.
+   *
+   * The state-machine transition goes FIRST and is allowed to throw: an
+   * illegal `from` state must leave the device untouched, not half-revoked with
+   * an audit row missing. Everything after it is the enforcement the state
+   * column is a record of — `Device.status`, the refresh-token family, and (as
+   * of this change) the family's own record that it happened.
+   */
   async revoke(deviceId: string, familyId: string, userId: string, reason?: string): Promise<void> {
     const device = await this.getDeviceOrThrowScopedToFamily(deviceId, familyId);
     await this.pairingStateMachine.transition({
@@ -262,6 +332,31 @@ export class PairingOrchestratorService {
     });
     await this.pairingDeviceRepository.revokeDevice(deviceId);
     await this.tokenService.revokeAllTokensForDevice(deviceId);
+
+    // THE NOTIFICATION, THROUGH THIS MODULE'S EXISTING FACADE AND NO NEW ONE.
+    // `RuntimeAlertService` is where this module's alerts are composed and is
+    // already the reviewed producer on `notification-engine-bypass.guard.spec.ts`'s
+    // allow-list; the composition itself (type, priority, source key) lives
+    // there with its reasoning, not here.
+    //
+    // BEST-EFFORT, AND STATED: a notification failure must never leave a device
+    // revoked in the state machine but still usable in the token layer. The
+    // security half above has already happened by the time this line runs, and
+    // it is not conditional on anyone being told.
+    try {
+      await this.runtimeAlertService.deviceRevoked({
+        familyId: device.familyId,
+        childId: device.childId,
+        deviceId,
+        reason,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `pairing.revoke_notification_failed device=${deviceId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async getStatus(deviceId: string, familyId: string): Promise<IPairingDeviceStatus> {
@@ -304,7 +399,7 @@ export class PairingOrchestratorService {
    * capabilityProfile below — no per-heartbeat history table.
    */
   async recordHeartbeat(deviceId: string, telemetry?: IHeartbeatTelemetryInput): Promise<void> {
-    const device = await this.getDeviceOrThrow(deviceId);
+    const device = await this.getLiveDeviceOrThrow(deviceId);
     await this.pairingDeviceRepository.touchLastSeen(deviceId);
 
     if (telemetry) {
@@ -346,7 +441,7 @@ export class PairingOrchestratorService {
    * current-state fields on `Device`, same pattern as `trustLevel`.
    */
   async reportCapabilities(deviceId: string, report: IDeviceCapabilityReport): Promise<void> {
-    await this.getDeviceOrThrow(deviceId);
+    await this.getLiveDeviceOrThrow(deviceId);
     await this.pairingDeviceRepository.updateCapabilityProfile(
       deviceId,
       report as unknown as Record<string, unknown>,
@@ -368,7 +463,7 @@ export class PairingOrchestratorService {
    * an empty array.
    */
   async getPolicySync(deviceId: string): Promise<IPolicySyncResponse> {
-    const device = await this.getDeviceOrThrow(deviceId);
+    const device = await this.getLiveDeviceOrThrow(deviceId);
     const [policy, blockedPackages] = await Promise.all([
       this.screenTimeService.getPolicy(device.childId, device.familyId),
       this.screenTimeService.getBlockedPackageNames(device.childId),
@@ -500,6 +595,57 @@ export class PairingOrchestratorService {
     await this.pairingDeviceRepository.upsertParentDevicePushToken({ userId, familyId, platform, pushToken });
   }
 
+  /**
+   * THE CHILD EQUIVALENT OF `registerParentDevicePushToken`, and the reason the
+   * child half of the Smart Notification Engine could never deliver: the only
+   * push-token route in the backend was `POST /pairing/parent-device/push-token`,
+   * parent-only, so a child device had nowhere to put an FCM token.
+   *
+   * `deviceId` COMES FROM THE VERIFIED TOKEN, never from a body — the controller
+   * passes `device.sub` off `DeviceJwtAuthGuard`'s payload, the same shape
+   * `ChildAchievementsController` and `ChildCoachController` use. That is what
+   * makes "child A registers a token for child B" and "family A's device
+   * attaches to family B" unreachable rather than merely checked: there is no
+   * field in the request in which either could be expressed.
+   *
+   * `getChildAndFamilyIdForDevice` is called for its ASSERTIONS, not for its
+   * return value — it re-reads the row and refuses a device that is not ACTIVE
+   * or not paired to a child. A revoked device therefore cannot re-attach a push
+   * token and start receiving a child's notifications again on a stale access
+   * token.
+   *
+   * `platform` is deliberately NOT a parameter, unlike the parent version. The
+   * child device's platform was recorded at registration from its own registered
+   * `Device` row; letting the request state it again would be a client asserting
+   * a value the server already knows — and the row is keyed by id here anyway,
+   * so it could only ever disagree, never inform.
+   */
+  async registerChildDevicePushToken(deviceId: string, pushToken: string): Promise<void> {
+    await this.getChildAndFamilyIdForDevice(deviceId);
+    await this.pairingDeviceRepository.setChildDevicePushToken(deviceId, pushToken);
+  }
+
+  /**
+   * THE OTHER HALF OF THE `Device.pushToken` CONTRACT: a token FCM has told us
+   * is permanently dead stops being sent to.
+   *
+   * SCOPE, STATED HONESTLY. This is the CHILD path only. `docs/integration/FCM_CONTRACT.md`
+   * §7 records the parent path as an open, externally-owned item (item 13,
+   * "clearing a dead token after a PERMANENT failure"), and the FCM delivery
+   * pipeline itself is owned outside this module — so this method is the ABNY-side
+   * primitive that pipeline calls when `PushSendResult.outcome === 'PERMANENT'`
+   * for a child device's token, not a second delivery pipeline. It deliberately
+   * does not classify anything: `PERMANENT_FCM_CODES` in `PushNotificationService`
+   * is the one place that decision is made, and duplicating it here is how two
+   * places start disagreeing about which codes are terminal.
+   *
+   * Returns how many rows were cleared so the caller can log a real number; zero
+   * is a normal outcome (the device re-registered a fresh token first).
+   */
+  registerPermanentPushFailureForChildToken(pushToken: string): Promise<number> {
+    return this.pairingDeviceRepository.clearDeadChildDevicePushToken(pushToken);
+  }
+
   async getChildIdForDevice(deviceId: string): Promise<string> {
     const device = await this.getDeviceOrThrow(deviceId);
     if (device.status !== 'ACTIVE') {
@@ -515,6 +661,47 @@ export class PairingOrchestratorService {
     const device = await this.pairingDeviceRepository.findById(deviceId);
     if (!device) {
       throw new NotFoundException(`Device "${deviceId}" was not found.`);
+    }
+    return device;
+  }
+
+  /**
+   * THE DEVICE-SIDE HALF OF REVOCATION, and the reason `Device.status` is not
+   * decoration.
+   *
+   * `revoke()` sets `Device.status = REVOKED` and revokes the device's REFRESH
+   * tokens — but an ACCESS token already in the revoked device's hands stays
+   * cryptographically valid until it expires, and `DeviceJwtStrategy.validate()`
+   * checks only the JWT's own claims: it never re-reads the row. Every
+   * `/self/*` surface is safe from that because it resolves its child through
+   * `getChildAndFamilyIdForDevice`, which asserts `status === 'ACTIVE'`.
+   *
+   * THIS MODULE'S OWN DEVICE ROUTES DID NOT. `GET /pairing/device/policy`
+   * (the child's screen-time policy and block list), `POST /pairing/device/heartbeat`
+   * (writes `lastSeenAt` and telemetry, and can raise a family notification) and
+   * `POST /pairing/device/capabilities` all went through `getDeviceOrThrow`,
+   * which reads the row and ignores its status — so a revoked device kept
+   * pulling policy and reporting telemetry for the whole life of its last access
+   * token. Measured, not assumed: the golden lifecycle spec asserts each of
+   * these three answers 403 after a revoke.
+   *
+   * IT REFUSES ON A TERMINAL STATUS RATHER THAN REQUIRING `ACTIVE`, which is the
+   * distinction that lets this be used on the PAIRING routes at all: a device
+   * mid-pairing is legitimately `PENDING_PAIRING` when it calls `verify`, so
+   * "must be ACTIVE" would break the very flow these routes exist to complete.
+   * REVOKED and LOST are the two statuses that mean «this device must stop», and
+   * they are the two this refuses.
+   */
+  private async getLiveDeviceOrThrow(deviceId: string) {
+    const device = await this.getDeviceOrThrow(deviceId);
+    if (device.status === 'REVOKED' || device.status === 'LOST') {
+      throw new ForbiddenException({
+        code: 'DEVICE_NOT_ACTIVE',
+        // B3: what the child actually reads. No enum, no status code, no
+        // Prisma constraint name reaches this sentence.
+        messageAr: 'تم فصل هذا الجهاز عن حساب العائلة. اطلب من ولي الأمر ربطه من جديد.',
+        message: `Device "${deviceId}" is ${device.status.toLowerCase()} and may no longer act for its child.`,
+      });
     }
     return device;
   }

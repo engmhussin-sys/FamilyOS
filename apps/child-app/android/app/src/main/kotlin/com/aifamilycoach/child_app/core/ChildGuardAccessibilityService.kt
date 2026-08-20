@@ -63,7 +63,7 @@ class ChildGuardAccessibilityService : AccessibilityService() {
         val result = PolicyEnforcer.evaluate(packageName, policy, minutesUsedToday)
 
         if (result.decision == EnforcementDecision.BLOCK) {
-            overlayManager.show(result.reason) { goHome() }
+            overlayManager.show(result.reasonRes) { goHome() }
         } else {
             overlayManager.hide()
         }

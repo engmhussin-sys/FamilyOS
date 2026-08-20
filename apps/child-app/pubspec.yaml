@@ -1,7 +1,15 @@
 name: child_app
 description: AI Family Digital Coach — Child Agent (Core Architecture, Step 1/12 per ADR child-agent-android-enforcement.md)
 publish_to: "none"
-version: 0.1.0
+# PHASE G — THE SINGLE SOURCE OF TRUTH FOR BOTH ANDROID VERSION FIELDS.
+# `<name>+<code>`: `0.1.0` becomes versionName, `1` becomes versionCode.
+# `flutter build` writes both halves into android/local.properties, which
+# android/app/build.gradle reads — nothing else in this repository declares a
+# version. The `+1` was previously ABSENT, so versionCode fell through to the
+# hardcoded `1` in build.gradle; that fallback is now a hard failure for any
+# release build, and CI overrides the code with a monotonic run number via
+# ORG_GRADLE_PROJECT_abnyVersionCode.
+version: 0.1.0+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -10,6 +18,18 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # CLOSES audit MA-017. Without this the app can declare a locale but
+  # native Material widgets (date pickers, dialog button labels,
+  # text-selection handles) have no Arabic strings to render and stay
+  # English/LTR. parent-app already depended on this; child-app did not,
+  # which is exactly why its Arabic screens still had English chrome.
+  flutter_localizations:
+    sdk: flutter
+  # CLOSES audit MA-016 (language choice was lost on every restart).
+  # Deliberately NOT flutter_secure_storage: the selected language is a
+  # UI preference, not a secret, and the secure store is Keystore-backed
+  # and reserved for the device-bound refresh token (Decision-012).
+  shared_preferences: ^2.2.3
   # State management + DI. Chosen for the same "explicit ports, explicit
   # providers" instinct used throughout the backend/dashboard — no hidden
   # service locators.
@@ -29,6 +49,71 @@ dependencies:
   # Sprint 4 (Observability): same gap closure as apps/parent-app —
   # see that pubspec's own comment for the full reasoning.
   sentry_flutter: ^8.9.0
+
+  # -------------------------------------------------------------------------
+  # SPRINT F1 — EVIDENCE CAPTURE. THE FIVE PACKAGES THAT UNBLOCK
+  # `RECITATION_SUBMISSION` AND `COMPLETION_ARTIFACT`.
+  #
+  # WHY ANY OF THIS IS NEEDED AT ALL. The backend route
+  # `POST /api/v1/self/achievements/:achievementId/evidence` has existed since
+  # B5: one multipart part named `file`, type decided from the MAGIC BYTES
+  # (`shared/rewards/evidence.ts`), 15 MiB ceiling, and it returns the
+  # `submissionRef` that `AchievementService.submit` then resolves. Until now
+  # this app could not produce a single byte to send it — the 12 declared
+  # packages contain no recorder, no camera route and no file picker — so
+  # every Quran memorisation program (RECITATION_SUBMISSION) and every
+  # artifact program (COMPLETION_ARTIFACT) failed server-side with a missing
+  # ref and escalated to a parent after MAX_VERIFICATION_ATTEMPTS. The
+  # flagship journey was blocked on a missing verb.
+  #
+  # VERSIONS ARE EXACT, NOT CARETS, AND THAT IS DELIBERATE. This repository
+  # has no `pubspec.lock` (PA-M-016) and cannot generate one here — pub.dev
+  # answers 403, so `flutter pub get` has never run against these lines. A
+  # caret on a NEW dependency therefore resolves to whatever is newest on CI
+  # day, which is exactly how a package that requires Dart 3.6 or
+  # compileSdk 35 lands in a tree pinned to Flutter 3.24.5 / Dart >=3.3.0 /
+  # compileSdk 34 / AGP 8.1.1 / Gradle 8.3. Each version below is the last
+  # release published INSIDE that window. The existing eight dependencies
+  # keep their carets: they already resolve today and re-pinning them is a
+  # different, unrelated change.
+  #
+  # NOT ONE OF THESE HAS BEEN RESOLVED, DOWNLOADED OR COMPILED. See the F1
+  # report: STATIC VERIFIED only.
+
+  # The recitation itself. `record` writes AAC into an MPEG-4 container,
+  # which the server sniffs as `audio/mp4` via the `ftyp` box at offset 4 —
+  # one of the four RECITATION signatures in evidence.ts. Pinned to the last
+  # 5.x: `record` 6.x moves its floor to Dart 3.6 / Flutter 3.27, above this
+  # repo's pins. Its `hasPermission()` is also the RECORD_AUDIO runtime
+  # request (see AndroidManifest.xml and PlatformEvidenceCaptureSource).
+  record: 5.1.2
+  # Camera photo + gallery image for COMPLETION_ARTIFACT — `image/jpeg` and
+  # `image/png` are two of that kind's four allowed signatures. On Android 13+
+  # the gallery route is the system Photo Picker, which needs NO storage
+  # permission, and the camera route needs no CAMERA permission unless the
+  # app declares one — which is precisely why the manifest does not.
+  image_picker: 1.1.2
+  # The document route: `application/pdf` is the fourth ARTIFACT signature and
+  # neither of the two packages above can reach a PDF. Uses the Storage Access
+  # Framework, so it too needs no manifest permission. 8.1.2 is the last
+  # release on compileSdk 34; later 8.x/9.x move to 35, which AGP 8.1.1
+  # refuses outright.
+  file_picker: 8.1.2
+  # `record` requires an explicit output PATH, and Dart's own
+  # `Directory.systemTemp` resolves to `/tmp` on Android, which does not
+  # exist. `getTemporaryDirectory()` is the app's own cache dir and is the
+  # only correct answer. First-party (flutter/packages), platform-channel
+  # only, no transitive surface.
+  path_provider: 2.1.4
+  # `MediaType`, for the Content-Type of the multipart part. This is NOT a
+  # new package in the dependency graph — `dio` already depends on it — it is
+  # declared so the import is legal for verify_dart_imports.py and so this
+  # code does not depend on `DioMediaType`, a re-export dio only added in
+  # 5.5.0 and which `dio: ^5.4.3` therefore does not guarantee. The declared
+  # type matters: multer's `fileFilter` on the route drops any part whose
+  # Content-Type is outside ALLOWED_EVIDENCE_MIME_TYPES, and the child would
+  # then read `EVIDENCE_MISSING` for a file that did arrive.
+  http_parser: ^4.0.2
 
 dev_dependencies:
   flutter_test:

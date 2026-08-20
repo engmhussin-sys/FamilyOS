@@ -4,6 +4,9 @@ import { lifeIntelligenceApi, digitalTwinQueryKey, ExplainableSubScore, DigitalT
 import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi';
 import { Card } from '../../../shared/components/Card';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — this panel had no error branch, so a
+// failed fetch was indistinguishable from "nothing recorded yet".
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 type SubScoreKey = 'health' | 'learning' | 'faith' | 'habits' | 'social' | 'behavior' | 'safety';
 
@@ -45,7 +48,7 @@ function SubScoreRow({ label, subScore }: { label: string; subScore: Explainable
       </button>
 
       {expanded && subScore && (
-        <ul className="mt-2 list-disc pr-4 text-xs text-ink-soft">
+        <ul className="mt-2 list-disc ps-4 text-xs text-ink-soft">
           {Object.entries(subScore.inputs).map(([key, value]) => (
             <li key={key}>
               {key}: {typeof value === 'object' ? JSON.stringify(value) : String(value)}
@@ -59,7 +62,7 @@ function SubScoreRow({ label, subScore }: { label: string; subScore: Explainable
 
 function ChildDigitalTwinPanel({ childId, childName }: { childId: string; childName: string }) {
   const { t } = useTranslation();
-  const { data: twin, isLoading } = useQuery<DigitalTwin>({
+  const { data: twin, isLoading, error, refetch } = useQuery<DigitalTwin>({
     queryKey: digitalTwinQueryKey(childId),
     queryFn: () => lifeIntelligenceApi.getDigitalTwin(childId),
   });
@@ -68,9 +71,14 @@ function ChildDigitalTwinPanel({ childId, childName }: { childId: string; childN
     <div className="rounded-card border border-sand-200 p-3">
       <p className="text-sm font-medium text-ink">{childName}</p>
 
-      {isLoading && <p className="mt-2 text-sm text-ink-soft">{t('common.loading')}</p>}
-
-      {twin && (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => void refetch()}
+        isEmpty={!isLoading && !error && !twin}
+      >
+        {/* The `twin &&` guard stays: JSX children are CONSTRUCTED eagerly. */}
+        {twin && (
         <>
           <div className="my-3 rounded-card bg-sand-50 p-3 text-center">
             <p className="text-xs text-ink-soft">{t('digitalTwin.growthScore')}</p>
@@ -93,7 +101,8 @@ function ChildDigitalTwinPanel({ childId, childName }: { childId: string; childN
             <SubScoreRow key={key} label={t(labelKey)} subScore={twin[key]} />
           ))}
         </>
-      )}
+        )}
+      </AsyncBoundary>
     </div>
   );
 }

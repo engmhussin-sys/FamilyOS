@@ -1,27 +1,66 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 
 import 'core/di/providers.dart';
+import 'core/localization/locale_controller.dart';
+import 'core/routing/child_deep_link_router.dart';
+import 'core/routing/deep_link_channel.dart';
 import 'core/theme/kid_theme.dart';
 import 'features/pairing/presentation/pairing_screen.dart';
-import 'features/device_status/presentation/device_home_screen.dart';
+import 'features/goals/presentation/child_home_shell.dart';
+import 'features/onboarding/presentation/prominent_disclosure_screen.dart';
 
-/// Sprint 4 update: the paired-state landing screen is now
-/// DeviceHomeScreen (permission checklist + capability sync), replacing
-/// Step 1's bare platform-channel diagnostic screen — still within the
-/// standing "onboarding/diagnostic screens only" scope, since
-/// DeviceHomeScreen IS the onboarding/diagnostic screen for a paired
-/// device, not a new feature surface.
+/// B7 — THE PAIRED-STATE LANDING SCREEN IS NOW `ChildHomeShell`.
+///
+/// It was `DeviceHomeScreen`, and audit PA-M-041 (🔴 High) named that as a
+/// product-level defect rather than a cosmetic one: «الشاشة الأولى التي
+/// يراها الطفل اسمها "حالة الجهاز" … هذا console مراقبة، لا مدرّب».
+/// A child opened this app and was shown heartbeat, diagnostics,
+/// permissions, capabilities, memory usage and battery percent.
+///
+/// The Sprint 4 note this comment replaces was honest about its own scope
+/// ("onboarding/diagnostic screens only") — that scope simply expired the
+/// moment F4 gave the child something to actually do. Today's goal is now
+/// the first thing a paired child sees; `DeviceHomeScreen` is unchanged and
+/// lives one tap away behind the settings icon in `ChildHomeShell`.
 class ChildAgentApp extends ConsumerWidget {
   const ChildAgentApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Watch the STATE (not just `.notifier`) so a language change actually
+    // rebuilds — see LocaleController's docstring for why this line is
+    // load-bearing despite its return value being unused.
+    ref.watch(localeControllerProvider);
+    final localeController = ref.watch(localeControllerProvider.notifier);
+
     return MaterialApp(
       title: 'AI Family Digital Coach — Agent',
       debugShowCheckedModeBanner: false,
       theme: KidTheme.theme,
+      // CLOSES audit MA-017: this app previously set no locale at all, so
+      // every native Material widget (date pickers, dialog button labels,
+      // text-selection handles) stayed English/LTR even when the child's
+      // own screens were Arabic. Copied verbatim from parent-app's
+      // main.dart, which already had this right.
+      locale: localeController.toLocale,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ar'), Locale('en')],
+      // Directionality belongs HERE, on MaterialApp's builder, not on each
+      // screen individually (audit §6 gap 6): anything rendered into the
+      // root Overlay — showDialog, SnackBar, CelebrationOverlay — is built
+      // OUTSIDE the per-screen widget tree and so escaped the per-screen
+      // Directionality wrappers, rendering LTR in an Arabic app.
+      builder: (context, child) => Directionality(
+        textDirection: localeController.isRtl ? TextDirection.rtl : TextDirection.ltr,
+        child: child!,
+      ),
       home: const _AppRoot(),
     );
   }
@@ -36,7 +75,28 @@ class _AppRoot extends ConsumerStatefulWidget {
 
 class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver {
   bool? _isPaired;
+
+  /// F2 (Play User Data policy; audit A3 §4/P2, verdict risk R5).
+  /// `null` = not read yet, `false` = disclosure must be shown FIRST.
+  ///
+  /// This gate sits ABOVE pairing on purpose. Pairing is the first thing
+  /// that talks to the backend, so putting the disclosure after it would
+  /// mean data left the device before the family was told what leaves the
+  /// device — which is the exact ordering the policy forbids.
+  bool? _hasAcknowledgedDisclosure;
   Timer? _wellbeingSafetyTimer;
+
+  /// AN `abny://` LINK THE OS DELIVERED BEFORE THERE WAS ANYWHERE TO PUT IT.
+  ///
+  /// Every cold start lands here: the link is read on the first frame, while
+  /// `_checkSession` is still asking whether this device is paired and whether
+  /// the disclosure has been acknowledged. Following it then would navigate on
+  /// top of the pairing screen — or, worse, past the disclosure gate, which
+  /// exists precisely so nothing happens before the family has been told what
+  /// leaves the device. So it waits here until [_isDeepLinkReady], and
+  /// [_drainPendingDeepLink] is called from every place that can make that
+  /// true.
+  String? _pendingDeepLink;
 
   // FIXES A REAL COST GAP (Sprint 14.2): threshold state, checked
   // locally (zero network cost) before deciding whether a real sync
@@ -55,14 +115,65 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Warm starts first: `onNewIntent` can fire from here on.
+    DeepLinkChannel.listen(_onPlatformDeepLink);
     _checkSession();
+    // The cold-start link, after the first frame — the shell this router pops
+    // back to does not exist until one has been built.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumeInitialDeepLink());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    DeepLinkChannel.stopListening();
     _wellbeingSafetyTimer?.cancel();
     super.dispose();
+  }
+
+  /// True once this child is past BOTH gates and `ChildHomeShell` is what the
+  /// build below returns. Anything earlier and there is no shell for
+  /// `ChildDeepLinkRouter` to select a tab on.
+  bool get _isDeepLinkReady =>
+      _isPaired == true && _hasAcknowledgedDisclosure == true;
+
+  Future<void> _consumeInitialDeepLink() async {
+    final link = await DeepLinkChannel.consumeInitialLink();
+    if (link == null) return;
+    if (!mounted) return;
+    _onPlatformDeepLink(link);
+  }
+
+  /// TOTAL: a link either moves the app now or waits for the gates. There is
+  /// no branch that drops one.
+  void _onPlatformDeepLink(String link) {
+    if (!_isDeepLinkReady) {
+      _pendingDeepLink = link;
+      return;
+    }
+    _followDeepLink(link);
+  }
+
+  void _drainPendingDeepLink() {
+    final link = _pendingDeepLink;
+    if (link == null || !_isDeepLinkReady) return;
+    // Cleared BEFORE following: a link is followed exactly once.
+    _pendingDeepLink = null;
+    _followDeepLink(link);
+  }
+
+  /// THE ONE RESOLVER, AND NOTHING ELSE. `ChildDeepLinkRouter.followLink` is
+  /// the same entry point the in-app message cards use — no second parser and
+  /// no second map, exactly as that router's header requires of any future
+  /// push handler.
+  ///
+  /// After a frame, because this runs from `initState`/`setState` paths where
+  /// the shell may be one build away from existing.
+  void _followDeepLink(String link) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ChildDeepLinkRouter.followLink(context, ref, link);
+    });
   }
 
   /// FIXES A REAL COST GAP (Sprint 14.2): the app backgrounding is a
@@ -79,21 +190,56 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
   }
 
   Future<void> _checkSession() async {
+    // Disclosure first, session second — see _hasAcknowledgedDisclosure.
+    try {
+      final acknowledged =
+          await ref.read(onboardingConsentStoreProvider).hasAcknowledgedDisclosure();
+      if (mounted) setState(() => _hasAcknowledgedDisclosure = acknowledged);
+    } catch (_) {
+      // A preferences read failure must fail SAFE, i.e. towards showing
+      // the disclosure again, never towards skipping it.
+      if (mounted) setState(() => _hasAcknowledgedDisclosure = false);
+    }
+
     final tokenStorage = ref.read(tokenStorageProvider);
     final hasSession = await tokenStorage.hasSession();
     if (mounted) setState(() => _isPaired = hasSession);
-    if (hasSession) {
-      ref.read(heartbeatServiceProvider).start();
-      await _syncRuntimeAndStartEnforcement();
-      _startDigitalWellbeing();
+    // The heartbeat and the wellbeing sync are the two things that MOVE
+    // DATA OFF THE DEVICE. Neither may start before the disclosure has
+    // been acknowledged — including on an EXISTING paired install that is
+    // upgrading into this build, which is the case a naive gate at the
+    // widget level would have missed entirely: the widget would show the
+    // disclosure while the services quietly uploaded behind it.
+    if (hasSession && _hasAcknowledgedDisclosure == true) {
+      await _startSessionServices();
     }
+    // Both gates have now been ANSWERED (whichever way), so a link that was
+    // waiting on them can go — or keep waiting, if the answer was «not yet».
+    if (mounted) _drainPendingDeepLink();
+  }
+
+  /// Everything that begins network activity for a paired device. Split
+  /// out so it has exactly two callers, both of which are gated on the
+  /// disclosure: [_checkSession] and [_onDisclosureAccepted].
+  Future<void> _startSessionServices() async {
+    ref.read(heartbeatServiceProvider).start();
+    await _syncRuntimeAndStartEnforcement();
+    _startDigitalWellbeing();
+  }
+
+  void _onDisclosureAccepted() {
+    setState(() => _hasAcknowledgedDisclosure = true);
+    // An already-paired device that was waiting on the disclosure starts
+    // its services now, not on the next cold start.
+    if (_isPaired == true) _startSessionServices();
+    // Same moment, same reason: the gate that was holding a deep link is open.
+    _drainPendingDeepLink();
   }
 
   void _onPaired() {
     setState(() => _isPaired = true);
-    ref.read(heartbeatServiceProvider).start();
-    _syncRuntimeAndStartEnforcement();
-    _startDigitalWellbeing();
+    _startSessionServices();
+    _drainPendingDeepLink();
   }
 
   /// FIXES A REAL COST GAP (Sprint 14.2 — previously found in Sprint
@@ -203,12 +349,15 @@ class _AppRootState extends ConsumerState<_AppRoot> with WidgetsBindingObserver 
 
   @override
   Widget build(BuildContext context) {
-    if (_isPaired == null) {
+    if (_isPaired == null || _hasAcknowledgedDisclosure == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_hasAcknowledgedDisclosure == false) {
+      return ProminentDisclosureScreen(onAccepted: _onDisclosureAccepted);
     }
     if (_isPaired == false) {
       return PairingScreen(onPaired: _onPaired);
     }
-    return const DeviceHomeScreen();
+    return const ChildHomeShell();
   }
 }

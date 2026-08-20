@@ -10,6 +10,7 @@ import type {
   IRedeemedInvitation,
 } from '../../domain/invitation.types';
 import { InvalidOrExpiredInvitationException } from '../../domain/invitation.errors';
+import { runWithTenant } from '../../../../common/tenancy/tenant-context';
 
 const INVITATION_TTL_SECONDS = 10 * 60; // unchanged from the original PairingService design
 const REDIS_PREFIX = 'pairing-invitation:';
@@ -64,11 +65,22 @@ export class InvitationService {
 
     const ticket = JSON.parse(raw) as IRedeemedInvitation;
 
-    await this.pairingStateMachine.transition({
-      childId: ticket.childId,
-      event: 'PAIRING_ACCEPTED',
-      actorType: 'DEVICE',
-    });
+    // The device that redeemed this code holds no token yet, so the request
+    // arrived under a SystemContext (@SystemRoute AUTH_BOOTSTRAP). The tenant
+    // is now known — and it was derived SERVER-side: it was written into Redis
+    // by createInvitation from the inviting parent's own token, never sent by
+    // the device. Establishing it here is what lets the state-machine write
+    // (a tenant-scoped DevicePairingEvent) succeed under the extension without
+    // widening the bypass to the whole request.
+    await runWithTenant(
+      { familyId: ticket.familyId, actorType: 'DEVICE', actorId: `pairing-accept:${ticket.childId}` },
+      () =>
+        this.pairingStateMachine.transition({
+          childId: ticket.childId,
+          event: 'PAIRING_ACCEPTED',
+          actorType: 'DEVICE',
+        }),
+    );
 
     return ticket;
   }

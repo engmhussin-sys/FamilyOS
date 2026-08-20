@@ -15,7 +15,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "seed:demo": "ts-node --transpile-only prisma/seed-demo.ts",
+    "ci:tenant-guard": "ts-node scripts/ci/assert-tenant-scoping.ts",
+    "ci:event-emission": "ts-node scripts/ci/assert-event-emission.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -48,7 +51,11 @@
     "@types/jest": "^29.5.13",
     "@types/node": "^20.16.5",
     "@types/passport-jwt": "^4.0.1",
+    "@prisma/adapter-pg": "5.22.0",
+    "@types/pg": "^8.21.0",
+    "@types/supertest": "^6.0.3",
     "jest": "^29.7.0",
+    "pg": "^8.23.0",
     "prisma": "^5.20.0",
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    النصوص العربية للطبقة الأصلية (Kotlin) — وهي اللغة الأولى للمنتج
+    (CONTEXT §1: عربي أولًا، RTL حقيقي، لا ترجمة آلية).
+
+    قاعدة النبرة (CONTEXT §3 مبدأ 7 — NO PUNITIVE UX):
+    ممنوع «تم حظرك» / «ممنوع» / «أنت تجاوزت».
+    الطفل يُوجَّه ويُدرَّب، لا يُعاقَب. كل جملة هنا مكتوبة لتُقرأ بصوت
+    عالٍ لطفل عمره ٦ سنوات دون أن تُشعره بالذنب.
+
+    السجل اللغوي: فصحى مبسّطة (لا عامية) — مطابقة للنصوص المعتمدة في
+    CONTEXT §3.7، وأوسع فهمًا عبر مصر والسعودية معًا (السوقان الأول
+    والثاني). محرك ترجمة Flutter يستخدم عامية مصرية في تطبيق الطفل؛
+    توحيد السجل بين الطبقتين بند مفتوح في التقرير.
+-->
+<resources>
+
+    <!-- هوية التطبيق -->
+    <string name="app_name">ابني — نكبر معًا</string>
+
+    <!-- ==================================================================
+         شاشة الـ Overlay (OverlayManager.kt) — نقطة الاحتكاك الوحيدة في
+         المنتج كله. هذه الشاشة هي ما يحدّد إن كان الطفل سيحاول حذف
+         التطبيق أم لا.
+         ================================================================== -->
+    <string name="overlay_break_heading">وقت استراحة</string>
+    <string name="overlay_action_go_home">نرجع للشاشة الرئيسية</string>
+
+    <!-- أسباب التوجيه — تُحلّ من EnforcementResult.reasonRes.
+         كل سطر جملة تدريبية كاملة قائمة بذاتها. -->
+    <string name="enforcement_reason_not_in_plan">هذا التطبيق ليس ضمن خطة اليوم. تعال نجد شيئًا آخر ممتعًا.</string>
+    <string name="enforcement_reason_bedtime">وقت النوم بدأ. نَم جيدًا ليكون غدك أفضل.</string>
+    <string name="enforcement_reason_daily_limit">وقت الشاشة انتهى الآن. خذ استراحة صغيرة وارجع لهدفك.</string>
+    <string name="enforcement_reason_within_policy">كل شيء تمام.</string>
+
+    <!-- تنبيه لطيف قبل الوصول للحد. المورد جاهز ومترجم؛ مسار قرار
+         WARN الذي سيعرضه غير مُضاف في هذا التغيير (انظر قسم المخاطر). -->
+    <plurals name="overlay_minutes_remaining">
+        <item quantity="zero">لم يتبقَّ وقت</item>
+        <item quantity="one">باقية دقيقة واحدة</item>
+        <item quantity="two">باقي دقيقتان</item>
+        <item quantity="few">باقي %1$d دقائق</item>
+        <item quantity="many">باقي %1$d دقيقة</item>
+        <item quantity="other">باقي %1$d دقيقة</item>
+    </plurals>
+
+    <!-- ==================================================================
+         إشعار الخدمة الأمامية الدائم (ChildGuardForegroundService.kt)
+         ================================================================== -->
+    <string name="notif_channel_protection_status">حالة الحماية</string>
+    <string name="notif_protection_active_title">الحماية شغّالة</string>
+    <string name="notif_protection_active_text">كل شيء يعمل بشكل طبيعي.</string>
+    <string name="notif_protection_attention_title">الحماية تحتاج انتباهك</string>
+    <string name="notif_protection_attention_text">خدمة الوصول متوقفة، لذلك خطة اليوم لا تُطبَّق الآن.</string>
+
+    <!-- ==================================================================
+         تنبيهات وقت التشغيل عالية الأولوية (RuntimeAlertNotifier.kt)
+         ================================================================== -->
+    <string name="notif_channel_protection_alerts">تنبيهات الحماية</string>
+    <string name="alert_protection_off_title">الحماية متوقفة</string>
+    <string name="alert_protection_off_text">تم إيقاف خدمة الوصول. اضغط لإعادة تشغيل الحماية.</string>
+
+    <!-- ==================================================================
+         وصف خدمة الوصول — يظهر حرفيًا في الإعدادات > إمكانية الوصول،
+         ويقرأه مراجع Google Play. مكتوب ليكون واقعيًا وضيّق النطاق:
+         يذكر ما يُقرأ (اسم التطبيق المفتوح) وما لا يُقرأ (محتوى الشاشة).
+         ================================================================== -->
+    <string name="accessibility_service_label">ابني — خطة وقت الشاشة</string>
+    <string name="accessibility_service_description">يستخدم «ابني» هذه الخدمة لشيء واحد: معرفة اسم التطبيق المفتوح في هذه اللحظة، حتى يطبّق خطة وقت الشاشة التي ضبطها ولي الأمر لهذا الجهاز. لا يستطيع قراءة ما يظهر على الشاشة، ولا ما يُكتَب، ولا الرسائل، ولا كلمات المرور — الخدمة معلنة بـ canRetrieveWindowContent=false، أي أن النظام نفسه لا يمنحها هذه البيانات. تستطيع إيقافها من هذه الشاشة نفسها في أي وقت.</string>
+
+</resources>

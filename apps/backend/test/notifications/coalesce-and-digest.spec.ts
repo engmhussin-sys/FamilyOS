@@ -1,0 +1,278 @@
+/**
+ * PHASE D — THE ANTI-FLOOD POLICY, PROVEN AS A PURE FUNCTION.
+ *
+ * The brief's own scenario is the first test: eleven notifications defer
+ * overnight, and the parent must NOT receive eleven at 07:00. Everything below
+ * is deterministic — no clock, no database — so the policy is a property that
+ * can be reasoned about rather than a behaviour that has to be observed.
+ */
+import {
+  digestText,
+  planRelease,
+} from '../../src/modules/notifications/domain/coalesce-and-digest';
+import {
+  RELEASE_DEFAULTS,
+  type DeferredNotificationRow,
+} from '../../src/modules/notifications/domain/notification-delivery.types';
+import { formatNumber } from '../../src/modules/notifications/domain/engine/notification-copy';
+import { ChildSafetyFilterService } from '../../src/modules/ai-core/application/services/child-safety-filter.service';
+import { AGE_BANDS, ageBandProfile, countWords } from '../../src/modules/ai-core/domain/age-band';
+
+const BASE = new Date('2026-01-15T21:00:00.000Z').getTime();
+
+let seq = 0;
+function row(
+  overrides: Partial<DeferredNotificationRow> & Pick<DeferredNotificationRow, 'type'>,
+): DeferredNotificationRow {
+  seq += 1;
+  return {
+    id: `row-${String(seq).padStart(3, '0')}`,
+    familyId: 'fam-1',
+    childId: 'child-1',
+    category: 'REWARD',
+    priority: 'NORMAL',
+    targetAudience: 'PARENT',
+    title: `t-${seq}`,
+    body: `b-${seq}`,
+    sourceEventId: `evt:${seq}`,
+    // PHASE E (`PD-N-004`): every queued row now carries the producer's own
+    // payload. These fixtures have none, and `null` is the honest value.
+    data: null,
+    scheduledFor: new Date(BASE + 36_000_000),
+    businessDate: '2026-01-15',
+    attemptCount: 1,
+    createdAt: new Date(BASE + seq * 60_000),
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  seq = 0;
+});
+
+describe('PHASE D — coalescing and the morning digest', () => {
+  describe('1. THE BRIEF’S SCENARIO: eleven overnight notifications', () => {
+    it('eleven rows of ONE type collapse to exactly ONE delivery and zero digest', () => {
+      const rows = Array.from({ length: 11 }, () => row({ type: 'REWARD_GRANTED' }));
+      const plan = planRelease(rows, 'PARENT');
+
+      expect(plan.deliver).toHaveLength(1);
+      expect(plan.digestOf).toHaveLength(0);
+      expect(plan.resolve).toHaveLength(10);
+      expect(new Set(plan.resolve.map((r) => r.reason))).toEqual(new Set(['COALESCED']));
+      // NEWEST WINS: the content of a repeated notification is a snapshot, and
+      // the most recent snapshot is the only true one at release.
+      expect(plan.deliver[0].id).toBe('row-011');
+    });
+
+    it('eleven rows of ELEVEN DIFFERENT types produce 3 deliveries + 1 digest — four, not eleven', () => {
+      const rows = Array.from({ length: 11 }, (_, i) => row({ type: `TYPE_${i}` }));
+      const plan = planRelease(rows, 'PARENT');
+
+      expect(plan.deliver).toHaveLength(RELEASE_DEFAULTS.maxIndividualPerAudience);
+      expect(plan.digestOf).toHaveLength(8);
+      expect(plan.resolve.every((r) => r.reason === 'DIGESTED')).toBe(true);
+      // What the parent's phone actually does at 07:00.
+      expect(plan.deliver.length + (plan.digestOf.length > 0 ? 1 : 0)).toBe(4);
+    });
+
+    it('the realistic mixed night: 11 rows, 4 types, still four notifications', () => {
+      const rows = [
+        ...Array.from({ length: 5 }, () => row({ type: 'HYDRATION_REMINDER' })),
+        ...Array.from({ length: 3 }, () => row({ type: 'REWARD_GRANTED' })),
+        ...Array.from({ length: 2 }, () => row({ type: 'BADGE_EARNED' })),
+        row({ type: 'SCREEN_TIME_EXCEEDED' }),
+      ];
+      const plan = planRelease(rows, 'PARENT');
+      // Coalescing alone takes 11 -> 4; the cap then leaves 3 + a 1-row tail,
+      // and a 1-row tail is DELIVERED rather than digested (see below).
+      expect(plan.deliver).toHaveLength(4);
+      expect(plan.digestOf).toHaveLength(0);
+      expect(plan.resolve.filter((r) => r.reason === 'COALESCED')).toHaveLength(7);
+    });
+  });
+
+  describe('2. ORDERING — priority first, then the night in the order it happened', () => {
+    it('a CRITICAL that was somehow deferred is never third', () => {
+      const rows = [
+        row({ type: 'A', priority: 'LOW' }),
+        row({ type: 'B', priority: 'NORMAL' }),
+        row({ type: 'C', priority: 'CRITICAL' }),
+      ];
+      const plan = planRelease(rows, 'PARENT');
+      expect(plan.deliver.map((r) => r.type)).toEqual(['C', 'B', 'A']);
+    });
+
+    it('inside one priority band the order is CHRONOLOGICAL, oldest first', () => {
+      const rows = [row({ type: 'A' }), row({ type: 'B' }), row({ type: 'C' })];
+      const plan = planRelease(rows, 'PARENT');
+      expect(plan.deliver.map((r) => r.type)).toEqual(['A', 'B', 'C']);
+    });
+
+    it('IS DETERMINISTIC: two rows written in the same millisecond always plan the same way', () => {
+      const at = new Date(BASE);
+      const a = row({ type: 'A', createdAt: at });
+      const b = row({ type: 'B', createdAt: at });
+      const one = planRelease([a, b], 'PARENT');
+      const two = planRelease([b, a], 'PARENT');
+      expect(one.deliver.map((r) => r.id)).toEqual(two.deliver.map((r) => r.id));
+    });
+
+    it('a same-millisecond COALESCE tie is broken by id, so two replicas keep the same survivor', () => {
+      const at = new Date(BASE);
+      const a = row({ type: 'SAME', createdAt: at });
+      const b = row({ type: 'SAME', createdAt: at });
+      expect(planRelease([a, b], 'PARENT').deliver[0].id).toBe(
+        planRelease([b, a], 'PARENT').deliver[0].id,
+      );
+    });
+  });
+
+  describe('3. THE DIGEST IS ONLY WORTH IT WHEN IT REPLACES SOMETHING', () => {
+    it('a one-row tail is DELIVERED, not summarised — «1 more update» is never better than the update', () => {
+      const rows = Array.from({ length: 4 }, (_, i) => row({ type: `T${i}` }));
+      const plan = planRelease(rows, 'PARENT');
+      expect(plan.deliver).toHaveLength(4);
+      expect(plan.digestOf).toHaveLength(0);
+    });
+
+    it('a two-row tail IS summarised', () => {
+      const rows = Array.from({ length: 5 }, (_, i) => row({ type: `T${i}` }));
+      const plan = planRelease(rows, 'PARENT');
+      expect(plan.deliver).toHaveLength(3);
+      expect(plan.digestOf).toHaveLength(2);
+    });
+
+    it('at or below the cap nothing is resolved at all', () => {
+      const rows = [row({ type: 'A' }), row({ type: 'B' }), row({ type: 'C' })];
+      const plan = planRelease(rows, 'PARENT');
+      expect(plan.deliver).toHaveLength(3);
+      expect(plan.resolve).toHaveLength(0);
+      expect(plan.digestOf).toHaveLength(0);
+    });
+  });
+
+  describe('4. THE TWO AUDIENCES NEVER CAP EACH OTHER', () => {
+    it('a parent’s queue and a child’s queue are planned independently', () => {
+      const rows = [
+        ...Array.from({ length: 5 }, (_, i) => row({ type: `P${i}`, targetAudience: 'PARENT' })),
+        ...Array.from({ length: 5 }, (_, i) => row({ type: `C${i}`, targetAudience: 'CHILD' })),
+      ];
+      const parent = planRelease(rows, 'PARENT');
+      const child = planRelease(rows, 'CHILD');
+
+      expect(parent.deliver).toHaveLength(3);
+      expect(child.deliver).toHaveLength(3);
+      // Neither plan touched the other audience's rows.
+      expect(parent.deliver.every((r) => r.targetAudience === 'PARENT')).toBe(true);
+      expect(child.deliver.every((r) => r.targetAudience === 'CHILD')).toBe(true);
+      expect(parent.resolve.every((r) => r.row.targetAudience === 'PARENT')).toBe(true);
+    });
+
+    it('the same type for two audiences is TWO facts, not one — coalescing does not cross the boundary', () => {
+      const rows = [
+        row({ type: 'REWARD_GRANTED', targetAudience: 'PARENT' }),
+        row({ type: 'REWARD_GRANTED', targetAudience: 'CHILD' }),
+      ];
+      expect(planRelease(rows, 'PARENT').deliver).toHaveLength(1);
+      expect(planRelease(rows, 'CHILD').deliver).toHaveLength(1);
+    });
+  });
+
+  describe('5. NOTHING IS LOST WITHOUT A REASON', () => {
+    it('every row is accounted for exactly once — delivered, resolved, or in the digest', () => {
+      const rows = [
+        ...Array.from({ length: 4 }, () => row({ type: 'HYDRATION_REMINDER' })),
+        ...Array.from({ length: 6 }, (_, i) => row({ type: `T${i}` })),
+      ];
+      const plan = planRelease(rows, 'PARENT');
+
+      const accounted = new Set([
+        ...plan.deliver.map((r) => r.id),
+        ...plan.resolve.map((r) => r.row.id),
+      ]);
+      expect(accounted.size).toBe(rows.length);
+      // The digest members are a subset of the resolved ones, not a third bucket
+      // that could silently swallow a row.
+      const resolvedIds = new Set(plan.resolve.map((r) => r.row.id));
+      expect(plan.digestOf.every((r) => resolvedIds.has(r.id))).toBe(true);
+    });
+
+    it('every resolution carries one of the two documented reasons and never an empty one', () => {
+      const rows = Array.from({ length: 9 }, (_, i) => row({ type: `T${i % 4}` }));
+      const plan = planRelease(rows, 'PARENT');
+      for (const { reason } of plan.resolve) {
+        expect(['COALESCED', 'DIGESTED']).toContain(reason);
+      }
+    });
+
+    it('an empty input plans nothing rather than an empty digest', () => {
+      const plan = planRelease([], 'PARENT');
+      expect(plan.deliver).toHaveLength(0);
+      expect(plan.resolve).toHaveLength(0);
+      expect(plan.digestOf).toHaveLength(0);
+    });
+  });
+
+  describe('6. the digest text', () => {
+    it('is Arabic, carries the count, and carries NOTHING ELSE about the child', () => {
+      const text = digestText(8);
+      expect(text.body).toContain('8');
+      expect(/[؀-ۿ]/.test(text.title)).toBe(true);
+      expect(/[؀-ۿ]/.test(text.body)).toBe(true);
+      // docs/06 §8.3 — the push is a pointer; the app fetches the content over
+      // an authenticated GET. No name, no habit title, no reward amount.
+      expect(text.body).not.toMatch(/child|habit|reward/i);
+    });
+
+    /**
+     * `PG-002` — THE CHILD'S DIGEST HAS A CEILING, AND IT USED TO BREAK IT.
+     *
+     * `writeDigest` hands this text to `deliverNow`, whose CHILD branch writes
+     * `child_messages`. The single string above is ELEVEN WORDS with WESTERN
+     * DIGITS; `age-band.ts` caps band `6-8` at EIGHT words and `PF-E-002` is the
+     * record of this product rejecting «5» in Arabic prose. Every other
+     * child-facing string in the system is validated against that ceiling — this
+     * one was not, because until `PG-001` nothing enforced the CHILD policy on
+     * the `FamilyCommunicationService` door.
+     *
+     * Asserted against the REAL filter at the NARROWEST band, so a future
+     * rewording that grows the sentence fails here rather than in a household.
+     */
+    it('`PG-002` — the CHILD digest fits the NARROWEST §11.3 band and carries Arabic-Indic digits', () => {
+      const filter = new ChildSafetyFilterService();
+      for (const count of [2, 5, 12, 99]) {
+        const text = digestText(count, 'CHILD');
+        for (const band of AGE_BANDS) {
+          const body = filter.validate(text.body, band);
+          const title = filter.validate(text.title, band);
+          expect(`${band}/${count} body ${body.isSafe} [${body.reasons}]`).toBe(`${band}/${count} body true []`);
+          expect(`${band}/${count} title ${title.isSafe} [${title.reasons}]`).toBe(`${band}/${count} title true []`);
+        }
+        // Arabic-Indic, and the count is still IN there — a digest that lost its
+        // count would pass the ceiling by saying nothing.
+        expect(text.body).not.toMatch(/[0-9]/);
+        expect(text.body).toMatch(/[٠-٩]/);
+        expect(text.body).toContain(formatNumber(count, 'ar'));
+      }
+    });
+
+    it('`PG-002` — and the PARENT digest is UNCHANGED, byte for byte: the fix is a child variant, not a rewrite', () => {
+      expect(digestText(8)).toEqual({
+        title: 'ملخّص إشعارات الليلة',
+        body: 'لديك 8 تحديثات أخرى من الليلة الماضية. افتح التطبيق لرؤية التفاصيل.',
+      });
+      // Defaulting to PARENT is what keeps every pre-`PG-002` caller identical.
+      expect(digestText(8, 'PARENT')).toEqual(digestText(8));
+    });
+
+    it('`PG-002` — the OLD single string is measurably outside band `6-8`, so this is a regression test and not a preference', () => {
+      const filter = new ChildSafetyFilterService();
+      const oldChildDigest = digestText(5, 'PARENT');
+      const verdict = filter.validate(oldChildDigest.body, '6-8');
+      expect(verdict.isSafe).toBe(false);
+      expect(verdict.reasons).toContain('TOO_LONG');
+      expect(countWords(oldChildDigest.body)).toBeGreaterThan(ageBandProfile('6-8').maxWords);
+    });
+  });
+});

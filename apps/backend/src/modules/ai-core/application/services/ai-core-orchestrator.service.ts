@@ -4,6 +4,7 @@ import { AI_PROVIDER, type IAIProvider } from '../../domain/ai-provider.port';
 import { AiCoreUnavailableException } from '../../domain/ai-core.errors';
 import type { IChildAIContext } from '../../domain/ai-context.types';
 import { AiContextManagerService } from './ai-context-manager.service';
+import { GrowthEventEmitter } from '../../../analytics/application/growth-event-emitter.service';
 
 const PARENTING_ASSISTANT_SYSTEM_PROMPT = `You are a warm, evidence-informed parenting coach inside a family safety app.
 A parent will describe a situation about their child and ask for guidance.
@@ -52,6 +53,14 @@ export class AiCoreOrchestratorService {
   constructor(
     private readonly contextManager: AiContextManagerService,
     @Inject(AI_PROVIDER) private readonly aiProvider: IAIProvider,
+    /**
+     * PHASE D (GROWTH). AI engagement is one of the strongest retention
+     * predictors this product has, so it is instrumented — but the events
+     * carry NO message text, NO child identifier and NO answer. `messageText`
+     * is not in `ALLOWED_PAYLOAD_KEYS`, so a future caller that tried to
+     * include it would have it dropped and logged rather than stored.
+     */
+    private readonly growthEvents: GrowthEventEmitter,
   ) {}
 
   async askParentingQuestion(
@@ -61,6 +70,12 @@ export class AiCoreOrchestratorService {
   ): Promise<IAssistantAnswer> {
     const context = await this.contextManager.buildChildContext(childId, familyId);
     const userMessage = this.formatUserMessage(context, question);
+
+    await this.growthEvents.emit({
+      name: 'AI_MESSAGE_SENT',
+      familyId,
+      sessionId: `ai:${familyId}`,
+    });
 
     try {
       const answer = await this.aiProvider.complete({
@@ -72,6 +87,12 @@ export class AiCoreOrchestratorService {
       if (!answer.trim()) {
         throw new Error('Empty completion returned from AI provider.');
       }
+
+      await this.growthEvents.emit({
+        name: 'AI_MESSAGE_RECEIVED',
+        familyId,
+        sessionId: `ai:${familyId}`,
+      });
 
       return { answer, generatedAt: new Date() };
     } catch (err) {

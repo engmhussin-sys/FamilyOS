@@ -3,11 +3,13 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/auth/session_expired_notifier.dart';
+import 'core/config/app_config.dart';
 import 'core/connectivity/connectivity_controller.dart';
 import 'core/di/providers.dart';
 import 'core/localization/locale_controller.dart';
 import 'core/offline/offline_banner.dart';
 import 'core/routing/app_routes.dart';
+import 'core/routing/deep_link_host.dart';
 import 'core/theme/app_theme.dart';
 import 'features/authentication/presentation/login_screen.dart';
 import 'features/authentication/presentation/register_screen.dart';
@@ -26,8 +28,18 @@ import 'features/family/presentation/manage_consents_screen.dart';
 import 'features/settings/presentation/delete_account_screen.dart';
 import 'features/billing/presentation/redeem_code_screen.dart';
 import 'core/observability/crash_reporting.dart';
+import 'features/rewards/presentation/fulfilments_screen.dart';
+import 'features/rewards/presentation/pending_achievements_screen.dart';
+import 'features/rewards/presentation/programs_list_screen.dart';
+import 'features/safety/presentation/safety_screen.dart';
+import 'features/screen_time/presentation/screen_time_children_screen.dart';
+import 'features/life_intelligence/presentation/coach_children_screen.dart';
+import 'features/rewards/presentation/progress_children_screen.dart';
 
 void main() {
+  // F2 (audit MA-004) — identical guard to the child app's main(), for the
+  // identical reason. First statement, before the Sentry zone.
+  AppConfig.assertUsableForBuildMode();
   bootstrapWithCrashReporting(() async {
     runApp(const ProviderScope(child: ParentApp()));
   });
@@ -91,7 +103,11 @@ class ParentApp extends ConsumerWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [Locale('en'), Locale('ar')],
+      // Arabic FIRST: `supportedLocales` order is also the resolution
+      // preference order Flutter falls back through when the device
+      // locale matches none of them. For an Arabic-first product that
+      // fallback must be Arabic, not English (audit MA-016).
+      supportedLocales: const [Locale('ar'), Locale('en')],
       // No Flutter-native localization delegate is wired here for THIS
       // app's own text — that stays LocaleController's mechanism
       // (mirrors the Dashboard's LocaleProvider), not
@@ -99,9 +115,20 @@ class ParentApp extends ConsumerWidget {
       // below for the same reason — both of these remain correct and
       // unchanged; flutter_localizations above is additive, for
       // native widgets only.
+      // `DeepLinkHost` is here rather than on a screen because an OS-delivered
+      // `abny://` link can arrive at ANY moment, including before the first
+      // screen exists (a cold start FOR the link) and while any screen is on
+      // top (a warm start). `builder` runs above the Navigator and for the
+      // whole life of the app, which is exactly the scope that listener needs;
+      // it is handed `_navigatorKey` for the same reason — from up here
+      // `Navigator.of(context)` would find nothing. It renders `child`
+      // untouched and decides only WHEN a link is followed.
       builder: (context, child) => Directionality(
         textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-        child: OfflineBanner(child: child!),
+        child: DeepLinkHost(
+          navigatorKey: _navigatorKey,
+          child: OfflineBanner(child: child!),
+        ),
       ),
       initialRoute: AppRoutes.splash,
       routes: {
@@ -121,6 +148,32 @@ class ParentApp extends ConsumerWidget {
         AppRoutes.manageConsents: (_) => const ManageConsentsScreen(),
         AppRoutes.deleteAccount: (_) => const DeleteAccountScreen(),
         AppRoutes.redeemCode: (_) => const RedeemCodeScreen(),
+        // B6 — the F4 surface. Family-wide by default; the child-scoped
+        // variants are pushed with constructor arguments instead.
+        AppRoutes.goals: (_) => const ProgramsListScreen(),
+        AppRoutes.goalReviewQueue: (_) => const PendingAchievementsScreen(),
+        AppRoutes.fulfilments: (_) => const FulfilmentsScreen(),
+        // F1 — the safety & protection surface. Argument-free, which is
+        // what qualifies it for this table; `abny://safety/<alertId>` is
+        // pushed as a page instead. See `deep_link_router.dart`.
+        AppRoutes.safety: (_) => const SafetyScreen(),
+        // The parent's screen-time surface, and where `abny://screen-time`
+        // now lands. Argument-free by design: the link names no child, so
+        // this screen resolves «which child» from the family's own data
+        // rather than taking an id it was never given. See its header.
+        AppRoutes.screenTime: (_) => const ScreenTimeChildrenScreen(),
+        // WHERE `abny://progress` LANDS, and it is the repair of a dead tap on
+        // the two most-sent parent notifications — `REWARD_GRANTED` and
+        // `BADGE_EARNED_PARENT` both resolve to that link, and the router
+        // answered it with `unavailable()` until this screen existed.
+        // Argument-free for the same reason `screenTime` above is: the link
+        // names no child, and the screen asks the family's data instead of
+        // taking an id it was never given.
+        AppRoutes.progress: (_) => const ProgressChildrenScreen(),
+        // The same repair for the other refused surface. No key resolves to
+        // `abny://coach` today, but the surface is in the scheme and a surface
+        // the app cannot open is the defect, not the traffic on it.
+        AppRoutes.coach: (_) => const CoachChildrenScreen(),
       },
     );
   }

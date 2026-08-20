@@ -33,6 +33,16 @@ export default {
           100: '#E4EBE1',
         },
         amber: {
+          /**
+           * TEXT ink for the amber family. `amber-600` measures 3.26:1 on
+           * white — legal for a 24px figure, and a WCAG AA failure for the
+           * 11–14px labels it was also being used on. This value is not a new
+           * invention: it is `STATUS.warning.light` from the already-validated
+           * chart palette (`features/growth/lib/vizTokens.ts`), which clears
+           * 5.19:1 on amber-100 and 6.09:1 on white. Amber TEXT uses 700;
+           * amber FILLS and borders keep 500/600.
+           */
+          700: '#8A570A',
           // Sparse highlight accent — CTAs, active states. NOT terracotta.
           600: '#B98527',
           500: '#D9A441',

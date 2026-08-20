@@ -8,6 +8,7 @@ import type {
   IAiMemoryRecord,
   IAiMemoryRepository,
 } from '../domain/memory.types';
+import { tenantIdForWrite } from '../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaAiMemoryRepository implements IAiMemoryRepository {
@@ -22,7 +23,7 @@ export class PrismaAiMemoryRepository implements IAiMemoryRepository {
     await this.prisma.aiMemoryEntry.upsert({
       where: { childId_category_key: { childId, category, key } },
       update: { value: value as Prisma.InputJsonValue },
-      create: { childId, category, key, value: value as Prisma.InputJsonValue },
+      create: { familyId: tenantIdForWrite(), childId, category, key, value: value as Prisma.InputJsonValue },
     });
   }
 
@@ -34,7 +35,7 @@ export class PrismaAiMemoryRepository implements IAiMemoryRepository {
     // A random key per row — this category is event history, not state,
     // so every call must produce a new, independently-countable row.
     await this.prisma.aiMemoryEntry.create({
-      data: { childId, category, key: randomUUID(), value: value as Prisma.InputJsonValue },
+      data: { familyId: tenantIdForWrite(), childId, category, key: randomUUID(), value: value as Prisma.InputJsonValue },
     });
   }
 

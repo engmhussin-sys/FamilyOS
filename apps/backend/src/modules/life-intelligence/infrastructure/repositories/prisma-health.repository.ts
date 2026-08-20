@@ -12,6 +12,8 @@ import {
   INutritionLog,
   ISleepLog,
 } from '../../domain/health.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
+import { getBusinessDate } from '../../../../common/time/family-date';
 
 @Injectable()
 export class PrismaHealthRepository {
@@ -20,6 +22,7 @@ export class PrismaHealthRepository {
   async createNutritionLog(input: ICreateNutritionLogInput): Promise<INutritionLog> {
     const row = await this.prisma.nutritionLog.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         date: new Date(input.date),
         mealType: input.mealType,
@@ -50,7 +53,7 @@ export class PrismaHealthRepository {
   }
 
   async createHydrationLog(input: ICreateHydrationLogInput): Promise<IHydrationLog> {
-    const row = await this.prisma.hydrationLog.create({ data: { childId: input.childId, amountMl: input.amountMl } });
+    const row = await this.prisma.hydrationLog.create({ data: { familyId: tenantIdForWrite(), childId: input.childId, amountMl: input.amountMl } });
     return { id: row.id, childId: row.childId, amountMl: row.amountMl, loggedAt: row.loggedAt };
   }
 
@@ -69,14 +72,27 @@ export class PrismaHealthRepository {
    * bounded, small window (30 days max), matching
    * findSnapshotsInWindow's own style in the digital-wellbeing
    * repository. */
-  async getDailyHydrationTotals(childId: string, since: Date): Promise<Map<string, number>> {
+  /**
+   * B2 (PA-B-001). `timeZone` is REQUIRED here and absent from the sibling
+   * `getDailyActivityTotals`, and the asymmetry is the point:
+   *
+   *   - `HydrationLog.loggedAt` is a TIMESTAMP. Grouping it by UTC day put a
+   *     Cairo child's 22:00 glass of water on tomorrow, so the streak's
+   *     qualifying-day set disagreed with the `asOf` business date the caller
+   *     computed — a streak that silently failed to count today.
+   *   - `ActivityLog.date` is a `@db.Date` that already HOLDS a business date.
+   *     Projecting it through a timezone would corrupt it.
+   *
+   * One rule, stated once: project instants, read stored days verbatim.
+   */
+  async getDailyHydrationTotals(childId: string, since: Date, timeZone: string): Promise<Map<string, number>> {
     const rows = await this.prisma.hydrationLog.findMany({
       where: { childId, loggedAt: { gte: since } },
       select: { loggedAt: true, amountMl: true },
     });
     const totals = new Map<string, number>();
     for (const row of rows) {
-      const dateStr = row.loggedAt.toISOString().slice(0, 10);
+      const dateStr = getBusinessDate(row.loggedAt, timeZone);
       totals.set(dateStr, (totals.get(dateStr) ?? 0) + row.amountMl);
     }
     return totals;
@@ -85,6 +101,7 @@ export class PrismaHealthRepository {
   async createSleepLog(input: ICreateSleepLogInput): Promise<ISleepLog> {
     const row = await this.prisma.sleepLog.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         date: new Date(input.date),
         sleepStart: new Date(input.sleepStart),
@@ -118,6 +135,7 @@ export class PrismaHealthRepository {
   async createActivityLog(input: ICreateActivityLogInput): Promise<IActivityLog> {
     const row = await this.prisma.activityLog.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId: input.childId,
         date: new Date(input.date),
         activityType: input.activityType,
@@ -145,6 +163,8 @@ export class PrismaHealthRepository {
 
   /** Sprint 15 — CLOSES A REAL GAP: same reasoning as
    * getDailyHydrationTotals above, for Activity streak calculation. */
+  /** B2, DELIBERATELY TIMEZONE-FREE: `ActivityLog.date` is a `@db.Date` that
+   * already holds a business date. See `getDailyHydrationTotals`. */
   async getDailyActivityTotals(childId: string, since: Date): Promise<Map<string, number>> {
     const rows = await this.prisma.activityLog.findMany({
       where: { childId, date: { gte: since } },
@@ -167,7 +187,7 @@ export class PrismaHealthRepository {
   async upsertHealthScore(childId: string, date: Date, score: number, breakdown: Record<string, unknown>): Promise<void> {
     await this.prisma.healthScoreDaily.upsert({
       where: { childId_date: { childId, date } },
-      create: { childId, date, score, breakdown: breakdown as Prisma.InputJsonValue },
+      create: { familyId: tenantIdForWrite(), childId, date, score, breakdown: breakdown as Prisma.InputJsonValue },
       update: { score, breakdown: breakdown as Prisma.InputJsonValue },
     });
   }

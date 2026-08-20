@@ -40,6 +40,24 @@ abstract class AgentPlatformChannel {
   Future<void> requestBatteryOptimizationExemption();
   Future<bool> areNotificationsGranted();
 
+  /// G18 — asks for POST_NOTIFICATIONS and returns the platform's answer as one
+  /// of the `NotificationPermissionOutcome` wire strings: 'granted',
+  /// 'already_granted', 'not_required', 'denied', 'permanently_denied'.
+  ///
+  /// A STRING, not a bool, because the caller must distinguish "declined once"
+  /// (worth offering again another day) from "declined for good" (Android will
+  /// never show the dialog again, so only the settings route remains).
+  ///
+  /// The raw wire string stops here, exactly as [getCapabilityReport] keeps a
+  /// raw Map at this boundary: the typed `NotificationPermissionOutcome` is
+  /// produced one layer up, in the permissions plugin.
+  Future<String> requestNotificationsPermission();
+
+  /// G18 — opens this app's own notification settings page. Returns whether a
+  /// screen actually opened; the native side never throws on a device that has
+  /// no such Activity.
+  Future<bool> openNotificationSettings();
+
   // --- Sprint 4: Device Capability Engine ---
   /// Returns the raw field map exactly matching the backend's
   /// ReportCapabilitiesDto shape — kept as a Map here (not a typed
@@ -105,4 +123,25 @@ abstract class AgentPlatformChannel {
   Future<Map<Object?, Object?>> getEnforcementStatus();
 
   Future<void> startEnforcementService();
+
+  // --- F2 (audit verdict R7): OEM background-restriction onboarding ---
+
+  /// Describes this device's manufacturer-specific "keep this app
+  /// running" screen. Keys: `manufacturer`, `brand`, `oemKey`,
+  /// `hasOemIntent`, `batteryExempt`.
+  ///
+  /// `oemKey` is one of `xiaomi`, `oppo`, `vivo`, `huawei`, `samsung`,
+  /// `transsion`, `generic` — never null, never an error: an unrecognised
+  /// manufacturer is a normal answer (`generic`), not a failure.
+  Future<Map<Object?, Object?>> getOemBackgroundRestrictionInfo();
+
+  /// Opens the best screen this device actually has: the vendor autostart
+  /// list, else the platform battery-optimisation list, else this app's
+  /// settings page. Returns which one opened (`oem_autostart`,
+  /// `battery_optimization`, `app_details`, `none`) so the UI can describe
+  /// what the user is looking at instead of guessing.
+  ///
+  /// The native side never throws for a missing OEM Activity — that is the
+  /// single most common crash in apps that ship this feature.
+  Future<String> openOemBackgroundSettings();
 }

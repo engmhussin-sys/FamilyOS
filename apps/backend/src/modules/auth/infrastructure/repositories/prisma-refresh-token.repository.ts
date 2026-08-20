@@ -21,6 +21,7 @@ export class PrismaRefreshTokenRepository implements IRefreshTokenRepository {
         expiresAt: input.expiresAt,
         userAgent: input.userAgent,
         ipAddress: input.ipAddress,
+        familyTokenId: input.familyTokenId,
       },
     });
   }
@@ -33,6 +34,23 @@ export class PrismaRefreshTokenRepository implements IRefreshTokenRepository {
         expiresAt: { gt: new Date() },
       },
     });
+  }
+
+  findAnyByTokenHash(tokenHash: string): Promise<RefreshToken | null> {
+    // tokenHash is @unique, so findUnique is exact and index-backed.
+    return this.prisma.refreshToken.findUnique({ where: { tokenHash } });
+  }
+
+  async revokeFamily(familyTokenId: string, revokedAt: Date): Promise<number> {
+    const result = await this.prisma.refreshToken.updateMany({
+      where: { familyTokenId, revokedAt: null },
+      data: { revokedAt },
+    });
+    return result.count;
+  }
+
+  async markReplacedBy(id: string, replacedById: string): Promise<void> {
+    await this.prisma.refreshToken.update({ where: { id }, data: { replacedById } });
   }
 
   async revokeById(id: string, revokedAt: Date): Promise<void> {

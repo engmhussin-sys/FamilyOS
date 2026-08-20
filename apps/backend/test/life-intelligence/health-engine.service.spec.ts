@@ -5,7 +5,11 @@ import { PrismaHealthRepository } from '../../src/modules/life-intelligence/infr
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
+import { SmartNotificationEngineService } from '../../src/modules/notification-engine/application/services/smart-notification-engine.service';
 import { computeHydrationTargetMl } from '../../src/modules/life-intelligence/application/services/health-rules';
+import { familyDateProvider } from '../common/family-date.testing';
+import { getBusinessDate } from '../../src/common/time/family-date';
+import { composeIdempotencyKey } from '../../src/shared/events/idempotency';
 
 describe('computeHydrationTargetMl (pure rule component)', () => {
   it('returns the correct band for a range of ages, including boundary values', () => {
@@ -43,13 +47,28 @@ describe('HealthEngineService', () => {
   };
   const timelineMock = { record: jest.fn() };
   const rewardTriggerMock = { trigger: jest.fn() };
+  /**
+   * SPRINT F1 — THE NOTIFICATION DOOR, STUBBED AT ITS OWN BOUNDARY.
+   *
+   * `HealthEngineService` gained one collaborator when it became the producer of
+   * `DAILY_GOAL_COMPLETED`. This is a UNIT spec — the timeline writer and the
+   * reward trigger beside it are stubs for the same reason — so the door is
+   * stubbed and the assertions below check only WHAT THIS CLASS DECIDES: that it
+   * knocks on the crossing and stays silent otherwise, with the server-owned
+   * cause and a family-local dedup key. Everything past the door — scoring, the
+   * quiet-hours class, the SAFETY ENGINE, the Arabic bytes, the deep link — is
+   * asserted against a real engine and a real database in
+   * `test/notifications/daily-goal-completed.e2e.spec.ts`, never here and never
+   * with a mocked Safety Engine.
+   */
+  const notificationsMock = { handleEvent: jest.fn() };
 
   let service: HealthEngineService;
   const childId = 'child-1';
   const familyId = 'family-1';
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     childrenServiceMock.getChildOrThrow.mockResolvedValue({ id: childId, dateOfBirth: '2016-01-01' });
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -58,9 +77,21 @@ describe('HealthEngineService', () => {
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        { provide: SmartNotificationEngineService, useValue: notificationsMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(HealthEngineService);
+  });
+
+  afterEach(() => {
+    // FIXES A REAL ROOT CAUSE: jest.useRealTimers() at the end of an
+    // individual test only runs if that test's own assertions pass —
+    // a failing expect() throws BEFORE reaching that line, leaving
+    // fake timers active for the NEXT test in this file. This
+    // unconditional cleanup runs regardless of pass/fail/throw.
+    jest.useRealTimers();
   });
 
   describe('logNutrition', () => {
@@ -178,7 +209,7 @@ describe('HealthEngineService', () => {
 
   // --- Sprint 25: Reward Rules wiring ---
   describe('logHydration — reward trigger wiring (FIXED Sprint 16.3: this section was broken since Sprint 16.1 Phase 4 extended the real behavior to 3 events + a repository call this mock never had — would have thrown a runtime error if ever actually executed)', () => {
-    it('triggers Reward Rules exactly when the target is crossed — real current behavior: hydration_event + DAILY_GOAL_COMPLETED', async () => {
+    it('triggers Reward Rules exactly when the target is crossed — hydration_event + DAILY_GOAL_COMPLETED + the contract name HYDRATION_GOAL_COMPLETED', async () => {
       repositoryMock.createHydrationLog.mockResolvedValue({ id: 'h4', childId, amountMl: 400, loggedAt: new Date() });
       repositoryMock.sumHydrationMlOnDate.mockResolvedValue(2200);
       repositoryMock.getDailyHydrationTotals.mockResolvedValue(new Map());
@@ -193,13 +224,61 @@ describe('HealthEngineService', () => {
         childId, familyId,
         expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'hydration' }) }),
       );
+
+      /**
+       * THE CONTRACT NAME, AND THE KEY THAT MAKES THE TWO DOORS ONE.
+       *
+       * `first_hydration_goal` is seeded against `HYDRATION_GOAL_COMPLETED`, a
+       * name this method never fired — so the badge was unreachable through the
+       * Child App's own button while being reachable through `POST
+       * /events/batch`. The trigger below closes that.
+       *
+       * THE KEY IS ASSERTED AGAINST `composeIdempotencyKey`, NOT AGAINST A
+       * LITERAL, and that is the point of this assertion rather than a
+       * decoration: `EventIngestionService` composes the DEVICE door's key with
+       * the same call, so a hand-written key here would award the badge and
+       * still let the same crossing be PAID TWICE across the two doors. The
+       * shared string is what lets `rewards_ledger_entries (child_id,
+       * idempotency_key)` refuse the second grant.
+       */
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({
+          engine: 'health',
+          type: 'HYDRATION_GOAL_COMPLETED',
+          payload: expect.objectContaining({ metric: 'hydration', verifiedBy: 'SELF' }),
+          // `familyDateProvider()` defaults this suite's family to UTC, and the
+          // day is DERIVED with the product's own function rather than written
+          // as a literal — so the assertion follows the calendar rather than
+          // pinning a date that goes stale tomorrow.
+          idempotencyKey: composeIdempotencyKey('HYDRATION_GOAL_COMPLETED', {
+            childId,
+            localDate: getBusinessDate(new Date(), 'UTC'),
+          }),
+        }),
+      );
+      // SPRINT F1 — AND THE CHILD IS TOLD, on the same crossing, through the
+      // engine door and nothing else. The cause is the SERVER-OWNED domain event
+      // name that `notification-nouns.ts` keys the Arabic noun on — never the
+      // device-supplied `metadata` the ledger entry refused.
+      expect(notificationsMock.handleEvent).toHaveBeenCalledTimes(1);
+      expect(notificationsMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          familyId,
+          childId,
+          eventType: 'DAILY_GOAL_COMPLETED',
+          cause: 'HYDRATION_GOAL_COMPLETED',
+          sourceEventId: expect.any(String),
+        }),
+      );
     });
 
     it('additionally fires STREAK_ACHIEVED at a real milestone', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-11T12:00:00.000Z'));
       repositoryMock.createHydrationLog.mockResolvedValue({ id: 'h4b', childId, amountMl: 400, loggedAt: new Date() });
       repositoryMock.sumHydrationMlOnDate.mockResolvedValue(2200);
       const sevenDays = new Map(Array.from({ length: 7 }, (_, i) => {
-        const d = new Date('2026-08-10'); d.setUTCDate(d.getUTCDate() - i);
+        const d = new Date('2026-08-11T12:00:00.000Z'); d.setUTCDate(d.getUTCDate() - i); // pinned to the SAME fixed clock the service itself now reads
         return [d.toISOString().slice(0, 10), 2200];
       }));
       repositoryMock.getDailyHydrationTotals.mockResolvedValue(sevenDays);
@@ -219,6 +298,9 @@ describe('HealthEngineService', () => {
       await service.logHydration(childId, familyId, { amountMl: 100 });
 
       expect(rewardTriggerMock.trigger).not.toHaveBeenCalled();
+      // THE NEGATIVE CASE FOR THE PRODUCER: a child still short of the target is
+      // told nothing. The crossing is the condition, not the log.
+      expect(notificationsMock.handleEvent).not.toHaveBeenCalled();
     });
 
     it('a Reward Rules failure never blocks the hydration log itself from succeeding', async () => {
@@ -244,6 +326,34 @@ describe('HealthEngineService', () => {
         childId, familyId,
         expect.objectContaining({ engine: 'health', type: 'DAILY_GOAL_COMPLETED', payload: expect.objectContaining({ metric: 'activity' }) }),
       );
+
+      /** The contract name, for the same reason and with the same shared-key
+       *  discipline as `logHydration`'s — see that assertion's own comment.
+       *  Without it `first_activity_goal` is unreachable through
+       *  `POST /life-intelligence/self/health/activity-logs`. */
+      expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
+        childId, familyId,
+        expect.objectContaining({
+          engine: 'health',
+          type: 'ACTIVITY_GOAL_COMPLETED',
+          payload: expect.objectContaining({ metric: 'activity', verifiedBy: 'SELF' }),
+          idempotencyKey: composeIdempotencyKey('ACTIVITY_GOAL_COMPLETED', {
+            childId,
+            localDate: getBusinessDate(new Date(), 'UTC'),
+          }),
+        }),
+      );
+
+      // The OTHER of the two crossings that have ever emitted this name, and it
+      // carries the OTHER server-owned cause — so the child reads «هدف الحركة»
+      // and not the hydration sentence.
+      expect(notificationsMock.handleEvent).toHaveBeenCalledTimes(1);
+      expect(notificationsMock.handleEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'DAILY_GOAL_COMPLETED',
+          cause: 'ACTIVITY_GOAL_COMPLETED',
+        }),
+      );
     });
 
     it('does NOT trigger Reward Rules when the daily target is not crossed by this log', async () => {
@@ -254,19 +364,20 @@ describe('HealthEngineService', () => {
       await service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 10, socialContext: 'SOLO' });
 
       expect(rewardTriggerMock.trigger).not.toHaveBeenCalled();
+      expect(notificationsMock.handleEvent).not.toHaveBeenCalled();
     });
 
     it('additionally fires STREAK_ACHIEVED for activity at a real milestone', async () => {
-      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a3', childId, activityType: 'running', durationMinutes: 30, socialContext: 'SOLO', date: new Date('2026-08-10') });
+      repositoryMock.createActivityLog.mockResolvedValue({ id: 'a3', childId, activityType: 'running', durationMinutes: 30, socialContext: 'SOLO', date: new Date() });
       repositoryMock.sumActivityMinutesOnDate.mockResolvedValue(70);
       repositoryMock.countGroupActivitiesInWindow.mockResolvedValue(0);
       const sevenDays = new Map(Array.from({ length: 7 }, (_, i) => {
-        const d = new Date('2026-08-10'); d.setUTCDate(d.getUTCDate() - i);
+        const d = new Date(); d.setUTCDate(d.getUTCDate() - i);
         return [d.toISOString().slice(0, 10), 70];
       }));
       repositoryMock.getDailyActivityTotals.mockResolvedValue(sevenDays);
 
-      await service.logActivity(childId, familyId, { date: '2026-08-10', activityType: 'running', durationMinutes: 30, socialContext: 'SOLO' });
+      await service.logActivity(childId, familyId, { date: new Date().toISOString().slice(0, 10), activityType: 'running', durationMinutes: 30, socialContext: 'SOLO' });
 
       expect(rewardTriggerMock.trigger).toHaveBeenCalledWith(
         childId, familyId,

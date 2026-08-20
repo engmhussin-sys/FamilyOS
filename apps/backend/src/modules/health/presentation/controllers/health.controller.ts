@@ -1,4 +1,6 @@
 import { Controller, Get, HttpStatus, Res } from '@nestjs/common';
+
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 import type { Response } from 'express';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
@@ -32,6 +34,7 @@ export class HealthController {
    * a body saying "down") so load balancers correctly stop routing here
    * without needing to parse the response body. */
   @Get('ready')
+  @SystemRoute('HEALTH_CHECK', 'An orchestrator probe cannot authenticate and must not need a tenant to answer.')
   async ready(@Res() res: Response) {
     const [dbOk, redisOk] = await Promise.all([this.checkDatabase(), this.checkRedis()]);
     const isReady = dbOk && redisOk;

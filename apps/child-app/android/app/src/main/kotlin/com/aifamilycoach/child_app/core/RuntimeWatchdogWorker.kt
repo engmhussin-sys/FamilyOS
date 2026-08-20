@@ -34,9 +34,7 @@ class RuntimeWatchdogWorker(
         val notifier = RuntimeAlertNotifier(applicationContext)
         val prefs = applicationContext.getSharedPreferences("afdc_runtime_watchdog", Context.MODE_PRIVATE)
 
-        val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-        )
+        val accessibilityEnabled = permissionManager.isChildGuardAccessibilityServiceEnabled()
         val wasEnabledLastCheck = prefs.getBoolean("was_accessibility_enabled", true)
 
         if (!accessibilityEnabled) {

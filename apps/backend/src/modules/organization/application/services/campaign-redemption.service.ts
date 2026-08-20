@@ -3,11 +3,30 @@ import { Inject, Injectable, BadRequestException, NotFoundException } from '@nes
 import { ORGANIZATION_REPOSITORY, type IOrganizationRepository } from '../ports/organization.repository.port';
 import { TrialManager } from '../../../billing/application/services/trial-manager.service';
 import { BILLING_REPOSITORY, type IBillingRepository } from '../../../billing/application/ports/billing.repository.port';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
 import type { PartnerCampaignTypeValue } from '../../domain/organization.types';
+import { CAMPAIGN_COPY_AR } from '../../domain/campaign-copy';
 
 export interface ICampaignRedemptionResult {
   campaignType: PartnerCampaignTypeValue;
+  /**
+   * THE SENTENCE THE PARENT READS, and it is Arabic.
+   *
+   * `redeem_code_screen.dart` renders this field verbatim and deliberately
+   * prefers it over its own localised fallback, because only the server knows
+   * the real numbers. That is the right call — and it is precisely why this
+   * field being English was a defect no client could compensate for.
+   */
   message: string;
+  /**
+   * The same string under the name B3 established for user-facing prose
+   * (`common/errors/error-response.ts`), so a client written to
+   * `messageAr ?? message` — which is what the parent app does on every FAILURE
+   * path — reads the same sentence on the SUCCESS path. It is an ALIAS, not a
+   * second translation: two copies free to drift is the defect this module is
+   * removing, and the shipped client keys on `message`.
+   */
+  messageAr: string;
 }
 
 /**
@@ -34,6 +53,8 @@ export class CampaignRedemptionService {
     @Inject(ORGANIZATION_REPOSITORY) private readonly repository: IOrganizationRepository,
     private readonly trialManager: TrialManager,
     @Inject(BILLING_REPOSITORY) private readonly billingRepository: IBillingRepository,
+    /** From the `@Global` TimeModule — the ONE reader of `Family.timezone`. */
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   async redeem(code: string, familyId: string): Promise<ICampaignRedemptionResult> {
@@ -61,10 +82,14 @@ export class CampaignRedemptionService {
           throw new BadRequestException(`Campaign "${code}" is misconfigured — missing a valid "extraDays" or "discountPercent" value.`);
         }
         const newTrialEndsAt = await this.trialManager.extendTrial(familyId, extraDays);
-        return {
-          campaignType: campaign.type,
-          message: `Your trial has been extended by ${extraDays} day(s), now ending ${newTrialEndsAt.toISOString().split('T')[0]}.`,
-        };
+        // WHICH DAY THE TRIAL ENDS ON IS THE FAMILY'S QUESTION, NOT UTC'S.
+        // `toISOString().split('T')[0]` is the exact construct B1+B2 removed
+        // from fourteen sites: a trial ending at 01:00 on the 1st in Cairo was
+        // announced to that family as the 31st. The instant comes from
+        // TrialManager; only `Family.timezone` decides which calendar day it is.
+        const trialEndsOn = await this.familyDate.getBusinessDate(familyId, newTrialEndsAt);
+        const message = CAMPAIGN_COPY_AR.trialExtended(extraDays, trialEndsOn);
+        return { campaignType: campaign.type, message, messageAr: message };
       }
       case 'DISCOUNT': {
         const discountPercent = this.readDiscountPercent(campaign.config);
@@ -84,10 +109,8 @@ export class CampaignRedemptionService {
       throw new NotFoundException('No subscription found for this family to apply a discount to.');
     }
     await this.billingRepository.setPendingDiscount(subscription.id, discountPercent);
-    return {
-      campaignType,
-      message: `A ${discountPercent}% discount has been applied — it will be used automatically the next time you subscribe or renew.`,
-    };
+    const message = CAMPAIGN_COPY_AR.discountApplied(discountPercent);
+    return { campaignType, message, messageAr: message };
   }
 
   private readExtraDays(config: Record<string, unknown>): number | null {

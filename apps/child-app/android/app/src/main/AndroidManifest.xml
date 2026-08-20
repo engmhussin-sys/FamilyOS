@@ -20,13 +20,126 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- F1 (audit MA-003): REQUIRED by PermissionManager.kt, which fires
+         Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS. Without this
+         declaration that Intent throws / is ignored, meaning the battery
+         exemption — the single thing keeping the agent alive overnight —
+         could never actually be requested. Used, therefore declared. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- F1 (audit MA-002/P3): USE_EXACT_ALARM was REMOVED.
+         Google Play restricts it to alarm-clock and calendar apps; a
+         parental-control app declaring it is rejected outright.
+         SCHEDULE_EXACT_ALARM is kept because the runtime path that needs
+         it already degrades safely: RuntimeWatchdogScheduler.kt checks
+         alarmManager.canScheduleExactAlarms() and, when the grant is
+         absent (the default on Android 14+ for this app category), falls
+         back to an inexact but Doze-tolerant alarm. Behaviour is
+         therefore preserved on every API level without the banned
+         permission. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- SPRINT F1 (evidence capture): RECORD_AUDIO — and it is the ONLY
+         permission this whole feature adds. That is a decision, not an
+         oversight, and each of the three it does NOT add is worth stating.
+
+         CAMERA is deliberately ABSENT. image_picker reaches the camera
+         through ACTION_IMAGE_CAPTURE, which is another app's activity and
+         needs nothing from us. Declaring CAMERA would actively make things
+         WORSE: Android's documented rule is that once an app declares the
+         CAMERA permission, the platform starts enforcing it on
+         ACTION_IMAGE_CAPTURE and the intent throws until the app also
+         requests it at runtime. The declaration would create the requirement
+         it looks like it satisfies, and buy a Play review flag for a
+         permission no code here uses.
+
+         READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE are ABSENT for the same
+         class of reason. On Android 13+ image_picker uses the system Photo
+         Picker (ACTION_PICK_IMAGES) and file_picker uses the Storage Access
+         Framework; both return ONE user-chosen file through a permission-free
+         grant. Declaring a broad media permission in order to read the single
+         file a child just pointed at is exactly the over-request this
+         manifest's own header refuses.
+
+         RECORD_AUDIO is different and genuinely unavoidable: the recitation
+         is captured IN THIS PROCESS by `record`, so the microphone is ours to
+         hold. It is a dangerous permission on every API level and it is
+         invisible on Android 13+ unless it is requested at runtime — which
+         PlatformEvidenceCaptureSource.requestMicrophonePermission() does,
+         AFTER session.evidence.micWhy has explained it to the child in their
+         own words. verify_notification_permission.py now asserts that
+         declared-therefore-requested conjunction for this permission too, so
+         the declaration cannot quietly go back to being decorative. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Neither is REQUIRED. A device with no microphone or no camera must
+         still install and run every non-upload goal, and required="false" is
+         what stops Play filtering the listing off those devices. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- F1 (audit MA-021): WAKE_LOCK was REMOVED — grep-confirmed zero
+         usage (no newWakeLock / PowerManager.WakeLock anywhere in the
+         Kotlin or Dart source). Every unused sensitive permission is
+         review surface bought for nothing. -->
+
+    <!-- F2 (verdict risk R7): package visibility for the OEM autostart
+         screens OemBackgroundRestrictionManager.kt deep-links into.
+
+         On Android 11+ (API 30) an app cannot see, resolve or launch
+         another package's Activity unless that package is declared here
+         or the app holds QUERY_ALL_PACKAGES. QUERY_ALL_PACKAGES is a
+         Play-restricted permission and is deliberately NOT used: the
+         eleven named packages below are the entire need.
+
+         Every one of them is a vendor "security centre" / "phone
+         manager" app that owns the device's out-of-AOSP autostart
+         allow-list. Without an entry on that list the enforcement agent
+         is killed on screen-off no matter what the app does — see the
+         class docstring. Naming the packages does not grant anything;
+         it only makes resolveActivity() honest, and the launch itself is
+         still wrapped in try/catch because these components are renamed
+         between skin versions. -->
+    <queries>
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.miui.powerkeeper" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.coloros.oppoguardelf" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.samsung.android.lool" />
+        <package android:name="com.transsion.phonemaster" />
+        <package android:name="com.transsion.phonemanager" />
+    </queries>
+
+    <!-- F2 (audit MA-004): networkSecurityConfig + usesCleartextTraffic.
+
+         Without these two attributes this app was installable and
+         non-functional: Android 9+ (API 28) denies cleartext HTTP by
+         default, so every call to the default dev backend
+         (http://10.0.2.2:3000) failed with "CLEARTEXT communication ...
+         not permitted by network security policy".
+
+         android:usesCleartextTraffic="false" is the production default,
+         stated explicitly rather than relied upon. It is also what the
+         platform enforces on API 27 and below, where the config file's
+         cleartext flag is not consulted.
+
+         @xml/network_security_config resolves PER BUILD VARIANT:
+           release/profile -> src/main/res/xml/...  (TLS only, system CAs)
+           debug           -> src/debug/res/xml/... (cleartext for
+                              10.0.2.2 / 127.0.0.1 / localhost only)
+         Read either file's header comment for the full rationale. -->
     <application
-        android:label="AI Family Digital Coach — Agent"
-        android:icon="@mipmap/ic_launcher">
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:localeConfig="@xml/locales_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -42,15 +155,54 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- THE `abny://` SCHEME — IDENTICAL TO THE PARENT APP'S, AND THAT
+                 IS THE FINDING RATHER THAN AN OVERSIGHT.
+
+                 The two apps answer DIFFERENT surface sets in behaviour —
+                 `child_deep_link_router.dart` sends `approvals`, `approval`,
+                 `subscription`, `child` and `safety` to the child's own home
+                 because none of them is a child concept — but they answer the
+                 SAME SCHEME, and every surface resolves to a real screen in
+                 both. So there is nothing for a host/path filter to distinguish
+                 here: an `android:host` list would have to enumerate all twelve
+                 of `DEEP_LINK_SURFACES` in each app and be maintained in
+                 lockstep with the backend registry, and the failure mode of
+                 falling behind is a link the server emits and the OS silently
+                 drops. `parseDeepLink` is total on both sides, so an unknown
+                 surface already degrades to a real screen. One `scheme="abny"`
+                 entry, both apps.
+
+                 Why the launcher activity, why a separate <intent-filter>
+                 element, and why no android:autoVerify — see the parent app's
+                 manifest, which carries the full argument. The same three
+                 reasons apply verbatim: one Activity hosts the one Flutter
+                 engine, `launchMode="singleTop"` (already set above) delivers
+                 the cold-start intent and every later one to it, folding VIEW
+                 into the MAIN/LAUNCHER filter is how a launcher icon gets lost,
+                 and autoVerify governs https App Links, not custom schemes. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="abny" />
+            </intent-filter>
         </activity>
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
         <!-- Sprint 5: the actual enforcement loop. -->
+        <!-- android:label and android:description are what the child and
+             the parent actually read in Settings > Accessibility, and what
+             the Play reviewer screenshots. Previously the service
+             inherited the app label and had no description at this level,
+             so the list entry said nothing about what it does. -->
         <service
             android:name=".core.ChildGuardAccessibilityService"
             android:exported="false"
+            android:label="@string/accessibility_service_label"
+            android:description="@string/accessibility_service_description"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -60,13 +212,28 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Foreground service.
+
+             foregroundServiceType="specialUse" is the correct and only
+             workable type here: the service exists to keep a parent-set
+             screen-time plan being evaluated on the child's device. It
+             maps to none of the predefined Android 14 types — it is not
+             mediaPlayback, not location, not dataSync (it is not moving
+             a bounded set of data and then stopping), not health. Play
+             requires specialUse to be justified in writing, hence the
+             PROPERTY_SPECIAL_USE_FGS_SUBTYPE element below, which is
+             mandatory on API 34+ and is what the reviewer reads.
+
+             The subtype value deliberately names the user benefit and the
+             continuous nature of the work, because "why can this not be
+             a periodic job?" is the exact question the reviewer asks. -->
         <service
             android:name=".core.ChildGuardForegroundService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Parental control enforcement — keeps device protection active." />
+                android:value="Parental control: continuously evaluates the parent-configured screen-time plan on this child device and shows an on-device break reminder when a limit or bedtime is reached. Must run continuously because enforcement has to react at the moment the child opens an app, which periodic background work cannot guarantee." />
         </service>
 
         <receiver

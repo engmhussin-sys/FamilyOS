@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
+import com.aifamilycoach.child_app.R
 
 /**
  * Sprint 5's Foreground Runtime + Runtime Watchdog, combined —
@@ -17,7 +18,7 @@ import androidx.core.app.NotificationCompat
  * no watchdog duty is just a notification. Its one real job beyond the
  * mandatory persistent notification: periodically check whether
  * `ChildGuardAccessibilityService` is still enabled
- * (`PermissionManager.isAccessibilityServiceEnabled`, already built)
+ * (`PermissionManager.isChildGuardAccessibilityServiceEnabled`, already built)
  * and, if not, escalate via the notification — it cannot re-enable
  * Accessibility itself (no API allows that; only the user can, in
  * Settings) but it CAN make sure the parent's device finds out.
@@ -69,9 +70,8 @@ class ChildGuardForegroundService : Service() {
     private fun startWatchdog() {
         val runnable = object : Runnable {
             override fun run() {
-                val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-                    AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                )
+                val accessibilityEnabled =
+                    permissionManager.isChildGuardAccessibilityServiceEnabled()
                 val notification = buildNotification(isHealthy = accessibilityEnabled)
                 val notificationManager =
                     getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -88,7 +88,7 @@ class ChildGuardForegroundService : Service() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = NotificationChannel(
             NOTIFICATION_CHANNEL_ID,
-            "Device Protection Status",
+            getString(R.string.notif_channel_protection_status),
             NotificationManager.IMPORTANCE_LOW, // low, not high — this is a status indicator, not an alert
         )
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -97,10 +97,21 @@ class ChildGuardForegroundService : Service() {
 
     private fun buildNotification(isHealthy: Boolean) =
         NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle(if (isHealthy) "Device protection is active" else "Device protection needs attention")
+            // Localised (Arabic first) and non-technical: this notification
+            // sits permanently on a child's device, so it must not read like
+            // a system error log. The term "Accessibility Service" is gone
+            // from the child-facing copy — it means nothing to a 9-year-old.
+            .setContentTitle(
+                getString(
+                    if (isHealthy) R.string.notif_protection_active_title
+                    else R.string.notif_protection_attention_title,
+                ),
+            )
             .setContentText(
-                if (isHealthy) "Everything is working normally."
-                else "Accessibility Service was turned off — protection is not enforcing right now.",
+                getString(
+                    if (isHealthy) R.string.notif_protection_active_text
+                    else R.string.notif_protection_attention_text,
+                ),
             )
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock) // placeholder — replace with a real app icon asset
             .setOngoing(true)

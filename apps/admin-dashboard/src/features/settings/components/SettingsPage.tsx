@@ -7,6 +7,15 @@ import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { Input } from '../../../shared/components/Input';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A1: money has ONE renderer in this dashboard. `formatBackendMoneyMinor`
+// wraps `formatMoneyMinor` for the billing payloads, which carry a currency
+// but no country — see that function's header for why billing must not
+// divide by 100 on its own.
+import { formatBackendMoneyMinor } from '../../growth/lib/format';
+// A2: the shared four-state boundary. Billing history and the consent
+// switches are the two places on this page where a failed read used to
+// render as a FACT — «لا توجد فواتير» and every consent unchecked.
+import { AsyncBoundary, ErrorBlock } from '../../../shared/components/AsyncState';
 
 type Tab = 'profile' | 'family' | 'billing' | 'consents' | 'account' | 'support';
 
@@ -80,11 +89,16 @@ function FamilyTab() {
 }
 
 function BillingTab() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const queryClient = useQueryClient();
   const { data: plans } = useQuery({ queryKey: ['billing-plans'], queryFn: settingsApi.listPlans });
   const { data: subscriptionInfo } = useQuery({ queryKey: ['subscription'], queryFn: settingsApi.getSubscription });
-  const { data: history } = useQuery({ queryKey: ['billing-history'], queryFn: settingsApi.getBillingHistory });
+  const {
+    data: history,
+    isLoading: isHistoryLoading,
+    error: historyError,
+    refetch: refetchHistory,
+  } = useQuery({ queryKey: ['billing-history'], queryFn: settingsApi.getBillingHistory });
   const [error, setError] = useState<string | null>(null);
 
   const startTrialMutation = useMutation({
@@ -137,7 +151,7 @@ function BillingTab() {
               onClick={() => subscribeMutation.mutate(plan.tier)}
               isLoading={subscribeMutation.isPending}
             >
-              {plan.name} — {(plan.priceCents / 100).toFixed(2)} {plan.currency}
+              {plan.name} — {formatBackendMoneyMinor(locale, plan.priceCents, plan.currency)}
             </Button>
           ))}
         </div>
@@ -146,17 +160,24 @@ function BillingTab() {
 
       <div>
         <h3 className="text-sm font-medium text-ink">{t('billing.history')}</h3>
-        {!history || history.length === 0 ? (
-          <p className="text-xs text-ink-soft">{t('billing.noHistory')}</p>
-        ) : (
+        <AsyncBoundary
+          isLoading={isHistoryLoading}
+          error={historyError}
+          onRetry={() => void refetchHistory()}
+          isEmpty={!isHistoryLoading && !historyError && (!history || history.length === 0)}
+          emptyHint={t('billing.noHistory')}
+        >
+          {history && history.length > 0 && (
           <ul className="mt-1 flex flex-col gap-1 text-xs text-ink-soft">
             {history.map((invoice) => (
               <li key={invoice.id}>
-                {new Date(invoice.issuedAt).toLocaleDateString()} — {(invoice.amountCents / 100).toFixed(2)} {invoice.currency} ({invoice.status})
+                {new Date(invoice.issuedAt).toLocaleDateString()} —{' '}
+                {formatBackendMoneyMinor(locale, invoice.amountCents, invoice.currency)} ({invoice.status})
               </li>
             ))}
           </ul>
-        )}
+          )}
+        </AsyncBoundary>
       </div>
     </div>
   );
@@ -178,7 +199,11 @@ function ConsentsTab() {
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const activeChildId = selectedChildId ?? children?.[0]?.id ?? null;
 
-  const { data: consents } = useQuery({
+  const {
+    data: consents,
+    error: consentsError,
+    refetch: refetchConsents,
+  } = useQuery({
     queryKey: ['consents', activeChildId],
     queryFn: () => settingsApi.listConsents(activeChildId!),
     enabled: !!activeChildId,
@@ -212,6 +237,15 @@ function ConsentsTab() {
         </select>
       )}
       <p className="text-xs text-ink-soft">{t('consents.explanation')}</p>
+
+      {/* A2, and the sharpest instance of it on this page: an unread consent
+          list falls back to `granted: false` for every type, i.e. the screen
+          states that nothing was consented to. A consent switch must never
+          assert a legal fact it could not read, so the switches are not shown
+          at all until the read succeeds. */}
+      {consentsError ? (
+        <ErrorBlock error={consentsError} onRetry={() => void refetchConsents()} />
+      ) : (
       <div className="flex flex-col gap-2">
         {CONSENT_TYPES.map((type) => (
           <label key={type} className="flex items-center justify-between rounded-card border border-sand-200 p-3">
@@ -228,6 +262,7 @@ function ConsentsTab() {
           </label>
         ))}
       </div>
+      )}
     </div>
   );
 }

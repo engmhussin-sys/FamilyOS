@@ -3,8 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
+import '../../../core/routing/child_deep_link_router.dart';
+import '../../../core/routing/deep_link.dart';
 import '../../../core/theme/kid_theme.dart';
 import '../../../core/widgets/celebration_overlay.dart';
 import '../../../core/widgets/daily_progress_ring.dart';
@@ -45,7 +49,12 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   List<dynamic>? _coachingTips;
   List<dynamic>? _smartTasks;
   String _childName = 'there'; // honest default only until the real profile loads
-  String? _errorMessage;
+
+  /// THE B3 ENVELOPE, not `e.toString()`. This used to hold raw exception
+  /// text — which the error widget then did not render, so the child was
+  /// told a fixed «ياااه! حاجة ما حمّلتش.» while the server had already
+  /// written the actual reason in Arabic and it was thrown away.
+  ApiFailure? _failure;
 
   int get _totalTasks => (_habits?.length ?? 0) + (_practices?.length ?? 0);
 
@@ -65,7 +74,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
   }
 
   Future<void> _loadAll() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
       final api = ref.read(familyGrowthApiProvider);
       final results = await Future.wait([api.getHabits(), api.getFaithPractices(), api.getMessages(), api.getProfile()]);
@@ -89,7 +98,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
         }
       }
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+      if (mounted) setState(() => _failure = ApiFailure.from(e));
       return;
     }
 
@@ -98,20 +107,49 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     // discipline as WellbeingScreen's own insight-fetch pattern —
     // Health/Learning being unavailable must never block the
     // already-working Habits/Faith/Messages sections above.
+    // THE COMMENT ABOVE WAS TRUE OF THE INTENT AND FALSE OF THE CODE.
+    //
+    // These five calls used to share ONE `Future.wait` and ONE `catch`, which
+    // is the opposite of "one section's failure never blocks another":
+    // `Future.wait` rejects on the FIRST error, so a single failing call
+    // discarded the four that had already succeeded and the whole block fell
+    // into a silent `catch (_)`.
+    //
+    // That was not hypothetical. `generateSmartTasks()` threw a `TypeError`
+    // on EVERY call (it cast an array response to a Map — see that method's
+    // own note), so in practice health, learning, rewards and coaching never
+    // rendered either. Fixing the cast alone would have hidden how much this
+    // basket was costing; each call now settles on its own.
+    final api = ref.read(familyGrowthApiProvider);
+    final results = await Future.wait<Object?>([
+      _softly(api.getHealthProgress),
+      _softly(api.getLearningProgress),
+      _softly(api.getRewardsAccount),
+      _softly(api.getCoaching),
+      _softly(api.generateSmartTasks),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      // `as ... ?` not `as ...`: a null means that ONE section is unavailable
+      // and renders its own empty state. It never means the others are.
+      _healthProgress = results[0] as Map<String, dynamic>?;
+      _learningProgress = results[1] as Map<String, dynamic>?;
+      _rewardsAccount = results[2] as Map<String, dynamic>?;
+      _coachingTips = results[3] as List<dynamic>?;
+      _smartTasks = results[4] as List<dynamic>?;
+    });
+  }
+
+  /// Runs one section's fetch and converts its failure into `null` instead of
+  /// letting it take the other four with it. Deliberately catch-all: these are
+  /// supplementary sections on a screen that has already rendered, and there
+  /// is no version of "the rewards balance failed" that should blank the
+  /// child's habits.
+  Future<T?> _softly<T>(Future<T> Function() call) async {
     try {
-      final api = ref.read(familyGrowthApiProvider);
-      final results = await Future.wait([api.getHealthProgress(), api.getLearningProgress(), api.getRewardsAccount(), api.getCoaching(), api.generateSmartTasks()]);
-      if (mounted) {
-        setState(() {
-          _healthProgress = results[0] as Map<String, dynamic>;
-          _learningProgress = results[1] as Map<String, dynamic>;
-          _rewardsAccount = results[2] as Map<String, dynamic>;
-          _coachingTips = results[3] as List<dynamic>;
-          _smartTasks = results[4] as List<dynamic>;
-        });
-      }
+      return await call();
     } catch (_) {
-      // Best-effort — the screen already rendered successfully above.
+      return null;
     }
   }
 
@@ -122,14 +160,14 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
       SnackBar(
         content: Row(
           children: [
-            const Text('\u{1F389}', style: TextStyle(fontSize: 20)),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))),
+            const Icon(Icons.celebration_rounded, size: KidSize.iconSm, color: KidColor.onColour),
+            const SizedBox(width: KidSpace.sm),
+            Expanded(child: Text(message, style: KidText.onColour(context).copyWith(fontWeight: FontWeight.w600))),
           ],
         ),
         backgroundColor: color,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(KidRadius.control)),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -182,6 +220,56 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     await _loadAll();
   }
 
+  /// THE EXERCISE VERB, WHICH THIS APP HAD NO WAY TO SPEAK.
+  ///
+  /// `FamilyGrowthApi.logActivity` has existed since Sprint 16.4 with **zero
+  /// call sites** — the health card above has always RENDERED the activity row
+  /// («25/30 دقيقة») from `/self/health/progress`, so a child could watch a bar
+  /// that nothing in their app could ever move. `POST
+  /// /life-intelligence/self/health/activity-logs` is a real, guarded route
+  /// (`@ChildSurface`, `DeviceJwtAuthGuard`) and this is its first caller.
+  ///
+  /// THE THREE VALUES AND WHY EACH IS WHAT IT IS:
+  ///   * `activityType: 'exercise'` — a wire value, never rendered. `LogActivityDto`
+  ///     types it as a free `@IsString() @Length(1, 50)`, so there is no enum to
+  ///     leak to a child even by accident.
+  ///   * `socialContext: 'SOLO'` — the honest answer for a button a child taps
+  ///     alone on their own phone. The DTO's other two values (`GROUP`, `TEAM`)
+  ///     describe something this app cannot observe, so it does not claim them.
+  ///   * `durationMinutes: 20` — a fixed amount NAMED ON THE BUTTON
+  ///     («سجّل ٢٠ دقيقة»), exactly like the 250 ml water button beside it. The
+  ///     app measures nothing here and the label does not pretend it did.
+  ///
+  /// The DATE is sent because the DTO requires an ISO string, and it decides
+  /// nothing: the route passes `'DEVICE'` as the actor and the engine discards
+  /// a device's date, deriving the day server-side. That is PC-B-003 — a child
+  /// could otherwise back-fill a month of exercise they never did and collect
+  /// the streak for it — and this client must not look as though it has an
+  /// opinion about which day its own log lands on.
+  Future<void> _logActivity() async {
+    try {
+      final now = DateTime.now();
+      final dateStr =
+          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      await ref.read(familyGrowthApiProvider).logActivity(
+            date: dateStr,
+            activityType: 'exercise',
+            durationMinutes: 20,
+            socialContext: 'SOLO',
+          );
+      _celebrate(
+        ref.read(localeControllerProvider.notifier).t('myGrowth.activityDone'),
+        KidTheme.healthAccent,
+      );
+    } catch (_) {
+      // Best-effort, same as the water, habit, faith and study taps beside it:
+      // a single low-stakes retry-safe log is not worth an error page, and the
+      // `_loadAll()` below re-reads the server's own numbers either way, so a
+      // failed log simply leaves the bar where it was.
+    }
+    await _loadAll();
+  }
+
   /// CLOSES A REAL GAP: the missing UI consumer for SmartTaskEngineService
   /// (context-aware suggestions, now server-computed after fixing a
   /// real backend design flaw). ACCEPTED is a real commitment
@@ -210,18 +298,18 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
           appBar: AppBar(title: Text(t('myGrowth.title'))),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: _logWater,
-            icon: const Text('\u{1F4A7}', style: TextStyle(fontSize: 20)),
+            icon: const Icon(Icons.water_drop_rounded, size: KidSize.iconSm),
             label: Text(t('myGrowth.logWater')),
           ),
-          body: _errorMessage != null
-              ? _buildFriendlyError(t)
+          body: _failure != null
+              ? _buildFriendlyError(t, localeController.isRtl)
               : (_habits == null || _practices == null || _messages == null)
-                  ? const Center(child: CircularProgressIndicator(color: KidTheme.skyBlue))
+                  ? Center(child: KidLoadingState(label: t('common.loading')))
                   : RefreshIndicator(
                       color: KidTheme.skyBlue,
                       onRefresh: _loadAll,
                       child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                        padding: const EdgeInsetsDirectional.fromSTEB(KidSpace.lg, KidSpace.sm, KidSpace.lg, 96),
                         children: [
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
@@ -230,12 +318,23 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                                 child: DailyProgressRing(
                                   completed: _completedToday,
                                   total: _totalTasks,
-                                  childName: _childName,
+                                  // The ring used to hold these five
+                                  // sentences as English literals. They are
+                                  // resolved here, where `t` lives.
+                                  greeting: _totalTasks > 0 && _completedToday >= _totalTasks
+                                      ? t('myGrowth.ringGreetingAllDone', options: {'name': _childName})
+                                      : t('myGrowth.ringGreeting', options: {'name': _childName}),
+                                  encouragement: _totalTasks > 0 && _completedToday >= _totalTasks
+                                      ? t('myGrowth.ringAllDone')
+                                      : _totalTasks > 0
+                                          ? t('myGrowth.ringKeepGoing')
+                                          : t('myGrowth.ringNothingYet'),
+                                  allDoneSemanticLabel: t('myGrowth.ringAllDoneLabel'),
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: KidSpace.sm),
                           Align(
                             alignment: Alignment.center,
                             child: SparkyMascot(
@@ -245,13 +344,13 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                               size: 64,
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: KidSpace.lg),
                           // Sprint 16.4 — CLOSES A REAL GAP: a compact coins/XP
                           // summary, real data only (never rendered if
                           // _rewardsAccount hasn't loaded — no placeholder numbers).
                           if (_rewardsAccount != null) ...[
                             _RewardsSummaryChip(account: _rewardsAccount!, t: t),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: KidSpace.lg),
                           ],
                           // Sprint 16.4 continuation — CLOSES A REAL GAP: Coaching
                           // had zero Child App representation before this.
@@ -261,7 +360,7 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                           // placeholder message).
                           if (_coachingTips != null && _coachingTips!.isNotEmpty) ...[
                             ..._coachingTips!.map((tip) => _CoachingTipCard(tip: tip as Map<String, dynamic>)),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: KidSpace.lg),
                           ],
                           // Sprint continuation — CLOSES A REAL GAP: SmartTaskEngineService
                           // had zero UI consumer. Only SUGGESTED tasks shown — an
@@ -277,31 +376,48 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                                       onAccept: () => _decideSmartTask(task['id'] as String, 'ACCEPTED'),
                                       onDismiss: () => _decideSmartTask(task['id'] as String, 'DISMISSED'),
                                     )),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: KidSpace.lg),
                           ],
-                          if (_messages!.isNotEmpty) ...[
-                            _SectionHeader(emoji: '\u{1F48C}', title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
+                          // THE INBOX ALWAYS HAS A HEADER, AND THAT IS A FIX.
+                          //
+                          // This section used to render only when a message
+                          // existed, so an empty inbox was not an empty inbox —
+                          // it was NO inbox: no «رسايل» header, no line, nothing
+                          // on the screen at all. `ChildDeepLinkRouter` sends
+                          // every `notifications` deep link here precisely
+                          // BECAUSE this section is the child's inbox, so a tap
+                          // on a notification whose message had not landed yet
+                          // opened a screen with no trace of what was tapped.
+                          // Habits and faith below have always said «لسه مفيش»
+                          // when they are empty; the inbox now does too.
+                          _SectionHeader(icon: Icons.mail_rounded, title: t('myGrowth.messages'), color: KidTheme.messagesAccent),
+                          if (_messages!.isEmpty)
+                            _EmptyHint(text: t('myGrowth.noMessagesYet'))
+                          else
                             ..._messages!.map((m) => _MessageCard(message: m as Map<String, dynamic>)),
-                            const SizedBox(height: 24),
-                          ],
+                          const SizedBox(height: KidSpace.xl),
                           // Sprint 16.4 — CLOSES A REAL GAP: Health had zero
                           // Child App representation before this sprint's new
                           // /self/health/progress endpoint. Best-effort — the
                           // whole card is simply absent if the fetch failed,
                           // never a fake/zero placeholder.
                           if (_healthProgress != null) ...[
-                            _SectionHeader(emoji: '\u{1F4AA}', title: t('myGrowth.healthTitle'), color: KidTheme.healthAccent),
-                            _HealthProgressCard(progress: _healthProgress!, t: t),
-                            const SizedBox(height: 24),
+                            _SectionHeader(icon: Icons.favorite_rounded, title: t('myGrowth.healthTitle'), color: KidTheme.healthAccent),
+                            _HealthProgressCard(
+                              progress: _healthProgress!,
+                              t: t,
+                              onLogActivity: _logActivity,
+                            ),
+                            const SizedBox(height: KidSpace.xl),
                           ],
                           // Sprint 16.4 — CLOSES A REAL GAP: Education had zero
                           // Child App representation before this sprint.
                           if (_learningProgress != null) ...[
-                            _SectionHeader(emoji: '\u{1F4DA}', title: t('myGrowth.learningTitle'), color: KidTheme.messagesAccent),
+                            _SectionHeader(icon: Icons.menu_book_rounded, title: t('myGrowth.learningTitle'), color: KidTheme.messagesAccent),
                             _LearningProgressCard(progress: _learningProgress!, t: t, onLogSession: _logStudySession),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: KidSpace.xl),
                           ],
-                          _SectionHeader(emoji: '\u{2B50}', title: t('myGrowth.myHabits'), color: KidTheme.habitsAccent),
+                          _SectionHeader(icon: Icons.check_circle_rounded, title: t('myGrowth.myHabits'), color: KidTheme.habitsAccent),
                           if (_habits!.isEmpty) _EmptyHint(text: t('myGrowth.noHabitsYet')),
                           ..._habits!.map(
                             (h) => _TaskCard(
@@ -313,8 +429,8 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
                               onDone: () => _completeHabit(h['id'] as String, h['title'] as String? ?? 'habit'),
                             ),
                           ),
-                          const SizedBox(height: 24),
-                          _SectionHeader(emoji: '\u{1F54C}', title: t('myGrowth.faith'), color: KidTheme.faithAccent),
+                          const SizedBox(height: KidSpace.xl),
+                          _SectionHeader(icon: Icons.mosque_rounded, title: t('myGrowth.faith'), color: KidTheme.faithAccent),
                           if (_practices!.isEmpty) _EmptyHint(text: t('myGrowth.noPracticesYet')),
                           ..._practices!.map(
                             (p) => _TaskCard(
@@ -333,33 +449,24 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
     );
   }
 
-  Widget _buildFriendlyError(String Function(String, {int? count, Map<String, Object>? options}) t) {
+  /// The chrome line stays this screen's; the EXPLANATION is the server's.
+  ///
+  /// `KidErrorState` keeps Sparky and the warm framing this widget already
+  /// had, and adds the one thing it was missing: `failure.displayFor(arabic:)`
+  /// — the Arabic sentence the server wrote for this exact failure, which
+  /// used to be discarded in favour of a fixed «ياااه! حاجة ما حمّلتش.».
+  Widget _buildFriendlyError(
+    String Function(String, {int? count, Map<String, Object>? options}) t,
+    bool arabic,
+  ) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SparkyMascot(mood: SparkyMood.neutral, size: 72),
-            const SizedBox(height: 16),
-            Text(
-              t('myGrowth.loadError'),
-              style: Theme.of(context).textTheme.titleLarge,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              t('myGrowth.tryAgainPrompt'),
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: _loadAll,
-              icon: const Icon(Icons.refresh_rounded),
-              label: Text(t('myGrowth.tryAgain')),
-            ),
-          ],
+      child: SingleChildScrollView(
+        child: KidErrorState(
+          failure: _failure!,
+          title: t('myGrowth.loadError'),
+          retryLabel: t('myGrowth.tryAgain'),
+          arabic: arabic,
+          onRetry: _loadAll,
         ),
       ),
     );
@@ -367,16 +474,20 @@ class _MyGrowthScreenState extends ConsumerState<MyGrowthScreen> {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.emoji, required this.title, required this.color});
+  const _SectionHeader({required this.icon, required this.title, required this.color});
 
-  final String emoji;
+  /// WAS a `String emoji`. An emoji is drawn by whatever emoji font the
+  /// device happens to ship; a Material glyph is inside the APK, renders
+  /// identically on every phone in this product's market, and takes the
+  /// section's own accent colour instead of its own.
+  final IconData icon;
   final String title;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10, top: 4),
+      padding: const EdgeInsets.only(bottom: KidSpace.md, top: KidSpace.xs),
       child: Row(
         children: [
           Container(
@@ -384,9 +495,9 @@ class _SectionHeader extends StatelessWidget {
             height: 36,
             decoration: BoxDecoration(color: color.withOpacity(0.18), shape: BoxShape.circle),
             alignment: Alignment.center,
-            child: Text(emoji, style: const TextStyle(fontSize: 18)),
+            child: Icon(icon, size: KidSize.iconSm, color: color),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: KidSpace.md),
           Text(title, style: Theme.of(context).textTheme.headlineMedium),
         ],
       ),
@@ -401,7 +512,7 @@ class _EmptyHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: KidSpace.md),
       child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
     );
   }
@@ -423,27 +534,23 @@ class _CoachingTipCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
+      padding: const EdgeInsets.all(KidSpace.md),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.sage500.withOpacity(0.18), KidTheme.sage500.withOpacity(0.06)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(18),
+        gradient: KidGradient.tint(KidTheme.habitsAccent),
+        borderRadius: BorderRadius.circular(KidRadius.control),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('\u{1F31F}', style: TextStyle(fontSize: 20)),
-          const SizedBox(width: 10),
+          const Icon(Icons.auto_awesome_rounded, size: KidSize.iconSm, color: KidTheme.habitsAccent),
+          const SizedBox(width: KidSpace.md),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(tip['title'] as String? ?? '', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
+                const SizedBox(height: KidSpace.xs),
                 Text(tip['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyMedium),
               ],
             ),
@@ -476,27 +583,23 @@ class _SmartTaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
+      padding: const EdgeInsets.all(KidSpace.md),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.skyBlue.withOpacity(0.18), KidTheme.skyBlue.withOpacity(0.06)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(18),
+        gradient: KidGradient.tint(KidTheme.skyBlue),
+        borderRadius: BorderRadius.circular(KidRadius.control),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Text('\u{1F4A1}', style: TextStyle(fontSize: 18)),
-              const SizedBox(width: 8),
+              const Icon(Icons.lightbulb_rounded, size: KidSize.iconSm, color: KidTheme.skyBlue),
+              const SizedBox(width: KidSpace.sm),
               Expanded(child: Text(task['title'] as String? ?? '', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700))),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: KidSpace.md),
           Row(
             children: [
               Expanded(
@@ -505,7 +608,7 @@ class _SmartTaskCard extends StatelessWidget {
                   child: Text(dismissLabel),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: KidSpace.sm),
               Expanded(
                 child: FilledButton(
                   onPressed: onAccept,
@@ -529,34 +632,34 @@ class _RewardsSummaryChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+      padding: const EdgeInsets.symmetric(vertical: KidSpace.md, horizontal: KidSpace.lg),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.sunshineYellow.withOpacity(0.25), KidTheme.coral.withOpacity(0.15)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        gradient: KidGradient.duo(KidTheme.sunshineYellow, KidTheme.coral),
+        borderRadius: BorderRadius.circular(KidRadius.card),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _rewardStat('\u{1FA99}', '${account['coins'] ?? 0}', t('myGrowth.coins')),
+          _rewardStat(context, Icons.monetization_on_rounded, '${account['coins'] ?? 0}', t('myGrowth.coins'), KidTheme.sunshineYellow),
           Container(width: 1, height: 32, color: KidTheme.mutedInk.withOpacity(0.2)),
-          _rewardStat('\u2B50', '${account['xp'] ?? 0}', 'XP'),
+          _rewardStat(context, Icons.star_rounded, '${account['xp'] ?? 0}', t('myGrowth.xp'), KidTheme.berryPurple),
           Container(width: 1, height: 32, color: KidTheme.mutedInk.withOpacity(0.2)),
-          _rewardStat('\u{1F3C6}', '${account['level'] ?? 1}', t('myGrowth.level')),
+          _rewardStat(context, Icons.emoji_events_rounded, '${account['level'] ?? 1}', t('myGrowth.level'), KidTheme.coral),
         ],
       ),
     );
   }
 
-  Widget _rewardStat(String emoji, String value, String label) {
+  Widget _rewardStat(BuildContext context, IconData icon, String value, String label, Color colour) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(emoji, style: const TextStyle(fontSize: 20)),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-        Text(label, style: const TextStyle(fontSize: 11, color: KidTheme.mutedInk)),
+        Icon(icon, size: KidSize.iconSm, color: colour),
+        KidSpace.gapXs,
+        // Was `fontSize: 16, w700` and `fontSize: 11` — two sizes that are
+        // on no scale in this app.
+        Text(value, style: KidText.stat(context)),
+        Text(label, style: KidText.caption(context)),
       ],
     );
   }
@@ -567,61 +670,81 @@ class _RewardsSummaryChip extends StatelessWidget {
 /// REAL backend data (getDailyProgress, Sprint 15/16.1/16.3) —
 /// never a fabricated number.
 class _HealthProgressCard extends StatelessWidget {
-  const _HealthProgressCard({required this.progress, required this.t});
+  const _HealthProgressCard({
+    required this.progress,
+    required this.t,
+    required this.onLogActivity,
+  });
   final Map<String, dynamic> progress;
   final String Function(String, {int? count, Map<String, Object>? options}) t;
+
+  /// The activity row's missing verb. See [_MyGrowthScreenState._logActivity].
+  final VoidCallback onLogActivity;
 
   @override
   Widget build(BuildContext context) {
     final hydration = progress['hydration'] as Map<String, dynamic>?;
     final activity = progress['activity'] as Map<String, dynamic>?;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [
-        BoxShadow(color: KidTheme.healthAccent.withOpacity(0.10), blurRadius: 14, offset: const Offset(0, 5)),
-      ]),
+    // WAS a hand-built `Container` with its own white fill, its own radius
+    // and its own shadow, holding a private `_progressRow` that drew an
+    // emoji, a bar and — for "you did it" — the single character
+    // U+2705. Meaning stated only in an emoji font is meaning a cheap
+    // Android phone can render as a grey outline or a tofu box, and it is
+    // also colour-only once the bar turns green. `KidProgressRow` states
+    // it three ways: a Material glyph that ships inside the app, the
+    // colour, and a localised label a screen reader can read out.
+    return KidCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (hydration != null)
-            _progressRow('\u{1F4A7}', t('myGrowth.waterLabel'), hydration['actualMl'] as int? ?? 0, hydration['targetMl'] as int? ?? 1, hydration['isAchieved'] as bool? ?? false, 'ml'),
-          if (hydration != null && activity != null) const SizedBox(height: 12),
-          if (activity != null)
-            _progressRow('\u{1F3C3}', t('myGrowth.activityLabel'), activity['totalMinutes'] as int? ?? 0, activity['targetMinutes'] as int? ?? 1, activity['isAchieved'] as bool? ?? false, t('myGrowth.minutesUnit')),
+            KidProgressRow(
+              icon: Icons.water_drop_rounded,
+              label: t('myGrowth.waterLabel'),
+              valueLabel: '${hydration['actualMl'] as int? ?? 0}/${hydration['targetMl'] as int? ?? 1} ${t('myGrowth.millilitresUnit')}',
+              fraction: _fraction(hydration['actualMl'], hydration['targetMl']),
+              achieved: hydration['isAchieved'] as bool? ?? false,
+              achievedSemanticLabel: t('myGrowth.achievedLabel'),
+              color: KidTheme.healthAccent,
+            ),
+          if (activity != null) ...[
+            KidProgressRow(
+              icon: Icons.directions_run_rounded,
+              label: t('myGrowth.activityLabel'),
+              valueLabel: '${activity['totalMinutes'] as int? ?? 0}/${activity['targetMinutes'] as int? ?? 1} ${t('myGrowth.minutesUnit')}',
+              fraction: _fraction(activity['totalMinutes'], activity['targetMinutes']),
+              achieved: activity['isAchieved'] as bool? ?? false,
+              achievedSemanticLabel: t('myGrowth.achievedLabel'),
+              color: KidTheme.healthAccent,
+            ),
+            // The row above was a read-only bar in an app with no way to move
+            // it. Placed INSIDE the `activity != null` branch on purpose: with
+            // no activity target from the server there is no bar to move, and a
+            // button that logs into nothing visible is a dead tap.
+            KidSpace.gapSm,
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: FilledButton.icon(
+                onPressed: onLogActivity,
+                style: FilledButton.styleFrom(
+                  backgroundColor: KidTheme.healthAccent,
+                  minimumSize: const Size(96, KidSize.touchTarget),
+                ),
+                icon: const Icon(Icons.directions_run_rounded, size: KidSize.iconSm),
+                label: Text(t('myGrowth.logActivity')),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _progressRow(String emoji, String label, int actual, int target, bool achieved, String unit) {
-    return Row(
-      children: [
-        Text(emoji, style: const TextStyle(fontSize: 22)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 4),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: LinearProgressIndicator(
-                  value: target > 0 ? (actual / target).clamp(0.0, 1.0) : 0,
-                  minHeight: 8,
-                  backgroundColor: KidTheme.mutedInk.withOpacity(0.1),
-                  valueColor: AlwaysStoppedAnimation(achieved ? KidTheme.sage500 : KidTheme.healthAccent),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 10),
-        Text('$actual/$target $unit', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-        if (achieved) const Padding(padding: EdgeInsets.only(left: 6), child: Text('\u2705')),
-      ],
-    );
+  static double _fraction(Object? actual, Object? target) {
+    final a = actual is int ? actual : 0;
+    final b = target is int ? target : 0;
+    return b > 0 ? (a / b) : 0;
   }
 }
 
@@ -640,8 +763,8 @@ class _LearningProgressCard extends StatelessWidget {
     final totalSessions = progress['totalSessions'] as int? ?? 0;
 
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [
+      padding: const EdgeInsets.all(KidSpace.lg),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(KidRadius.card), boxShadow: [
         BoxShadow(color: KidTheme.messagesAccent.withOpacity(0.10), blurRadius: 14, offset: const Offset(0, 5)),
       ]),
       child: Row(
@@ -652,10 +775,12 @@ class _LearningProgressCard extends StatelessWidget {
               children: [
                 Text(
                   streakDays > 0 ? t('myGrowth.learningStreak', options: {'count': streakDays}) : t('myGrowth.learningNoStreak'),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  style: KidText.cardTitle(context),
                 ),
-                const SizedBox(height: 4),
-                Text(t('myGrowth.sessionsCount', options: {'count': totalSessions}), style: const TextStyle(fontSize: 12, color: KidTheme.mutedInk)),
+                KidSpace.gapXs,
+                // Was `fontSize: 12` — off the scale, and with no line
+                // height, which is what clips an Arabic descender.
+                Text(t('myGrowth.sessionsCount', options: {'count': totalSessions}), style: KidText.caption(context)),
               ],
             ),
           ),
@@ -686,20 +811,20 @@ class _TaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
       decoration: BoxDecoration(
         color: isDone ? color.withOpacity(0.06) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(KidRadius.card),
         boxShadow: isDone
             ? null
             : [BoxShadow(color: color.withOpacity(0.12), blurRadius: 16, offset: const Offset(0, 6))],
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+        padding: const EdgeInsetsDirectional.fromSTEB(KidSpace.lg, KidSpace.md, KidSpace.md, KidSpace.md),
         child: Row(
           children: [
-            Container(width: 6, height: 40, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
-            const SizedBox(width: 14),
+            Container(width: 6, height: 40, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(KidRadius.sm))),
+            const SizedBox(width: KidSpace.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -736,47 +861,107 @@ class _TaskCard extends StatelessWidget {
   }
 }
 
-class _MessageCard extends StatelessWidget {
+/// ONE MESSAGE, AND THE TAP THAT NOW LANDS SOMEWHERE.
+///
+/// F1 — THE IN-APP HALF OF `abny://`. This card was inert: it rendered a
+/// server-authored sentence, the screen acknowledged it on load, and a tap did
+/// nothing at all. The server now resolves a destination for every
+/// notification it sends and delivers it under `deepLink` (see
+/// `core/routing/deep_link.dart`), so a row that carries one is now openable,
+/// and it opens through `ChildDeepLinkRouter` — the same resolver a future
+/// push handler will call, never a second one.
+///
+/// AND THE ROW NOW CARRIES ONE. `/life-intelligence/self/messages` serves
+/// `data` on every message — `{"deepLink": "abny://<surface>"}` — written by the
+/// approval-gated child branch of the delivery pipeline and narrowed on the
+/// server to that single key, so this row carries a DESTINATION and never a
+/// `familyId`, a `childId`, a `deviceId` or a token. Nothing here parses it:
+/// `deepLinkFromNotification` reads the one key and `ChildDeepLinkRouter`
+/// decides where it lands, because a client that decided would be a second
+/// opinion nobody can audit.
+///
+/// TAPPABLE EXACTLY WHEN THERE IS SOMEWHERE TO GO, and this is deliberate
+/// rather than defensive. `data` is `null` on every message written before that
+/// field existed and on every message a PARENT typed — neither names a screen —
+/// and NOTHING BACKFILLS A GUESS: such a card stays exactly as inert as it
+/// looks. A card that offered a tap and then did nothing, or that quietly
+/// re-opened the screen the child is already on, would be the same dead end in
+/// a nicer coat.
+///
+/// The message's own words are server-authored and rendered VERBATIM: they
+/// passed the safety engine at this child's own age band, and nothing here
+/// rewrites, keys or truncates them.
+class _MessageCard extends ConsumerWidget {
   const _MessageCard({required this.message});
   final Map<String, dynamic> message;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // `t` IS RESOLVED HERE, and it was not resolved anywhere before this line.
+    // The «جديد» badge below called `t('myGrowth.newLabel')` in a class that
+    // has no `t` in scope and no enclosing one to inherit — a bare undefined
+    // identifier, which is a COMPILE error, not a runtime one: this file could
+    // not be built, and neither could the app. `verify_l10n_parity` reported
+    // the key as resolving because the key does exist in both locales; what it
+    // does not do, and does not claim to do, is type-check the call site.
+    ref.watch(localeControllerProvider);
+    final t = ref.watch(localeControllerProvider.notifier).t;
     final isNew = message['acknowledgedAt'] == null;
+    final link = deepLinkFromNotification(message);
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: KidSpace.md),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [KidTheme.messagesAccent.withOpacity(0.16), KidTheme.messagesAccent.withOpacity(0.06)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        gradient: KidGradient.tint(KidTheme.messagesAccent),
+        borderRadius: BorderRadius.circular(KidRadius.card),
         border: isNew ? Border.all(color: KidTheme.messagesAccent, width: 1.5) : null,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('\u{1F48C}', style: TextStyle(fontSize: 24)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+      // Transparency, so the ripple draws over the gradient above instead of
+      // under it.
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(KidRadius.card),
+          onTap: link == null
+              ? null
+              : () => ChildDeepLinkRouter.followLink(context, ref, link),
+          child: Padding(
+            padding: const EdgeInsets.all(KidSpace.lg),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.mail_rounded, size: KidSize.iconMd, color: KidTheme.messagesAccent),
+                const SizedBox(width: KidSpace.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(child: Text(message['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium)),
-                      if (isNew) Container(width: 8, height: 8, margin: const EdgeInsets.only(left: 6), decoration: const BoxDecoration(color: KidTheme.messagesAccent, shape: BoxShape.circle)),
+                      Row(
+                        children: [
+                          Expanded(child: Text(message['title'] as String? ?? '', style: Theme.of(context).textTheme.titleMedium)),
+                          // WAS an 8px coloured dot and nothing else —
+                          // "this one is new" stated in hue alone, which a
+                          // colour-blind child and a screen reader both miss.
+                          // A badge says it in words.
+                          if (isNew) ...[
+                            KidSpace.hGapSm,
+                            KidBadge(label: t('myGrowth.newLabel'), color: KidTheme.messagesAccent),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: KidSpace.xs),
+                      Text(message['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyLarge),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(message['body'] as String? ?? '', style: Theme.of(context).textTheme.bodyLarge),
-                ],
-              ),
+                ),
+                // The one affordance, and only when the tap leads somewhere.
+                // The hand-written `isRtl ? ... : ...` mirror is now a token,
+                // so every chevron in the app answers to one rule.
+                if (link != null)
+                  KidIcons.disclosure(context, color: KidTheme.messagesAccent),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

@@ -23,16 +23,20 @@ import { RegistrationContext } from '../decorators/registration-context.decorato
 import { ReportCapabilitiesDto } from '../dto/report-capabilities.dto';
 import { HeartbeatDto } from '../dto/heartbeat.dto';
 import { RegisterParentDevicePushTokenDto } from '../dto/register-parent-device-push-token.dto';
+import { RegisterChildDevicePushTokenDto } from '../dto/register-child-device-push-token.dto';
 import { JwtAuthGuard, DeviceJwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
 import type { IConsumedRegistrationToken } from '../../domain/registration-token.types';
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
+import { ChildSurface, ParentSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('pairing')
 export class PairingController {
   constructor(private readonly pairingOrchestrator: PairingOrchestratorService) {}
 
   @Post('invite')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
@@ -41,6 +45,10 @@ export class PairingController {
   }
 
   @Post('accept')
+  @SystemRoute(
+    'AUTH_BOOTSTRAP',
+    'A child device redeems a one-time pairing code before it holds any token; the family is resolved FROM the code, server-side.',
+  )
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   accept(@Body() dto: AcceptDto) {
@@ -48,6 +56,10 @@ export class PairingController {
   }
 
   @Post('device/register')
+  @SystemRoute(
+    'AUTH_BOOTSTRAP',
+    'RegistrationTokenGuard supplies childId/familyId from a server-issued registration token, not from a tenant access token.',
+  )
   @UseGuards(RegistrationTokenGuard)
   @HttpCode(HttpStatus.CREATED)
   registerDevice(
@@ -58,6 +70,7 @@ export class PairingController {
   }
 
   @Post('verify')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   verify(@Body() dto: VerifyDto, @CurrentUser() device: IJwtPayload) {
@@ -68,6 +81,7 @@ export class PairingController {
   }
 
   @Post('activate')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   activate(@Body() dto: ActivateDto, @CurrentUser() user: IJwtPayload) {
@@ -80,6 +94,7 @@ export class PairingController {
   }
 
   @Post('reject')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async reject(@Body() dto: RejectDto, @CurrentUser() user: IJwtPayload): Promise<void> {
@@ -87,6 +102,7 @@ export class PairingController {
   }
 
   @Post('revoke')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async revoke(@Body() dto: RevokeDto, @CurrentUser() user: IJwtPayload): Promise<void> {
@@ -94,6 +110,7 @@ export class PairingController {
   }
 
   @Get('device/:deviceId/status')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   getStatus(@Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
     return this.pairingOrchestrator.getStatus(deviceId, user.familyId!);
@@ -105,6 +122,7 @@ export class PairingController {
    * token rotates (the Parent App's own responsibility to detect and
    * re-call this, standard FCM token-refresh handling). */
   @Post('parent-device/push-token')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async registerParentDevicePushToken(
@@ -114,7 +132,36 @@ export class PairingController {
     await this.pairingOrchestrator.registerParentDevicePushToken(user.sub, user.familyId!, dto.platform, dto.pushToken);
   }
 
+  /**
+   * THE CHILD'S PUSH TOKEN — the route whose absence meant the child half of
+   * the Smart Notification Engine could never deliver anything.
+   *
+   * SECURITY SHAPE, copied from `ChildAchievementsController` rather than
+   * invented here:
+   *   - `DeviceJwtAuthGuard` (the `'device-jwt'` Passport strategy), per route.
+   *     A parent token cannot reach this and this device token cannot reach
+   *     `parent-device/push-token` above — two strategies, not one role check.
+   *   - the device is `device.sub` OUT OF THE VERIFIED TOKEN. The body carries
+   *     the token string and nothing else (see the DTO), so there is no id for
+   *     a child to substitute and no family for it to point at.
+   *   - idempotent: the service updates one row by primary key, so re-registering
+   *     after every `onTokenRefresh` — which is what the client is supposed to do
+   *     — writes the same value and never creates a second row.
+   */
+  @Post('device/push-token')
+  @ChildSurface()
+  @UseGuards(DeviceJwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async registerChildDevicePushToken(
+    @Body() dto: RegisterChildDevicePushTokenDto,
+    @CurrentUser() device: IJwtPayload,
+  ): Promise<void> {
+    await this.pairingOrchestrator.registerChildDevicePushToken(device.sub, dto.pushToken);
+  }
+
   @Post('device/heartbeat')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @Throttle({ default: { limit: 120, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -123,6 +170,7 @@ export class PairingController {
   }
 
   @Post('device/capabilities')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async reportCapabilities(
@@ -133,24 +181,28 @@ export class PairingController {
   }
 
   @Get('device/policy')
+  @ChildSurface()
   @UseGuards(DeviceJwtAuthGuard)
   getPolicySync(@CurrentUser() device: IJwtPayload) {
     return this.pairingOrchestrator.getPolicySync(device.sub);
   }
 
   @Get('devices')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   listDevices(@CurrentUser() user: IJwtPayload) {
     return this.pairingOrchestrator.listFamilyDevices(user.familyId!);
   }
 
   @Get('device/:deviceId/timeline')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   getTimeline(@Param('deviceId') deviceId: string, @CurrentUser() user: IJwtPayload) {
     return this.pairingOrchestrator.getTimeline(deviceId, user.familyId!);
   }
 
   @Get('alerts')
+  @ParentSurface()
   @UseGuards(JwtAuthGuard)
   listAlerts(@CurrentUser() user: IJwtPayload) {
     return this.pairingOrchestrator.listAlerts(user.sub);

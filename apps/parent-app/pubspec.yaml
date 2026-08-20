@@ -1,7 +1,15 @@
 name: parent_app
 description: AI Family Digital Coach — Parent Application (Sprint 10 Foundation)
 publish_to: "none"
-version: 0.1.0
+# PHASE G — THE SINGLE SOURCE OF TRUTH FOR BOTH ANDROID VERSION FIELDS.
+# `<name>+<code>`: `0.1.0` becomes versionName, `1` becomes versionCode.
+# `flutter build` writes both halves into android/local.properties, which
+# android/app/build.gradle reads — nothing else in this repository declares a
+# version. The `+1` was previously ABSENT, so versionCode fell through to the
+# hardcoded `1` in build.gradle; that fallback is now a hard failure for any
+# release build, and CI overrides the code with a monotonic run number via
+# ORG_GRADLE_PROJECT_abnyVersionCode.
+version: 0.1.0+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -18,6 +26,11 @@ dependencies:
   # mechanism this SDK package provides.
   flutter_localizations:
     sdk: flutter
+  # CLOSES audit MA-016 (language choice was lost on every restart).
+  # Deliberately NOT flutter_secure_storage: the selected language is a
+  # UI preference, not a secret, and the secure store is reserved for
+  # the user's session tokens.
+  shared_preferences: ^2.2.3
   # Same choice as apps/child-app, for the same reason: explicit ports,
   # explicit providers, no hidden service locator.
   flutter_riverpod: ^2.5.1

@@ -1,4 +1,4 @@
-import '../../pairing/api/pairing_api.dart';
+import '../../../features/pairing/api/pairing_api.dart';
 import '../../policy/application/policy_cache_service.dart';
 import '../../policy/contracts/cached_policy.dart';
 import '../../../core/platform/agent_channel.dart';

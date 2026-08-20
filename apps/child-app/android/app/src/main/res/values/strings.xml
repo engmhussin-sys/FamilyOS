@@ -1,7 +1,70 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    English FALLBACK strings for the native (Kotlin) layer.
+
+    Arabic is the product's first language (CONTEXT §1) and lives in
+    res/values-ar/strings.xml. This file exists so a device set to any
+    non-Arabic locale still gets coherent copy, and so lint can resolve
+    every @string reference.
+
+    TONE RULE (CONTEXT §3 principle 7 — NO PUNITIVE UX):
+    never "blocked", "forbidden", "you exceeded". The child is being
+    redirected and coached, not punished. Every string below is written
+    to be readable out loud to a 6-year-old without shaming them.
+-->
 <resources>
-    <string name="accessibility_service_description">
-        Lets AI Family Digital Coach know which app is currently open, so it can apply the
-        screen time rules a parent has set. It does not read anything on the screen.
-    </string>
+
+    <!-- Launcher / app identity -->
+    <string name="app_name">ABNY — Grow Together</string>
+
+    <!-- ==================================================================
+         Overlay (OverlayManager.kt) — the single friction point in the
+         entire product. This is the screen that decides whether the child
+         tries to uninstall the app or not.
+         ================================================================== -->
+    <string name="overlay_break_heading">Time for a break</string>
+    <string name="overlay_action_go_home">Back to home screen</string>
+
+    <!-- Reason lines, resolved from EnforcementResult.reasonRes.
+         Each one is a complete, self-contained coaching sentence — the
+         overlay shows the heading + this line, nothing else. -->
+    <string name="enforcement_reason_not_in_plan">This app is not part of the plan for today. Let us find something else fun.</string>
+    <string name="enforcement_reason_bedtime">Bedtime has started. Sleep well so tomorrow is even better.</string>
+    <string name="enforcement_reason_daily_limit">Screen time is over for now. Take a little break and get back to your goal.</string>
+    <string name="enforcement_reason_within_policy">Everything is fine.</string>
+
+    <!-- Gentle heads-up before the limit is reached. The resource is in
+         place and localised; the WARN decision path that would show it is
+         deliberately NOT introduced in this change (see report §risks). -->
+    <plurals name="overlay_minutes_remaining">
+        <item quantity="one">1 minute left</item>
+        <item quantity="other">%1$d minutes left</item>
+    </plurals>
+
+    <!-- ==================================================================
+         Ongoing foreground-service notification
+         (ChildGuardForegroundService.kt)
+         ================================================================== -->
+    <string name="notif_channel_protection_status">Protection status</string>
+    <string name="notif_protection_active_title">Protection is on</string>
+    <string name="notif_protection_active_text">Everything is working normally.</string>
+    <string name="notif_protection_attention_title">Protection needs attention</string>
+    <string name="notif_protection_attention_text">The accessibility service is off, so the rules are not being applied right now.</string>
+
+    <!-- ==================================================================
+         High-priority runtime alerts (RuntimeAlertNotifier.kt)
+         ================================================================== -->
+    <string name="notif_channel_protection_alerts">Protection alerts</string>
+    <string name="alert_protection_off_title">Protection is off</string>
+    <string name="alert_protection_off_text">The accessibility service was turned off. Tap to turn protection back on.</string>
+
+    <!-- ==================================================================
+         Accessibility service declaration.
+         Shown verbatim in Settings > Accessibility, and read by the Play
+         reviewer. Kept factual and narrow on purpose: it states what is
+         read (the current app name) and what is NOT read (screen content).
+         ================================================================== -->
+    <string name="accessibility_service_label">ABNY screen-time plan</string>
+    <string name="accessibility_service_description">ABNY uses this service for one thing: to know the name of the app that is open right now, so it can apply the screen-time plan a parent set up for this device. It cannot read what is shown on the screen, what is typed, messages, or passwords — the service is declared with canRetrieveWindowContent=false, so the system does not give it that data at all. You can turn it off from this same screen at any time.</string>
+
 </resources>

@@ -26,6 +26,15 @@ generator client {
   // exact base image; "native" is kept so local/non-Alpine
   // development environments are unaffected.
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // F2 (R8, tenant isolation): enables `new PrismaClient({ adapter })`.
+  // Production still runs the default library engine — nothing here changes
+  // that. The flag exists so the tenant-isolation proof suites can open a
+  // REAL connection to PostgreSQL in an environment where the Prisma engine
+  // binary cannot be downloaded (binaries.prisma.sh answers 403), by routing
+  // through @prisma/adapter-pg + the WASM query engine instead. Without it
+  // the constructor rejects the `adapter` option outright and the cross-tenant
+  // probe suite could only ever be CODE VERIFIED, never TESTED.
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -51,6 +60,11 @@ enum FamilyRole {
 
 enum SubscriptionPlan {
   FREE
+  /// PHASE D. CONTEXT §6 names four consumer tiers — Free / Basic / Premium /
+  /// Family — and this enum was missing the second one. ADDED, not renamed:
+  /// `ALTER TYPE ... ADD VALUE` is safe on a table that has rows; a rename is
+  /// not, and 2,476 passing tests depend on the four values below.
+  BASIC
   PREMIUM
   FAMILY
   ENTERPRISE
@@ -60,12 +74,27 @@ enum SubscriptionPlan {
 /// pre-existing SubscriptionPlan enum above (which stays as Family's
 /// cached-current-tier field, same pattern as Device.trustLevel) rather
 /// than renamed/merged, avoiding a breaking change to an already-used field.
+/// PHASE D adds the three lifecycle states the brief names that this database
+/// could not represent. It does NOT rename `TRIALING` -> `TRIAL` or
+/// `CANCELED` -> `CANCELLED`: the brief's vocabulary is owned by
+/// `src/modules/billing/domain/subscription-status.ts`, which holds the ONE
+/// bidirectional mapping and is proven total by test. See the PHASE D section
+/// at the bottom of this file.
 enum SubscriptionStatus {
   TRIALING
   ACTIVE
   PAST_DUE
   CANCELED
   EXPIRED
+  /// PHASE D. The state Fawry makes unavoidable: the customer has a payment
+  /// reference and has not paid yet. NOT entitlement-bearing.
+  PENDING
+  /// PHASE D. Payment failed or the term lapsed, and the household keeps FULL
+  /// access for a configured window (Q17: 7 days) with a non-punitive notice.
+  GRACE_PERIOD
+  /// PHASE D. A completed refund. Terminal, and distinct from CANCELED: money
+  /// went back, so entitlement is revoked immediately rather than at period end.
+  REFUNDED
 }
 
 enum InvoiceStatus {
@@ -88,6 +117,11 @@ enum PaymentProvider {
   /// own docstring.
   APPLE_IAP
   GOOGLE_PLAY
+  /// PHASE D. The Saudi card/mada-capable gateway. CONTEXT §2 names Moyasar
+  /// or Tap; `00-Company-Response.md` Q16 leaves the final pick to two
+  /// commercial offers. The ADAPTER is written against the interface either
+  /// way — see `HUMAN DECISION REQUIRED #4` in the Phase D report.
+  MOYASAR
 }
 
 enum DevicePlatform {
@@ -264,7 +298,14 @@ model User {
   passwordHash    String     @map("password_hash")
   fullName        String     @map("full_name")
   phone           String?
-  locale          String     @default("en")
+  /// PHASE F (`F6-009`, `PF-E-002`). ARABIC, because CONTEXT §1 is a locked
+  /// decision and not a preference: first markets Egypt then Saudi Arabia,
+  /// first language Arabic, real RTL and not a translation. This column is what
+  /// `NotificationContextAssembler.readLocale` reads to choose the column of
+  /// `COPY_CATALOGUE` every sentence a household receives is rendered from, so
+  /// an English default meant English notifications for an Egyptian family that
+  /// simply did not send a `locale` on registration. See migration 0019.
+  locale          String     @default("ar")
   timezone        String     @default("UTC")
   status          UserStatus @default(PENDING_VERIFICATION)
   mfaEnabled      Boolean    @default(false) @map("mfa_enabled")
@@ -297,6 +338,7 @@ model User {
   authoredChildMessages ChildMessage[]
   authoredBroadcasts FamilyBroadcastMessage[]
   supportRequests    SupportRequest[]
+  createdRewardPrograms RewardProgram[]
 
   @@index([status])
   @@map("users")
@@ -309,6 +351,17 @@ model Family {
   id               String            @id @default(uuid()) @db.Uuid
   name             String
   timezone         String            @default("UTC")
+  /// ISO-3166-1 alpha-2, a REAL foreign key to `countries` (migration 0022) —
+  /// so an unsupported market cannot be stored by ANY code path, present or
+  /// future, rather than depending on whichever validator happens to run.
+  /// `countries` is the launch-market catalogue and adding a market is an
+  /// INSERT, not a migration.
+  ///
+  /// NULLABLE because families created before this column exist and there is no
+  /// true value to backfill them with — defaulting them to 'EG' would make the
+  /// growth dashboard report invented market data as measured fact, which is the
+  /// one thing that dashboard's NOT MEASURED discipline exists to prevent.
+  countryCode      String?           @map("country_code") @db.VarChar(2)
   subscriptionPlan SubscriptionPlan  @default(FREE) @map("subscription_plan")
   createdAt        DateTime          @default(now()) @map("created_at")
   updatedAt        DateTime          @updatedAt @map("updated_at")
@@ -324,11 +377,103 @@ model Family {
   challenges         FamilyChallenge[]
   supportRequests    SupportRequest[]
 
+  country  Country? @relation(fields: [countryCode], references: [code], onDelete: Restrict)
+  /// NOTE: `families_country_code_idx` is a PARTIAL index
+  /// (`WHERE country_code IS NOT NULL`) created by migration 0022. Prisma has no
+  /// syntax for a partial index, so it is deliberately ABSENT from this block
+  /// rather than declared as a full index that would not match the database.
+
+  parentalConsents ParentalConsent[]
+  devicePairingEvents DevicePairingEvent[]
+  screenTimePolicies ScreenTimePolicy[]
+  dailyBehavioralSnapshots DailyBehavioralSnapshot[]
+  appUsageLogs AppUsageLog[]
+  appBlockRules AppBlockRule[]
+  locationSafeZones LocationSafeZone[]
+  locationEvents LocationEvent[]
+  aiRiskScores AiRiskScore[]
+  aiAlerts AiAlert[]
+  aiMemoryEntries AiMemoryEntry[]
+  notifications Notification[]
+  notificationDeliveries NotificationDelivery[]
+  notificationDecisions NotificationDecision[]
+  notificationPolicySettings NotificationPolicySetting[]
+  habits Habit[]
+  habitCompletions HabitCompletion[]
+  rewardsAccounts RewardsAccount[]
+  rewardsLedgerEntries RewardsLedgerEntry[]
+  childBadgeAwards ChildBadgeAward[]
+  rewardRedemptions RewardRedemption[]
+  childMessages ChildMessage[]
+  lifeTimelineEvents LifeTimelineEvent[]
+  childDigitalTwinProjections ChildDigitalTwinProjection[]
+  nutritionLogs NutritionLog[]
+  hydrationLogs HydrationLog[]
+  sleepLogs SleepLog[]
+  activityLogs ActivityLog[]
+  physicalMeasurementLogs PhysicalMeasurementLog[]
+  healthScoreDailies HealthScoreDaily[]
+  faithPractices FaithPractice[]
+  faithPracticeLogs FaithPracticeLog[]
+  learningGoals LearningGoal[]
+  learningSessions LearningSession[]
+  learningAssessments LearningAssessment[]
+  smartTasks SmartTask[]
+  familyChallengeParticipations FamilyChallengeParticipation[]
+  deviceRiskAssessments DeviceRiskAssessment[]
+  appCatalogEntries AppCatalogEntry[]
+  invoices Invoice[]
+  auditLogs AuditLog[]
+  aiUsageLogs AiUsageLog[]
+  domainEvents DomainEvent[]
+  outboxMessages OutboxMessage[]
+  consumedMessages ConsumedMessage[]
+
+  // -- F4 (Smart Learning & Reward Engine) --
+  rewardPrograms RewardProgram[]
+  achievementRequests AchievementRequest[]
+  verificationAttempts VerificationAttempt[]
+  screenTimeRewardGrants ScreenTimeRewardGrant[]
+  rewardFulfilments RewardFulfilment[]
+
+  // -- B5 (server-owned quiz bank + evidence upload) --
+  quizQuestions QuizQuestion[]
+  quizAssignments QuizAssignment[]
+  achievementEvidence AchievementEvidence[]
+
+  // -- PHASE C P4 (scheduler): one row per family-scoped job execution. --
+  jobRuns JobRun[]
+
+  // -- PHASE D (commercial subscription & payments) --
+  trial                Trial?
+  providerAccountLinks ProviderAccountLink[]
+  paymentTransactions  PaymentTransaction[]
+  refunds              Refund[]
+  entitlements         Entitlement[]
+  paymentWebhookEvents PaymentWebhookEvent[]
+
+  // -- PHASE D (growth, attribution, referral) --
+  acquisitionAttribution   AcquisitionAttribution?
+  activation               FamilyActivation?
+  referralCode             ReferralCode?
+  referralLinks            ReferralLink[]
+  referralEventsAsReferrer ReferralEvent[]         @relation("ReferrerFamily")
+  referralRewards          ReferralReward[]
+  growthAlerts             GrowthAlert[]
+
   @@map("families")
 }
 
 /// Join table: which Users belong to which Family, and with what role.
 /// Supports co-parenting (two parents, one family) from day one.
+///
+/// PHASE C (A4 SA-005): `role` is no longer a label. It is read by
+/// `assertRoleAllowed()` on every authenticated request (via the signed
+/// `familyRole` JWT claim) and re-read from THIS TABLE, inside the mutating
+/// transaction, by every destructive operation. Migration 0009 adds a PARTIAL
+/// UNIQUE INDEX -- one live OWNER per family -- which Prisma's schema language
+/// cannot express (no `WHERE` on `@@unique`), so it lives in SQL only. Read
+/// 0009_rbac_family_ownership/migration.sql before changing anything here.
 model FamilyMember {
   id        String     @id @default(uuid()) @db.Uuid
   familyId  String     @map("family_id") @db.Uuid
@@ -373,6 +518,8 @@ model Child {
   aiRiskScores        AiRiskScore[]
   aiAlerts            AiAlert[]
   notifications       Notification[]
+  notificationDeliveries NotificationDelivery[]
+  notificationDecisions NotificationDecision[]
   aiMemoryEntries     AiMemoryEntry[]
   habits              Habit[]
   habitCompletions    HabitCompletion[]
@@ -397,6 +544,17 @@ model Child {
   smartTasks          SmartTask[]
   challengeParticipations FamilyChallengeParticipation[]
 
+  // -- F4 (Smart Learning & Reward Engine) --
+  rewardPrograms      RewardProgram[]
+  achievementRequests AchievementRequest[]
+  verificationAttempts VerificationAttempt[]
+  screenTimeRewardGrants ScreenTimeRewardGrant[]
+  rewardFulfilments   RewardFulfilment[]
+
+  // -- B5 (server-owned quiz bank + evidence upload) --
+  quizAssignments     QuizAssignment[]
+  achievementEvidence AchievementEvidence[]
+
   @@index([familyId])
   @@map("children")
 }
@@ -405,6 +563,7 @@ model Child {
 /// No AI/monitoring module is permitted to run for a child unless a matching
 /// row exists here with granted = true and revokedAt = null.
 model ParentalConsent {
+  familyId  String  @map("family_id") @db.Uuid
   id              String      @id @default(uuid()) @db.Uuid
   childId         String      @map("child_id") @db.Uuid
   consentType     ConsentType @map("consent_type")
@@ -418,8 +577,11 @@ model ParentalConsent {
   child         Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   grantedByUser User  @relation("ConsentGrantedBy", fields: [grantedByUserId], references: [id])
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, consentType])
   @@index([childId])
+  @@index([familyId])
   @@map("parental_consents")
 }
 
@@ -494,6 +656,21 @@ model Device {
   pairingEvents    DevicePairingEvent[]
   riskAssessments  DeviceRiskAssessment[]
 
+  /// `last_seen_at` IS INDEXED, AND THE INDEX IS NOT DECLARED HERE.
+  ///
+  /// Migration 0025 adds `devices_last_seen_at_active_idx` — a PARTIAL index
+  /// `("last_seen_at") WHERE "deleted_at" IS NULL` — which Prisma's schema
+  /// language cannot express (no `WHERE` on `@@index`), exactly like migration
+  /// 0009's one-live-OWNER unique index on `family_members` and migration
+  /// 0022's `families_country_code_idx`. It lives in SQL only.
+  ///
+  /// It is the access path for EVERY "active" number this product prints —
+  /// active devices, active families, ACTIVE_PARENTS, ACTIVE_CHILDREN, DAU /
+  /// WAU / MAU and every retention cohort all filter this column together with
+  /// `deleted_at IS NULL`. Read 0025's header before adding a second index on
+  /// `last_seen_at`: that column is written by every heartbeat from every
+  /// paired device, and the header records which composite was measured and
+  /// why it was deliberately not shipped.
   @@index([familyId])
   @@index([userId])
   @@index([childId])
@@ -508,6 +685,7 @@ model Device {
 /// pairing-backend-domain-architecture.md §1.5's derived PairingSession
 /// read both depend on.
 model DevicePairingEvent {
+  familyId  String  @map("family_id") @db.Uuid
   id         String           @id @default(uuid()) @db.Uuid
   /// Nullable — secondary reference, populated from DEVICE_REGISTERED
   /// onward. Per Decision-065/066: the pairing lifecycle is a
@@ -532,8 +710,11 @@ model DevicePairingEvent {
 
   device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([deviceId, occurredAt])
   @@index([childId, occurredAt])
+  @@index([familyId])
   @@map("device_pairing_events")
 }
 
@@ -542,6 +723,7 @@ model DevicePairingEvent {
 /// (above) is a SEPARATE, rarely-changing cache; this table is the
 /// frequently-changing counterpart (Decision-043's core distinction).
 model DeviceRiskAssessment {
+  familyId  String  @map("family_id") @db.Uuid
   id             String    @id @default(uuid()) @db.Uuid
   deviceId       String    @map("device_id") @db.Uuid
   overallRisk    Int       @map("overall_risk") // 0-100
@@ -556,7 +738,10 @@ model DeviceRiskAssessment {
 
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([deviceId, assessedAt])
+  @@index([familyId])
   @@map("device_risk_assessments")
 }
 
@@ -574,11 +759,23 @@ model RefreshToken {
   revokedAt DateTime? @map("revoked_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
+  /// SA-002 (Refresh Token Reuse Detection, RFC 6819 §5.2.2.3 / OAuth 2.0
+  /// Security BCP §4.13.2). Every rotation chain shares one lineage id:
+  /// the very first token of a session sets it to its own id, and each
+  /// rotated successor inherits it. Presenting an already-rotated token
+  /// therefore identifies the whole compromised chain in a single
+  /// indexed query, and the entire family is revoked at once.
+  familyTokenId String  @map("family_token_id") @db.Uuid
+  /// Set on the token that was consumed, pointing at the token issued in
+  /// its place. Makes the rotation chain reconstructable for forensics.
+  replacedById  String? @map("replaced_by_id") @db.Uuid
+
   user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
   device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([deviceId])
+  @@index([familyTokenId])
   @@map("refresh_tokens")
 }
 
@@ -587,6 +784,7 @@ model RefreshToken {
 // ============================================================================
 
 model ScreenTimePolicy {
+  familyId  String  @map("family_id") @db.Uuid
   id                 String    @id @default(uuid()) @db.Uuid
   childId            String    @map("child_id") @db.Uuid
   dailyLimitMinutes  Int?      @map("daily_limit_minutes")
@@ -602,13 +800,17 @@ model ScreenTimePolicy {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId])
+  @@index([familyId])
   @@map("screen_time_policies")
 }
 
 /// Apps observed installed on a child's device. Reported by the Child App,
 /// not by scraping message content — inventory only, no content capture.
 model AppCatalogEntry {
+  familyId  String  @map("family_id") @db.Uuid
   id          String    @id @default(uuid()) @db.Uuid
   deviceId    String    @map("device_id") @db.Uuid
   packageName String    @map("package_name")
@@ -622,8 +824,11 @@ model AppCatalogEntry {
 
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([deviceId, packageName])
   @@index([deviceId])
+  @@index([familyId])
   @@map("app_catalog_entries")
 }
 
@@ -668,6 +873,7 @@ model SupportRequest {
 }
 
 model DailyBehavioralSnapshot {
+  familyId  String  @map("family_id") @db.Uuid
   id                  String   @id @default(uuid()) @db.Uuid
   childId             String   @map("child_id") @db.Uuid
   deviceId            String   @map("device_id") @db.Uuid
@@ -711,8 +917,11 @@ model DailyBehavioralSnapshot {
   child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, usageDate])
   @@index([childId, usageDate])
+  @@index([familyId])
   @@map("daily_behavioral_snapshots")
 }
 
@@ -720,6 +929,7 @@ model DailyBehavioralSnapshot {
 /// (no per-tap or per-second logging) to minimize data collected about
 /// the child, per the project's privacy-first principle.
 model AppUsageLog {
+  familyId  String  @map("family_id") @db.Uuid
   id           String   @id @default(uuid()) @db.Uuid
   childId      String   @map("child_id") @db.Uuid
   deviceId     String   @map("device_id") @db.Uuid
@@ -742,12 +952,16 @@ model AppUsageLog {
   child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, deviceId, packageName, usageDate])
   @@index([childId, usageDate])
+  @@index([familyId])
   @@map("app_usage_logs")
 }
 
 model AppBlockRule {
+  familyId  String  @map("family_id") @db.Uuid
   id             String      @id @default(uuid()) @db.Uuid
   childId        String      @map("child_id") @db.Uuid
   packageName    String?     @map("package_name") // null when ruling by category
@@ -763,7 +977,10 @@ model AppBlockRule {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId])
+  @@index([familyId])
   @@map("app_block_rules")
 }
 
@@ -772,6 +989,7 @@ model AppBlockRule {
 // ============================================================================
 
 model LocationSafeZone {
+  familyId  String  @map("family_id") @db.Uuid
   id            String    @id @default(uuid()) @db.Uuid
   childId       String    @map("child_id") @db.Uuid
   name          String
@@ -786,7 +1004,10 @@ model LocationSafeZone {
   child          Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
   locationEvents LocationEvent[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId])
+  @@index([familyId])
   @@map("location_safe_zones")
 }
 
@@ -796,6 +1017,7 @@ model LocationSafeZone {
 /// expiresAt drives a scheduled purge job (default retention: 30 days)
 /// so raw location history does not accumulate indefinitely.
 model LocationEvent {
+  familyId  String  @map("family_id") @db.Uuid
   id             String            @id @default(uuid()) @db.Uuid
   childId        String            @map("child_id") @db.Uuid
   deviceId       String            @map("device_id") @db.Uuid
@@ -812,8 +1034,11 @@ model LocationEvent {
   device   Device            @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   safeZone LocationSafeZone? @relation(fields: [safeZoneId], references: [id])
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, recordedAt])
   @@index([expiresAt])
+  @@index([familyId])
   @@map("location_events")
 }
 
@@ -836,6 +1061,7 @@ model LocationEvent {
 /// decision-making logic (Rule/Decision/Safety/Behavioral engines
 /// remain completely untouched).
 model AiUsageLog {
+  familyId  String? @map("family_id") @db.Uuid
   id                 String   @id @default(uuid()) @db.Uuid
   model              String
   inputTokens        Int      @map("input_tokens")
@@ -857,12 +1083,17 @@ model AiUsageLog {
   sourceFeature      String?  @map("source_feature")
   createdAt          DateTime @default(now()) @map("created_at")
 
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
   @@index([createdAt])
   @@index([sourceFeature, createdAt])
+  @@index([familyId])
+  @@index([familyId, createdAt])
   @@map("ai_usage_logs")
 }
 
 model AiRiskScore {
+  familyId  String  @map("family_id") @db.Uuid
   id                String   @id @default(uuid()) @db.Uuid
   childId           String   @map("child_id") @db.Uuid
   scoreDate         DateTime @map("score_date") @db.Date
@@ -872,14 +1103,18 @@ model AiRiskScore {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, scoreDate])
   @@index([childId])
+  @@index([familyId])
   @@map("ai_risk_scores")
 }
 
 /// A single actionable alert surfaced to parents. This is the AI layer's
 /// output contract — parents see alerts, never raw monitored content.
 model AiAlert {
+  familyId  String  @map("family_id") @db.Uuid
   id               String        @id @default(uuid()) @db.Uuid
   childId          String        @map("child_id") @db.Uuid
   category         AlertCategory
@@ -887,6 +1122,14 @@ model AiAlert {
   title            String
   description      String
   sourceModule     String        @map("source_module") // e.g. "keyboard-behavior-ai"
+  /// WHAT MAKES THIS ALERT THE SAME ALERT (migration 0027). Composed by the
+  /// PRODUCER — the only layer that knows what caused the detection — and held
+  /// by the unique index below, so a REPLAYED detection is refused by
+  /// PostgreSQL rather than by a `findFirst` that cannot see a concurrent
+  /// writer. Deliberately the same column name, and the same discipline, as
+  /// `notifications.source_event_id`. SERVER-INTERNAL: no parent-facing
+  /// payload returns it, and no producer may put a child's words in it.
+  sourceEventId    String        @map("source_event_id") @db.VarChar(200)
   status           AlertStatus   @default(NEW)
   reviewedByUserId String?       @map("reviewed_by_user_id") @db.Uuid
   reviewedAt       DateTime?     @map("reviewed_at")
@@ -896,8 +1139,12 @@ model AiAlert {
   child          Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   reviewedByUser User? @relation("AlertReviewedBy", fields: [reviewedByUserId], references: [id])
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, sourceEventId])
   @@index([childId, status])
   @@index([severity])
+  @@index([familyId])
   @@map("ai_alerts")
 }
 
@@ -908,6 +1155,7 @@ model AiAlert {
 /// Append-only. Never updated or soft-deleted — this is the compliance
 /// trail (GDPR "right to access", security incident investigation).
 model AuditLog {
+  familyId  String? @map("family_id") @db.Uuid
   id         String    @id @default(uuid()) @db.Uuid
   actorType  ActorType @map("actor_type")
   actorUserId String?  @map("actor_user_id") @db.Uuid
@@ -920,12 +1168,17 @@ model AuditLog {
 
   actorUser User? @relation("AuditActorUser", fields: [actorUserId], references: [id])
 
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
   @@index([entityType, entityId])
   @@index([actorUserId])
+  @@index([familyId])
+  @@index([familyId, createdAt])
   @@map("audit_logs")
 }
 
 model AiMemoryEntry {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   /// HABIT | PREFERENCE | VIOLATION | RECOMMENDATION | CONFIDENCE —
@@ -940,8 +1193,11 @@ model AiMemoryEntry {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, category, key])
   @@index([childId, category])
+  @@index([familyId])
   @@map("ai_memory_entries")
 }
 
@@ -988,16 +1244,52 @@ model Subscription {
   /// simply overwrites this value) — those are real, separate
   /// product decisions this migration does not make.
   pendingDiscountPercent Int?               @map("pending_discount_percent")
+
+  // ---- PHASE D additions. All nullable; every pre-Phase-D row stays valid. ----
+  /// ISO-3166-1 alpha-2. Which market's price list this subscription was sold
+  /// from. NULL on rows created before Phase D.
+  countryCode            String?            @map("country_code") @db.VarChar(2)
+  /// ISO-4217, frozen at purchase. A family that bought in EGP is billed in
+  /// EGP even if it later moves country — changing the currency of a live
+  /// subscription is a re-purchase, not an UPDATE.
+  currencyCode           String?            @map("currency_code") @db.VarChar(3)
+  billingPeriod          BillingPeriod?     @map("billing_period")
+  /// The exact `subscription_prices` row this was sold at. Lets a price change
+  /// be rolled out without silently re-pricing live subscriptions.
+  subscriptionPriceId    String?            @map("subscription_price_id") @db.Uuid
+  /// End of the non-punitive grace window (Q17: 7 days after failure/expiry).
+  gracePeriodEndsAt      DateTime?          @map("grace_period_ends_at")
+  /// Whether the provider will attempt another charge. FALSE for Egypt's
+  /// manual-renewal design and for a cancelled store subscription that has
+  /// not yet expired.
+  autoRenewing           Boolean            @default(false) @map("auto_renewing")
+  /// Apple `originalTransactionId` / Google `purchaseToken` — the durable
+  /// lineage key a store uses across renewals, which is NOT the same thing as
+  /// `provider_subscription_id` (Stripe's `sub_...`).
+  providerOriginalTransactionId String?     @map("provider_original_transaction_id") @db.VarChar(200)
+  /// Apple productId / Google basePlanId this subscription currently resolves to.
+  providerProductId      String?            @map("provider_product_id") @db.VarChar(120)
+  /// THE OUT-OF-ORDER GUARD. `00-Company-Response.md` Q17: «the older event
+  /// does not overwrite the newer». Every webhook handler compares the
+  /// provider's own signed timestamp against this column and drops anything
+  /// not strictly newer. Arrival order is not causal order.
+  lastProviderEventAt    DateTime?          @map("last_provider_event_at")
+
   createdAt              DateTime           @default(now()) @map("created_at")
   updatedAt              DateTime           @updatedAt @map("updated_at")
 
   family   Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
   invoices Invoice[]
 
+  paymentTransactions PaymentTransaction[]
+  entitlements        Entitlement[]
+
+  @@index([providerOriginalTransactionId])
   @@map("subscriptions")
 }
 
 model Invoice {
+  familyId  String  @map("family_id") @db.Uuid
   id                String        @id @default(uuid()) @db.Uuid
   subscriptionId    String        @map("subscription_id") @db.Uuid
   amountCents       Int           @map("amount_cents")
@@ -1007,9 +1299,34 @@ model Invoice {
   issuedAt          DateTime      @default(now()) @map("issued_at")
   paidAt            DateTime?     @map("paid_at")
 
+  // ---- PHASE D additions. All nullable; every pre-Phase-D row stays valid. ----
+  /// Human-facing document number. Sequential per family, allocated by the
+  /// database (see `next_invoice_number()` in migration 0012) so two
+  /// concurrent issuances cannot produce the same number.
+  invoiceNumber     String?       @map("invoice_number") @db.VarChar(40)
+  countryCode       String?       @map("country_code") @db.VarChar(2)
+  billingPeriod     BillingPeriod? @map("billing_period")
+  /// FROZEN AT ISSUANCE. A VAT rate change must not retroactively alter a
+  /// document that has already been given to a customer and a tax authority.
+  vatBasisPoints    Int?          @map("vat_basis_points")
+  subtotalMinor     Int?          @map("subtotal_minor")
+  vatMinor          Int?          @map("vat_minor")
+  /// Gross total, in minor units. `amount_cents` above is retained unchanged
+  /// for every existing reader; for Phase D rows the two agree.
+  totalMinor        Int?          @map("total_minor")
+  provider          PaymentProvider?
+  paymentTransactionId String?    @map("payment_transaction_id") @db.Uuid
+
   subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+
+  @@unique([invoiceNumber])
   @@index([subscriptionId])
+  @@index([familyId])
+  @@index([paymentTransactionId])
   @@map("invoices")
 }
 
@@ -1040,6 +1357,14 @@ model AnalyticsEvent {
   eventName String   @map("event_name")
   payload   Json?
   occurredAt DateTime @default(now()) @map("occurred_at")
+  /// PHASE F (`F6-004`, closing `PF-E-004`) — the CAUSE this row counts, for
+  /// the bus-derived growth events only. `null` for the open
+  /// `POST /analytics/track` surface, which has no cause and is not
+  /// deduplicated. The partial unique index that makes redelivery a no-op
+  /// lives in migration 0020 — Prisma cannot express a partial index, and
+  /// declaring a plain `@@unique` here would generate a TOTAL one that
+  /// collapsed every ad-hoc event with a NULL cause into a single row.
+  sourceEventId String? @map("source_event_id")
 
   @@index([eventName, occurredAt])
   @@index([familyId])
@@ -1207,6 +1532,7 @@ model PartnerCampaign {
 }
 
 model Notification {
+  familyId  String  @map("family_id") @db.Uuid
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
   childId   String?   @map("child_id") @db.Uuid
@@ -1225,10 +1551,49 @@ model Notification {
   readAt    DateTime? @map("read_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
+  /// B9 (PA-B-007 / PA-B-008). THE COLUMN WHOSE ABSENCE WAS THE DEFECT.
+  ///
+  /// Every other link in the chain CONTEXT §5 describes — device event, outbox
+  /// message, consumer marker, ledger row — is protected by a UNIQUE index.
+  /// This row was protected by a `findFirst` over a five-minute window, which
+  /// is not a constraint: delete the consumption marker, wait six minutes,
+  /// redeliver, and one reward notified twice. The project's own «KNOWN LIMIT»
+  /// test measured exactly that (notificationCount = 2).
+  ///
+  /// This is the CAUSAL KEY of the notification, composed deliberately by each
+  /// producer (`src/shared/notifications/notification-source-key.ts`). For the
+  /// outbox path it is the `domain_events.id` that caused it, so it is stable
+  /// across every redelivery for all time; for the paths that have no domain
+  /// event it is a stated, documented composition. NOT NULL on purpose — a
+  /// nullable column lets a future producer opt out of the constraint by
+  /// forgetting, and forgetting is the failure mode a constraint exists to
+  /// remove.
+  sourceEventId String @map("source_event_id") @db.VarChar(200)
+
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   child Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  /// B9 — THE CONSTRAINT. `user_id` IS in the key and `type` is NOT; both
+  /// halves are deliberate.
+  ///
+  ///   `user_id` is in it because delivery is PER RECIPIENT. Today
+  ///   `createForFamilyOwner` writes one row, for the owner, and its own
+  ///   docstring names all-member fanout as a real follow-up. With `user_id`
+  ///   in the key that fanout is additive; without it the follow-up would have
+  ///   to WEAKEN this index in order to ship, which is how constraints die.
+  ///
+  ///   `type` is NOT in it because the declared rule is «one business event =>
+  ///   one notification», not «one per type». Putting `type` in the key would
+  ///   re-create PA-B-011 at the database level: four types from one event,
+  ///   four rows, all legal. A producer that genuinely needs two notifications
+  ///   from one event says so by composing two different source keys —
+  ///   visibly, at the call site.
+  @@unique([familyId, sourceEventId, userId])
   @@index([userId, readAt])
+  @@index([childId, createdAt])
+  @@index([familyId])
   @@map("notifications")
 }
 
@@ -1244,10 +1609,24 @@ enum SmartTaskStatus {
   DISMISSED
 }
 
+/// F4 — EXTENDED, NOT REPLACED. `XP`/`COINS`/`BADGE` are untouched, so every
+/// existing reader, every existing ledger row and every existing CHECK
+/// constraint keeps working. The six values below are added with
+/// `ALTER TYPE ... ADD VALUE` in migration 0006 (additive, no rewrite).
+///
+/// `POINTS` is deliberately ABSENT: the product word "نقطة" maps onto the
+/// existing `XP` value rather than becoming a second currency next to it
+/// (CONTEXT §3 principle 1). See `src/shared/rewards/reward-spec.ts`.
 enum RewardType {
   XP
   COINS
   BADGE
+  SCREEN_TIME
+  PHYSICAL_REWARD
+  DIGITAL_REWARD
+  PRIVILEGE
+  PARENT_APPROVAL_REWARD
+  CUSTOM_REWARD
 }
 
 enum RedemptionStatus {
@@ -1289,6 +1668,7 @@ enum TimelineCategory {
 /// Deliberately STATIC — AI-generated dynamic suggestions are a
 /// separate, later concern (Smart Tasks Engine, not built this sprint).
 model Habit {
+  familyId  String  @map("family_id") @db.Uuid
   id          String   @id @default(uuid()) @db.Uuid
   childId     String   @map("child_id") @db.Uuid
   title       String
@@ -1328,11 +1708,15 @@ model Habit {
   createdBy   User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   completions HabitCompletion[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, isActive])
+  @@index([familyId])
   @@map("habits")
 }
 
 model HabitCompletion {
+  familyId  String  @map("family_id") @db.Uuid
   id          String   @id @default(uuid()) @db.Uuid
   habitId     String   @map("habit_id") @db.Uuid
   childId     String   @map("child_id") @db.Uuid
@@ -1350,13 +1734,17 @@ model HabitCompletion {
   habit Habit @relation(fields: [habitId], references: [id], onDelete: Cascade)
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([habitId, date])
   @@index([childId, date])
+  @@index([familyId])
   @@map("habit_completions")
 }
 
 /// Rewards Engine — Family Economy
 model RewardsAccount {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @unique @map("child_id") @db.Uuid
   xp        Int      @default(0)
@@ -1367,38 +1755,71 @@ model RewardsAccount {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
   @@map("rewards_accounts")
 }
 
 /// Append-only ledger — mirrors AuditLog's own append-only discipline.
 model RewardsLedgerEntry {
+  familyId  String  @map("family_id") @db.Uuid
   id        String     @id @default(uuid()) @db.Uuid
   childId   String     @map("child_id") @db.Uuid
   type      String     // 'EARN' | 'REDEEM'
   rewardType RewardType @map("reward_type")
+  /// UNSIGNED magnitude, kept for backward compatibility with every
+  /// existing reader. Direction lives in `type`, which is exactly why
+  /// `SUM(amount)` could never reconstruct a balance (A2 §7.4: ledger
+  /// SUM = 600 while the account column said −500). Use `delta`.
   amount    Int
+  /// DA-002. SIGNED movement: +amount for EARN, −amount for REDEEM.
+  /// This is what makes the ledger an actual ledger — the balance of
+  /// any reward type is `SUM(delta)` filtered by `reward_type`, and
+  /// `RewardsAccount` becomes a reconcilable cache of that sum rather
+  /// than an unverifiable source of truth (CONTEXT §3.6 / DP-5
+  /// deterministic recomputation).
+  delta     Int
   source    String     // e.g. 'habit_streak', 'reward_rule:<id>', 'manual:<userId>', 'redemption:<id>'
-  /// Sprint 16.1 (Double Reward Protection) — CLOSES A REAL GAP:
-  /// zero idempotency mechanism existed anywhere in the reward
-  /// pipeline before this — a retried request, a duplicate event, or
-  /// two concurrent requests for the SAME real-world event (e.g. one
-  /// habit completion) could each grant a full reward independently.
-  /// Nullable BY DESIGN, not by oversight: manual grants and any
-  /// caller with no natural idempotency key (e.g. an admin action)
-  /// simply pass none — PostgreSQL's own unique index treats every
-  /// NULL as distinct from every other NULL, so this never blocks
-  /// those. The REAL defense is the unique constraint below, not an
-  /// application-level "check then insert" (which would itself be a
-  /// real race condition under concurrent requests) — this column
-  /// exists specifically so the DATABASE rejects a true duplicate
-  /// insert atomically.
-  idempotencyKey String? @map("idempotency_key")
+  /// Sprint 16.1 (Double Reward Protection), hardened in DA-002.
+  /// The ONLY defense against double-granting is this column's unique
+  /// constraint below, enforced by PostgreSQL — never an application
+  /// "check then insert", which is itself a race.
+  ///
+  /// NOW MANDATORY (was nullable). A2 §7.3 scenario C proved the
+  /// nullable design left every keyless path completely unprotected:
+  /// PostgreSQL treats each NULL as distinct, so 8 concurrent keyless
+  /// grants produced 8 rows. Callers that have no natural key no
+  /// longer pass nothing — the repository synthesises a unique
+  /// per-call key instead, which keeps manual/admin grants working
+  /// while making the unique index total over the table.
+  idempotencyKey String @map("idempotency_key")
+  /// B4 — WHICH FAMILY DAY THIS GRANT BELONGS TO.
+  ///
+  /// `FamilyDateService.getBusinessDate(familyId)` at grant time — the same
+  /// value the idempotency key above was composed from. `maxPerDay` and
+  /// `maxPerWeek` are counted against THIS column and never against a
+  /// `created_at` range: `created_at` is PostgreSQL's `now()` while a day
+  /// boundary is computed from the application's clock, and comparing the two
+  /// mis-buckets exactly the hours around local midnight that PA-B-001 was
+  /// about. It also means a family changing its timezone does not silently
+  /// re-bucket its entire reward history.
+  ///
+  /// NULLABLE: rows written before B4 have no business date and must not be
+  /// invented one. They count against no cap, which is correct — no cap existed
+  /// when they were written. `REDEEM` rows leave it NULL too; a redemption is
+  /// not rate-limited by a rule.
+  businessDate DateTime? @map("business_date") @db.Date
   createdAt DateTime   @default(now()) @map("created_at")
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, idempotencyKey])
   @@index([childId, createdAt])
+  @@index([familyId])
+  @@index([childId, source, businessDate])
   @@map("rewards_ledger_entries")
 }
 
@@ -1417,6 +1838,7 @@ model BadgeDefinition {
 }
 
 model ChildBadgeAward {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   badgeId   String   @map("badge_id") @db.Uuid
@@ -1425,7 +1847,10 @@ model ChildBadgeAward {
   child Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
   badge BadgeDefinition @relation(fields: [badgeId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, badgeId])
+  @@index([familyId])
   @@map("child_badge_awards")
 }
 
@@ -1447,6 +1872,7 @@ model RewardCatalogItem {
 }
 
 model RewardRedemption {
+  familyId  String  @map("family_id") @db.Uuid
   id                  String            @id @default(uuid()) @db.Uuid
   childId             String            @map("child_id") @db.Uuid
   rewardCatalogItemId String            @map("reward_catalog_item_id") @db.Uuid
@@ -1458,7 +1884,10 @@ model RewardRedemption {
   child     Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
   rewardItem RewardCatalogItem @relation(fields: [rewardCatalogItemId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, status])
+  @@index([familyId])
   @@map("reward_redemptions")
 }
 
@@ -1474,15 +1903,62 @@ model RewardRule {
   isActive            Boolean    @default(true) @map("is_active")
   createdAt           DateTime   @default(now()) @map("created_at")
 
+  /// F4 — THE EXTENSION POINT, and the reason `RewardProgram` did not have to
+  /// bring its own grant path. A `RewardProgram` MATERIALISES companion
+  /// `RewardRule` rows (one per multiplier tier it has actually used), so the
+  /// existing `evaluateRewardRules` subset-match and the existing
+  /// `RewardsEngineService.processTriggerEvent` grant BOTH work unmodified —
+  /// zero lines changed in either. `triggerCondition` on a companion row is
+  /// `{ programId, multiplierBps }`, which is exactly what the engine already
+  /// knows how to match against a trigger payload.
+  programId           String?    @map("program_id") @db.Uuid
+  /// 10000 = 1.00x. Present on companion rows only; NULL on hand-authored and
+  /// platform rules, which is what keeps the partial unique index below from
+  /// touching them.
+  multiplierBps       Int?       @map("multiplier_bps")
+
+  /// B4 (PA-B-015 · PA-B-013) — THE MANAGEMENT COLUMNS.
+  ///
+  /// `eventType` is the load-bearing one. A rule used to match on
+  /// `triggerEngine` alone, so ONE habit-builder rule matched BOTH the keyed
+  /// `HABIT_COMPLETED` trigger and the legacy keyless `habit_completed` trigger
+  /// that the same engine still fires — two ledger rows for one completion, and
+  /// the keyless one carried a `nokey:<uuid>` key no unique index can catch.
+  /// A rule that names its event type matches exactly one of them.
+  ///
+  /// NULL = wildcard, the pre-B4 behaviour, kept because F4 companion rows are
+  /// matched by `{programId, multiplierBps}` and must stay untouched.
+  eventType           String?    @map("event_type") @db.VarChar(60)
+  /// FK into `reward_program_categories.code` — a TABLE, never a PostgreSQL
+  /// enum, so the client's category list grows by INSERT. NULL on F4 companion
+  /// rows (the PROGRAM carries the category there).
+  category            String?    @map("category") @db.VarChar(40)
+  labelAr             String?    @map("label_ar")
+  /// Counted on the FAMILY's business day / business week
+  /// (`FamilyDateService.getBusinessDayRange`), never on UTC and never on the
+  /// container clock. NULL = uncapped.
+  maxPerDay           Int?       @map("max_per_day")
+  maxPerWeek          Int?       @map("max_per_week")
+  /// SELF | SENSOR | SYSTEM | PARENT — the weakest evidence this rule will pay
+  /// for. Compared against `CompletionEvent.verifiedBy`. NULL = accept any.
+  minVerifiedBy       String?    @map("min_verified_by") @db.VarChar(10)
+  createdByUserId     String?    @map("created_by_user_id") @db.Uuid
+  updatedAt           DateTime   @default(now()) @updatedAt @map("updated_at")
+
   family Family? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  program RewardProgram? @relation(fields: [programId], references: [id], onDelete: Cascade)
+  categoryRef RewardProgramCategory? @relation(fields: [category], references: [code])
 
   @@index([familyId, isActive])
+  @@index([programId])
+  @@index([triggerEngine, isActive])
   @@map("reward_rules")
 }
 
 /// Family Communication — AI Conversation with mandatory parent approval
 /// enforced at the schema level (Architecture 1.0 Decision 8).
 model ChildMessage {
+  familyId  String  @map("family_id") @db.Uuid
   id             String                 @id @default(uuid()) @db.Uuid
   childId        String                 @map("child_id") @db.Uuid
   fromUserId     String?                @map("from_user_id") @db.Uuid
@@ -1491,15 +1967,46 @@ model ChildMessage {
   category       String
   title          String
   body           String
+  /// The notification payload — the SAME shape `notifications.data` carries on
+  /// the parent surface, so one decision does not render two ways. Today it
+  /// holds `deepLink`; see migration 0023 for why this is a JSON payload and
+  /// not a single-purpose `deep_link` column.
+  ///
+  /// A CHILD-READABLE ROW: never a `familyId`, never a `childId`, never a token.
+  /// A deep link is a destination, not a capability — the server re-authorizes
+  /// on the next call whatever the link claims.
+  data           Json?
   deliveredAt    DateTime?              @map("delivered_at")
   acknowledgedAt DateTime?              @map("acknowledged_at")
   createdAt      DateTime               @default(now()) @map("created_at")
 
+  /// B9 — THE OTHER HALF OF THE NOTIFICATION SURFACE, and the reason the fix
+  /// is not one column on one table.
+  ///
+  /// `SmartNotificationIntegrationService.deliver` routes PARENT candidates to
+  /// `notifications` and CHILD candidates to THIS table (through
+  /// `FamilyCommunicationService.draftAiMessage`, which is where the approval
+  /// gate lives). A child-targeted notification is therefore a `child_messages`
+  /// row, and it had exactly the same duplicate exposure — with no five-minute
+  /// window in front of it at all.
+  ///
+  /// NULLABLE here, unlike `notifications.source_event_id`, and that is a
+  /// stated distinction rather than an inconsistency: this table also holds
+  /// PARENT-AUTHORED messages, which are not caused by any event and must not
+  /// be deduplicated — a parent may legitimately send «أحسنت» twice. NULL means
+  /// «a human wrote this», and PostgreSQL treats NULLs as distinct in a unique
+  /// index, so the constraint below binds exactly the machine-generated rows.
+  sourceEventId  String?                @map("source_event_id") @db.VarChar(200)
+
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   fromUser User? @relation(fields: [fromUserId], references: [id], onDelete: SetNull)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, sourceEventId])
   @@index([childId, deliveredAt])
   @@index([approvalStatus])
+  @@index([familyId])
   @@map("child_messages")
 }
 
@@ -1514,6 +2021,10 @@ model FamilyBroadcastMessage {
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
   authoredBy User @relation(fields: [authoredByUserId], references: [id], onDelete: Cascade)
 
+  // DP-1 gap found by the F2 registry test: this table carried family_id from
+  // the start but never had an index on it, so every family's broadcast list
+  // was a sequential scan of every family's broadcasts.
+  @@index([familyId, createdAt])
   @@map("family_broadcast_messages")
 }
 
@@ -1521,6 +2032,7 @@ model FamilyBroadcastMessage {
 /// (Architecture 1.0 Decision 10). No engine writes into another
 /// engine's table; every engine writes here through the same one service.
 model LifeTimelineEvent {
+  familyId  String  @map("family_id") @db.Uuid
   id           String            @id @default(uuid()) @db.Uuid
   childId      String            @map("child_id") @db.Uuid
   sourceEngine String            @map("source_engine")
@@ -1528,12 +2040,38 @@ model LifeTimelineEvent {
   eventType    String            @map("event_type")
   title        String
   occurredAt   DateTime          @default(now()) @map("occurred_at")
+  /// PHASE C (`PC-B-006`) — CARRIES AN IDEMPOTENCY KEY, AND AN INDEX THIS FILE
+  /// CANNOT DECLARE. Recorded here so it is not invisible to the next reader.
+  ///
+  /// Migration 0010 adds:
+  ///   CREATE UNIQUE INDEX life_timeline_events_reward_source_key_uq
+  ///       ON life_timeline_events (child_id, ((metadata ->> 'sourceKey')))
+  ///    WHERE (metadata ->> 'sourceKey') IS NOT NULL;
+  ///
+  /// It is the FOURTH link of ONE BUSINESS EVENT -> ONE REWARD -> ONE TIMELINE
+  /// ENTRY -> ONE NOTIFICATION. The other three are `@@unique` on their own
+  /// models; this one is not, because Prisma cannot express a PARTIAL index over
+  /// a JSON EXPRESSION — and the key lives inside `metadata` rather than in a
+  /// column of its own only because `prisma generate` is unreachable in this
+  /// environment (binaries.prisma.sh answers 403 for both engines), so a new
+  /// column could not reach the generated client. Migration 0010's header
+  /// carries the full reasoning.
+  ///
+  /// PARTIAL, so it is additive: only the `reward_granted` entry sets a
+  /// `sourceKey`; every other engine's timeline write is unaffected.
+  ///
+  /// THE FOLLOW-UP, stated so it is not forgotten: once the Prisma engines are
+  /// downloadable, promote it to a real `sourceKey String? @map("source_key")`
+  /// field with `@@unique([childId, sourceKey])`, backfilling nothing.
   metadata     Json?
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, occurredAt])
   @@index([childId, category])
+  @@index([familyId])
   @@map("life_timeline_events")
 }
 
@@ -1541,6 +2079,7 @@ model LifeTimelineEvent {
 /// Rebuildable from source tables at any time; if it and the source
 /// tables ever disagree, the source tables win (Architecture 1.0 §6.1).
 model ChildDigitalTwinProjection {
+  familyId  String  @map("family_id") @db.Uuid
   childId       String   @id @map("child_id") @db.Uuid
   healthSlice   Json?    @map("health_slice")
   learningSlice Json?    @map("learning_slice")
@@ -1553,6 +2092,9 @@ model ChildDigitalTwinProjection {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
   @@map("child_digital_twin_projections")
 }
 
@@ -1577,6 +2119,7 @@ enum FaithPracticeType {
 }
 
 model NutritionLog {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   date      DateTime @db.Date
@@ -1591,11 +2134,15 @@ model NutritionLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("nutrition_logs")
 }
 
 model HydrationLog {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   amountMl  Int      @map("amount_ml")
@@ -1603,11 +2150,15 @@ model HydrationLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, loggedAt])
+  @@index([familyId])
   @@map("hydration_logs")
 }
 
 model SleepLog {
+  familyId  String  @map("family_id") @db.Uuid
   id         String    @id @default(uuid()) @db.Uuid
   childId    String    @map("child_id") @db.Uuid
   date       DateTime  @db.Date
@@ -1617,11 +2168,15 @@ model SleepLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("sleep_logs")
 }
 
 model ActivityLog {
+  familyId  String  @map("family_id") @db.Uuid
   id            String                  @id @default(uuid()) @db.Uuid
   childId       String                  @map("child_id") @db.Uuid
   date          DateTime                @db.Date
@@ -1632,8 +2187,11 @@ model ActivityLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
   @@index([childId, socialContext])
+  @@index([familyId])
   @@map("activity_logs")
 }
 
@@ -1641,6 +2199,7 @@ model ActivityLog {
 /// anything containing "Growth" to avoid colliding with the Growth
 /// Score composite AI indicator.
 model PhysicalMeasurementLog {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   date      DateTime @db.Date
@@ -1650,11 +2209,15 @@ model PhysicalMeasurementLog {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("physical_measurement_logs")
 }
 
 model HealthScoreDaily {
+  familyId  String  @map("family_id") @db.Uuid
   id        String   @id @default(uuid()) @db.Uuid
   childId   String   @map("child_id") @db.Uuid
   date      DateTime @db.Date
@@ -1664,11 +2227,15 @@ model HealthScoreDaily {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([childId, date])
+  @@index([familyId])
   @@map("health_score_daily")
 }
 
 model FaithPractice {
+  familyId  String  @map("family_id") @db.Uuid
   id       String            @id @default(uuid()) @db.Uuid
   childId  String            @map("child_id") @db.Uuid
   type     FaithPracticeType
@@ -1680,11 +2247,15 @@ model FaithPractice {
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   logs  FaithPracticeLog[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, isActive])
+  @@index([familyId])
   @@map("faith_practices")
 }
 
 model FaithPracticeLog {
+  familyId  String  @map("family_id") @db.Uuid
   id         String   @id @default(uuid()) @db.Uuid
   practiceId String   @map("practice_id") @db.Uuid
   childId    String   @map("child_id") @db.Uuid
@@ -1695,8 +2266,11 @@ model FaithPracticeLog {
   practice FaithPractice @relation(fields: [practiceId], references: [id], onDelete: Cascade)
   child    Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([practiceId, date])
   @@index([childId, date])
+  @@index([familyId])
   @@map("faith_practice_logs")
 }
 
@@ -1712,6 +2286,7 @@ enum LearningGoalStatus {
 }
 
 model LearningGoal {
+  familyId  String  @map("family_id") @db.Uuid
   id         String             @id @default(uuid()) @db.Uuid
   childId    String             @map("child_id") @db.Uuid
   subject    String             // 'school' | 'language' | 'reading' | 'custom'
@@ -1723,11 +2298,15 @@ model LearningGoal {
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
   sessions LearningSession[]
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, status])
+  @@index([familyId])
   @@map("learning_goals")
 }
 
 model LearningSession {
+  familyId  String  @map("family_id") @db.Uuid
   id              String   @id @default(uuid()) @db.Uuid
   childId         String   @map("child_id") @db.Uuid
   goalId          String?  @map("goal_id") @db.Uuid
@@ -1740,11 +2319,15 @@ model LearningSession {
   child Child          @relation(fields: [childId], references: [id], onDelete: Cascade)
   goal  LearningGoal?  @relation(fields: [goalId], references: [id], onDelete: SetNull)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, date])
+  @@index([familyId])
   @@map("learning_sessions")
 }
 
 model LearningAssessment {
+  familyId  String  @map("family_id") @db.Uuid
   id         String   @id @default(uuid()) @db.Uuid
   childId    String   @map("child_id") @db.Uuid
   subject    String
@@ -1754,11 +2337,15 @@ model LearningAssessment {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, takenAt])
+  @@index([familyId])
   @@map("learning_assessments")
 }
 
 model SmartTask {
+  familyId  String  @map("family_id") @db.Uuid
   id             String          @id @default(uuid()) @db.Uuid
   childId        String          @map("child_id") @db.Uuid
   title          String
@@ -1772,8 +2359,11 @@ model SmartTask {
 
   child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@index([childId, status])
   @@index([childId, suggestedDate])
+  @@index([familyId])
   @@map("smart_tasks")
 }
 
@@ -1799,6 +2389,7 @@ model FamilyChallenge {
 }
 
 model FamilyChallengeParticipation {
+  familyId  String  @map("family_id") @db.Uuid
   id          String    @id @default(uuid()) @db.Uuid
   challengeId String    @map("challenge_id") @db.Uuid
   childId     String    @map("child_id") @db.Uuid
@@ -1807,7 +2398,2000 @@ model FamilyChallengeParticipation {
   challenge FamilyChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
   child     Child           @relation(fields: [childId], references: [id], onDelete: Cascade)
 
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
   @@unique([challengeId, childId])
   @@index([childId])
+  @@index([familyId])
   @@map("family_challenge_participations")
+}
+
+// ============================================================
+// Sprint F3 — EVENT BACKBONE (R3)
+// Domain Event Bus + Transactional Outbox + /events/batch.
+// docs/04-System-Architecture.md §5, docs/05-Database-Architecture.md §3.3.
+// Every model below is ADDITIVE. Zero existing model touched apart from the
+// three back-relations added to `Family` above.
+// ============================================================
+
+/// The catalogue from CONTEXT §5, as a database enum rather than a free
+/// string. A typo in an event type is then a migration error, not a silently
+/// unrouted event.
+enum EventType {
+  HABIT_COMPLETED
+  TASK_COMPLETED
+  STREAK_ACHIEVED
+  DAILY_GOAL_COMPLETED
+  HYDRATION_GOAL_COMPLETED
+  ACTIVITY_GOAL_COMPLETED
+  EDUCATION_PROGRESS
+  MEMORIZATION_COMPLETED
+  REWARD_GRANTED
+  DEVICE_PAIRED
+  SCREEN_TIME_THRESHOLD
+  IMPORTANT_SAFETY_EVENT
+  // -- F4 (Smart Learning & Reward Engine). None is device-ingestible: a child
+  //    device requests an achievement over an authenticated /self/* route, and
+  //    the SERVER decides the verification outcome. A device that could post
+  //    ACHIEVEMENT_VERIFIED could grant itself a reward.
+  REWARD_PROGRAM_CREATED
+  ACHIEVEMENT_REQUESTED
+  ACHIEVEMENT_VERIFIED
+  ACHIEVEMENT_REJECTED
+  QURAN_ACHIEVEMENT_COMPLETED
+  LEARNING_GOAL_COMPLETED
+  BADGE_EARNED
+}
+
+enum OutboxStatus {
+  PENDING
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  DEAD
+}
+
+/// Append-only record of everything the system has published.
+///
+/// DELIBERATE DIVERGENCE FROM docs/05 §3.3, STATED: the target schema declares
+/// this table `PARTITIONED BY RANGE (occurred_at)` with `@@id([id, occurredAt])`
+/// and `@@unique([familyId, idempotencyKey, occurredAt])` — the third column
+/// exists there ONLY because a unique index on a partitioned table must include
+/// the partition key. This repository has no partitioning anywhere (migrations
+/// 0001–0004 create none), so partitioning is NOT introduced here. The
+/// consequence is a STRONGER constraint, not a weaker one:
+/// `@@unique([familyId, idempotencyKey])` with no date column means a replay of
+/// yesterday's event collides today. When partitioning is introduced, that
+/// unique index MUST gain `occurred_at` and the guarantee weakens to
+/// "once per partition" — which is exactly why it is written down here.
+model DomainEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  familyId       String    @map("family_id") @db.Uuid
+  childId        String?   @map("child_id") @db.Uuid
+  deviceId       String?   @map("device_id") @db.Uuid
+  aggregateType  String    @map("aggregate_type") @db.VarChar(40)
+  aggregateId    String    @map("aggregate_id") @db.Uuid
+  eventType      EventType @map("event_type")
+  /// Deterministic — see src/shared/events/idempotency.ts. THE defence against
+  /// a duplicated reward (CONTEXT §3 principle 6).
+  idempotencyKey String    @map("idempotency_key") @db.VarChar(80)
+  /// The device's own queue key, `{deviceId-short}:seq:{n}`. Null for events
+  /// the server derived rather than ingested.
+  clientEventId  String?   @map("client_event_id") @db.VarChar(120)
+  schemaVersion  Int       @default(1) @map("schema_version") @db.SmallInt
+  payload        Json
+  /// The originating request's correlation id (traceId).
+  correlationId  String?   @map("correlation_id")
+  /// Device clock.
+  occurredAt     DateTime  @map("occurred_at")
+  /// Server clock — authoritative, never client-supplied.
+  receivedAt     DateTime  @default(now()) @map("received_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  outboxMessages OutboxMessage[]
+
+  /// Layer 1 of replay protection (docs/06 §6.6) — the final guarantee.
+  @@unique([familyId, idempotencyKey])
+  /// Transport-level de-duplication: the same queued row re-sent after a
+  /// network timeout. NOTE: `deviceId` is nullable and PostgreSQL treats NULLs
+  /// as distinct, so this constraint is only meaningful for device-ingested
+  /// rows — which is the only place it is needed, and the only place it is
+  /// claimed to work.
+  @@unique([familyId, deviceId, clientEventId])
+  @@index([familyId, eventType, occurredAt])
+  @@index([familyId, childId, occurredAt])
+  @@index([aggregateType, aggregateId])
+  @@map("domain_events")
+}
+
+/// Transactional Outbox — written in the SAME transaction as the domain state
+/// change, published afterwards by the relay. docs/04 §5.4.
+model OutboxMessage {
+  id             String       @id @default(uuid()) @db.Uuid
+  familyId       String       @map("family_id") @db.Uuid
+  domainEventId  String       @map("domain_event_id") @db.Uuid
+  eventType      EventType    @map("event_type")
+  /// `INTERNAL_BUS` today. The column exists so a second destination
+  /// (`REDIS_STREAM:...`, `HTTP:<endpointId>`) is a row value, not a migration.
+  destination    String       @default("INTERNAL_BUS") @db.VarChar(40)
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attemptCount   Int          @default(0) @map("attempt_count") @db.SmallInt
+  nextAttemptAt  DateTime     @default(now()) @map("next_attempt_at")
+  lastError      String?      @map("last_error") @db.VarChar(500)
+  lockedBy       String?      @map("locked_by") @db.VarChar(60)
+  lockedAt       DateTime?    @map("locked_at")
+  publishedAt    DateTime?    @map("published_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  domainEvent DomainEvent @relation(fields: [domainEventId], references: [id], onDelete: Cascade)
+
+  /// One message per (event, destination). A retried write of the same domain
+  /// event cannot enqueue a second delivery.
+  @@unique([domainEventId, destination])
+  @@index([status, nextAttemptAt])
+  @@index([familyId, status])
+  @@map("outbox_messages")
+}
+
+/// Consumer-side idempotency marker. At-least-once delivery means a consumer
+/// WILL see the same message twice; this table is the fast path that stops the
+/// second attempt before it does any work.
+///
+/// IT IS NOT THE PRIMARY DEFENCE, and saying otherwise would be dishonest: a
+/// crash between "work committed" and "marker written" replays the work. The
+/// primary defence remains the unique constraint inside each consumer's own
+/// write (`rewards_ledger_entries (child_id, idempotency_key)` for Rewards,
+/// `domain_events (family_id, idempotency_key)` for derived events). This table
+/// saves the round-trips, it does not create the guarantee.
+model ConsumedMessage {
+  id           String   @id @default(uuid()) @db.Uuid
+  familyId     String   @map("family_id") @db.Uuid
+  consumerName String   @map("consumer_name") @db.VarChar(80)
+  domainEventId String  @map("domain_event_id") @db.Uuid
+  /// What the consumer did, for auditing a redelivery after the fact.
+  outcome      String   @default("HANDLED") @db.VarChar(40)
+  consumedAt   DateTime @default(now()) @map("consumed_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([consumerName, domainEventId])
+  @@index([familyId, consumerName])
+  @@map("consumed_messages")
+}
+
+// ============================================================
+// Sprint F4 — SMART LEARNING & REWARD ENGINE
+//
+// Every model below is ADDITIVE. Zero existing model is rewritten; the only
+// edits to pre-existing models are: five back-relations on `Family`, five on
+// `Child`, two nullable columns + one relation on `RewardRule`, six new values
+// on `RewardType`, and seven new values on `EventType`. All of those are
+// additive in PostgreSQL terms (`ADD COLUMN` nullable, `ALTER TYPE ... ADD
+// VALUE`), which is what makes migration 0006 safe on a database with rows.
+//
+// TENANCY (F2): every table here carries `family_id uuid NOT NULL` from the
+// moment it is created — there is no backfill and no orphan case — and every
+// one is registered STRICT in `tenant-model-registry.ts`. The two reference
+// tables (`reward_program_categories`, `quran_surahs`) are GLOBAL platform
+// catalogues with a written reason, exactly like `BadgeDefinition`.
+// ============================================================
+
+/// Reference catalogue, seeded by migration 0006 from
+/// `src/shared/rewards/program-taxonomy.ts`. A TABLE, not a PostgreSQL enum,
+/// so a nineteenth category is an INSERT and not an `ALTER TYPE` — the brief's
+/// own "so new ones don't need a migration" requirement.
+///
+/// GLOBAL (tenancy): a platform catalogue every family reads, owned by none.
+/// Same class and same reasoning as `BadgeDefinition` and `PlanDefinition`.
+model RewardProgramCategory {
+  code       String   @id @db.VarChar(40)
+  labelAr    String   @map("label_ar")
+  streakKind String   @map("streak_kind") @db.VarChar(20)
+  sortOrder  Int      @default(0) @map("sort_order")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  programs RewardProgram[]
+  /// B4: a managed `RewardRule` also names a category, from this same table.
+  /// The client's list (Religion, Fitness, Family contribution, Custom) arrived
+  /// as four INSERTs in migration 0007 — no enum was widened, no business logic
+  /// branches on the value.
+  rules    RewardRule[]
+
+  @@map("reward_program_categories")
+}
+
+/// The 114 surahs with their Arabic name, transliteration, Hafs ayah count and
+/// revelation type — fixed, well-known reference data, seeded by migration 0006
+/// from `src/shared/rewards/quran.ts`.
+/// `test/rewards/quran-reference.spec.ts` asserts the code list and this table
+/// are identical row for row, and asserts both checksums (6,236 ayahs · 28
+/// Medinan surahs) against the TABLE and not only against the constant.
+///
+/// GLOBAL (tenancy): revelation is not tenant data.
+model QuranSurah {
+  number          Int    @id
+  nameAr          String @map("name_ar")
+  transliteration String
+  ayahCount       Int    @map("ayah_count")
+  /// MECCAN | MEDINAN — the King Fahd Complex classification.
+  revelationType  String @map("revelation_type") @db.VarChar(10)
+
+  @@map("quran_surahs")
+}
+
+/// THE PARENT-AUTHORED PROGRAM — what a parent creates.
+///
+/// WHY THIS IS A NEW TABLE AND NOT MORE COLUMNS ON `RewardRule` (the brief asks
+/// for this decision explicitly): `RewardRule` is SHARED-NULL — `family_id IS
+/// NULL` means "platform rule, visible to every family" — and it is a
+/// stateless matcher with three fields (engine, condition, payout). A program
+/// is tenant-owned by definition (a NULL-family program is meaningless), is
+/// addressed to a specific child, carries a lifecycle (`status`, `expiresAt`,
+/// archived), carries quotas that are counted against per-child history, and
+/// carries verification configuration. Forcing those eighteen columns onto a
+/// shared platform table would have made `family_id IS NULL` ambiguous and
+/// broken the one property `RewardRule`'s tenancy class depends on.
+///
+/// The REUSE is real and it is in the other direction: a program does not own a
+/// grant path. It MATERIALISES `RewardRule` rows (see `RewardRule.programId`),
+/// so the payout is still evaluated and written by the untouched
+/// `RewardsEngineService`.
+model RewardProgram {
+  familyId  String  @map("family_id") @db.Uuid
+  id        String  @id @default(uuid()) @db.Uuid
+  /// NULL = "all children in this family". A real, meaningful absence: the
+  /// brief asks for both shapes and a sentinel UUID would have been a lie.
+  childId   String? @map("child_id") @db.Uuid
+
+  category  String  @map("category") @db.VarChar(40)
+  activity  String  @map("activity") @db.VarChar(40)
+  /// Validated per activity by `validateTargetSpec` BEFORE the row is written —
+  /// surah 1..114 and an ayah range inside that surah's real ayah count.
+  targetSpec Json   @map("target_spec")
+  /// Human-readable Arabic summary of `targetSpec`, derived server-side once so
+  /// three clients do not each re-derive it.
+  targetSummaryAr String @map("target_summary_ar")
+
+  durationMinutes Int    @map("duration_minutes")
+  verificationLevel String @map("verification_level") @db.VarChar(40)
+  /// Method-specific configuration: `{ passScorePercent }` for QUIZ /
+  /// CODE_CHALLENGE / ASSESSMENT / DURATION_PLUS_QUIZ.
+  verificationConfig Json  @default("{}") @map("verification_config")
+
+  /// `{ type, amount, description?, expiresInHours? }` — validated by
+  /// `validateRewardSpec`, including the SCREEN_TIME per-grant ceiling.
+  rewardSpec Json  @map("reward_spec")
+
+  frequency String @default("DAILY") @map("frequency") @db.VarChar(20)
+  maxPerDay  Int   @default(1) @map("max_per_day")
+  maxPerWeek Int   @default(7) @map("max_per_week")
+  minAge     Int   @default(0) @map("min_age")
+  difficulty String @default("MEDIUM") @db.VarChar(20)
+  requiresParentApproval Boolean @default(false) @map("requires_parent_approval")
+  expiresAt  DateTime? @map("expires_at")
+  /// 10000 = 1.00x. The CEILING a program allows, not the multiplier applied:
+  /// the applied value is computed server-side from the child's real streak and
+  /// clamped to this.
+  streakMultiplierBps Int @default(30000) @map("streak_multiplier_bps")
+
+  status String @default("ACTIVE") @db.VarChar(20)
+
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  archivedAt DateTime? @map("archived_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
+  categoryRef RewardProgramCategory @relation(fields: [category], references: [code])
+  createdBy User @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  rules RewardRule[]
+  achievements AchievementRequest[]
+
+  @@index([familyId, status])
+  @@index([childId, status])
+  @@index([familyId, category])
+  @@map("reward_programs")
+}
+
+/// A child's attempt at a program on a given day. THE SECURITY BOUNDARY: a
+/// child principal may create this row (status REQUESTED/IN_PROGRESS) and
+/// submit to it (SUBMITTED). It may never move it to VERIFIED, and no
+/// child-authenticated path writes `rewards_ledger_entries` — the verification
+/// outcome and the grant are decided server-side inside a consumer.
+model AchievementRequest {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  programId String @map("program_id") @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+
+  /// REQUESTED | IN_PROGRESS | SUBMITTED | PENDING_PARENT | VERIFIED | REJECTED | EXPIRED
+  status String @default("REQUESTED") @db.VarChar(20)
+  /// The family-local calendar day this attempt belongs to. Together with the
+  /// unique index below it is what makes `maxPerDay` countable and what makes a
+  /// replayed "start" idempotent rather than a second attempt.
+  localDate DateTime @map("local_date") @db.Date
+  /// 1-based. `(program_id, child_id, local_date, attempt_no)` is unique.
+  attemptNo Int @default(1) @map("attempt_no")
+
+  startedAt   DateTime? @map("started_at")
+  submittedAt DateTime? @map("submitted_at")
+  decidedAt   DateTime? @map("decided_at")
+  /// The parent who approved/rejected, when a human decided. NULL when the
+  /// server decided — and that difference is the audit trail.
+  decidedByUserId String? @map("decided_by_user_id") @db.Uuid
+
+  /// Server-measured, never client-claimed.
+  elapsedMinutes Int? @map("elapsed_minutes")
+
+  /// FROZEN AT VERIFICATION TIME. Read back — never recomputed — on every
+  /// subsequent grant attempt, which is what makes the multiplier safe to put
+  /// inside the idempotency key. See `streak-multiplier.ts`.
+  appliedMultiplierBps Int? @map("applied_multiplier_bps")
+  streakDaysAtVerification Int? @map("streak_days_at_verification")
+  /// The final amount the ledger was asked for, kept for audit even though the
+  /// ledger row is the source of truth.
+  grantedAmount Int? @map("granted_amount")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  family  Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  program RewardProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  child   Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  attempts VerificationAttempt[]
+  screenTimeGrants ScreenTimeRewardGrant[]
+  fulfilments RewardFulfilment[]
+  quizAssignments QuizAssignment[]
+  evidence AchievementEvidence[]
+
+  @@unique([programId, childId, localDate, attemptNo])
+  @@index([familyId, status])
+  @@index([childId, localDate])
+  @@index([programId, childId, localDate])
+  @@map("achievement_requests")
+}
+
+/// APPEND-ONLY. One row per verification decision, ever. `0006` REVOKEs UPDATE
+/// and DELETE on it at the privilege level for `abny_app`, the same discipline
+/// `0004` applied to `rewards_ledger_entries` and `audit_logs` — append-only by
+/// permission, not by convention.
+model VerificationAttempt {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  achievementId String @map("achievement_id") @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+
+  method String @db.VarChar(40)
+  /// PASSED | FAILED | ESCALATED
+  result String @db.VarChar(20)
+  scorePercent Int? @map("score_percent")
+  reasonCode String @map("reason_code") @db.VarChar(60)
+  /// Opaque pointer to submitted evidence (a recitation upload, a quiz run).
+  /// NO audio/media processing is built — this is a reference and nothing else.
+  evidenceRef String? @map("evidence_ref")
+  /// 1-based index of this attempt within the achievement.
+  attemptNumber Int @map("attempt_number")
+  /// SYSTEM | PARENT. Which principal decided.
+  verifierType String @map("verifier_type") @db.VarChar(20)
+  /// The parent user id when `verifierType = 'PARENT'`, NULL for SYSTEM.
+  verifierUserId String? @map("verifier_user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  child Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([achievementId, attemptNumber])
+  @@index([familyId, createdAt])
+  @@index([childId, createdAt])
+  @@map("verification_attempts")
+}
+
+/// A bounded, expiring, revocable grant of extra screen-time minutes.
+///
+/// This is what makes SCREEN_TIME a REAL reward rather than a number in a
+/// ledger: `ScreenTimeService.getEffectivePolicy` sums the ACTIVE, unexpired,
+/// unrevoked rows here and adds them to `ScreenTimePolicy.dailyLimitMinutes`.
+/// The base policy row is NOT edited — a reward must not silently rewrite a
+/// parental control, and it must expire on its own.
+model ScreenTimeRewardGrant {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+  achievementId String? @map("achievement_id") @db.Uuid
+  /// UNIQUE. The ledger row that paid for this grant — one grant per ledger
+  /// entry, enforced by the database, so a redelivered REWARD_GRANTED cannot
+  /// mint a second block of minutes.
+  ledgerEntryId String @unique @map("ledger_entry_id") @db.Uuid
+
+  minutes   Int
+  grantedAt DateTime @default(now()) @map("granted_at")
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  revokedByUserId String? @map("revoked_by_user_id") @db.Uuid
+  revokeReason String? @map("revoke_reason")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest? @relation(fields: [achievementId], references: [id], onDelete: SetNull)
+
+  @@index([childId, expiresAt])
+  @@index([familyId])
+  @@map("screen_time_reward_grants")
+}
+
+/// PENDING -> APPROVED -> FULFILLED | DECLINED, for the reward types a server
+/// cannot deliver by itself (a physical toy, a privilege, a custom promise).
+/// Legal transitions live in `reward-spec.ts`; the terminal states have no
+/// outgoing edge, which is why "fulfil a declined reward" is a 400.
+model RewardFulfilment {
+  familyId  String @map("family_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  childId   String @map("child_id") @db.Uuid
+  achievementId String? @map("achievement_id") @db.Uuid
+  ledgerEntryId String @unique @map("ledger_entry_id") @db.Uuid
+
+  rewardType String @map("reward_type") @db.VarChar(40)
+  description String
+  quantity Int @default(1)
+  status String @default("PENDING") @db.VarChar(20)
+
+  decidedAt DateTime? @map("decided_at")
+  decidedByUserId String? @map("decided_by_user_id") @db.Uuid
+  fulfilledAt DateTime? @map("fulfilled_at")
+  note String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest? @relation(fields: [achievementId], references: [id], onDelete: SetNull)
+
+  @@index([familyId, status])
+  @@index([childId, status])
+  @@map("reward_fulfilments")
+}
+
+// ============================================================
+// B5 — THE SERVER-OWNED QUESTION BANK (PA-B-017)
+//
+// THE DEFECT, stated plainly: `QUIZ` and `CODE_CHALLENGE` read
+// `quizCorrect`/`quizTotal` and `testsPassed`/`testsTotal` FROM THE CHILD'S
+// OWN DEVICE and carried `canAutoApprove: true`. The server compared a number
+// the child chose against a threshold and paid out. There was no question bank
+// and no answer key anywhere in the repository — `grep -rn "correctAnswer\|
+// answerKey\|questionBank" src/` returned nothing. The child graded herself.
+//
+// THE FIX IS PROVENANCE, NOT VALIDATION. The server now owns both halves: it
+// SELECTS the questions (`quiz_assignments`) and it HOLDS the answer key
+// (`quiz_questions.correct_choice_index`), and the child submits ANSWERS. The
+// score that reaches `verification-strategies.ts` is produced by
+// `QuizGradingService`, never by a DTO field — the two DTO fields that used to
+// carry it are gone.
+//
+// CONTENT IS A BUSINESS DECISION AND IS NOT INVENTED HERE. Migration 0008
+// seeds a small, explicitly-labelled SAMPLE bank so the mechanism is provable
+// end to end; authoring the real bank is flagged for the client in the B5+B9
+// report's `افتراضات ومخاطر مفتوحة`.
+// ============================================================
+
+/// SHARED_NULL tenancy, the same mechanism `RewardRule` has used since Sprint
+/// 25 and B4 seeded 16 rows through: `family_id IS NULL` means «provided by
+/// the platform to every family», a non-NULL value means «this family wrote
+/// it». No new tenancy mechanism is introduced for the bank.
+model QuizQuestion {
+  familyId String? @map("family_id") @db.Uuid
+  id       String  @id @default(uuid()) @db.Uuid
+
+  /// A `ProgramCategory` code (`program-taxonomy.ts`), so a STUDY program
+  /// draws STUDY questions. Not an enum, matching this schema's own convention
+  /// for taxonomy codes that live in a table.
+  category String  @db.VarChar(40)
+  /// Optional narrowing inside a category (a school subject, a surah name).
+  subject  String? @db.VarChar(80)
+  difficulty String @default("EASY") @db.VarChar(20)
+  minAge   Int?    @map("min_age")
+  maxAge   Int?    @map("max_age")
+
+  promptAr String @map("prompt_ar")
+  /// `string[]`, 2..6 entries. JSON rather than a child table because a choice
+  /// has no identity of its own and is never queried independently.
+  choices  Json
+
+  /// THE ANSWER KEY. The one column in this schema that must never appear in a
+  /// response body; `QuizService.serve` selects explicit fields precisely so
+  /// this one cannot be leaked by a future `select: undefined`.
+  correctChoiceIndex Int @map("correct_choice_index")
+  explanationAr String? @map("explanation_ar")
+
+  isActive Boolean @default(true) @map("is_active")
+  createdByUserId String? @map("created_by_user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([familyId, category, isActive])
+  @@index([category, isActive])
+  @@map("quiz_questions")
+}
+
+/// WHAT THE SERVER SERVED, so that what it grades is what it asked. Without
+/// this row the grading step would have to trust the client's statement of
+/// which questions it answered — the same provenance hole one level down.
+model QuizAssignment {
+  familyId String @map("family_id") @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
+  achievementId String @map("achievement_id") @db.Uuid
+  childId  String @map("child_id") @db.Uuid
+
+  /// 1-based, and part of the unique key: a re-submission under
+  /// `MAX_VERIFICATION_ATTEMPTS` gets a FRESH draw. Reusing one set across
+  /// three attempts would make the third attempt a memory test of the first.
+  attemptNo Int @map("attempt_no")
+
+  /// Ordered `string[]` of `quiz_questions.id`. Order is part of the contract:
+  /// the child answers by INDEX, so a reorder would misgrade.
+  questionIds Json @map("question_ids")
+  totalCount  Int  @map("total_count")
+
+  servedAt  DateTime  @default(now()) @map("served_at")
+  gradedAt  DateTime? @map("graded_at")
+  correctCount Int?   @map("correct_count")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// One served set per attempt. A second `GET .../quiz` inside the same
+  /// attempt returns THE SAME questions rather than re-rolling until an easy
+  /// draw appears — enforced by the database, not by a check in the service.
+  @@unique([achievementId, attemptNo])
+  @@index([familyId, childId])
+  @@map("quiz_assignments")
+}
+
+// ============================================================
+// B5 — EVIDENCE UPLOAD (PA-B-019)
+//
+// `RECITATION_SUBMISSION` and `COMPLETION_ARTIFACT` both require a
+// `submissionRef`, both are `canAutoApprove: false`, and there was NO WAY TO
+// PRODUCE ONE: zero multipart routes, zero storage abstraction, zero file
+// models in the repository. Every Quran program in the product was therefore
+// unreachable from the child app — the strategy could only ever return
+// `RECITATION_MISSING`.
+//
+// NO AUDIO ML AND NO IMAGE CLASSIFICATION IS BUILT. A parent still confirms.
+// This model stores the METADATA of a stored object; the bytes live behind
+// `IEvidenceStorage` (local disk today, S3-compatible as the documented
+// target).
+// ============================================================
+model AchievementEvidence {
+  familyId String @map("family_id") @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
+  achievementId String @map("achievement_id") @db.Uuid
+  childId  String @map("child_id") @db.Uuid
+
+  /// RECITATION | ARTIFACT — derived from the program's verification method by
+  /// the server, never sent by the client.
+  kind String @db.VarChar(40)
+
+  /// Opaque to every caller. Tenant-prefixed by the storage adapter
+  /// (`<familyId>/<childId>/<achievementId>/<id>.<ext>`) so a traversal in a
+  /// future adapter still cannot leave the family's own prefix.
+  storageKey String @map("storage_key") @db.VarChar(400)
+  /// The mime type the server DECIDED from the magic bytes, not the one the
+  /// client declared.
+  mimeType String @map("mime_type") @db.VarChar(100)
+  byteSize Int    @map("byte_size")
+  sha256   String @db.VarChar(64)
+  originalFilename String? @map("original_filename") @db.VarChar(255)
+
+  /// THE RETENTION HOOK. A child's recitation is among the most sensitive
+  /// bytes this product will ever hold. Set at write time from
+  /// `EVIDENCE_RETENTION_DAYS`, swept by
+  /// `DataRetentionEnforcementService.enforceAchievementEvidenceRetention`,
+  /// which is registered in `enforceAll()` like every other category.
+  retainUntil DateTime @map("retain_until")
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  achievement AchievementRequest @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  child  Child  @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// Content-addressed idempotency: the same bytes uploaded twice for one
+  /// attempt (a retry on a flaky mobile connection) is ONE asset, decided by
+  /// the database rather than by a size/name heuristic.
+  @@unique([achievementId, sha256])
+  @@index([familyId, achievementId])
+  @@index([retainUntil])
+  @@map("achievement_evidence")
+}
+
+// ============================================================
+// PHASE C — P4: THE SCHEDULER (PA-B-031)
+//
+// THE DEFECT THIS CLOSES, stated as a measurement rather than as a complaint:
+// before these two tables there was NO recurring execution mechanism in this
+// repository other than `OutboxRelay`'s own `setInterval`. Not `@nestjs/schedule`,
+// not BullMQ, not a cron entry, not a `Procfile` worker. Everything written to
+// be run "periodically" — `DataRetentionEnforcementService.enforceAll()`,
+// `HabitEngineService.markMissedHabits()` — had ZERO production callers, which
+// means retention was a policy document with an unexecuted implementation
+// underneath it, and `habit_completions.status = 'MISSED'` was a value the
+// vocabulary allowed and no code path ever wrote.
+//
+// WHY POSTGRES AND NOT A NEW QUEUE. Identical reasoning to ADR-007 and to the
+// outbox relay's own transport note: the durable state a scheduler needs IS a
+// table (a run history you can query is not optional — it is requirement §3
+// "observable"), and the exclusion a scheduler needs across replicas is a
+// conditional UPDATE plus `pg_try_advisory_xact_lock`, both of which this
+// database already provides and this codebase already uses
+// (`rewards.sql.ts:168`). BullMQ would have added a second datastore holding
+// authoritative state, a second retry policy, and a second place a job can be
+// stuck. `@nestjs/schedule` would have added cron parsing and NOTHING else —
+// no lock, no history, no per-family calendar — and cron parsing is the one
+// piece a family-scoped scheduler cannot use anyway, because "02:00" for a
+// Cairo family and "02:00" for a Riyadh family are different instants and no
+// server-side crontab can express both.
+// ============================================================
+
+/// THE JOB REGISTRY AND ITS SCHEDULING STATE — one row per named job.
+///
+/// TENANCY: GLOBAL, and the reason is the same one written next to
+/// `FeatureFlag`: this is platform configuration, not tenant data. A job
+/// DEFINITION belongs to the deployment; a job RUN may belong to a family, and
+/// that is what `JobRun.family_id` is for. Giving this table a `family_id`
+/// would mean either one registry row per family (60,000 rows describing one
+/// piece of code) or a NULL that means nothing.
+///
+/// The row is the LEASE as well as the schedule. `locked_by`/`locked_at` are
+/// claimed by a conditional UPDATE — the same primitive
+/// `SQL_CLAIM_OUTBOX_BATCH` uses — so two replicas ticking at the same
+/// millisecond cannot both run the job, and a replica that dies mid-run
+/// releases its claim by the lease going stale rather than by anything having
+/// to notice it died.
+model ScheduledJob {
+  /// The code-side identifier. Primary key on purpose: a job is named, not
+  /// numbered, and the name is what an operator types.
+  name       String  @id @db.VarChar(60)
+  /// PLATFORM (one execution covers every tenant) | FAMILY (the sweep fans out
+  /// to one execution per family, on that family's calendar).
+  scope      String  @db.VarChar(20)
+  /// How often the SWEEP runs. For a FAMILY job this is the granularity at
+  /// which families are re-checked against their own local clock, NOT the
+  /// cadence at which any one family is processed — that is once per family
+  /// business day, enforced by `job_runs`' unique key.
+  cadenceSeconds Int  @map("cadence_seconds")
+  /// FAMILY jobs only: the family-LOCAL hour (0-23) after which the previous
+  /// business day is considered closed and may be rolled over. NULL for
+  /// PLATFORM jobs.
+  localHour  Int?    @map("local_hour") @db.SmallInt
+  enabled    Boolean @default(true)
+
+  nextRunAt      DateTime  @default(now()) @map("next_run_at")
+  lastStartedAt  DateTime? @map("last_started_at")
+  lastFinishedAt DateTime? @map("last_finished_at")
+  /// SUCCEEDED | FAILED — the visible failure state requirement §3.
+  lastStatus     String?   @map("last_status") @db.VarChar(20)
+  lastError      String?   @map("last_error") @db.VarChar(500)
+  lastDurationMs Int?      @map("last_duration_ms")
+  lastAffectedRows Int?    @map("last_affected_rows")
+  /// Drives the exponential backoff AND is the alert signal: a job whose
+  /// consecutive failure count is climbing is broken even while the process is
+  /// healthy.
+  consecutiveFailures Int  @default(0) @map("consecutive_failures")
+
+  lockedBy   String?   @map("locked_by") @db.VarChar(60)
+  lockedAt   DateTime? @map("locked_at")
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  runs JobRun[]
+
+  @@index([enabled, nextRunAt])
+  @@map("scheduled_jobs")
+}
+
+/// THE RUN HISTORY — started/finished/failed, duration, affected rows.
+/// Requirement §3 "observable", as a queryable table rather than as log lines
+/// nobody can aggregate.
+///
+/// TENANCY: PLATFORM_ANNOTATED. `family_id IS NULL` means "a platform-wide
+/// execution not attributable to any one household" (the retention sweep, the
+/// dead-letter gauge) and such rows are invisible to every tenant — only
+/// SystemContext reads them. A FAMILY-scoped run stamps the tenant, because
+/// the runner re-enters `runWithTenant({ familyId })` before executing it, in
+/// exactly the way `OutboxRelay.dispatch` does.
+///
+/// IDEMPOTENCY IS A DATABASE CONSTRAINT, NOT A CHECK IN CODE
+/// (CONTEXT §3 principle 6). `@@unique([jobName, familyId, businessDate])` is
+/// what makes "run the Cairo family's daily rollover for 2026-01-15" happen
+/// exactly once no matter how many sweeps see it as due, how many replicas are
+/// running, or how many times an operator presses the manual trigger.
+/// PostgreSQL treats NULLs as distinct in a unique index, so PLATFORM runs
+/// (both columns NULL) are free to accumulate one row per execution — which is
+/// precisely the history an operator wants for those.
+///
+/// WHAT IS DELIBERATELY NOT IN THIS TABLE: the deleted content. `details` holds
+/// per-target COUNTS ({"notifications": 412}) and never a row, an id, a body,
+/// an email or a child's name. A retention log that records what it deleted has
+/// re-created the data it was asked to destroy.
+model JobRun {
+  id       String  @id @default(uuid()) @db.Uuid
+  familyId String? @map("family_id") @db.Uuid
+  jobName  String  @map("job_name") @db.VarChar(60)
+  /// The family business date this run CLOSES. `@db.Date`, stored as UTC
+  /// midnight and interpreted on the family's calendar — the storage
+  /// convention `FamilyDateService.toDateColumn` documents. NULL for PLATFORM
+  /// runs, which close no calendar day.
+  businessDate DateTime? @map("business_date") @db.Date
+
+  /// RUNNING | SUCCEEDED | FAILED
+  status   String   @db.VarChar(20)
+  /// Increments on every retry of the same (job, family, businessDate).
+  attempt  Int      @default(1)
+  /// Which process executed it — the same shape as `outbox_messages.locked_by`.
+  workerId String   @map("worker_id") @db.VarChar(60)
+  /// MANUAL when an operator pressed the button, SCHEDULE otherwise. An audit
+  /// question ("who caused this delete?") that the run history can answer.
+  trigger  String   @default("SCHEDULE") @db.VarChar(20)
+
+  startedAt    DateTime  @default(now()) @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+  durationMs   Int?      @map("duration_ms")
+  affectedRows Int       @default(0) @map("affected_rows")
+  /// COUNTS ONLY. Never content. See the model docstring.
+  details      Json?
+  error        String?   @db.VarChar(1000)
+
+  family Family?      @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  job    ScheduledJob @relation(fields: [jobName], references: [name], onDelete: Cascade)
+
+  @@unique([jobName, familyId, businessDate])
+  @@index([jobName, startedAt])
+  @@index([familyId, jobName])
+  @@index([status, startedAt])
+  @@map("job_runs")
+}
+
+// ============================================================
+// PHASE D (PC-D-005) — QUIET-HOURS DEFERRAL
+// ============================================================
+
+/// PHASE D (`PC-D-005`) — THE ROW WHOSE ABSENCE WAS THE DEFECT.
+///
+/// `SmartNotificationIntegrationService` returned `decision: 'DEFER'` and wrote
+/// nothing. There was no table, no queue and no redelivery, so «deferred» and
+/// «lost» were the same state — and with the default quiet-hours policy of
+/// 21:00–07:00 that state covered 41.6% of every day, including the hours a
+/// reward is most often earned.
+///
+/// This model is the durable half of the fix. One row per notification the
+/// system has ACCEPTED but not yet DELIVERED, carrying:
+///   - `scheduledFor`   — computed by `FamilyDateService.nextLocalTimeAfter`
+///                        from `Family.timezone`, i.e. the end of THIS family's
+///                        quiet hours, read from tzdata at the target instant.
+///   - `sourceEventId`  — the producer's causal key, carried UNCHANGED into
+///                        `notifications.source_event_id` at release. This is
+///                        what makes B9's idempotency survive defer → deliver.
+///   - `state`          — visible, with a terminal `DEAD` that an operator can
+///                        query. Phase C's outbox lesson, applied to the other
+///                        delivery path.
+///
+/// TENANCY: STRICT_TENANT, the same class as `Notification` itself.
+model NotificationDelivery {
+  familyId String  @map("family_id") @db.Uuid
+  id       String  @id @default(uuid()) @db.Uuid
+  childId  String? @map("child_id") @db.Uuid
+
+  type            String  @db.VarChar(60)
+  /// The `NOTIFICATION_CLASSES` category — the axis the per-category cap counts
+  /// on at delivery time. Denormalised on purpose: the cap must be enforceable
+  /// from this row alone, without re-deriving the classification months later
+  /// from a table that may have changed.
+  category        String  @db.VarChar(30)
+  priority        String  @default("NORMAL") @db.VarChar(20)
+  targetAudience  String  @map("target_audience") @db.VarChar(10)
+  title           String  @db.VarChar(200)
+  body            String  @db.VarChar(500)
+  sourceEventId   String  @map("source_event_id") @db.VarChar(200)
+  /// PHASE E (`PD-N-004`, migration 0017). The producer's payload, carried
+  /// verbatim into `notifications.data` on release. Added when
+  /// `DigitalWellbeingEngineService` was routed through this queue: its alerts
+  /// carry device metadata (which package, which limit, how far over) that the
+  /// parent app reads, and a queue that reconstructs a message instead of
+  /// holding it would replace a silent drop with a silent truncation.
+  data            Json?
+
+  /// PENDING | DELIVERING | DELIVERED | SUPPRESSED | DEAD — closed by a CHECK
+  /// constraint in migration 0014, not only by a TypeScript union.
+  state            String    @default("PENDING") @db.VarChar(20)
+  /// Why it was held in the first place (`QUIET_HOURS` today).
+  deferReason      String    @map("defer_reason") @db.VarChar(40)
+  /// Why it will never be delivered. NOT NULL whenever state is SUPPRESSED or
+  /// DEAD, enforced by a CHECK — a resolved row that does not say why is the
+  /// silent drop this phase removes.
+  resolutionReason String?   @map("resolution_reason") @db.VarChar(40)
+
+  scheduledFor DateTime @map("scheduled_for")
+  businessDate DateTime @map("business_date") @db.Date
+
+  attemptCount  Int       @default(0) @map("attempt_count")
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  lastError     String?   @map("last_error") @db.VarChar(500)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  deliveredAt DateTime? @map("delivered_at")
+  lockedBy    String?   @map("locked_by") @db.VarChar(60)
+  lockedAt    DateTime? @map("locked_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// The deferral half of B9's constraint. `notifications` protects the
+  /// DELIVERED row; this protects the PENDING one, so a redelivery inside the
+  /// quiet window cannot inflate the morning digest with a duplicate that the
+  /// downstream index would only have refused after it had been counted.
+  @@unique([familyId, sourceEventId])
+  @@index([state, scheduledFor])
+  @@index([familyId, state, scheduledFor])
+  @@index([createdAt])
+  @@map("notification_deliveries")
+}
+
+// ============================================================
+// PHASE D — COMMERCIAL SUBSCRIPTION & PAYMENT ARCHITECTURE
+//
+// Everything below is ADDITIVE. Zero existing model is rewritten. The only
+// edits to pre-existing declarations are: three new values on
+// `SubscriptionStatus` (PENDING, GRACE_PERIOD, REFUNDED), one new value on
+// `SubscriptionPlan` (BASIC), one new value on `PaymentProvider` (MOYASAR),
+// eight nullable columns on `Subscription`, six nullable columns on `Invoice`,
+// and back-relations on `Family`. All of those are additive in PostgreSQL
+// terms (`ALTER TYPE ... ADD VALUE`, `ADD COLUMN` nullable), which is what
+// makes migration 0012 safe on a database that already has rows.
+//
+// STATUS VOCABULARY, STATED PLAINLY. The brief names eight subscription
+// statuses: PENDING · ACTIVE · PAST_DUE · CANCELLED · EXPIRED · REFUNDED ·
+// TRIAL · GRACE_PERIOD. Five of them already exist in this database under
+// two US spellings that predate Phase D (`TRIALING`, `CANCELED`). Renaming a
+// PostgreSQL enum value that 2,476 passing tests and every existing row
+// depend on is a breaking change bought for nothing, so the DB keeps its
+// spellings and `src/modules/billing/domain/subscription-status.ts` owns the
+// ONE bidirectional mapping to the brief's vocabulary. There is exactly one
+// mapping site, and a test asserts it is total in both directions.
+//
+// TENANCY (F2): every table below that can belong to a household carries
+// `family_id uuid NOT NULL` from the moment it is created and is registered
+// STRICT in `tenant-model-registry.ts`. `Country`, `Currency` and
+// `SubscriptionPrice` are GLOBAL platform catalogues with a written reason,
+// exactly like `PlanDefinition`. `PaymentWebhookEvent` is
+// PLATFORM_ANNOTATED: a provider's webhook is received and its signature
+// verified BEFORE any family is known — that is the whole point of not
+// trusting the payload — so `family_id IS NULL` is the honest value for the
+// window between receipt and resolution, and such a row must not be readable
+// by a tenant.
+//
+// APPEND-ONLY: `payment_transactions`, `refunds`, `invoices` and
+// `payment_webhook_events` are protected by DELETE-blocking triggers and by
+// an UPDATE trigger that rejects any change to a monetary field or a
+// backwards status transition. Migration 0012 installs them. The discipline
+// is the reward ledger's, not a convention: the database refuses, the
+// application does not merely decline to ask.
+// ============================================================
+
+/// How often a subscription bills. A TABLE-less enum on purpose: unlike the
+/// reward taxonomy this is a closed set that the payment providers themselves
+/// close (Apple and Google both offer a fixed period ladder).
+enum BillingPeriod {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+/// Whether the configured price already contains VAT (the norm for consumer
+/// pricing in both launch markets) or has it added at checkout.
+enum VatMode {
+  INCLUSIVE
+  EXCLUSIVE
+}
+
+enum PaymentTransactionStatus {
+  /// Money not yet moved. Fawry's whole model: the customer is given a
+  /// reference and may pay days later.
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  CHARGEBACK
+}
+
+enum RefundStatus {
+  PENDING
+  COMPLETED
+  DECLINED
+  /// Apple's REFUND_REVERSED: a refund the customer disputed and lost.
+  REVERSED
+}
+
+enum EntitlementStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum WebhookOutcome {
+  RECEIVED
+  PROCESSED
+  /// Understood, deliberately not acted on (an event type we do not model).
+  IGNORED
+  REJECTED_SIGNATURE
+  REJECTED_VALIDATION
+  /// Seen before. The dedupe constraint fired; nothing was re-applied.
+  DUPLICATE
+  FAILED
+}
+
+/// GLOBAL (tenancy): the launch-market catalogue. One row per country we sell
+/// in. VAT IS A COLUMN, not a constant in code — «VAT/tax is configurable per
+/// country» is the requirement, and 14% (EG) vs 15% (SA) is exactly the kind
+/// of number that changes by decree between two releases.
+model Country {
+  /// ISO-3166-1 alpha-2.
+  code                  String   @id @db.VarChar(2)
+  nameEn                String   @map("name_en") @db.VarChar(80)
+  nameAr                String   @map("name_ar") @db.VarChar(80)
+  currencyCode          String   @map("currency_code") @db.VarChar(3)
+  /// BASIS POINTS, not a float. 1400 = 14.00%. Money arithmetic in this
+  /// module never touches IEEE-754.
+  vatBasisPoints        Int      @map("vat_basis_points")
+  /// The default for prices in this country; a price row may override it.
+  vatMode               VatMode  @default(INCLUSIVE) @map("vat_mode")
+  /// Which provider a family in this country is offered by default. Data,
+  /// not code — Egypt today is PAYMOB, and changing that is an UPDATE.
+  defaultProvider       PaymentProvider @default(MANUAL) @map("default_provider")
+  isActive              Boolean  @default(true) @map("is_active")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  currency Currency            @relation(fields: [currencyCode], references: [code])
+  prices   SubscriptionPrice[]
+  families Family[]
+
+  @@index([isActive])
+  @@map("countries")
+}
+
+/// GLOBAL (tenancy): ISO-4217 reference data. `minorUnits` exists because
+/// «cents» is not universal — a system that hardcodes 100 is wrong for KWD
+/// (1000) and for JPY (1), and both markets border currencies that are.
+model Currency {
+  code       String   @id @db.VarChar(3)
+  symbolEn   String   @map("symbol_en") @db.VarChar(8)
+  symbolAr   String   @map("symbol_ar") @db.VarChar(8)
+  /// 10^minorUnits minor units per major unit. EGP = 2, SAR = 2.
+  minorUnits Int      @default(2) @map("minor_units")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  countries Country[]
+  prices    SubscriptionPrice[]
+
+  @@map("currencies")
+}
+
+/// GLOBAL (tenancy): THE price list. Same class and same reasoning as
+/// `PlanDefinition`, which it extends rather than replaces: `PlanDefinition`
+/// answers «what does this tier grant», this table answers «what does it cost
+/// HERE, in THIS currency, for THIS period».
+///
+/// «Prices are centrally configured, never hardcoded across the app» is
+/// enforced structurally: `PricingService` is the only reader, every caller
+/// goes through it, and `PlanDefinition.priceCents` — the single hardcoded
+/// USD number Phase C shipped — is left in place only as the legacy fallback
+/// it always was, with a CI-visible deprecation note.
+model SubscriptionPrice {
+  id            String           @id @default(uuid()) @db.Uuid
+  planTier      SubscriptionPlan @map("plan_tier")
+  countryCode   String           @map("country_code") @db.VarChar(2)
+  currencyCode  String           @map("currency_code") @db.VarChar(3)
+  billingPeriod BillingPeriod    @map("billing_period")
+  /// The amount a customer is charged, in MINOR units of `currencyCode`,
+  /// interpreted according to `vatMode`. 9900 with EGP+INCLUSIVE = 99.00 EGP
+  /// with VAT already inside.
+  amountMinor   Int              @map("amount_minor")
+  vatMode       VatMode          @map("vat_mode")
+  /// The store product identifier this price maps to, when the purchase
+  /// channel is a store. Apple productId / Google basePlanId. NULL for
+  /// direct-checkout channels, which price from this row directly.
+  storeProductId String?         @map("store_product_id") @db.VarChar(120)
+  isActive      Boolean          @default(true) @map("is_active")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  country  Country  @relation(fields: [countryCode], references: [code])
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  /// ONE live price per (tier, country, period). The unique constraint is the
+  /// reason two rows cannot disagree about what a Premium monthly costs in
+  /// Egypt — a class of bug no amount of application care prevents.
+  @@unique([planTier, countryCode, billingPeriod])
+  @@index([countryCode, isActive])
+  @@index([storeProductId])
+  @@map("subscription_prices")
+}
+
+/// STRICT (tenancy). The trial as an ENTITY rather than a nullable column on
+/// `Subscription`. It has to be one: «one trial per family, ever» is a
+/// lifetime fact that must survive the subscription row being cancelled,
+/// deleted-and-recreated, or moved to another provider. The `family_id`
+/// UNIQUE constraint IS the once-per-family rule — not an application check,
+/// which is a race (CONTEXT §3.6).
+model Trial {
+  id          String           @id @default(uuid()) @db.Uuid
+  familyId    String           @unique @map("family_id") @db.Uuid
+  planTier    SubscriptionPlan @map("plan_tier")
+  startedAt   DateTime         @default(now()) @map("started_at")
+  endsAt      DateTime         @map("ends_at")
+  /// 'SIGNUP' | 'CAMPAIGN:<id>' | 'MANUAL:<userId>' — provenance, for the
+  /// day someone asks why this household got 30 days.
+  source      String           @default("SIGNUP") @db.VarChar(60)
+  convertedAt DateTime?        @map("converted_at")
+  cancelledAt DateTime?        @map("cancelled_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([endsAt])
+  @@map("trials")
+}
+
+/// STRICT (tenancy). Binds a STORE account to a household.
+///
+/// This table is the answer to «cross-tenant attempt rejected». Apple hands us
+/// an `appAccountToken` (a UUID the app sets at purchase time) and Google an
+/// `obfuscatedExternalAccountId`; both are OPAQUE to the store and are the
+/// only durable link between a verified purchase and one of our tenants. A
+/// purchase whose account reference resolves to family B can never be applied
+/// to family A, because the resolution goes through this table's UNIQUE
+/// constraint and not through anything the client sent.
+model ProviderAccountLink {
+  id                 String          @id @default(uuid()) @db.Uuid
+  familyId           String          @map("family_id") @db.Uuid
+  provider           PaymentProvider
+  /// Apple `appAccountToken` / Google `obfuscatedExternalAccountId` /
+  /// gateway customer id.
+  providerAccountRef String          @map("provider_account_ref") @db.VarChar(120)
+  linkedAt           DateTime        @default(now()) @map("linked_at")
+  revokedAt          DateTime?       @map("revoked_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountRef])
+  @@index([familyId, provider])
+  @@map("provider_account_links")
+}
+
+/// STRICT (tenancy). APPEND-ONLY financial fact.
+///
+/// One row per money-movement event the provider told us about AND we
+/// verified server-side. Never written from a client request body: the
+/// amounts here come from Apple's signed JWS, Google's Developer API
+/// response, or the gateway's server-to-server callback — never from
+/// `req.body.amount`.
+///
+/// IMMUTABILITY IS A TRIGGER, NOT A CONVENTION. `payment_transactions_no_delete`
+/// blocks DELETE outright; `payment_transactions_immutable_money` rejects any
+/// UPDATE that changes provider, providerTransactionId, currency, or any
+/// amount column, and rejects a status transition that is not in the allowed
+/// lattice. See migration 0012.
+model PaymentTransaction {
+  id                            String                   @id @default(uuid()) @db.Uuid
+  familyId                      String                   @map("family_id") @db.Uuid
+  subscriptionId                String?                  @map("subscription_id") @db.Uuid
+  provider                      PaymentProvider
+  /// The provider's identifier for THIS transaction. Apple `transactionId`,
+  /// Google `orderId`, Paymob transaction id, Fawry reference number.
+  providerTransactionId         String                   @map("provider_transaction_id") @db.VarChar(160)
+  /// The provider's identifier for the SUBSCRIPTION LINEAGE this transaction
+  /// belongs to. Apple `originalTransactionId`, Google `purchaseToken`.
+  providerOriginalTransactionId String?                  @map("provider_original_transaction_id") @db.VarChar(200)
+  /// Apple productId / Google basePlanId / our own price id — whatever the
+  /// provider called the thing that was bought.
+  productRef                    String?                  @map("product_ref") @db.VarChar(120)
+  planTier                      SubscriptionPlan?        @map("plan_tier")
+  billingPeriod                 BillingPeriod?           @map("billing_period")
+  countryCode                   String?                  @map("country_code") @db.VarChar(2)
+  currency                      String                   @db.VarChar(3)
+  /// What the customer paid, in minor units. VAT INCLUDED.
+  grossAmountMinor              Int                      @map("gross_amount_minor")
+  /// The VAT component of `grossAmountMinor`, computed from the COUNTRY's
+  /// rate at the time of the transaction and frozen here. Financial history
+  /// does not move when a tax rate changes.
+  vatAmountMinor                Int                      @default(0) @map("vat_amount_minor")
+  netAmountMinor                Int                      @map("net_amount_minor")
+  status                        PaymentTransactionStatus
+  /// THE defence against double-crediting, enforced by the unique index
+  /// below and never by an application "check then insert".
+  idempotencyKey                String                   @map("idempotency_key") @db.VarChar(200)
+  /// The provider's own timestamp for the event. Ordering is decided by
+  /// THIS, never by arrival order — webhooks arrive out of order and an
+  /// older event must not overwrite a newer one (Q17).
+  occurredAt                    DateTime                 @map("occurred_at")
+  verifiedAt                    DateTime?                @map("verified_at")
+  /// SHA-256 of the exact bytes we verified. Lets a dispute be re-checked
+  /// without this table storing a receipt, a card number, or an email.
+  verifiedPayloadDigest         String?                  @map("verified_payload_digest") @db.VarChar(64)
+  /// Sandbox purchases are recorded and are NEVER entitlement-bearing in a
+  /// production environment. Apple `environment`, Google `testPurchase`.
+  isSandbox                     Boolean                  @default(false) @map("is_sandbox")
+  createdAt                     DateTime                 @default(now()) @map("created_at")
+
+  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  refunds      Refund[]
+  invoices     Invoice[]
+
+  /// The provider can only tell us about a transaction once. A redelivered
+  /// webhook hits this and is a no-op.
+  @@unique([provider, providerTransactionId])
+  /// Our own idempotency key, tenant-scoped. Two different code paths that
+  /// derive the same key for the same household credit the household once.
+  @@unique([familyId, idempotencyKey])
+  @@index([familyId, occurredAt])
+  @@index([subscriptionId])
+  @@index([providerOriginalTransactionId])
+  @@map("payment_transactions")
+}
+
+/// STRICT (tenancy). APPEND-ONLY. A refund is never an UPDATE of the payment
+/// it reverses — it is its own fact, with its own provider identifier and its
+/// own idempotency key, pointing at the transaction it reverses.
+model Refund {
+  id                   String       @id @default(uuid()) @db.Uuid
+  familyId             String       @map("family_id") @db.Uuid
+  paymentTransactionId String       @map("payment_transaction_id") @db.Uuid
+  provider             PaymentProvider
+  providerRefundId     String?      @map("provider_refund_id") @db.VarChar(160)
+  amountMinor          Int          @map("amount_minor")
+  currency             String       @db.VarChar(3)
+  reason               String?      @db.VarChar(300)
+  status               RefundStatus
+  idempotencyKey       String       @map("idempotency_key") @db.VarChar(200)
+  occurredAt           DateTime     @map("occurred_at")
+  createdAt            DateTime     @default(now()) @map("created_at")
+
+  family             Family             @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  paymentTransaction PaymentTransaction @relation(fields: [paymentTransactionId], references: [id], onDelete: Restrict)
+
+  @@unique([familyId, idempotencyKey])
+  @@index([paymentTransactionId])
+  @@index([familyId, occurredAt])
+  @@map("refunds")
+}
+
+/// STRICT (tenancy). THE ANSWER TO «AM I ALLOWED TO USE THIS».
+///
+/// Feature access anywhere in this application resolves through a row in this
+/// table, never through «which provider paid». `source` records the channel
+/// for accounting and for the refund rule («a Play purchase is refunded only
+/// through Play») — it is INFORMATION, and no business-logic branch reads it
+/// to decide access.
+///
+/// One live row per (family, feature): the unique constraint makes the grant
+/// an idempotent UPSERT, so a redelivered renewal webhook extends
+/// `valid_until` instead of creating a second, contradictory grant. Revocation
+/// sets `status` and `revoked_at`; the row itself is never deleted, because
+/// «this household lost access on 3 March and here is why» is exactly the
+/// question a support ticket asks.
+model Entitlement {
+  id             String            @id @default(uuid()) @db.Uuid
+  familyId       String            @map("family_id") @db.Uuid
+  /// A member of `EntitlementKey` — the fixed vocabulary in
+  /// `billing.types.ts`. An unrecognised key fails safe: not entitled.
+  featureKey     String            @map("feature_key") @db.VarChar(60)
+  planTier       SubscriptionPlan  @map("plan_tier")
+  /// WHICH CHANNEL granted it. Informational. See the model docstring.
+  source         PaymentProvider
+  subscriptionId String?           @map("subscription_id") @db.Uuid
+  status         EntitlementStatus @default(ACTIVE)
+  validFrom      DateTime          @map("valid_from")
+  /// NULL = open-ended (a manual grant). Otherwise the instant access lapses
+  /// unless a renewal extends it.
+  validUntil     DateTime?         @map("valid_until")
+  revokedAt      DateTime?         @map("revoked_at")
+  revokedReason  String?           @map("revoked_reason") @db.VarChar(200)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@unique([familyId, featureKey])
+  @@index([familyId, status])
+  @@index([validUntil])
+  @@map("entitlements")
+}
+
+/// PLATFORM_ANNOTATED (tenancy) — see the section docstring for why
+/// `family_id` is nullable here and nowhere else in Phase D.
+///
+/// The dedupe table. Every provider callback is INSERTed here first, with
+/// `ON CONFLICT DO NOTHING`; a conflict means «seen before» and the handler
+/// returns 200 immediately without re-applying anything. This is the pattern
+/// `consumed_messages` already uses for the domain event bus, applied to the
+/// money path.
+///
+/// `payload_digest` is a SHA-256, not the payload. A webhook body contains a
+/// customer email and a receipt; this table is queried by support staff.
+model PaymentWebhookEvent {
+  id                String          @id @default(uuid()) @db.Uuid
+  familyId          String?         @map("family_id") @db.Uuid
+  provider          PaymentProvider
+  /// Apple `notificationUUID`, Google Pub/Sub `messageId`, Paymob
+  /// transaction id, Fawry `merchantRefNumber`. The provider's own idea of
+  /// «this event», which is what makes redelivery detectable.
+  providerEventId   String          @map("provider_event_id") @db.VarChar(200)
+  eventType         String          @map("event_type") @db.VarChar(80)
+  eventSubtype      String?         @map("event_subtype") @db.VarChar(80)
+  signatureVerified Boolean         @default(false) @map("signature_verified")
+  outcome           WebhookOutcome  @default(RECEIVED)
+  payloadDigest     String          @map("payload_digest") @db.VarChar(64)
+  /// The PROVIDER's timestamp. Out-of-order delivery is resolved against
+  /// this, never against `received_at`.
+  providerSignedAt  DateTime?       @map("provider_signed_at")
+  receivedAt        DateTime        @default(now()) @map("received_at")
+  processedAt       DateTime?       @map("processed_at")
+  failureReason     String?         @map("failure_reason") @db.VarChar(400)
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, providerEventId])
+  @@index([provider, receivedAt])
+  @@index([outcome, receivedAt])
+  @@map("payment_webhook_events")
+}
+
+/// ============================================================
+/// PHASE D — GROWTH, ATTRIBUTION, REFERRAL & FORECASTING
+/// (migration `0015_growth_attribution_referral`)
+///
+/// TWELVE TABLES, AND THE TENANCY CLASS OF EACH IS AN ARGUMENT, NOT A
+/// DEFAULT. Four of them are STRICT because a row describes ONE household
+/// and is meaningless outside it; seven are GLOBAL because they are
+/// platform configuration or platform-wide aggregates that belong to no
+/// household and must never be readable by one; one is PLATFORM_ANNOTATED
+/// because it is an operator alert that may or may not be about a family.
+///
+/// PRIVACY (CONTEXT §3 principle 8). Not one of these tables carries a
+/// child identifier, a child name, a date of birth, message content or
+/// app-usage detail. `family_activations` — the table closest to a child's
+/// behaviour — stores a family id, an instant, a duration and a rule
+/// version, and deliberately not WHICH child completed WHICH goal. That is
+/// the line between product analytics and behavioural profiling of minors,
+/// and it is drawn in the schema so no query can cross it.
+/// ============================================================
+
+enum AcquisitionChannelType {
+  ORGANIC
+  TIKTOK
+  INSTAGRAM
+  FACEBOOK
+  YOUTUBE
+  GOOGLE
+  INFLUENCER
+  SCHOOL
+  PARENT_COMMUNITY
+  REFERRAL
+  PARTNERSHIP
+  APP_STORE
+  GOOGLE_PLAY
+  OTHER
+}
+
+enum AcquisitionPlatformType {
+  ANDROID
+  IOS
+  WEB
+  UNKNOWN
+}
+
+enum ReferralEventKind {
+  SENT
+  CLICKED
+  REGISTERED
+  QUALIFIED
+  REJECTED
+}
+
+enum ReferralRewardKind {
+  SUBSCRIPTION_CREDIT_DAYS
+  CHILD_REWARD_COINS
+}
+
+enum ReferralRewardState {
+  PENDING
+  GRANTED
+  FAILED
+}
+
+enum ForecastScenarioKind {
+  CONSERVATIVE
+  BASE
+  AGGRESSIVE
+}
+
+enum GrowthAlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// STRICT (tenancy). WHERE THIS HOUSEHOLD CAME FROM.
+///
+/// Written EXACTLY ONCE, inside the registration transaction, and never
+/// updated — `family_id` is UNIQUE and the service only INSERTs. Attribution
+/// that can be overwritten is not attribution: every campaign's number would
+/// then depend on which request arrived last.
+///
+/// The client supplies these values and the client is NOT trusted with them:
+/// they are normalised and length-capped in `domain/attribution.ts`, the
+/// channel is resolved to a closed enum, and none of it participates in any
+/// authorization decision. `family_id` still comes from the transaction that
+/// created the family — CONTEXT §3 principle 3 is not relaxed here.
+model AcquisitionAttribution {
+  id           String                  @id @default(uuid()) @db.Uuid
+  familyId     String                  @unique @map("family_id") @db.Uuid
+  channel      AcquisitionChannelType
+  /// The RAW `utm_source`, kept for diagnosis. Never used as a channel — an
+  /// unrecognised source resolves to OTHER, and this column is how you find
+  /// out which unrecognised sources deserve to become channels.
+  source       String?                 @db.VarChar(120)
+  campaign     String?                 @db.VarChar(120)
+  /// FK-less on purpose: a UTM may name a campaign that was never created in
+  /// `growth_campaigns`, and refusing the registration over a marketing typo
+  /// would be the wrong trade. Resolution to a campaign row happens at read
+  /// time, by name, and unmatched spend is reported as unmatched.
+  campaignId   String?                 @map("campaign_id") @db.Uuid
+  medium       String?                 @db.VarChar(60)
+  content      String?                 @db.VarChar(120)
+  countryCode  String?                 @map("country_code") @db.VarChar(2)
+  platform     AcquisitionPlatformType @default(UNKNOWN)
+  referralCode String?                 @map("referral_code") @db.VarChar(32)
+  referrer     String?                 @db.VarChar(400)
+  landingPage  String?                 @map("landing_page") @db.VarChar(400)
+  /// The anonymous session the APP_INSTALLED event was emitted under. This is
+  /// the ONLY join between the pre-registration funnel and the post-
+  /// registration one, and it is why INSTALL can be attributed at all.
+  sessionId    String?                 @map("session_id") @db.VarChar(100)
+  createdAt    DateTime                @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([channel, createdAt])
+  @@index([countryCode, createdAt])
+  @@index([campaignId])
+  @@index([referralCode])
+  @@map("acquisition_attributions")
+}
+
+/// STRICT (tenancy). THE ACTIVATION FACT — one row per household, ever.
+///
+/// `family_id` is UNIQUE, and that constraint IS the "first, and only once"
+/// gate of the activation definition (CONTEXT §3 principle 6: the defence is
+/// the database, not an application check-then-insert). Two concurrent
+/// qualifying completions produce exactly one row.
+///
+/// NO `child_id`. See the section docstring. `time_to_value_minutes` is
+/// STORED rather than recomputed so the median is taken over frozen facts
+/// and cannot move when a family changes its timezone.
+model FamilyActivation {
+  id                  String   @id @default(uuid()) @db.Uuid
+  familyId            String   @unique @map("family_id") @db.Uuid
+  /// Which version of the "meaningful goal" rule admitted this row. A metric
+  /// whose definition changed silently is worse than no metric.
+  ruleVersion         String   @map("rule_version") @db.VarChar(40)
+  completionKind      String   @map("completion_kind") @db.VarChar(30)
+  occurredAt          DateTime @map("occurred_at")
+  /// Minutes from `families.created_at` to `occurred_at`. Non-negative by
+  /// CHECK — a negative time-to-value is a clock problem, not a fast family.
+  timeToValueMinutes  Int      @map("time_to_value_minutes")
+  countryCode         String?  @map("country_code") @db.VarChar(2)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([occurredAt])
+  @@index([countryCode, occurredAt])
+  @@map("family_activations")
+}
+
+/// GLOBAL (tenancy). AN ADMIN-CREATED ACQUISITION CAMPAIGN.
+///
+/// Same class and same reasoning as `SubscriptionPrice`: platform
+/// configuration owned by the deployment, identical for every household,
+/// and meaningless to scope to one. What a HOUSEHOLD's relationship to a
+/// campaign is lives in `acquisition_attributions`, which IS strict.
+///
+/// EVERY NUMBER HERE IS SUPPLIED BY AN ADMIN. There is no default budget, no
+/// default target and no hardcoded channel mix anywhere in the growth module
+/// — `budget_minor`, `target_users` and `target_paid_users` are NOT NULL
+/// precisely so a campaign cannot be created without someone stating them.
+model GrowthCampaign {
+  id              String                 @id @default(uuid()) @db.Uuid
+  name            String                 @db.VarChar(120)
+  channel         AcquisitionChannelType
+  countryCode     String                 @map("country_code") @db.VarChar(2)
+  /// Minor units of `currency_code`. Never a float, never "cents".
+  budgetMinor     Int                    @map("budget_minor")
+  currencyCode    String                 @map("currency_code") @db.VarChar(3)
+  startsAt        DateTime               @map("starts_at")
+  endsAt          DateTime               @map("ends_at")
+  targetUsers     Int                    @map("target_users")
+  targetPaidUsers Int                    @map("target_paid_users")
+  /// The `utm_campaign` string this campaign is recognised by. Attribution
+  /// rows are matched to campaigns on THIS, case-insensitively.
+  utmCampaign     String?                @map("utm_campaign") @db.VarChar(120)
+  isActive        Boolean                @default(true) @map("is_active")
+  createdByUserId String?                @map("created_by_user_id") @db.Uuid
+  notes           String?                @db.VarChar(500)
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  dailySpend CampaignDailySpend[]
+
+  @@unique([name, countryCode])
+  @@index([countryCode, isActive])
+  @@index([channel])
+  @@map("growth_campaigns")
+}
+
+/// GLOBAL (tenancy). WHAT A CAMPAIGN ACTUALLY COST ON A GIVEN DAY, AND WHAT
+/// THE AD PLATFORM SAID IT BOUGHT.
+///
+/// `impressions`, `clicks`, `visits` and `leads` are EXTERNALLY REPORTED —
+/// this server never observes an ad impression, and the funnel API tags
+/// those two steps `EXTERNAL_REPORTED` so a dashboard cannot render a
+/// reported number and a measured one identically.
+///
+/// UNIQUE `(campaign_id, business_date)` makes the daily import idempotent:
+/// re-running yesterday's export UPDATEs one row instead of doubling spend.
+model CampaignDailySpend {
+  id           String   @id @default(uuid()) @db.Uuid
+  campaignId   String   @map("campaign_id") @db.Uuid
+  /// The campaign's country reporting day (`reporting.timezone.<CC>`), not a
+  /// UTC date. Stored as a DATE, interpreted on that country's calendar.
+  businessDate DateTime @map("business_date") @db.Date
+  spendMinor   Int      @map("spend_minor")
+  impressions  Int      @default(0)
+  clicks       Int      @default(0)
+  visits       Int      @default(0)
+  leads        Int      @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  campaign GrowthCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, businessDate])
+  @@index([businessDate])
+  @@map("campaign_daily_spend")
+}
+
+/// STRICT (tenancy). ONE REFERRAL CODE PER HOUSEHOLD, FOR LIFE.
+///
+/// `family_id` UNIQUE — a household that could mint codes could mint one per
+/// invitation and defeat every velocity limit that counts per code. `code`
+/// UNIQUE globally, over an alphabet with no confusable characters (see
+/// `domain/referral.ts`).
+model ReferralCode {
+  id              String   @id @default(uuid()) @db.Uuid
+  familyId        String   @unique @map("family_id") @db.Uuid
+  code            String   @unique @db.VarChar(32)
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  family Family         @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  links  ReferralLink[]
+  events ReferralEvent[]
+
+  @@map("referral_codes")
+}
+
+/// STRICT (tenancy). A SHAREABLE LINK FOR ONE CODE ON ONE CHANNEL.
+///
+/// Separate from `referral_codes` because the CODE is the identity and the
+/// LINK is a presentation of it: one household shares the same code on
+/// WhatsApp and on Instagram and wants to know which one worked. One row per
+/// (code, channel), enforced.
+model ReferralLink {
+  id             String                 @id @default(uuid()) @db.Uuid
+  familyId       String                 @map("family_id") @db.Uuid
+  referralCodeId String                 @map("referral_code_id") @db.Uuid
+  channel        AcquisitionChannelType
+  url            String                 @db.VarChar(400)
+  clickCount     Int                    @default(0) @map("click_count")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+
+  family       Family       @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  referralCode ReferralCode @relation(fields: [referralCodeId], references: [id], onDelete: Cascade)
+
+  @@unique([referralCodeId, channel])
+  @@index([familyId])
+  @@map("referral_links")
+}
+
+/// STRICT (tenancy), scoped to the REFERRER. The append-only referral log.
+///
+/// THREE OF THE FOUR FRAUD DEFENCES LIVE ON THIS TABLE, as constraints:
+///   - `referral_events_no_self_referral` CHECK — a family cannot refer
+///     itself, and the CHECK (not the service) is what guarantees it.
+///   - `referral_events_referred_family_uq` — a partial UNIQUE over
+///     `referred_family_id` WHERE kind = 'REGISTERED'. One household can be
+///     referred exactly once, by exactly one referrer, ever.
+///   - `(referrer family, idempotency_key)` UNIQUE — a redelivered
+///     qualification writes one row, not two.
+///
+/// REJECTED rows are KEPT. "This family tried to refer itself eleven times"
+/// is a fraud signal, and a system that discards its refusals cannot see it.
+model ReferralEvent {
+  id               String            @id @default(uuid()) @db.Uuid
+  /// The REFERRER. This is the tenant of the row.
+  familyId         String            @map("family_id") @db.Uuid
+  referralCodeId   String            @map("referral_code_id") @db.Uuid
+  kind             ReferralEventKind
+  /// The REFERRED household, once it exists. NULL for SENT/CLICKED — at
+  /// which point there is no referred household to name.
+  referredFamilyId String?           @map("referred_family_id") @db.Uuid
+  /// Which surface the invitation went out on. Never an email address, never
+  /// a phone number: this table would otherwise become a contact list of
+  /// people who are not our users.
+  channel          AcquisitionChannelType?
+  rejectionReason  String?           @map("rejection_reason") @db.VarChar(60)
+  idempotencyKey   String            @map("idempotency_key") @db.VarChar(200)
+  occurredAt       DateTime          @default(now()) @map("occurred_at")
+
+  family       Family       @relation("ReferrerFamily", fields: [familyId], references: [id], onDelete: Cascade)
+  referralCode ReferralCode @relation(fields: [referralCodeId], references: [id], onDelete: Cascade)
+
+  rewards ReferralReward[]
+
+  @@unique([familyId, idempotencyKey])
+  @@index([familyId, kind, occurredAt])
+  @@index([referredFamilyId])
+  @@map("referral_events")
+}
+
+/// STRICT (tenancy), scoped to the REFERRER who is being paid.
+///
+/// `referral_event_id` is UNIQUE, and that single constraint is the answer to
+/// "concurrent conversion → exactly one reward". It is the same shape as
+/// `payment_transactions (family_id, idempotency_key)` and exists for the
+/// same reason: this path pays out, and an application check-then-insert
+/// races over money.
+///
+/// FULFILMENT REUSES AN EXISTING LEDGER, never a new currency:
+///   SUBSCRIPTION_CREDIT_DAYS -> extends `entitlements.valid_until`, which is
+///                               monotonic and already idempotent;
+///   CHILD_REWARD_COINS       -> writes ONE `rewards_ledger_entries` row with
+///                               the deterministic key `referral:{eventId}`,
+///                               protected by that table's own UNIQUE.
+/// `fulfilment_ref` records which row was written, so the payout is auditable
+/// from either end.
+model ReferralReward {
+  id              String              @id @default(uuid()) @db.Uuid
+  familyId        String              @map("family_id") @db.Uuid
+  referralEventId String              @unique @map("referral_event_id") @db.Uuid
+  kind            ReferralRewardKind
+  /// Days of credit, or coins. Interpreted per `kind`; never a currency
+  /// amount, because a referral reward is not money and must not be summed
+  /// into revenue.
+  value           Int
+  status          ReferralRewardState @default(PENDING)
+  /// The id of the row this payout actually became (entitlement or ledger
+  /// entry). NULL until fulfilment succeeds.
+  fulfilmentRef   String?             @map("fulfilment_ref") @db.VarChar(120)
+  failureReason   String?             @map("failure_reason") @db.VarChar(300)
+  grantedAt       DateTime?           @map("granted_at")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  family        Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  referralEvent ReferralEvent @relation(fields: [referralEventId], references: [id], onDelete: Cascade)
+
+  @@index([familyId, status])
+  @@map("referral_rewards")
+}
+
+/// GLOBAL (tenancy). THE DAILY AGGREGATE THE DASHBOARD READS.
+///
+/// A cross-tenant aggregate belongs to no household and must never be
+/// readable by one — exactly the `SubscriptionPrice` argument. It is written
+/// only by `growth-daily-aggregation`, running under SystemContext.
+///
+/// UNIQUE `(business_date, country_code)` is what makes the aggregation job
+/// idempotent: a re-run UPSERTs the same row instead of doubling every
+/// number. `country_code = '**'` is the platform-wide row (a sentinel rather
+/// than NULL, so the unique index actually applies to it — PostgreSQL treats
+/// NULLs as distinct, which would have allowed duplicate platform rows).
+///
+/// MONEY IS PER-CURRENCY BY CONSTRUCTION: every row carries exactly one
+/// `currency_code` and a country has exactly one currency, so no column here
+/// can ever hold a sum of EGP and SAR.
+model GrowthDailyMetric {
+  id                   String   @id @default(uuid()) @db.Uuid
+  businessDate         DateTime @map("business_date") @db.Date
+  /// ISO-3166 alpha-2, or '**' for the platform-wide row.
+  countryCode          String   @map("country_code") @db.VarChar(2)
+  currencyCode         String?  @map("currency_code") @db.VarChar(3)
+  /// The reporting timezone the day boundary was computed on. Stored so a
+  /// later configuration change is visible as a discontinuity rather than as
+  /// an unexplained step.
+  reportingTimeZone    String   @map("reporting_timezone") @db.VarChar(64)
+
+  dau                  Int      @default(0)
+  wau                  Int      @default(0)
+  mau                  Int      @default(0)
+  newRegistrations     Int      @default(0) @map("new_registrations")
+  activations          Int      @default(0)
+  childrenAdded        Int      @default(0) @map("children_added")
+  devicesPaired        Int      @default(0) @map("devices_paired")
+  trialsStarted        Int      @default(0) @map("trials_started")
+  trialsResolved       Int      @default(0) @map("trials_resolved")
+  trialsConverted      Int      @default(0) @map("trials_converted")
+  newPaidFamilies      Int      @default(0) @map("new_paid_families")
+  payingFamilies       Int      @default(0) @map("paying_families")
+  activePaidSubs       Int      @default(0) @map("active_paid_subscriptions")
+  churnedPaidSubs      Int      @default(0) @map("churned_paid_subscriptions")
+  paymentSuccessCount  Int      @default(0) @map("payment_success_count")
+  paymentFailureCount  Int      @default(0) @map("payment_failure_count")
+  referralsQualified   Int      @default(0) @map("referrals_qualified")
+  /// NET of VAT, minor units of `currency_code`. Gross revenue includes money
+  /// that was never ours.
+  netRevenueMinor      Int      @default(0) @map("net_revenue_minor")
+  mrrMinor             Int      @default(0) @map("mrr_minor")
+  /// Median time-to-value in minutes for the families that activated TODAY.
+  medianTimeToValueMinutes Int? @map("median_time_to_value_minutes")
+
+  computedAt           DateTime @default(now()) @map("computed_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@unique([businessDate, countryCode])
+  @@index([countryCode, businessDate])
+  @@map("growth_daily_metrics")
+}
+
+/// GLOBAL (tenancy). WHAT A HUMAN COMMITTED TO, PER COUNTRY PER QUARTER.
+///
+/// A TARGET IS AN INPUT, NEVER AN OUTPUT. Nothing in this system invents one;
+/// the API returns `target: null` when nobody has set one, and a dashboard
+/// must render that as "no target", not as zero.
+model GrowthQuarterlyTarget {
+  id           String   @id @default(uuid()) @db.Uuid
+  countryCode  String   @map("country_code") @db.VarChar(2)
+  year         Int
+  quarter      Int
+  /// A member of `TARGET_METRICS` in `domain/forecast.ts`.
+  metric       String   @db.VarChar(30)
+  /// Numeric, not integer: CHURN_RATE is a rate and REVENUE_MINOR is a large
+  /// integer, and one column has to hold both without either losing precision.
+  targetValue  Decimal  @map("target_value") @db.Decimal(18, 6)
+  currencyCode String?  @map("currency_code") @db.VarChar(3)
+  setByUserId  String?  @map("set_by_user_id") @db.Uuid
+  note         String?  @db.VarChar(300)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([countryCode, year, quarter, metric])
+  @@index([countryCode, year])
+  @@map("growth_quarterly_targets")
+}
+
+/// GLOBAL (tenancy). THE ADMIN-EDITABLE ASSUMPTIONS BEHIND EVERY FORECAST.
+///
+/// Every number a forecast produces is derived from a row here, and the row is
+/// RETURNED WITH the forecast so a reader can disagree with the inputs rather
+/// than with the output. Three scenarios per country, no more: Conservative,
+/// Base, Aggressive.
+model GrowthForecastScenario {
+  id                 String               @id @default(uuid()) @db.Uuid
+  scenario           ForecastScenarioKind
+  countryCode        String               @map("country_code") @db.VarChar(2)
+  currencyCode       String               @map("currency_code") @db.VarChar(3)
+  monthlyAcquisition Int                  @map("monthly_acquisition")
+  conversionRate     Decimal              @map("conversion_rate") @db.Decimal(6, 5)
+  paidConversionRate Decimal              @map("paid_conversion_rate") @db.Decimal(6, 5)
+  churnRate          Decimal              @map("churn_rate") @db.Decimal(6, 5)
+  arpuMinor          Int                  @map("arpu_minor")
+  cacMinor           Int                  @map("cac_minor")
+  retentionD30       Decimal              @map("retention_d30") @db.Decimal(6, 5)
+  isActive           Boolean              @default(true) @map("is_active")
+  updatedByUserId    String?              @map("updated_by_user_id") @db.Uuid
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  @@unique([countryCode, scenario])
+  @@map("growth_forecast_scenarios")
+}
+
+/// PLATFORM_ANNOTATED (tenancy). AN OPERATOR ALERT.
+///
+/// `family_id IS NULL` means "not attributable to one household" — which is
+/// true of every alert this module raises today (conversion, churn, payment
+/// failures, country shifts are all population-level). The column exists
+/// because an AI-safety incident IS about one household, and such a row must
+/// NOT be readable by a tenant: an alert is a platform operations artefact,
+/// and "another family had a safety incident" is not this family's business.
+/// Exactly the `AuditLog` / `JobRun` case.
+///
+/// UNIQUE `(alert_type, scope_key, business_date)` is what makes the scan job
+/// idempotent — an hourly scan of a condition that persists for three days
+/// raises ONE alert per day, not seventy-two.
+model GrowthAlert {
+  id           String              @id @default(uuid()) @db.Uuid
+  familyId     String?             @map("family_id") @db.Uuid
+  alertType    String              @map("alert_type") @db.VarChar(60)
+  /// What the alert is ABOUT: a country code, a provider, '**' for platform.
+  scopeKey     String              @map("scope_key") @db.VarChar(40)
+  businessDate DateTime            @map("business_date") @db.Date
+  severity     GrowthAlertSeverity @default(WARNING)
+  /// Arabic operator-facing sentence. No child data, ever.
+  message      String              @db.VarChar(500)
+  /// The measured value and the threshold it crossed — counts and rates only.
+  observedValue Decimal?           @map("observed_value") @db.Decimal(18, 6)
+  thresholdValue Decimal?          @map("threshold_value") @db.Decimal(18, 6)
+  acknowledgedAt DateTime?         @map("acknowledged_at")
+  acknowledgedByUserId String?     @map("acknowledged_by_user_id") @db.Uuid
+  createdAt    DateTime            @default(now()) @map("created_at")
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  @@unique([alertType, scopeKey, businessDate])
+  @@index([severity, createdAt])
+  @@index([acknowledgedAt])
+  @@map("growth_alerts")
+}
+
+/// GLOBAL (tenancy). EVERY BUSINESS NUMBER THE GROWTH MODULE OBEYS.
+///
+/// Referral reward values, the qualification window, the activation
+/// threshold, alert thresholds and the reporting timezones all live here —
+/// none of them is a constant in code. `domain/growth-settings.ts` holds the
+/// SCHEMA (type, bounds, default, Arabic description); this table holds the
+/// VALUE, and a write is validated against the schema before it lands.
+///
+/// Exactly the `FeatureFlag` case: platform configuration owned by the
+/// deployment, not by a household.
+model GrowthSetting {
+  key             String   @id @db.VarChar(80)
+  value           String   @db.VarChar(200)
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("growth_settings")
+}
+
+// ============================================================
+// PHASE F (`F6-002`) — THE SMART NOTIFICATION DECISION LAYER.
+//
+// Two ADDITIVE tables (migration 0018). Zero existing model is touched; the
+// only edits to pre-existing declarations are two back-relations on `Family`
+// and one on `Child`.
+//
+// The argument for each table, the privacy argument for what is NOT stored,
+// and the tenancy classification are all written out at length in
+// `prisma/migrations/0018_smart_notification_decision_ledger/migration.sql`
+// rather than duplicated here.
+// ============================================================
+
+/// PHASE F — ONE ROW PER DECISION, INCLUDING THE ONES THAT SENT NOTHING.
+///
+/// This is the table that makes «why did this household not get the reward
+/// notification on Tuesday?» answerable. Before it, every decision this system
+/// made was a local variable and one `logger.debug` line.
+///
+/// IT DELIBERATELY HOLDS NO TITLE, NO BODY, NO CHILD NAME AND NO GOAL TITLE.
+/// The rendered sentence already exists in `notifications.body` /
+/// `child_messages.body` under the household's own tenancy; copying it here —
+/// into the table a platform operator queries cross-tenant — would make an
+/// admin dashboard the place a child's messages are readable. What is stored is
+/// the DECISION: numbers, enums and a reason.
+model NotificationDecision {
+  familyId String  @map("family_id") @db.Uuid
+  id       String  @id @default(uuid()) @db.Uuid
+  childId  String? @map("child_id") @db.Uuid
+
+  /// The causal key, identical to the one on `notifications` /
+  /// `notification_deliveries`. It is the join to both, and it is what makes a
+  /// retry, a redelivery and a concurrent double-fire produce ONE row rather
+  /// than inflating a suppression rate.
+  sourceEventId String @map("source_event_id") @db.VarChar(200)
+
+  trigger          String @db.VarChar(40)
+  eventType        String @map("event_type") @db.VarChar(60)
+  notificationType String @map("notification_type") @db.VarChar(60)
+  category         String @db.VarChar(30)
+  targetAudience   String @map("target_audience") @db.VarChar(10)
+
+  /// SEND | DEFER | SUPPRESS — closed by a CHECK in 0018, not only by a union.
+  decision     String @db.VarChar(10)
+  /// HIGH | MEDIUM | LOW | SUPPRESS.
+  priorityBand String @map("priority_band") @db.VarChar(10)
+  /// 0..100, bounded by a CHECK as well as by the scorer's own clamp.
+  score        Int    @db.SmallInt
+  reason       String @db.VarChar(60)
+
+  /// The component-by-component arithmetic: name, raw, weight, contribution and
+  /// an English note naming the fact that produced it. Stored rather than
+  /// recomputed, so a decision read back after the weights are retuned still
+  /// adds up.
+  explanation Json @default("[]")
+
+  providerId String @map("provider_id") @db.VarChar(40)
+
+  /// A BAND, never an age and never a date of birth.
+  ageBand     String? @map("age_band") @db.VarChar(10)
+  locale      String  @default("ar") @db.VarChar(5)
+  countryCode String? @map("country_code") @db.VarChar(2)
+
+  aiRewritten Boolean @default(false) @map("ai_rewritten")
+  aiFailed    Boolean @default(false) @map("ai_failed")
+
+  /// SPRINT F1 — THE PERMISSION AND THE CALL, which `ai_rewritten` / `ai_failed`
+  /// could not express. Both false on those two columns carried four different
+  /// histories (feature off · model called and refused by safety · model called
+  /// and answered the same sentence back · the TEMPLATE itself failed safety
+  /// before the model was ever offered one), and a run with the model provably
+  /// called zero times produced a byte-identical row to one with it provably
+  /// called.
+  ///
+  /// `aiAllowed`  the flag AND a bound provider, at the instant of composition.
+  /// `aiInvoked`  `IAIProvider.complete` was actually entered — set BEFORE the
+  ///              await, so a timeout still counts as a call.
+  /// Both written by `NotificationComposerService.compose`, which has always
+  /// computed them and until Sprint F1 threw them away.
+  aiAllowed Boolean @default(false) @map("ai_allowed")
+  aiInvoked Boolean @default(false) @map("ai_invoked")
+
+  /// The safety layer's closed refusal reason (`ENUM_OR_PLACEHOLDER_LEAK`,
+  /// `TOO_LONG`, `PARENT_COPY_UNSAFE`, …), or NULL when nothing was refused.
+  /// NULL is a MEANING here rather than a missing writer: it is «the gate had no
+  /// objection». `ComposedNotification.safetyRejection` is its producer.
+  aiSafetyRejection String? @map("ai_safety_rejection") @db.VarChar(40)
+
+  copyKey     String  @default("GENERIC") @map("copy_key") @db.VarChar(60)
+
+  /// What the PIPELINE did, as opposed to what the ENGINE decided. The two
+  /// disagreeing is the most useful row in this table.
+  outcome       String? @db.VarChar(10)
+  outcomeReason String? @map("outcome_reason") @db.VarChar(40)
+
+  businessDate DateTime @map("business_date") @db.Date
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  child  Child? @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  /// The audience is IN the key: one event legitimately notifies both a child
+  /// and a parent (`ACHIEVEMENT_VERIFIED` is classified BOTH), and those are two
+  /// decisions with two scores.
+  @@unique([familyId, sourceEventId, targetAudience])
+  @@index([familyId, createdAt])
+  @@index([decision, businessDate])
+  @@index([category, businessDate])
+  @@index([countryCode, businessDate])
+  @@index([notificationType, businessDate])
+  /// Migration 0028. The five above all lead with a DIMENSION, so a btree can
+  /// range-scan none of them on `business_date` — and «this window, over every
+  /// dimension» is exactly what the platform operator surface asks by default,
+  /// its other filters all being optional. Measured on 500k rows: the breakdown
+  /// roll-up 137.6 ms -> 28.5 ms, top causes 93.7 ms -> 18.0 ms. The argument,
+  /// the two rejected composites and the rollback are in the migration.
+  @@index([businessDate])
+  @@map("notification_decisions")
+}
+
+/// PHASE F — THE CAPS, COOLDOWNS, QUIET HOURS AND SCORE THRESHOLDS, PER FAMILY.
+///
+/// `DEFAULT_FATIGUE_POLICY`'s five constants were a deploy away from being
+/// changed, and its own docstring called them «easily-adjustable-later». This
+/// table is what makes that sentence true.
+///
+/// KEY/VALUE for `growth_settings`' reason: the set of knobs will grow, and a
+/// migration per knob is how a product ends up with knobs that stay in code.
+/// The vocabulary is closed in `NOTIFICATION_POLICY_SCHEMAS` and validated on
+/// write, so an unknown key is refused rather than silently ignored forever.
+///
+/// EVERY KEY IS OPTIONAL. A household with no rows gets
+/// `DEFAULT_NOTIFICATION_POLICY`, whose numbers are byte-for-byte the old ones.
+model NotificationPolicySetting {
+  familyId String @map("family_id") @db.Uuid
+  id       String @id @default(uuid()) @db.Uuid
+
+  key   String @db.VarChar(80)
+  value String @db.VarChar(200)
+
+  /// Who last changed it. Nullable because a platform-level default applied by
+  /// an operator has no family user behind it, and a fabricated actor is worse
+  /// than an honest NULL.
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@unique([familyId, key])
+  @@index([familyId])
+  @@map("notification_policy_settings")
+}
+
+/// G16 — THE CONTROLLED-PILOT ALLOW-LIST (Saudi Arabia + Egypt).
+///
+/// One row per INVITED household, created by an operator before that household
+/// registers. It is the only thing that lets a family through the pilot gate in
+/// a pilot country, and it is where the cohort and the country are recorded once
+/// they do.
+///
+/// GLOBAL, NOT FAMILY-SCOPED, AND THE REASON IS TIMING: the row must be readable
+/// BEFORE a family exists — the gate runs inside registration, ahead of the
+/// transaction that creates the Family. A `family_id` column could therefore only
+/// ever be NULL at the one moment it matters. `redeemed_by_family_id` is the
+/// backward link, filled in afterwards. Same shape as `growth_settings` and
+/// `feature_flags`; classified in `tenant-model-registry.ts` with that
+/// justification.
+///
+/// WHY THE EMAIL AND NOT A CODE: a redeemable code is bearer material — it can be
+/// forwarded, posted in a group chat, and used by whoever reads it first, which
+/// is precisely what a *controlled* pilot must not allow. An invitation bound to
+/// the address the operator sent it to cannot be transferred by forwarding it.
+/// The email is stored lower-cased, matching how `AuthService` resolves users.
+model PilotInvite {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Lower-cased. The address the operator invited; the family that registers
+  /// must use it. Stored, never used as a login credential.
+  email String @db.VarChar(255)
+
+  /// Which pilot wave this invitation belongs to. Free text against
+  /// `pilot.cohortId` in `growth_settings` rather than an enum, so starting a
+  /// second wave is an UPDATE of one setting and not an ALTER TYPE.
+  cohortId String @map("cohort_id") @db.VarChar(60)
+
+  /// ISO-3166 alpha-2, upper-cased. The country this invitation is FOR — which
+  /// is not necessarily the country the registration reports, and the two
+  /// disagreeing is exactly the sort of row an operator should be able to find.
+  countryCode String @map("country_code") @db.VarChar(2)
+
+  /// Null until redeemed. Set together with [redeemedByFamilyId] in the same
+  /// update, so a half-redeemed row is not representable.
+  redeemedAt         DateTime? @map("redeemed_at")
+  redeemedByFamilyId String?   @map("redeemed_by_family_id") @db.Uuid
+
+  /// The operator who created the invitation, for an audit trail. FK-less on
+  /// purpose, exactly as `AcquisitionAttribution.campaignId` is: an invitation
+  /// must survive the deletion of the admin account that issued it.
+  invitedByUserId String?  @map("invited_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  /// ONE invitation per address per cohort. This is the constraint that makes
+  /// the allow-list an allow-list: without it, two rows for one address in one
+  /// cohort would let a second registration redeem the second row.
+  @@unique([email, cohortId])
+  @@index([cohortId, countryCode])
+  @@index([redeemedByFamilyId])
+  @@map("pilot_invites")
 }

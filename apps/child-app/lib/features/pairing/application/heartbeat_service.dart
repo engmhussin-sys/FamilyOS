@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import '../api/pairing_api.dart';
-import '../../offline_queue/application/offline_queue.dart';
+import '../../../plugins/offline_queue/application/offline_queue.dart';
 
 /// Sprint 3's "Heartbeat mechanism," foundation scope. This is a
 /// Dart-level `Timer`, which only runs while the Flutter engine is

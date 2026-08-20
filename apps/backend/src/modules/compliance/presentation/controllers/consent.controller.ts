@@ -6,6 +6,7 @@ import { SetConsentDto } from '../dto/set-consent.dto';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('children/:childId/consents')
 @UseGuards(JwtAuthGuard)
@@ -13,11 +14,13 @@ export class ConsentController {
   constructor(private readonly consentService: ConsentService) {}
 
   @Get()
+  @ParentSurface()
   list(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.consentService.listConsents(childId, user.familyId!);
   }
 
   @Post()
+  @ParentSurface()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   set(
     @Param('childId') childId: string,
@@ -38,6 +41,7 @@ export class ConsentController {
    * registration-screen copy explaining what this means. Idempotent
    * (upsert-based) — calling it again is harmless. */
   @Post('grant-defaults')
+  @ParentSurface()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   grantDefaults(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.consentService.grantDefaults(childId, user.familyId!, user.sub);

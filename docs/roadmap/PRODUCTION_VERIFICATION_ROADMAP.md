@@ -26,8 +26,8 @@
 
 | # | الخطوة | الأمر |
 |---|---|---|
-| 1.1 | تسجيل حساب جديد | `curl -X POST https://<domain>/api/v1/auth/register -H "Content-Type: application/json" -d '{"fullName":"Test Parent","email":"test1@example.com","password":"SecurePass123!"}'` |
-| 1.2 | تسجيل دخول بنفس الحساب | `curl -X POST https://<domain>/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"test1@example.com","password":"SecurePass123!"}'` |
+| 1.1 | تسجيل حساب جديد | `curl -X POST https://<domain>/api/v1/auth/register -H "Content-Type: application/json" -d '{"fullName":"Test Parent","email":"<your-test-email>","password":"<your-test-password>"}'` |
+| 1.2 | تسجيل دخول بنفس الحساب | `curl -X POST https://<domain>/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"<your-test-email>","password":"<your-test-password>"}'` |
 | 1.3 | حفظ الـ `accessToken` من الرد | يُستخدم في كل الخطوات التالية كـ `Authorization: Bearer <token>` |
 | 1.4 | تجديد التوكين | `curl -X POST https://<domain>/api/v1/auth/refresh -d '{"refreshToken":"..."}'` |
 

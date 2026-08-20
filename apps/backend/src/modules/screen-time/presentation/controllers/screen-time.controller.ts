@@ -6,6 +6,7 @@ import { CreateAppBlockRuleDto } from '../dto/create-app-block-rule.dto';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('children/:childId/screen-time-policy')
 @UseGuards(JwtAuthGuard)
@@ -13,11 +14,25 @@ export class ScreenTimeController {
   constructor(private readonly screenTimeService: ScreenTimeService) {}
 
   @Get()
+  @ParentSurface()
   getPolicy(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.screenTimeService.getPolicy(childId, user.familyId!);
   }
 
+  /**
+   * F4. The allowance a device should actually enforce: the parent's base
+   * policy PLUS the bonus minutes the child has earned and not used up. A
+   * separate route rather than a change to `GET /` so no existing client's
+   * response shape moves under it.
+   */
+  @Get('effective')
+  @ParentSurface()
+  getEffectivePolicy(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
+    return this.screenTimeService.getEffectivePolicy(childId, user.familyId!);
+  }
+
   @Post()
+  @ParentSurface()
   setPolicy(
     @Param('childId') childId: string,
     @Body() dto: SetScreenTimePolicyDto,
@@ -39,16 +54,19 @@ export class AppBlockRuleController {
   constructor(private readonly screenTimeService: ScreenTimeService) {}
 
   @Get()
+  @ParentSurface()
   listRules(@Param('childId') childId: string, @CurrentUser() user: IJwtPayload) {
     return this.screenTimeService.listAppBlockRules(childId, user.familyId!);
   }
 
   @Post()
+  @ParentSurface()
   createRule(@Param('childId') childId: string, @Body() dto: CreateAppBlockRuleDto, @CurrentUser() user: IJwtPayload) {
     return this.screenTimeService.createAppBlockRule(childId, user.familyId!, user.sub, dto);
   }
 
   @Delete(':ruleId')
+  @ParentSurface()
   deactivateRule(
     @Param('childId') childId: string,
     @Param('ruleId') ruleId: string,

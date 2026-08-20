@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
-import '../../../core/theme/app_theme.dart';
 
 /// Sprint 16.1 Phase 7 — CLOSES A REAL GAP: LearningEngineService
 /// (Goals/Sessions/Assessments/Progress/Streak) existed in the
@@ -24,7 +25,7 @@ class LearningProgressScreen extends ConsumerStatefulWidget {
 
 class _LearningProgressScreenState extends ConsumerState<LearningProgressScreen> {
   Map<String, dynamic>? _progress;
-  String? _errorMessage;
+  ApiFailure? _failure;
 
   @override
   void initState() {
@@ -33,72 +34,80 @@ class _LearningProgressScreenState extends ConsumerState<LearningProgressScreen>
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
-      final result = await ref.read(lifeIntelligenceApiProvider).getLearningProgress(widget.childId);
+      final result = await ref
+          .read(lifeIntelligenceRepositoryProvider)
+          .getLearningProgress(widget.childId);
       if (mounted) setState(() => _progress = result);
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+    } catch (error) {
+      if (mounted) setState(() => _failure = ApiFailure.from(error));
     }
+  }
+
+  /// `streakDays`, `totalSessions` and `totalMinutes` were read straight out
+  /// of the map and interpolated. A missing one printed «null» into an
+  /// Arabic sentence, and `streakDays` went into the plural machinery as an
+  /// `Object`, so a null there was a type error inside build.
+  num? _number(String key) {
+    final value = _progress?[key];
+    return value is num ? value : null;
   }
 
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text('${t('learningProgress.title')} — ${widget.childName}')),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
-                ),
+              child: DsErrorState(
+                failure: _failure!,
+                title: t('common.error'),
+                retryLabel: t('common.retry'),
+                requestIdLabel: t('common.requestId'),
+                arabic: locale.isRtl,
+                onRetry: _load,
               ),
             )
           : _progress == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 3, hero: true)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: DsSpace.screen,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [AppTheme.guardian950.withOpacity(0.85), AppTheme.guardian950.withOpacity(0.6)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Column(
-                          children: [
-                            Text(t('learningProgress.streak'), style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white70)),
-                            const SizedBox(height: 8),
-                            Text(
-                              t('learningProgress.streakDays', options: {'count': _progress!['streakDays']}),
-                              style: Theme.of(context).textTheme.displaySmall?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
-                            ),
-                          ],
-                        ),
+                      DsHeroPanel(
+                        label: t('learningProgress.streak'),
+                        value: _number('streakDays') == null
+                            ? t('learningProgress.notYetAvailable')
+                            : t('learningProgress.streakDays',
+                                options: {'count': _number('streakDays')!}),
+                        base: DsColor.domainLearning,
                       ),
-                      const SizedBox(height: 16),
-                      _MetricRow(icon: Icons.menu_book_rounded, color: AppTheme.sage500, label: t('learningProgress.sessions'), value: '${_progress!['totalSessions']}'),
-                      _MetricRow(icon: Icons.timer_rounded, color: const Color(0xFF3D8FB4), label: t('learningProgress.minutes'), value: '${_progress!['totalMinutes']}'),
-                      _MetricRow(
+                      DsSpace.gapLg,
+                      DsMetricRow(
+                        icon: Icons.menu_book_rounded,
+                        color: DsColor.domainHabits,
+                        label: t('learningProgress.sessions'),
+                        value: _number('totalSessions')?.toString() ?? t('learningProgress.notYetAvailable'),
+                      ),
+                      DsMetricRow(
+                        icon: Icons.timer_rounded,
+                        color: DsColor.domainTime,
+                        label: t('learningProgress.minutes'),
+                        value: _number('totalMinutes')?.toString() ?? t('learningProgress.notYetAvailable'),
+                      ),
+                      DsMetricRow(
                         icon: Icons.quiz_rounded,
-                        color: AppTheme.amber500,
+                        color: DsColor.domainRewards,
                         label: t('learningProgress.avgScore'),
-                        value: _progress!['averageAssessmentScore'] != null ? '${(_progress!['averageAssessmentScore'] as num).toStringAsFixed(0)}%' : t('learningProgress.notYetAvailable'),
+                        value: _number('averageAssessmentScore') != null
+                            ? '${_number('averageAssessmentScore')!.toStringAsFixed(0)}%'
+                            : t('learningProgress.notYetAvailable'),
                       ),
                     ],
                   ),
@@ -107,28 +116,5 @@ class _LearningProgressScreenState extends ConsumerState<LearningProgressScreen>
   }
 }
 
-class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.icon, required this.color, required this.label, required this.value});
-
-  final IconData icon;
-  final Color color;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(color: color.withOpacity(0.14), shape: BoxShape.circle),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        title: Text(label),
-        trailing: Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: color, fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-}
+// REMOVED: the second of four private `_MetricRow` copies. It is
+// `DsMetricRow` now.

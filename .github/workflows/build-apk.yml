@@ -1,0 +1,889 @@
+name: Flutter — analyze, test, build debug APK + signed release AAB
+
+# ===========================================================================
+# WHAT THIS FILE IS FOR
+#
+# 23,860 lines of Dart in this repository have never been compiled. Audit A3
+# records zero successful `flutter pub get`, zero `flutter analyze`, zero
+# `flutter build apk` in the project's entire history. PHASE_B §19 blocker #1
+# calls one CI run "المجهول الأكبر في المشروع كله" — the single largest
+# unknown in the project — because it converts every estimate in §11 and §12
+# into a measurement.
+#
+# The previous version of this file was TOLERANT of analyzer and test
+# failures so that an APK could exist. That trade was right when nothing had
+# ever been analysed. It is wrong now: `continue-on-error` on the analyzer
+# means the first run's most valuable output — the analyzer's verdict — never
+# turns the job red and is easy to miss entirely.
+#
+# So this file is now STRICT and DIAGNOSTIC-FIRST, which are not in tension:
+#
+#   STRICT      — analyzer errors, test failures and build failures all fail
+#                 the job. No blanket `continue-on-error`, no relaxed
+#                 analyzer, no deleted tests, no mass `// ignore:`.
+#
+#   DIAGNOSTIC  — but every stage RUNS anyway and its full output is captured,
+#                 so one run reports EVERYTHING that is wrong instead of
+#                 stopping at the first error. Analyzer output, test output
+#                 and the Gradle log are written to files, uploaded as
+#                 artifacts, and summarised into $GITHUB_STEP_SUMMARY. The
+#                 job then fails at the END, on the accumulated verdict.
+#
+# The design goal is one round trip: after this run the client should know
+# every analyzer finding, every failing test AND whether the APK builds —
+# not merely the first of those three in sequence.
+#
+# STATIC PRE-ANALYSIS. Everything the repository could decide without a Dart
+# SDK has already been decided and fixed by `scripts/dart_preflight.py`
+# (25 checks — Phase C's 12 plus Phase E's 13 — each with a negative control
+# in `scripts/dart_preflight_selftest.py`, 26 in total). It runs first, here,
+# so a regression in the cheap checks is caught before a Flutter SDK is even
+# downloaded. It is NOT a substitute for `flutter analyze` and never claims
+# to be: its own printed abstention counters are an order of magnitude larger
+# than its findings.
+# ===========================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "Which app to build"
+        type: choice
+        required: true
+        default: both
+        options:
+          - child-app
+          - parent-app
+          - both
+      # =====================================================================
+      # PHASE G — THE RELEASE PATH IS OPT-IN, AND ONCE OPTED IN IT CANNOT SKIP
+      # GREEN.
+      #
+      # Two failure modes had to be avoided at the same time and they pull in
+      # opposite directions:
+      #
+      #   (a) a release build attempted on every push would be RED on every
+      #       push until someone creates a Play account and four secrets — and
+      #       a pipeline that is always red is a pipeline nobody reads.
+      #   (b) a release build that quietly does not happen when its secrets are
+      #       missing is the false green this whole file exists to eliminate.
+      #       That is exactly what the previous `flutter build apk --release`
+      #       step did: `if: env.RELEASE_API_BASE_URL != ''` plus
+      #       `continue-on-error: true`, so both "not configured" and "broken"
+      #       rendered as a green run with no artifact.
+      #
+      # The resolution is that the OPERATOR asks for a release, not the
+      # configuration. When `release_build` is false nothing release-related
+      # runs and the summary says so in words. When it is TRUE, every
+      # precondition is asserted and any missing one turns the job RED. There
+      # is no input under which a REQUESTED release silently does not happen.
+      # =====================================================================
+      release_build:
+        description: "Also build a signed release AAB (requires the signing secrets — a missing one FAILS the job)"
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches:
+      - abny/sprint-f1-unblock
+  # ci.yml CALLS this workflow rather than duplicating it, so there is exactly
+  # one definition of "what the Flutter gate is". Deliberately NOT a
+  # `pull_request:` trigger as well — that would run this twice per PR and
+  # have the two runs cancel each other through the concurrency group below.
+  workflow_call:
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # --- Flutter 3.24.5 — PINNED, and the pin is load-bearing -----------------
+  # 1. pubspec.yaml (both apps) requires Dart sdk ">=3.3.0 <4.0.0" and
+  #    flutter ">=3.19.0". Flutter 3.24.5 ships Dart 3.5.4 — inside the range.
+  # 2. android/settings.gradle pins Android Gradle Plugin 8.1.1, which refuses
+  #    compileSdk > 34. Both apps now pin `compileSdk 34` as a LITERAL rather
+  #    than `flutter.compileSdkVersion`, so the API level no longer moves with
+  #    the Flutter version — but the two must still agree, and 3.24.5 is the
+  #    version they agree at. Flutter 3.27+ defaults compileSdk to 35 and the
+  #    build dies with "compileSdk 35 requires AGP 8.6.0 or higher".
+  # 3. Flutter 3.24.5's minSdk default is 21, which is also what both apps now
+  #    pin literally, and the floor com.google.firebase:firebase-bom:33.1.2
+  #    requires.
+  FLUTTER_VERSION: "3.24.5"
+
+  # --- Java 17 — also load-bearing -----------------------------------------
+  # gradle-wrapper.properties pins Gradle 8.3 in BOTH apps. Gradle only gained
+  # the ability to RUN on JDK 21 in 8.5, so on a runner defaulting to JDK 21
+  # the build fails with "Unsupported class file major version 65". AGP 8.1.1
+  # independently wants JDK 17, and app/build.gradle sets source/target
+  # compatibility 17. 17 is the only version satisfying all three.
+  JAVA_VERSION: "17"
+
+  # --- API_BASE_URL (audit MA-004) -----------------------------------------
+  # Both apps read their base URL from String.fromEnvironment('API_BASE_URL').
+  # DEBUG falls back to the emulator host alias, which is one of the hosts
+  # android/app/src/debug/res/xml/network_security_config.xml permits in
+  # cleartext. RELEASE has no default on purpose: AppConfig throws at startup
+  # in release mode unless the URL is https, so a release build without a real
+  # backend URL would be a crash-on-launch artifact.
+  DEV_API_BASE_URL: ${{ vars.DEV_API_BASE_URL || 'http://10.0.2.2:3000/api/v1' }}
+  RELEASE_API_BASE_URL: ${{ vars.RELEASE_API_BASE_URL }}
+
+  # --- PHASE G: was a release requested? ------------------------------------
+  # `github.event.inputs.release_build` rather than `inputs.release_build`: the
+  # `github.event` form is null on every event that has no inputs (push, and the
+  # workflow_call from ci.yml) instead of depending on which contexts a given
+  # trigger populates, and a boolean dispatch input arrives there as the STRING
+  # 'true'. `vars.ABNY_RELEASE_BUILD` lets a repository opt every push in once
+  # the secrets exist, without editing this file.
+  ABNY_RELEASE_REQUESTED: ${{ (github.event.inputs.release_build == 'true' || vars.ABNY_RELEASE_BUILD == 'true') && 'true' || 'false' }}
+
+  # --- PHASE G: versionCode ------------------------------------------------
+  # Read by app/build.gradle as the Gradle project property `abnyVersionCode`
+  # (the `ORG_GRADLE_PROJECT_<name>` mechanism, which is documented by Gradle
+  # and survives being invoked through `flutter build`).
+  #
+  # WHY github.run_number AND NOT github.run_id: run_number increments by one
+  # per run of THIS workflow and starts at 1, so it is monotonic and small.
+  # run_id is a global identifier that already exceeds Play's versionCode
+  # ceiling of 2,100,000,000 — using it would work once and then be rejected
+  # forever, which is the same class of one-way mistake as the signing key.
+  #
+  # HOW TO CHANGE IT: the number only has to be MONOTONIC per Play track, not
+  # meaningful. If this repository is ever re-created, or the workflow is
+  # renamed and run_number restarts, set the repository variable
+  # ABNY_VERSION_CODE_OFFSET to a value above the highest versionCode Play has
+  # already accepted. Play's error for a reused versionCode names the number it
+  # already has, so recovery is mechanical.
+  ORG_GRADLE_PROJECT_abnyVersionCode: ${{ fromJSON(vars.ABNY_VERSION_CODE_OFFSET || '0') + github.run_number }}
+
+jobs:
+  # =========================================================================
+  # STATIC PREFLIGHT — runs before any SDK download. Cheap, and it is the only
+  # gate in this file that could ever have run in the authoring environment.
+  # =========================================================================
+  preflight:
+    name: Static preflight (no SDK required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The negative controls first: if the checkers themselves are broken,
+      # their silence on the real tree means nothing.
+      - name: Preflight negative controls (26 seeded faults must be caught)
+        run: python3 scripts/dart_preflight_selftest.py -v
+
+      - name: Dart preflight (25 checks over both apps)
+        run: python3 scripts/dart_preflight.py
+
+      - name: Import / package-declaration audit
+        run: python3 scripts/verify_dart_imports.py
+
+      - name: Localisation parity
+        run: python3 scripts/verify_l10n_parity.py
+
+      - name: Network security config
+        run: python3 scripts/verify_network_security.py
+
+      - name: Gradle scripts parse as Groovy
+        run: python3 scripts/verify_gradle_syntax.py
+
+      # G18. Its own negative control FIRST, for the same reason as the preflight
+      # controls above: this checker's silence is worthless unless it can be
+      # shown to fail on the defect it exists to catch — a POST_NOTIFICATIONS
+      # declared in the manifest that nothing ever requests, which on Android 13+
+      # makes every notification the app posts invisible while every unit test
+      # still passes.
+      - name: Notification permission — negative control
+        run: python3 scripts/verify_notification_permission.py --self-test
+
+      - name: Notification permission is declared AND requested (both apps)
+        run: python3 scripts/verify_notification_permission.py
+
+      # PHASE G. Runs here, in the cheap job, because the property it protects
+      # is one nobody notices until an upload is rejected: that a RELEASE build
+      # cannot be signed with the debug key and that no key material is
+      # committed. It does not merely grep — it lifts the
+      # `gradle.taskGraph.whenReady` guard out of both build.gradle files and
+      # EXECUTES it, under the Groovy that ships inside Gradle, against ten
+      # scenarios each.
+      - name: Android release signing (static + the guard, executed)
+        run: python3 scripts/verify_release_signing.py
+
+  # =========================================================================
+  # The two apps are IDENTICAL jobs apart from `app` and the Firebase step,
+  # so they are one matrix. A failure in one must not cancel the other:
+  # fail-fast: false is the whole point of a diagnostic run.
+  # =========================================================================
+  flutter:
+    name: ${{ matrix.app }}
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The `app` workflow_dispatch input narrows the MATRIX, not a job-level
+        # `if:`. That is not a style choice: the `matrix` context is not
+        # available in `jobs.<id>.if`, so `inputs.app == matrix.app` there
+        # would silently evaluate against an empty value and run both apps
+        # regardless of what the operator chose.
+        app: >-
+          ${{ (github.event_name == 'workflow_dispatch' && inputs.app != 'both')
+              && fromJSON(format('["{0}"]', inputs.app))
+              || fromJSON('["child-app","parent-app"]') }}
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.app }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # setup-java MUST precede flutter-action: the Flutter tool caches the
+      # JDK it sees when it first configures Gradle.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # ---------------------------------------------------------------
+      # TOOLCHAIN ASSERTION (§27) — FAIL LOUDLY, NEVER SKIP QUIETLY.
+      #
+      # WHY THIS STEP EXISTS. Everything below it assumes `flutter` runs and
+      # runs at the PINNED version. Three ways that assumption can break
+      # without anyone noticing:
+      #
+      #   1. `subosito/flutter-action` succeeds but leaves nothing usable on
+      #      PATH (a partial or corrupt SDK cache). `flutter analyze` then
+      #      exits 127 and the run reddens with "command not found", which
+      #      reads like a repository problem and is not one.
+      #   2. `cache: true` restores a cache keyed on something that drifted,
+      #      so a DIFFERENT Flutter version analyses the tree. The run can go
+      #      green while telling us nothing about the combination this
+      #      repository actually pins — the worst outcome available, because
+      #      it is a false green.
+      #   3. setup-java is skipped or overridden and Gradle meets JDK 21,
+      #      which Gradle 8.3 cannot run on at all.
+      #
+      # So the pins are ASSERTED, not assumed, and a mismatch stops the job
+      # here with a message naming the file the pin came from. This is the
+      # difference between "CI could not test this" and "CI tested it and it
+      # is broken" — and the whole point of §27 is that those two must never
+      # look the same.
+      # ---------------------------------------------------------------
+      - name: Assert the Flutter/Java toolchain is present and pinned
+        run: |
+          fail=0
+
+          for tool in flutter dart java; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::TOOLCHAIN UNAVAILABLE — '$tool' is not on PATH after setup-java + flutter-action. This job cannot analyse, test or build ${{ matrix.app }}, and it is failing rather than reporting a green run that measured nothing."
+              fail=1
+            fi
+          done
+          if [ "$fail" != "0" ]; then exit 1; fi
+
+          flutter --version
+          java -version 2>&1
+
+          got_flutter=$(flutter --version | head -1 | sed -E 's/^Flutter ([0-9.]+).*/\1/')
+          if [ "$got_flutter" != "${{ env.FLUTTER_VERSION }}" ]; then
+            echo "::error::FLUTTER VERSION MISMATCH — the runner has $got_flutter but this repository pins ${{ env.FLUTTER_VERSION }} (env.FLUTTER_VERSION in this file). Flutter 3.27+ defaults compileSdk to 35 and AGP 8.1.1 (apps/${{ matrix.app }}/android/settings.gradle) refuses anything above 34, so a build on the wrong SDK proves nothing about the pinned one. Failing instead of measuring the wrong thing."
+            fail=1
+          fi
+
+          got_java=$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+).*/\1/')
+          if [ "$got_java" != "${{ env.JAVA_VERSION }}" ]; then
+            echo "::error::JAVA VERSION MISMATCH — the runner has JDK $got_java but this repository needs ${{ env.JAVA_VERSION }}. gradle-wrapper.properties pins Gradle 8.3, which only learned to RUN on JDK 21 in 8.5; on the wrong JDK the Android build dies with 'Unsupported class file major version' before compiling anything."
+            fail=1
+          fi
+
+          {
+            echo "### Toolchain assertion — ${{ matrix.app }}"
+            echo ""
+            echo "| tool | pinned | on runner | ok |"
+            echo "|---|---|---|---|"
+            echo "| Flutter | ${{ env.FLUTTER_VERSION }} | $got_flutter | $([ "$got_flutter" = "${{ env.FLUTTER_VERSION }}" ] && echo yes || echo **NO**) |"
+            echo "| JDK | ${{ env.JAVA_VERSION }} | $got_java | $([ "$got_java" = "${{ env.JAVA_VERSION }}" ] && echo yes || echo **NO**) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit $fail
+
+      # ---------------------------------------------------------------
+      # FIREBASE — parent app only. See apps/parent-app/android/app/
+      # build.gradle for the full decoupling rationale.
+      #
+      # If the GOOGLE_SERVICES_JSON secret exists it is written and the
+      # google-services plugin applies, exactly as before. If it does NOT,
+      # this step no longer fails the job: it records the fact, and the
+      # build proceeds with the default `abny.firebase=auto`, producing a
+      # real, installable debug APK with push notifications disabled.
+      #
+      # WHAT IS LOST WITHOUT IT: no FCM token, so
+      # POST /pairing/parent-device/push-token is never called and no
+      # parent-facing push can be delivered — journeys J8 and J10 are not
+      # exercisable on this artifact. Everything else works.
+      #
+      # NOTHING IS FABRICATED. A placeholder google-services.json would
+      # produce an APK whose push silently never works, which is the false
+      # green CONTEXT §3.9 forbids.
+      # ---------------------------------------------------------------
+      - name: Firebase config (parent app)
+        id: firebase
+        if: matrix.app == 'parent-app'
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+            echo "state=enabled" >> "$GITHUB_OUTPUT"
+            echo "::notice::Firebase Messaging ENABLED ($(wc -c < android/app/google-services.json) bytes written)."
+          else
+            echo "state=absent" >> "$GITHUB_OUTPUT"
+            echo "::warning::GOOGLE_SERVICES_JSON is not set. Building WITHOUT Firebase Cloud Messaging — see docs/release/FIREBASE_SETUP.md. The APK is real and installable; push notifications will not arrive."
+          fi
+
+      - name: Toolchain versions (diagnostic)
+        run: |
+          {
+            echo "### Toolchain — ${{ matrix.app }}"
+            echo '```'
+            flutter --version
+            java -version 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ---------------------------------------------------------------
+      # DEPENDENCY RESOLUTION — a hard gate. Nothing downstream can teach us
+      # anything if resolution fails.
+      #
+      # REPRODUCIBILITY (audit PA-M-016, PHASE_B §19 blocker #11): neither app
+      # has a pubspec.lock and every constraint is a caret, so today's build
+      # and tomorrow's build of the SAME COMMIT can resolve different plugin
+      # versions — and a plugin that starts requiring compileSdk 35 breaks
+      # AGP 8.1.1 on a DATE rather than on a change. A lockfile cannot be
+      # generated without running `pub get`, which needs pub.dev.
+      #
+      # So this job does the next best thing and closes it in ONE round trip:
+      # when a lockfile is committed it is ENFORCED; when it is not, the one
+      # this run resolved is uploaded as an artifact for the client to commit.
+      # ---------------------------------------------------------------
+      - name: flutter pub get
+        run: |
+          if [ -f pubspec.lock ]; then
+            echo "pubspec.lock is committed — resolving with --enforce-lockfile."
+            flutter pub get --enforce-lockfile
+          else
+            echo "::warning::apps/${{ matrix.app }}/pubspec.lock is NOT committed. This build is not reproducible (audit PA-M-016). The lockfile this run resolved is uploaded as artifact 'pubspec-lock-${{ matrix.app }}' — commit it, and every later build of this commit resolves identically."
+            flutter pub get
+          fi
+
+      - name: Resolved dependency versions (diagnostic)
+        if: always()
+        run: |
+          flutter pub deps --style=compact > pub-deps.txt 2>&1 || true
+          {
+            echo "### Resolved dependencies — ${{ matrix.app }}"
+            echo ""
+            python3 "$GITHUB_WORKSPACE/scripts/summarize_pubspec_lock.py" pubspec.lock
+            echo ""
+            echo "<details><summary>full <code>flutter pub deps</code></summary>"
+            echo ""
+            echo '```'
+            cat pub-deps.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload resolved pubspec.lock (commit this — audit PA-M-016)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pubspec-lock-${{ matrix.app }}
+          path: apps/${{ matrix.app }}/pubspec.lock
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ---------------------------------------------------------------
+      # ANALYZE — BLOCKING, but not until the end of the job.
+      #
+      # `--fatal-warnings` is the `flutter analyze` default and is KEPT.
+      # `--no-fatal-infos` is also the tool's default and is kept: infos are
+      # style, and failing this first-ever run on style noise would bury the
+      # errors that matter. Nothing is relaxed BELOW the tool's own defaults,
+      # and no analyzer configuration is weakened anywhere in this repository.
+      #
+      # `set +e` here does NOT make the check non-blocking — the exit code is
+      # recorded and re-raised in the "Verdict" step at the bottom. It exists
+      # so that the tests and the APK build still RUN and still report, which
+      # is the entire point of a diagnostic-first pipeline.
+      # ---------------------------------------------------------------
+      - name: flutter analyze (full output captured)
+        id: analyze
+        run: |
+          set +e
+          flutter analyze --no-fatal-infos > analyze.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          errors=$(grep -cE '^ *error •' analyze.txt || true)
+          warnings=$(grep -cE '^ *warning •' analyze.txt || true)
+          infos=$(grep -cE '^ *info •' analyze.txt || true)
+          echo "errors=$errors"     >> "$GITHUB_OUTPUT"
+          echo "warnings=$warnings" >> "$GITHUB_OUTPUT"
+          echo "infos=$infos"       >> "$GITHUB_OUTPUT"
+          cat analyze.txt
+          {
+            echo "### flutter analyze — ${{ matrix.app }}"
+            echo ""
+            echo "| errors | warnings | infos | exit |"
+            echo "|---|---|---|---|"
+            echo "| $errors | $warnings | $infos | $code |"
+            echo ""
+            if [ "$errors" != "0" ] || [ "$warnings" != "0" ]; then
+              echo "Grouped by rule — the fastest way to see what one fix repeats over:"
+              echo ""
+              echo '```'
+              grep -E '^ *(error|warning) •' analyze.txt \
+                | sed -E 's/.*• ([a-z_]+)$/\1/' | sort | uniq -c | sort -rn | head -40
+              echo '```'
+            fi
+            echo "<details><summary>full analyzer output</summary>"
+            echo ""
+            echo '```'
+            head -c 200000 analyze.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload analyzer output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyze-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}
+          path: apps/${{ matrix.app }}/analyze.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ---------------------------------------------------------------
+      # TEST — BLOCKING, same deferral. `--reporter expanded` so a failure
+      # names the test instead of printing a dot.
+      # ---------------------------------------------------------------
+      - name: flutter test (full output captured)
+        id: test
+        run: |
+          set +e
+          flutter test --reporter expanded > test.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          cat test.txt
+          {
+            echo "### flutter test — ${{ matrix.app }}"
+            echo ""
+            echo '```'
+            tail -60 test.txt
+            echo '```'
+            echo "<details><summary>full test output</summary>"
+            echo ""
+            echo '```'
+            head -c 200000 test.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}
+          path: apps/${{ matrix.app }}/test.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ---------------------------------------------------------------
+      # BUILD — BLOCKING, same deferral, and the one artifact anyone can hold.
+      # --dart-define=API_BASE_URL is mandatory on every build in this
+      # repository (MA-004): without it the APK installs and can talk to
+      # nothing, and an artifact nobody can log into is not evidence.
+      # Nothing is weakened here — no --no-tree-shake-icons, no skipped
+      # checks. The Gradle log is captured whole because the useful part of an
+      # Android failure is usually 200 lines above the summary line.
+      # ---------------------------------------------------------------
+      - name: flutter build apk --debug
+        id: build
+        env:
+          ENABLE_PUSH: ${{ (matrix.app == 'parent-app' && steps.firebase.outputs.state == 'absent') && 'false' || 'true' }}
+        run: |
+          set +e
+          flutter build apk --debug \
+            --dart-define=API_BASE_URL=$DEV_API_BASE_URL \
+            --dart-define=ENABLE_PUSH=$ENABLE_PUSH \
+            > build.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -200 build.txt
+          {
+            echo "### flutter build apk --debug — ${{ matrix.app }}"
+            echo ""
+            echo "exit code: \`$code\`  ·  \`--dart-define=ENABLE_PUSH=$ENABLE_PUSH\`"
+            echo ""
+            echo '```'
+            tail -120 build.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildlog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}
+          path: apps/${{ matrix.app }}/build.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-debug-${{ steps.vars.outputs.sha_short }}
+          path: apps/${{ matrix.app }}/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 30
+          # `warn`, not `error`: when the build failed we already know that
+          # from the verdict below, and a second red X for a missing file is
+          # noise on the one run that is supposed to be readable.
+          if-no-files-found: warn
+
+      # =================================================================
+      # PHASE G — THE RELEASE PATH. WHAT REPLACED THE OLD "BONUS" STEP AND WHY.
+      #
+      # The old step was `flutter build apk --release` behind
+      # `if: env.RELEASE_API_BASE_URL != ''` with `continue-on-error: true`.
+      # Three things were wrong with it and all three are load-bearing:
+      #
+      #   1. IT BUILT AN APK. Google Play has not accepted APKs for new
+      #      applications since August 2021. The artifact it produced could not
+      #      be uploaded no matter what else was correct.
+      #   2. IT WAS DEBUG-SIGNED, because that is what app/build.gradle said at
+      #      the time. Even as an AAB it would have been rejected.
+      #   3. BOTH "not configured" AND "failed" RENDERED AS GREEN — the `if:`
+      #      skipped it silently and `continue-on-error` swallowed it.
+      #
+      # What follows is opt-in (ABNY_RELEASE_REQUESTED) and, when requested,
+      # UNCONDITIONALLY BLOCKING: preconditions are asserted, the AAB is built,
+      # and the exit code is re-raised by the Verdict step at the bottom of the
+      # job. No `continue-on-error` appears anywhere below.
+      # =================================================================
+      - name: Release preconditions (assert, do not skip)
+        id: relcfg
+        env:
+          KEYSTORE_B64: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEYSTORE_BASE64_PARENT || secrets.ANDROID_KEYSTORE_BASE64_CHILD }}
+          KEYSTORE_PASSWORD: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEYSTORE_PASSWORD_PARENT || secrets.ANDROID_KEYSTORE_PASSWORD_CHILD }}
+          KEY_ALIAS: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEY_ALIAS_PARENT || secrets.ANDROID_KEY_ALIAS_CHILD }}
+          KEY_PASSWORD: ${{ matrix.app == 'parent-app' && secrets.ANDROID_KEY_PASSWORD_PARENT || secrets.ANDROID_KEY_PASSWORD_CHILD }}
+        run: |
+          if [ "${{ env.ABNY_RELEASE_REQUESTED }}" != "true" ]; then
+            echo "requested=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release build was requested. Run this workflow with release_build=true, or set the repository variable ABNY_RELEASE_BUILD=true, to produce a signed AAB. Nothing below ran and nothing is being claimed."
+            {
+              echo "### Release — NOT REQUESTED (${{ matrix.app }})"
+              echo ""
+              echo "No signed AAB was produced and none is claimed. This is a"
+              echo "deliberate opt-in, not a skipped failure: re-run with"
+              echo "\`release_build=true\` to build one."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "requested=true" >> "$GITHUB_OUTPUT"
+          fail=0
+
+          # 1. THE BACKEND URL. AppConfig.assertUsableForBuildMode() THROWS at
+          #    startup in release mode unless the URL is https, so a release
+          #    artifact without one crashes on launch — an artifact nobody can
+          #    open is worse than no artifact, because it looks like progress.
+          if [ -z "$RELEASE_API_BASE_URL" ]; then
+            echo "::error::RELEASE BUILD REQUESTED BUT vars.RELEASE_API_BASE_URL IS EMPTY. A release build of ${{ matrix.app }} would throw StateError on launch (lib/core/config/app_config.dart requires https in release mode). Set the repository variable to https://<host>/api/v1."
+            fail=1
+          elif [ "${RELEASE_API_BASE_URL#https://}" = "$RELEASE_API_BASE_URL" ]; then
+            echo "::error::vars.RELEASE_API_BASE_URL is not https ('$RELEASE_API_BASE_URL'). AppConfig rejects it in release mode."
+            fail=1
+          fi
+
+          # 2. THE SIGNING SECRETS — all four, per app. Each app is its own Play
+          #    listing with its own upload key; sharing one key across two
+          #    applicationIds is legal but couples two releases forever.
+          for pair in "ANDROID_KEYSTORE_BASE64:$KEYSTORE_B64" \
+                      "ANDROID_KEYSTORE_PASSWORD:$KEYSTORE_PASSWORD" \
+                      "ANDROID_KEY_ALIAS:$KEY_ALIAS" \
+                      "ANDROID_KEY_PASSWORD:$KEY_PASSWORD"; do
+            name="${pair%%:*}"
+            value="${pair#*:}"
+            if [ -z "$value" ]; then
+              suffix=$([ "${{ matrix.app }}" = "parent-app" ] && echo PARENT || echo CHILD)
+              echo "::error::MISSING SIGNING SECRET ${name}_${suffix}. A release build cannot be signed without it, and app/build.gradle will NOT fall back to the debug key — see apps/${{ matrix.app }}/android/signing.properties.example for how to generate the keystore and derive all four values."
+              fail=1
+            fi
+          done
+
+          # 3. FIREBASE, PARENT APP ONLY. A release build with push silently
+          #    disabled is the false green CONTEXT §3.9 forbids — and unlike the
+          #    debug case it would reach real users' phones.
+          if [ "${{ matrix.app }}" = "parent-app" ] && [ "${{ steps.firebase.outputs.state }}" != "enabled" ]; then
+            echo "::error::RELEASE BUILD REQUESTED FOR THE PARENT APP WITHOUT FIREBASE. GOOGLE_SERVICES_JSON is not set, so this AAB would ship with FCM disabled and every parent notification would silently never arrive. See docs/release/FIREBASE_SETUP.md."
+            fail=1
+          fi
+
+          if [ "$fail" != "0" ]; then
+            echo "::error::Release preconditions FAILED for ${{ matrix.app }}. This job is going red rather than reporting a green run that produced no uploadable artifact."
+            exit 1
+          fi
+
+          # Write the keystore and the signing.properties that app/build.gradle
+          # reads. Both live under android/ and both are gitignored, so nothing
+          # here can be committed by accident.
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/abny-ci-upload.jks
+          if [ ! -s android/abny-ci-upload.jks ]; then
+            echo "::error::The decoded keystore is empty — ANDROID_KEYSTORE_BASE64 is not valid base64 of a .jks. Produce it with: base64 -w0 <keystore>.jks"
+            exit 1
+          fi
+          # `umask` before writing: the passwords are on disk for the length of
+          # this job and there is no reason for any other user to read them.
+          ( umask 077; {
+              echo "storeFile=abny-ci-upload.jks"
+              echo "storePassword=$KEYSTORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > android/signing.properties )
+          echo "::notice::Release signing configured for ${{ matrix.app }} (keystore $(wc -c < android/abny-ci-upload.jks) bytes, versionCode ${{ env.ORG_GRADLE_PROJECT_abnyVersionCode }})."
+
+      # THE ARTIFACT PLAY ACTUALLY ACCEPTS. `appbundle`, not `apk`.
+      - name: flutter build appbundle --release (the Play artifact)
+        id: aab
+        if: steps.relcfg.outputs.requested == 'true'
+        run: |
+          set +e
+          flutter build appbundle --release \
+            --dart-define=API_BASE_URL=$RELEASE_API_BASE_URL \
+            --dart-define=ENABLE_PUSH=true \
+            > release-aab.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -200 release-aab.txt
+          {
+            echo "### flutter build appbundle --release — ${{ matrix.app }}"
+            echo ""
+            echo "exit code: \`$code\`  ·  versionCode \`${{ env.ORG_GRADLE_PROJECT_abnyVersionCode }}\`"
+            echo ""
+            echo '```'
+            tail -120 release-aab.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The release APK is kept as well, for sideloaded QA on physical devices —
+      # Play takes the AAB, but a tester cannot install one. Same signing key,
+      # same dart-defines, so what QA installs is what Play receives.
+      - name: flutter build apk --release (sideload copy for QA)
+        id: releaseapk
+        if: steps.relcfg.outputs.requested == 'true'
+        run: |
+          set +e
+          flutter build apk --release \
+            --dart-define=API_BASE_URL=$RELEASE_API_BASE_URL \
+            --dart-define=ENABLE_PUSH=true \
+            > release-apk.txt 2>&1
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          tail -120 release-apk.txt
+
+      - name: Upload release logs
+        if: always() && steps.relcfg.outputs.requested == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: releaselog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}
+          path: |
+            apps/${{ matrix.app }}/release-aab.txt
+            apps/${{ matrix.app }}/release-apk.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload release AAB
+        if: always() && steps.relcfg.outputs.requested == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-release-aab-${{ steps.vars.outputs.sha_short }}
+          path: apps/${{ matrix.app }}/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload release APK (QA sideload)
+        if: always() && steps.relcfg.outputs.requested == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-release-apk-${{ steps.vars.outputs.sha_short }}
+          path: apps/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+          if-no-files-found: warn
+
+      # THE KEY MATERIAL LEAVES THE RUNNER. `if: always()` so it happens even
+      # when the build failed — a hosted runner is ephemeral, but a self-hosted
+      # one is not, and this file must be correct on both.
+      - name: Shred the signing material
+        if: always()
+        run: |
+          rm -f android/abny-ci-upload.jks android/signing.properties
+          echo "Signing material removed: $(ls android/abny-ci-upload.jks android/signing.properties 2>&1 | tail -1)"
+
+      # ---------------------------------------------------------------
+      # THE VERDICT. Every stage above ran to completion and reported; this
+      # is where the job goes red. One run, every answer.
+      # ---------------------------------------------------------------
+      - name: Verdict
+        if: always()
+        run: |
+          A="${{ steps.analyze.outputs.exit_code }}"
+          T="${{ steps.test.outputs.exit_code }}"
+          B="${{ steps.build.outputs.exit_code }}"
+          REQ="${{ steps.relcfg.outputs.requested }}"
+          AAB="${{ steps.aab.outputs.exit_code }}"
+          RAPK="${{ steps.releaseapk.outputs.exit_code }}"
+          apk="build/app/outputs/flutter-apk/app-debug.apk"
+          aab="build/app/outputs/bundle/release/app-release.aab"
+          {
+            echo "## VERDICT — ${{ matrix.app }} \`${{ steps.vars.outputs.sha_short }}\`"
+            echo ""
+            echo "| Gate | Exit | Blocking |"
+            echo "|---|---|---|"
+            echo "| flutter analyze | \`${A:-not reached}\` — ${{ steps.analyze.outputs.errors }} errors, ${{ steps.analyze.outputs.warnings }} warnings, ${{ steps.analyze.outputs.infos }} infos | yes |"
+            echo "| flutter test | \`${T:-not reached}\` | yes |"
+            echo "| flutter build apk --debug | \`${B:-not reached}\` | yes |"
+            if [ "$REQ" = "true" ]; then
+              echo "| flutter build appbundle --release | \`${AAB:-not reached}\` | **yes** |"
+              echo "| flutter build apk --release (QA) | \`${RAPK:-not reached}\` | **yes** |"
+            else
+              echo "| release build | not requested | — (opt-in) |"
+            fi
+            echo ""
+            if [ "${{ matrix.app }}" = "parent-app" ]; then
+              echo "Firebase: \`${{ steps.firebase.outputs.state }}\`"
+              if [ "${{ steps.firebase.outputs.state }}" = "absent" ]; then
+                echo ""
+                echo "> This APK was built **without** Firebase Cloud Messaging."
+                echo "> No FCM token, no parent push, journeys J8/J10 not exercisable."
+                echo "> Everything else is unaffected. See docs/release/FIREBASE_SETUP.md."
+              fi
+              echo ""
+            fi
+            if [ -f "$apk" ]; then
+              echo "APK (debug): \`apps/${{ matrix.app }}/$apk\` — $(du -h "$apk" | cut -f1)"
+            else
+              echo "APK (debug): NOT BUILT"
+            fi
+            if [ "$REQ" = "true" ]; then
+              if [ -f "$aab" ]; then
+                echo ""
+                echo "AAB (Play): \`apps/${{ matrix.app }}/$aab\` — $(du -h "$aab" | cut -f1)"
+                echo ""
+                echo "> Signed with the upload key from the repository secrets, versionCode"
+                echo "> \`${{ env.ORG_GRADLE_PROJECT_abnyVersionCode }}\`. This is the file Play accepts."
+              else
+                echo ""
+                echo "AAB (Play): NOT BUILT — see the release log artifact."
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          if [ "${A:-1}" != "0" ]; then
+            echo "::error::flutter analyze failed for ${{ matrix.app }} — ${{ steps.analyze.outputs.errors }} errors, ${{ steps.analyze.outputs.warnings }} warnings. Full output: artifact analyze-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}."
+            fail=1
+          fi
+          if [ "${T:-1}" != "0" ]; then
+            echo "::error::flutter test failed for ${{ matrix.app }}. Full output: artifact test-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}."
+            fail=1
+          fi
+          if [ "${B:-1}" != "0" ]; then
+            echo "::error::flutter build apk --debug failed for ${{ matrix.app }}. Full log: artifact buildlog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}."
+            fail=1
+          fi
+          # PHASE G. A REQUESTED release is BLOCKING. `${AAB:-1}` is the whole
+          # point of the default: if the step did not run at all — because an
+          # earlier step died, because the job was cancelled, because someone
+          # adds an `if:` to it later — the missing output reads as 1, not as
+          # success. "Release requested and not produced" must be red.
+          if [ "$REQ" = "true" ]; then
+            if [ "${AAB:-1}" != "0" ]; then
+              echo "::error::flutter build appbundle --release FAILED (or never ran) for ${{ matrix.app }} after a release was requested. There is no uploadable artifact. Full log: artifact releaselog-${{ matrix.app }}-${{ steps.vars.outputs.sha_short }}."
+              fail=1
+            fi
+            if [ "${RAPK:-1}" != "0" ]; then
+              echo "::error::flutter build apk --release (QA sideload copy) FAILED (or never ran) for ${{ matrix.app }}."
+              fail=1
+            fi
+          fi
+          exit $fail
+
+  # =========================================================================
+  # THE GATE (§27) — "SKIPPED" IS NOT "PASSED".
+  #
+  # GitHub's default aggregation is the problem this job exists to remove. If
+  # `preflight` fails, the `flutter` matrix job does not fail — it is SKIPPED,
+  # and a skipped job reports no conclusion of its own. The same is true when
+  # a job is cancelled by the concurrency group, or when the matrix expression
+  # at the top of this file evaluates to an empty list and produces ZERO jobs,
+  # which is a green run that built nothing at all.
+  #
+  # `if: always()` makes this job run in every one of those cases, and it
+  # refuses anything that is not literally `success`. So the only way this
+  # workflow can end green is if both apps really went through
+  # pub get -> analyze -> test -> build apk --debug.
+  #
+  # Make THIS the required status check on the branch, not the matrix jobs:
+  # its name is stable, while `${{ matrix.app }}` names come and go with the
+  # workflow_dispatch input.
+  # =========================================================================
+  gate:
+    name: Flutter gate (fails on skip, cancel or empty matrix)
+    if: always()
+    needs: [preflight, flutter]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verdict
+        run: |
+          pre="${{ needs.preflight.result }}"
+          flu="${{ needs.flutter.result }}"
+          {
+            echo "## Flutter gate"
+            echo ""
+            echo "| job | result | accepted |"
+            echo "|---|---|---|"
+            echo "| preflight | \`$pre\` | only \`success\` |"
+            echo "| flutter (both apps) | \`$flu\` | only \`success\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fail=0
+          if [ "$pre" != "success" ]; then
+            echo "::error::The static preflight did not succeed (result: $pre). Nothing downstream ran, so this run measured NOTHING about the apps. Failing loudly rather than reporting a green pipeline that skipped its own subject."
+            fail=1
+          fi
+          if [ "$flu" != "success" ]; then
+            echo "::error::The Flutter matrix did not succeed (result: $flu). '$flu' is not 'success' — a skipped, cancelled or empty matrix is a pipeline that did not answer the question, which §27 requires be red, not green."
+            fail=1
+          fi
+          if [ "$fail" = "0" ]; then
+            echo "Both apps completed pub get -> analyze -> test -> build apk --debug."
+          fi
+          exit $fail

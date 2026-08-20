@@ -52,6 +52,27 @@ class PairingApi {
     );
   }
 
+  /// `POST /pairing/device/push-token` — `PairingController
+  /// .registerChildDevicePushToken`, `DeviceJwtAuthGuard`, `@ChildSurface`,
+  /// throttled 10/min, answers 204.
+  ///
+  /// THE BODY IS ONE FIELD AND THAT IS THE SECURITY PROPERTY.
+  /// `RegisterChildDevicePushTokenDto` accepts `pushToken` and nothing else;
+  /// the deviceId comes from the verified device token server-side, so there
+  /// is no field in which this device could name another child's device. Do
+  /// not add one here — `forbidNonWhitelisted` would 400 it anyway, and the
+  /// absence is the point.
+  ///
+  /// 204 by contract, so [ApiClient.postNoContent] rather than `post`: there
+  /// is no body, and casting an absent one is how a completed request turns
+  /// into a client-side `TypeError`.
+  Future<void> registerPushToken(String pushToken) async {
+    await _apiClient.postNoContent(
+      '/pairing/device/push-token',
+      body: {'pushToken': pushToken},
+    );
+  }
+
   /// Fire-and-forget from the caller's perspective — HeartbeatService
   /// owns retry/failure handling, not this method.
   Future<void> heartbeat({

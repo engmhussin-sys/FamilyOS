@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import type { IDashboardMetrics } from '../domain/analytics.types';
+import { trialConversionRate } from '../domain/kpi-definitions';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -20,36 +21,78 @@ export class DashboardMetricsService {
   async getMetrics(): Promise<IDashboardMetrics> {
     const sevenDaysAgo = new Date(Date.now() - SEVEN_DAYS_MS);
 
-    const [totalFamilies, totalDevices, activeDevices, trialCount, activeCount, supportRequestCountLast7Days] = await Promise.all([
+    const [
+      totalFamilies,
+      totalDevices,
+      activeDevices,
+      /**
+       * COUNTED IN SQL, NOT IN NODE — the same correction `KpiService`
+       * documents on `activeFamilies()`, applied to the site that was missed.
+       *
+       * This was `device.findMany({ distinct: ['familyId'], select: {
+       * familyId: true } }).length`. This repo runs Prisma 5.20 with
+       * `previewFeatures = ["driverAdapters"]` and WITHOUT `nativeDistinct`,
+       * so `distinct` is applied CLIENT-SIDE: every matching device row —
+       * one per device, not one per family — crossed the wire so that
+       * JavaScript could throw the duplicates away. On this dashboard's own
+       * numbers that is roughly three rows fetched for every one counted, on
+       * every home-page load, growing with the fleet.
+       *
+       * PostgreSQL now answers it as a COUNT over a semi-join and returns one
+       * integer. THE PREDICATE IS IDENTICAL: «a family with at least one
+       * non-deleted device seen in the window», device-side filters unchanged.
+       *
+       * Deliberately NOT also adding `deletedAt: null` on the FAMILY here.
+       * `KpiService.activeFamilies()` does carry it and says why, but that is
+       * a behavioural correction to a different metric; folding it into a
+       * performance change would make this commit's number un-provable. It is
+       * a no-op against today's data in any case — nothing in `src/` writes
+       * `families.deleted_at`.
+       */
+      activeFamilyCount,
+      resolvedTrials,
+      convertedTrials,
+      supportRequestCountLast7Days,
+    ] = await Promise.all([
       this.prisma.family.count({ where: { deletedAt: null } }),
       this.prisma.device.count({ where: { deletedAt: null } }),
       this.prisma.device.count({ where: { deletedAt: null, lastSeenAt: { gte: sevenDaysAgo } } }),
-      this.prisma.subscription.count({ where: { status: 'TRIALING' } }),
-      this.prisma.subscription.count({ where: { status: 'ACTIVE' } }),
+      this.prisma.family.count({
+        where: { devices: { some: { deletedAt: null, lastSeenAt: { gte: sevenDaysAgo } } } },
+      }),
+      // PHASE D: the denominator is RESOLVED trials (`ends_at` in the past),
+      // and the numerator is trials that actually converted. Both come from
+      // the Phase D `trials` table, which records the lifetime fact.
+      this.prisma.trial.count({ where: { endsAt: { lt: new Date() } } }),
+      this.prisma.trial.count({ where: { endsAt: { lt: new Date() }, convertedAt: { not: null } } }),
       this.prisma.supportRequest.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
     ]);
 
-    const activeFamilyIds = await this.prisma.device.findMany({
-      where: { deletedAt: null, lastSeenAt: { gte: sevenDaysAgo } },
-      distinct: ['familyId'],
-      select: { familyId: true },
-    });
-
-    // Funnel Engine, first pass: trial -> paid conversion. Denominator
-    // is (trials that ever existed) = TRIALING + ACTIVE + CANCELED +
-    // EXPIRED that started as a trial \u2014 simplified here to
-    // trial+active as a reasonable first metric, not the full funnel
-    // (which would need a subscription-history table this project
-    // doesn't have yet \u2014 a real, flagged simplification).
-    const everTrialedOrActive = trialCount + activeCount;
-    const trialConversionRate = everTrialedOrActive === 0 ? 0 : activeCount / everTrialedOrActive;
+    /**
+     * PHASE D (GROWTH) — THE LINE THIS WHOLE MODULE EXISTS BECAUSE OF.
+     *
+     * What was here: `activeCount / (trialCount + activeCount)`, with a comment
+     * calling it "a reasonable first metric". It was reasonable and it was a
+     * SECOND definition: its denominator is «trials still running plus paid
+     * subscriptions», while `TRIAL_CONVERSION_RATE` divides by trials that have
+     * RESOLVED. The two disagree by exactly the trial length, every day, and
+     * nothing in the system could have told you they disagreed.
+     *
+     * It now calls the single implementation, with the correct denominator:
+     * `trials` is a Phase D table with `ends_at` and `converted_at`, so
+     * "resolved" is a real query rather than a simplification. The KPI is
+     * `null` when no trial has ended yet; this surface renders that as 0 for
+     * backward compatibility with its own `IDashboardMetrics` contract, and
+     * says so rather than pretending the null never existed.
+     */
+    const conversion = trialConversionRate(convertedTrials, resolvedTrials);
 
     return {
       totalFamilies,
-      activeFamiliesLast7Days: activeFamilyIds.length,
+      activeFamiliesLast7Days: activeFamilyCount,
       totalDevices,
       activeDevicesLast7Days: activeDevices,
-      trialConversionRate: Math.round(trialConversionRate * 1000) / 1000,
+      trialConversionRate: conversion === null ? 0 : Math.round(conversion * 1000) / 1000,
       supportRequestCountLast7Days,
     };
   }

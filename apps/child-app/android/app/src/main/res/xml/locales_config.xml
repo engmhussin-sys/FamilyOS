@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Per-app language support (Android 13 / API 33+).
+
+    Referenced from AndroidManifest.xml via android:localeConfig. Without
+    it, res/values-ar still works (the system picks it up from the device
+    locale automatically), but the child/parent cannot choose the app's
+    language independently from Settings > Apps > ABNY > Language.
+
+    Arabic is listed FIRST because it is the product's first language
+    (CONTEXT §1), not a translation of the English.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="ar" />
+    <locale android:name="en" />
+</locale-config>

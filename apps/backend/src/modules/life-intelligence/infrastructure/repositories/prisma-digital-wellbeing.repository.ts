@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import { IDailyUsageSummary, IDailyUsageSummaryInput } from '../../domain/digital-wellbeing.types';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 /** Sprint 14 (Behavioral Intelligence Engine) — category-summed
  * minutes computed from the app breakdown itself, never re-derived
@@ -36,6 +37,7 @@ export class PrismaDigitalWellbeingRepository {
       this.prisma.dailyBehavioralSnapshot.upsert({
         where: { childId_usageDate: { childId, usageDate } },
         create: {
+          familyId: tenantIdForWrite(),
           childId,
           deviceId,
           usageDate,
@@ -74,6 +76,7 @@ export class PrismaDigitalWellbeingRepository {
       ...input.appBreakdown.map((app) =>
         this.prisma.appUsageLog.create({
           data: {
+            familyId: tenantIdForWrite(),
             childId,
             deviceId,
             packageName: app.packageName,

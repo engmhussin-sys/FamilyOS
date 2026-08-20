@@ -13,6 +13,7 @@ import type {
   SubscriptionPlanTier,
   SubscriptionStatusValue,
 } from '../domain/billing.types';
+import { tenantIdForWrite } from '../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaBillingRepository implements IBillingRepository {
@@ -66,7 +67,7 @@ export class PrismaBillingRepository implements IBillingRepository {
     status: InvoiceStatusValue;
     providerInvoiceId?: string;
   }): Promise<IInvoiceRecord> {
-    return this.prisma.invoice.create({ data: input });
+    return this.prisma.invoice.create({ data: { ...input, familyId: tenantIdForWrite() } });
   }
 
   async markInvoicePaid(invoiceId: string, paidAt: Date): Promise<void> {

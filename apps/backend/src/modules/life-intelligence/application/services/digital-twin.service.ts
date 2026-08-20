@@ -13,6 +13,8 @@ import { PairingOrchestratorService } from '../../../pairing/application/service
 import { RiskEvaluationService } from '../../../pairing/application/services/risk-evaluation.service';
 import { BehavioralIntelligenceEngineService } from '../../../ai-core/application/services/behavioral-intelligence-engine.service';
 import { DigitalWellbeingEngineService } from './digital-wellbeing-engine.service';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate } from '../../../../common/time/family-date';
 
 const SOCIAL_SCORE_WINDOW_DAYS = 30;
 
@@ -49,17 +51,22 @@ export class DigitalTwinService {
     private readonly riskEvaluation: RiskEvaluationService,
     private readonly behavioralEngine: BehavioralIntelligenceEngineService,
     private readonly digitalWellbeing: DigitalWellbeingEngineService,
+    private readonly familyDate: FamilyDateService,
   ) {}
 
   async refreshAndGet(childId: string, familyId: string): Promise<IDigitalTwin> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
+
+    // B2: the social-score window starts at a FAMILY calendar boundary, so the
+    // Digital Twin's inputs agree with the engines it aggregates.
+    const socialSince = await this.daysAgo(familyId, SOCIAL_SCORE_WINDOW_DAYS);
 
     const [habitScore, healthScore, faithScore, learningProgress, socialInputs, primaryDeviceId] = await Promise.all([
       this.habitEngine.getScoreBreakdown(childId, familyId),
       this.healthEngine.computeAndStoreHealthScore(childId, familyId),
       this.faithEngine.getScoreBreakdown(childId, familyId),
       this.learningEngine.getProgressSummary(childId, familyId),
-      this.repository.getSocialScoreInputs(childId, this.daysAgo(SOCIAL_SCORE_WINDOW_DAYS)),
+      this.repository.getSocialScoreInputs(childId, socialSince),
       this.findPrimaryDeviceId(childId, familyId),
     ]);
 
@@ -143,10 +150,20 @@ export class DigitalTwinService {
     // today's insight may not exist yet (e.g. the device hasn't
     // synced today), in which case this stays undefined rather than
     // failing the whole Digital Twin refresh over one optional field.
+    //
+    // F1 — AND `todaysPatterns` MEANS THE FAMILY'S TODAY. This was the second
+    // surviving site of the UTC class (`new Date().toISOString().split('T')[0]`),
+    // and the `catch` above is what hid it: for a Cairo family between local
+    // midnight and 03:00, UTC still reads yesterday, `getWellbeingInsight`
+    // answers `null` for a day whose row exists, and the field simply does not
+    // appear in the Digital Twin — indistinguishable from "the device has not
+    // synced yet". A silently absent field is worse than a wrong one, because
+    // nothing looks broken. The family's calendar decides the day, exactly as
+    // `digital-wellbeing-engine.service.ts:todayColumn(familyId)` already does.
     let todaysPatterns: string[] | undefined;
     let baselineDeviationPercent: number | null | undefined;
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = await this.familyDate.getBusinessDate(familyId);
       const insight = await this.digitalWellbeing.getWellbeingInsight(childId, familyId, today);
       if (insight) {
         todaysPatterns = insight.patterns.map((p) => p.code);
@@ -225,10 +242,10 @@ export class DigitalTwinService {
     return { safety, behavior };
   }
 
-  private daysAgo(days: number): Date {
-    const now = new Date();
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    d.setUTCDate(d.getUTCDate() - days);
-    return d;
+  private async daysAgo(familyId: string, days: number): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(
+      FamilyDateService.addDays(getBusinessDate(new Date(), tz), -days),
+    );
   }
 }

@@ -1,10 +1,56 @@
 # Ebni — سكريبت التحقق الشامل (يشغّل المراحل 3-5 المتبقية دفعة واحدة)
-# طريقة الاستخدام: افتح PowerShell (مش CMD) في أي مكان، الصق السكريبت كامل، دوس Enter.
-# في الآخر هتلاقي كل النتائج مطبوعة بالترتيب + ملخّص نهائي واضح.
+#
+# طريقة الاستخدام:
+#   .\scripts\verification-script.ps1 -BaseUrl https://<host>/api/v1 -Email you@example.com
+#   (هيسأل عن كلمة المرور، أو ضعها في متغيّر البيئة ABNY_VERIFY_PASSWORD)
+#
+# لماذا تغيّر هذا الملف: كان يحمل عنوان نشر حقيقي وبريدًا وكلمة مرور كنصوص
+# ثابتة داخله. هذا يعني أن الاعتماد صار في تاريخ git لكل نسخة، وأن أي تشغيل
+# بالخطأ يكتب صفوفًا حقيقية في بيئة حقيقية، وأن السكريبت لا يصلح لأي بيئة
+# أخرى. الثلاثة صارت معاملات بلا قيم افتراضية — السكريبت يرفض أن يخمّن هدفًا
+# أو اعتمادًا بدل أن يتصرّف على أساس الخطأ.
+#
+# تنبيه: هذا السكريبت يكتب بيانات (شرب ماء، ممارسة إيمانية، هدف تعليمي، جلسة،
+# رسالة من الوالد). شغّله على بيئة اختبار، لا على الإنتاج.
+[CmdletBinding()]
+param(
+    [string] $BaseUrl,
+    [string] $Email,
+    [string] $Password
+)
 
 $ErrorActionPreference = "Continue"
-$baseUrl = "https://familyos-production-74ca.up.railway.app/api/v1"
+
+if (-not $BaseUrl)  { $BaseUrl  = $env:ABNY_VERIFY_BASE_URL }
+if (-not $Email)    { $Email    = $env:ABNY_VERIFY_EMAIL }
+if (-not $Password) { $Password = $env:ABNY_VERIFY_PASSWORD }
+
+if (-not $BaseUrl) {
+    Write-Host "verification-script: لم يُمرَّر -BaseUrl ولا ABNY_VERIFY_BASE_URL." -ForegroundColor Red
+    Write-Host "  لا توجد قيمة افتراضية. مرّر جذر الـ API للبيئة المطلوبة مع البادئة /api/v1" -ForegroundColor Red
+    exit 2
+}
+if (-not $Email) {
+    Write-Host "verification-script: لم يُمرَّر -Email ولا ABNY_VERIFY_EMAIL." -ForegroundColor Red
+    Write-Host "  مرّر حسابًا موجودًا في تلك البيئة؛ هذا السكريبت لا يُنشئ حسابًا." -ForegroundColor Red
+    exit 2
+}
+if (-not $Password) {
+    $secure = Read-Host -Prompt "كلمة المرور لـ $Email" -AsSecureString
+    $Password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+}
+if (-not $Password) {
+    Write-Host "verification-script: لا كلمة مرور. رفض محاولة تسجيل الدخول بدونها." -ForegroundColor Red
+    exit 2
+}
+
+$baseUrl = $BaseUrl.TrimEnd('/')
 $results = @()
+
+Write-Host "الهدف   : $baseUrl" -ForegroundColor Yellow
+Write-Host "الحساب  : $Email" -ForegroundColor Yellow
+Write-Host "تنبيه   : هذا السكريبت يكتب بيانات فعلية في البيئة أعلاه." -ForegroundColor Yellow
 
 function Test-Step {
     param($Name, $ScriptBlock)
@@ -25,7 +71,7 @@ function Test-Step {
 # --- إعادة تسجيل الدخول (التوكين القديم غالبًا منتهي) ---
 $login = Test-Step "0. تسجيل دخول جديد" {
     Invoke-RestMethod -Uri "$baseUrl/auth/login" -Method Post -ContentType "application/json" `
-        -Body '{"email":"test1@example.com","password":"SecurePass123!"}'
+        -Body (@{ email = $Email; password = $Password } | ConvertTo-Json -Compress)
 }
 if (-not $login) { Write-Host "توقف — تسجيل الدخول فشل، مينفعش نكمل." -ForegroundColor Red; return }
 $token = $login.tokens.accessToken

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/design_system/design_system.dart';
 import '../../../core/di/providers.dart';
+import '../../../core/errors/api_failure.dart';
 import '../../../core/localization/locale_controller.dart';
-import '../../../core/theme/app_theme.dart';
 
 /// DESIGN PASS: the score card is now a gradient hero (matching the
 /// visual weight given to Digital Twin's Growth Score), and each
@@ -21,7 +22,12 @@ class HealthTrendScreen extends ConsumerStatefulWidget {
 
 class _HealthTrendScreenState extends ConsumerState<HealthTrendScreen> {
   Map<String, dynamic>? _health;
-  String? _errorMessage;
+  ApiFailure? _failure;
+
+  /// A refused \u00ab\u0633\u062c\u0651\u0644 \u0643\u0648\u0628 \u0645\u0627\u0621\u00bb. Separate from [_failure] because the score
+  /// above it is still valid and still worth reading \u2014 one rejected log
+  /// must not blank the screen.
+  ApiFailure? _actionFailure;
 
   @override
   void initState() {
@@ -30,20 +36,25 @@ class _HealthTrendScreenState extends ConsumerState<HealthTrendScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _errorMessage = null);
+    setState(() => _failure = null);
     try {
-      final result = await ref.read(lifeIntelligenceApiProvider).getHealthScore(widget.childId);
+      final result =
+          await ref.read(lifeIntelligenceRepositoryProvider).getHealthScore(widget.childId);
       if (mounted) setState(() => _health = result);
-    } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString());
+    } catch (error) {
+      if (mounted) setState(() => _failure = ApiFailure.from(error));
     }
   }
 
   Future<void> _logGlassOfWater() async {
+    setState(() => _actionFailure = null);
     try {
-      await ref.read(lifeIntelligenceApiProvider).logHydration(widget.childId, 250);
-    } catch (_) {
-      // Best-effort.
+      await ref.read(lifeIntelligenceRepositoryProvider).logHydration(widget.childId, 250);
+    } catch (error) {
+      // WAS `catch (_) {}`. The reload underneath meant a refused log and a
+      // successful one looked the same: the hydration row simply did not
+      // move, and the parent had no way to know which had happened.
+      if (mounted) setState(() => _actionFailure = ApiFailure.from(error));
     }
     await _load();
   }
@@ -51,7 +62,8 @@ class _HealthTrendScreenState extends ConsumerState<HealthTrendScreen> {
   @override
   Widget build(BuildContext context) {
     ref.watch(localeControllerProvider);
-    final t = ref.watch(localeControllerProvider.notifier).t;
+    final locale = ref.watch(localeControllerProvider.notifier);
+    final t = locale.t;
 
     return Scaffold(
       appBar: AppBar(title: Text('${t('healthTrend.title')} \u2014 ${widget.childName}')),
@@ -60,101 +72,102 @@ class _HealthTrendScreenState extends ConsumerState<HealthTrendScreen> {
         icon: const Icon(Icons.water_drop_rounded),
         label: Text(t('healthTrend.logWater')),
       ),
-      body: _errorMessage != null
+      body: _failure != null
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(t('common.error'), textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    FilledButton(onPressed: _load, child: Text(t('common.retry'))),
-                  ],
-                ),
+              child: DsErrorState(
+                failure: _failure!,
+                title: t('common.error'),
+                retryLabel: t('common.retry'),
+                requestIdLabel: t('common.requestId'),
+                arabic: locale.isRtl,
+                onRetry: _load,
               ),
             )
           : _health == null
-              ? const Center(child: CircularProgressIndicator())
+              ? const DsSkeletonList(rows: 4, hero: true)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: DsSpace.screen,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [AppTheme.brick500.withOpacity(0.85), AppTheme.brick500.withOpacity(0.6)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(20),
+                      if (_actionFailure != null)
+                        DsErrorState(
+                          failure: _actionFailure!,
+                          title: t('lifeIntelligence.actionFailedTitle'),
+                          retryLabel: t('common.dismiss'),
+                          requestIdLabel: t('common.requestId'),
+                          arabic: locale.isRtl,
+                          compact: true,
+                          onRetry: () => setState(() => _actionFailure = null),
                         ),
-                        child: Column(
-                          children: [
-                            Text(t('healthTrend.score'), style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white70)),
-                            const SizedBox(height: 8),
-                            Text(
-                              '${_health!['score']}',
-                              style: Theme.of(context).textTheme.displaySmall?.copyWith(color: Colors.white, fontWeight: FontWeight.w700),
-                            ),
-                          ],
-                        ),
+                      DsHeroPanel(
+                        label: t('healthTrend.score'),
+                        value: _scoreText(t),
+                        base: DsColor.domainHealth,
                       ),
-                      const SizedBox(height: 16),
-                      _MetricRow(icon: Icons.water_drop_rounded, color: const Color(0xFF3D8FB4), label: t('healthTrend.hydration'), value: _hydrationText()),
-                      _MetricRow(icon: Icons.directions_run_rounded, color: AppTheme.sage500, label: t('healthTrend.activity'), value: _activityText(t)),
-                      _MetricRow(icon: Icons.bedtime_rounded, color: const Color(0xFF6B5B95), label: t('healthTrend.sleep'), value: _sleepText(t)),
-                      _MetricRow(icon: Icons.restaurant_rounded, color: AppTheme.amber500, label: t('healthTrend.meals'), value: '${(_health!['breakdown'] as Map)['nutritionLogsCount']}'),
+                      DsSpace.gapLg,
+                      DsMetricRow(icon: Icons.water_drop_rounded, color: DsColor.domainHydration, label: t('healthTrend.hydration'), value: _hydrationText(t)),
+                      DsMetricRow(icon: Icons.directions_run_rounded, color: DsColor.domainHabits, label: t('healthTrend.activity'), value: _activityText(t)),
+                      DsMetricRow(icon: Icons.bedtime_rounded, color: DsColor.domainSleep, label: t('healthTrend.sleep'), value: _sleepText(t)),
+                      DsMetricRow(icon: Icons.restaurant_rounded, color: DsColor.domainRewards, label: t('healthTrend.meals'), value: _mealsText(t)),
                     ],
                   ),
                 ),
     );
   }
 
-  String _hydrationText() {
-    final breakdown = _health!['breakdown'] as Map;
-    final hydration = breakdown['hydration'] as Map;
-    return '${hydration['actualMl']} / ${hydration['targetMl']} ml';
+  /// EVERY READER BELOW USED TO BE AN UNCHECKED CAST.
+  ///
+  /// `_health!['breakdown'] as Map`, then `breakdown['hydration'] as Map` —
+  /// four of them, all inside `build`. A backend that stops sending one
+  /// optional section (the health engine returns a partial breakdown when a
+  /// device has not synced) turned every one of those into a cast error
+  /// DURING BUILD, which is a red screen and a stack trace on the parent's
+  /// phone — the exact outcome the error work elsewhere in this screen
+  /// exists to prevent. `healthTrend.notLogged` is the honest answer for a
+  /// section that is not there, and it is a string this screen already had.
+  Map<String, dynamic>? get _breakdown {
+    final raw = _health?['breakdown'];
+    return raw is Map<String, dynamic> ? raw : null;
+  }
+
+  String _scoreText(String Function(String, {int? count, Map<String, Object>? options}) t) {
+    final score = _health?['score'];
+    return score is num ? '$score' : t('healthTrend.notLogged');
+  }
+
+  String _hydrationText(String Function(String, {int? count, Map<String, Object>? options}) t) {
+    final hydration = _breakdown?['hydration'];
+    if (hydration is! Map) return t('healthTrend.notLogged');
+    final actual = hydration['actualMl'];
+    final target = hydration['targetMl'];
+    if (actual is! num || target is! num) return t('healthTrend.notLogged');
+    // WAS a hardcoded 'ml' — a user-facing unit sitting outside the resource
+    // maps, so it stayed Latin script in an Arabic RTL line.
+    return '$actual / $target ${t('healthTrend.millilitres')}';
   }
 
   String _activityText(String Function(String, {int? count, Map<String, Object>? options}) t) {
-    final breakdown = _health!['breakdown'] as Map;
-    final activity = breakdown['activity'] as Map;
-    return '${activity['totalMinutes']} ${t('healthTrend.minutes')}';
+    final activity = _breakdown?['activity'];
+    if (activity is! Map) return t('healthTrend.notLogged');
+    final minutes = activity['totalMinutes'];
+    if (minutes is! num) return t('healthTrend.notLogged');
+    return '$minutes ${t('healthTrend.minutes')}';
   }
 
   String _sleepText(String Function(String, {int? count, Map<String, Object>? options}) t) {
-    final breakdown = _health!['breakdown'] as Map;
-    final sleepHours = breakdown['sleepHours'];
-    if (sleepHours == null) return t('healthTrend.notLogged');
-    return '${(sleepHours as num).toStringAsFixed(1)} ${t('healthTrend.hours')}';
+    final sleepHours = _breakdown?['sleepHours'];
+    if (sleepHours is! num) return t('healthTrend.notLogged');
+    return '${sleepHours.toStringAsFixed(1)} ${t('healthTrend.hours')}';
+  }
+
+  String _mealsText(String Function(String, {int? count, Map<String, Object>? options}) t) {
+    final count = _breakdown?['nutritionLogsCount'];
+    return count is num ? '$count' : t('healthTrend.notLogged');
   }
 }
 
-class _MetricRow extends StatelessWidget {
-  const _MetricRow({required this.icon, required this.color, required this.label, required this.value});
-
-  final IconData icon;
-  final Color color;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(color: color.withOpacity(0.14), shape: BoxShape.circle),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        title: Text(label),
-        trailing: Text(value, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: color, fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-}
+// REMOVED: a private `_MetricRow` that was one of four copies of the same
+// widget across this feature (here, learning_progress_screen,
+// digital_twin_screen and wellbeing_screen), each with its own leading
+// swatch size and its own margin. It is `DsMetricRow` now.

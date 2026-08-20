@@ -11,7 +11,12 @@
  * Pure — zero I/O, zero dependency, same discipline as ai-core's
  * RuleEngineService.evaluate() and health-rules.ts's own
  * computeHydrationTargetMl.
+ *
+ * B2: still pure, and still takes `YYYY-MM-DD` strings — the difference is that
+ * those strings are now FAMILY business dates rather than UTC dates, and the
+ * day-stepping below is calendar arithmetic rather than millisecond arithmetic.
  */
+import { addBusinessDays } from '../../../../common/time/family-date';
 
 /** Given a list of dates (as "YYYY-MM-DD" strings, any order,
  * duplicates allowed) on which a qualifying event occurred (a habit
@@ -23,11 +28,24 @@ export function computeCurrentStreak(qualifyingDateStrs: string[], asOfDateStr: 
   const qualifyingSet = new Set(qualifyingDateStrs);
 
   let streak = 0;
-  const cursor = new Date(`${asOfDateStr}T00:00:00.000Z`);
+  let cursor = asOfDateStr;
 
-  while (qualifyingSet.has(cursor.toISOString().slice(0, 10))) {
+  // B2 (PA-B-001). The step back used to be `cursor.setUTCDate(getUTCDate()-1)`
+  // on a `Date`. It worked, and it worked for the wrong reason: it assumed
+  // every day is exactly 86,400,000 ms long. On a DST boundary that is false —
+  // this runtime's tzdata puts Africa/Cairo's 2026 spring day at 23 hours and
+  // its autumn day at 25 — and now that the caller hands us dates computed on a
+  // real timezone, the assumption became reachable rather than theoretical.
+  // `addBusinessDays` walks the CALENDAR, which has no such notion, so a streak
+  // spanning either transition stays intact.
+  //
+  // The bound is not cosmetic: an unbounded loop over caller-supplied data on a
+  // hot reward path is an availability risk. 3,650 days is ten consecutive
+  // years, which is longer than the product will exist before this is revisited.
+  const MAX_STREAK_DAYS = 3650;
+  while (qualifyingSet.has(cursor) && streak < MAX_STREAK_DAYS) {
     streak++;
-    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    cursor = addBusinessDays(cursor, -1);
   }
 
   return streak;

@@ -27,6 +27,15 @@ class AgentChannelConstants {
       'requestBatteryOptimizationExemption';
   static const String methodAreNotificationsGranted = 'areNotificationsGranted';
 
+  /// G18 — requests POST_NOTIFICATIONS. Answers with one of the
+  /// `NotificationPermissionOutcome` wire strings, never a bool.
+  static const String methodRequestNotificationsPermission =
+      'requestNotificationsPermission';
+
+  /// G18 — opens this app's own notification settings page, the only route
+  /// left once Android has stopped showing the runtime dialog.
+  static const String methodOpenNotificationSettings = 'openNotificationSettings';
+
   // --- Sprint 4: Device Capability Engine ---
   static const String methodGetCapabilityReport = 'getCapabilityReport';
 
@@ -41,6 +50,13 @@ class AgentChannelConstants {
   // string literals used in MainActivity.kt's `when` block.
   static const String methodGetTodayAppCategories = 'getTodayAppCategories';
   static const String methodGetTodaySessionStats = 'getTodaySessionStats';
+
+  // --- F2 (audit verdict R7): OEM background-restriction onboarding ---
+  // Must match AgentChannel.kt's METHOD_GET_OEM_BACKGROUND_RESTRICTION_INFO
+  // and METHOD_OPEN_OEM_BACKGROUND_SETTINGS exactly.
+  static const String methodGetOemBackgroundRestrictionInfo =
+      'getOemBackgroundRestrictionInfo';
+  static const String methodOpenOemBackgroundSettings = 'openOemBackgroundSettings';
 
   // --- Sprint 5: Runtime Enforcement Engine ---
   static const String methodSyncPolicyToNative = 'syncPolicyToNative';

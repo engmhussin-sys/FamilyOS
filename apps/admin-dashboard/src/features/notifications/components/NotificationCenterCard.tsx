@@ -7,15 +7,29 @@ import {
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: the shared error block. This card stays ABSENT when there is
+// genuinely nothing to show — that discipline is deliberate and kept —
+// but absence must not also be what a failed request looks like.
+import { ErrorBlock } from '../../../shared/components/AsyncState';
 
 export function NotificationCenterCard() {
   const queryClient = useQueryClient();
   const { t, locale } = useTranslation();
-  const { data: notifications, isLoading } = useQuery({
+  const { data: notifications, isLoading, error, refetch } = useQuery({
     queryKey: NOTIFICATIONS_QUERY_KEY,
     queryFn: () => notificationsApi.list(),
   });
 
+  if (error) {
+    return (
+      <Card>
+        <h2 className="font-display text-lg text-ink">{t('notifications.title')}</h2>
+        <div className="mt-3">
+          <ErrorBlock error={error} onRetry={() => void refetch()} />
+        </div>
+      </Card>
+    );
+  }
   if (isLoading) return null;
   if (!notifications || notifications.length === 0) return null;
 

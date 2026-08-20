@@ -1,5 +1,5 @@
 import '../../../core/platform/agent_channel.dart';
-import 'contracts/i_app_usage_collector.dart';
+import '../contracts/i_app_usage_collector.dart';
 
 /// CLOSES A REAL GAP: `IAppUsageCollector` (Decision-016) has existed
 /// as a contract with zero implementation. This is that

@@ -1,0 +1,65 @@
+-- ============================================================================
+-- THE CLOCK THE CHILD'S GOAL SENTENCES NEVER HAD.
+--
+-- WHAT WAS BROKEN. `GOAL_DEADLINE_NEAR` and `GOAL_ALMOST_DONE` are the last two
+-- CHILD entries on `PRODUCERLESS_DEFECT_LEDGER`: four tone bands of Arabic and
+-- English each, a quiet-hours class, two scoring rows and a deep-link
+-- destination — and nothing in `src/` could produce either. Both are statements
+-- about a goal that is STILL OPEN, and a goal that is still open emits no domain
+-- event, so there was nothing for a consumer to subscribe to. That is the same
+-- absence `GOAL_STALLED_PARENT` sat behind for a sprint.
+--
+-- WHY THIS IS A ROW AND NOT A COLUMN. Nothing about the CONDITION was missing
+-- from this schema, and no table is altered here. `achievement_requests` already
+-- records which attempts are open and which are `VERIFIED`, on which
+-- family-local day; `reward_programs` already records `expires_at` and the
+-- parent's own `max_per_day`. The producer (`GoalNudgeService`) reads exactly
+-- those columns. What did not exist was a MOMENT AT WHICH TO ASK, and in this
+-- product a recurring moment is a `scheduled_jobs` row.
+--
+-- `achievement_requests.completed_units` WAS CONSIDERED AND DELIBERATELY NOT
+-- ADDED, and the reason is worth writing down where the next person to reach for
+-- it will read it: the column would have had NO WRITER. This product never asks
+-- a child «how many have you done so far» — a `DURATION` attempt is verified on
+-- FOREGROUND minutes reported at submit, and a `QUIZ` answer sheet arrives whole
+-- at submit — so a progress column would have been NULL on every row forever,
+-- and the producer reading it would have been a producer whose condition is
+-- false in production. That is `PF-E-001` wearing a migration, which is the one
+-- defect `notification-producer-chain.guard.spec.ts` exists to prevent.
+--
+-- WHY THE CADENCE IS 300 SECONDS, AND WHY IT IS NOT A TASTE. The deadline band
+-- is «between 3 and 10 whole minutes remaining» — the interval in which the
+-- catalogue's own Arabic sentence «باقي {minutes} دقائق» is grammatically
+-- correct, since «دقائق» is the plural of paucity and applies to 3..10. Floored
+-- to whole minutes that band is a continuous [180, 660) seconds: EIGHT REAL
+-- MINUTES. A sweep whose cadence is strictly smaller than the band cannot step
+-- over it, so 300 is the largest of this product's existing cadences that still
+-- guarantees the window is seen. 3600 would miss it almost always, which would
+-- have shipped a producer that exists and never fires.
+--
+-- PLATFORM, NOT FAMILY, AND `local_hour` IS THEREFORE NULL. A FAMILY-scoped job
+-- claims `job_runs (job_name, family_id, business_date)` and so runs ONCE per
+-- household per day — right for the 02:00 rollover, and wrong for a watch that
+-- must look again in five minutes. The fan-out over households happens inside
+-- the handler, each family inside its own `runWithTenant`, which is the same
+-- shape `notification-delivery-sweep` (migration 0015) and the outbox relay both
+-- use. The `scheduled_jobs_local_hour_check` CHECK constraint added by migration
+-- 0011 enforces the NULL rather than a comment asking for it.
+--
+-- IDEMPOTENT AT EVERY LEVEL. `ON CONFLICT DO NOTHING` so re-applying this file
+-- is a no-op; the job's lease so two replicas cannot run one tick twice; and
+-- `notification_decisions_cause_uniq (family_id, source_event_id,
+-- target_audience)` so the 288 ticks of one day all compose the same key and
+-- only the first is recorded. `test/scheduler/job-registry.spec.ts` reads every
+-- migration in this directory and asserts this row and `JobRegistry` are the
+-- same set, so a row here without code — or code without a row — is a red test
+-- and never a silent no-op.
+--
+-- ROLLBACK IS `DELETE FROM "scheduled_jobs" WHERE "name" = 'goal-nudge-sweep'`,
+-- and it is safe: `job_runs.job_name` cascades, no other table references the
+-- name, and the producer simply stops being asked.
+-- ============================================================================
+
+INSERT INTO "scheduled_jobs" ("name", "scope", "cadence_seconds", "local_hour", "enabled")
+VALUES ('goal-nudge-sweep', 'PLATFORM', 300, NULL, true)
+ON CONFLICT ("name") DO NOTHING;

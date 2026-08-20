@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type { IAppBlockRule, ICreateAppBlockRuleInput } from '../../domain/screen-time.types';
 import type { IAppBlockRuleRepository } from '../../application/ports/screen-time.repository.port';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaAppBlockRuleRepository implements IAppBlockRuleRepository {
@@ -11,6 +12,7 @@ export class PrismaAppBlockRuleRepository implements IAppBlockRuleRepository {
   async create(childId: string, createdByUserId: string, input: ICreateAppBlockRuleInput): Promise<IAppBlockRule> {
     const row = await this.prisma.appBlockRule.create({
       data: {
+        familyId: tenantIdForWrite(),
         childId,
         createdByUserId,
         packageName: input.packageName,

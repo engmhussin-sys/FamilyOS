@@ -1,0 +1,34 @@
+-- ============================================================================
+-- THE CHILD'S HALF OF A NOTIFICATION TAP.
+--
+-- WHAT WAS BROKEN. `notification-destination.ts` resolves an `abny://` link for
+-- every one of the ~30 copy keys, and `SmartNotificationEngineService` writes it
+-- onto `notifications.data` — which is the PARENT surface. A child-audience
+-- notification is not a `notifications` row at all: it is routed to
+-- `child_messages` (through `FamilyCommunicationService`, which is where the
+-- parent-approval gate lives), and that table has `title`, `body` and nowhere at
+-- all to put a payload. So the child's destination was computed and then thrown
+-- away, and a child tapping their own message had nothing to act on.
+--
+-- WHY A JSONB COLUMN AND NOT A `deep_link TEXT` COLUMN. `notifications.data`
+-- already carries a payload object — today `deepLink`, `goalTitle`, `points`,
+-- `completionKind`, `grantCount`. Giving the child table a single-purpose
+-- string would guarantee the two surfaces diverge the first time the parent's
+-- payload gains a field, and the two are rendered by the same product from the
+-- same decision. One shape, two tables.
+--
+-- WHAT MUST NEVER GO IN IT, restated because this is a CHILD-readable row: no
+-- tenant identifier, no `familyId`, no `childId`, no token, no secret. The
+-- golden vertical slice asserts the parent payload is identifier-free and the
+-- same rule binds here — a deep link is a destination, not a capability. The
+-- server re-authorizes on the next call regardless of what the link says.
+--
+-- NULLABLE, and no backfill. Messages written before this column exist have no
+-- destination and must not be given a guessed one: a link that opens the wrong
+-- screen is worse than a card that simply is not tappable. The client renders a
+-- row without a payload as non-tappable, which is the honest presentation of
+-- "this message predates destinations".
+-- ============================================================================
+
+ALTER TABLE "child_messages"
+  ADD COLUMN "data" JSONB;

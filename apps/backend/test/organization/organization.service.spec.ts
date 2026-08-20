@@ -154,6 +154,138 @@ describe('OrganizationService (Sprint B1)', () => {
       );
       expect(result.id).toBe('inv-1');
     });
+
+    /**
+     * PHASE E (`PC-S-007`, the real residual) — PRIVILEGE ESCALATION BY
+     * INVITATION.
+     *
+     * Phase C recorded `PC-S-007` as «12 routes carrying `@ParentSurface()`
+     * and ZERO reads of `OrganizationRole`». That description does not
+     * survive contact with the code and is corrected in the Phase E report:
+     * every write path here already calls `rbac.hasPermission`, and
+     * `getOrganizationOrThrow` already calls `rbac.getRole`. What was
+     * genuinely missing is narrower and worse — the INVITED role was never
+     * compared against the INVITER's own role.
+     *
+     * `ACTION_MIN_LEVEL.WRITE` is 2 (MANAGER), while `DELETE` and `ADMIN`
+     * both require 4 (OWNER). A MANAGER could therefore invite an OWNER, and
+     * one invitation to an address they control converts MANAGER into full
+     * organisation control. The audit row would read
+     * `organization.member_invited` — nothing in the trail would say a
+     * privilege boundary had been crossed.
+     */
+    it('a MANAGER cannot invite an OWNER — nobody grants a role above their own', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('MANAGER');
+      rbacMock.hasPermission.mockResolvedValue(true);
+
+      await expect(service.inviteMember('org-1', 'manager-1', 'accomplice@example.com', 'OWNER')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+
+      expect(repositoryMock.createInvitation).not.toHaveBeenCalled();
+    });
+
+    it('an ADMIN cannot invite an OWNER either — the rule is the hierarchy, not a hardcoded OWNER exception', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('ADMIN');
+      rbacMock.hasPermission.mockResolvedValue(true);
+
+      await expect(service.inviteMember('org-1', 'admin-1', 'accomplice@example.com', 'OWNER')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+
+      expect(repositoryMock.createInvitation).not.toHaveBeenCalled();
+    });
+
+    it('an OWNER may invite an OWNER — a co-owner is a legitimate B2B arrangement, so equality is allowed', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('OWNER');
+      rbacMock.hasPermission.mockResolvedValue(true);
+      repositoryMock.createInvitation.mockResolvedValue({
+        id: 'inv-owner',
+        organizationId: 'org-1',
+        email: 'co-owner@example.com',
+        role: 'OWNER',
+        status: 'PENDING',
+        expiresAt: new Date(),
+        invitedByUserId: 'owner-1',
+      });
+
+      const result = await service.inviteMember('org-1', 'owner-1', 'co-owner@example.com', 'OWNER');
+
+      expect(result.id).toBe('inv-owner');
+      expect(repositoryMock.createInvitation).toHaveBeenCalledWith(expect.objectContaining({ role: 'OWNER' }));
+    });
+
+    it('a MANAGER may still invite at or below their own level — the fix narrows, it does not remove the feature', async () => {
+      repositoryMock.findById.mockResolvedValue({ id: 'org-1', type: 'SCHOOL', name: 'Main School', parentOrganizationId: null, settings: null });
+      rbacMock.getRole.mockResolvedValue('MANAGER');
+      rbacMock.hasPermission.mockResolvedValue(true);
+      repositoryMock.createInvitation.mockResolvedValue({
+        id: 'inv-member',
+        organizationId: 'org-1',
+        email: 'teacher@example.com',
+        role: 'MEMBER',
+        status: 'PENDING',
+        expiresAt: new Date(),
+        invitedByUserId: 'manager-1',
+      });
+
+      const result = await service.inviteMember('org-1', 'manager-1', 'teacher@example.com', 'MEMBER');
+
+      expect(result.id).toBe('inv-member');
+    });
+
+    /**
+     * The other half of the same hole, and the reason the check cannot live
+     * only at invite time: the invitation ROW carries the role and is
+     * redeemed later, by someone else. An invitation created legitimately by
+     * an OWNER who has since been demoted is a role grant with no live
+     * authority behind it, and a seven-day expiry is a seven-day window.
+     */
+    it('an invitation whose inviter no longer outranks the invited role cannot be accepted', async () => {
+      repositoryMock.findInvitationById.mockResolvedValue({
+        id: 'inv-stale',
+        organizationId: 'org-1',
+        email: 'accomplice@example.com',
+        role: 'OWNER',
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 60_000),
+        invitedByUserId: 'demoted-1',
+      });
+      userRepositoryMock.findById.mockResolvedValue({ id: 'user-9', email: 'accomplice@example.com' });
+      // The inviter has since been demoted to MEMBER.
+      rbacMock.getRole.mockResolvedValue('MEMBER');
+
+      await expect(service.acceptInvitation('inv-stale', 'user-9')).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(repositoryMock.acceptInvitation).not.toHaveBeenCalled();
+    });
+
+    it('an invitation still backed by a sufficiently ranked inviter is accepted normally', async () => {
+      repositoryMock.findInvitationById.mockResolvedValue({
+        id: 'inv-ok',
+        organizationId: 'org-1',
+        email: 'teacher@example.com',
+        role: 'MEMBER',
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 60_000),
+        invitedByUserId: 'manager-1',
+      });
+      userRepositoryMock.findById.mockResolvedValue({ id: 'user-8', email: 'teacher@example.com' });
+      rbacMock.getRole.mockResolvedValue('MANAGER');
+      repositoryMock.acceptInvitation.mockResolvedValue({
+        id: 'mem-1',
+        organizationId: 'org-1',
+        userId: 'user-8',
+        role: 'MEMBER',
+      });
+
+      const member = await service.acceptInvitation('inv-ok', 'user-8');
+
+      expect(member.id).toBe('mem-1');
+    });
   });
 
   describe('setPolicy (Sprint B2)', () => {
@@ -322,14 +454,27 @@ describe('OrganizationService (Sprint B1)', () => {
       status: 'PENDING', expiresAt: new Date(Date.now() + 100_000), invitedByUserId: 'inviter-1',
     };
 
+    /** The person the invitation was actually addressed to. */
+    const theRecipient = { id: 'user-1', email: 'invited@example.com' };
+
     it('throws NotFoundException for a nonexistent invitation', async () => {
       repositoryMock.findInvitationById.mockResolvedValue(null);
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-missing', 'user-1')).rejects.toBeInstanceOf(NotFoundException);
     });
 
+    /**
+     * F1 — THE STATUS AND EXPIRY SENTENCES ARE FOR THE RECIPIENT, so these
+     * three now say who is asking. They used to leave `findById` unstubbed,
+     * which meant they were asserting that a caller who had proved NOTHING
+     * could read an invitation's status — the defect, pinned as the expected
+     * behaviour. The rule they encode is unchanged and still asserted: the
+     * person the invitation was sent to is told exactly why it will not work.
+     */
     it('throws BadRequestException when the invitation is already ACCEPTED — cannot accept twice', async () => {
       repositoryMock.findInvitationById.mockResolvedValue({ ...validInvitation, status: 'ACCEPTED' });
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
 
@@ -338,23 +483,35 @@ describe('OrganizationService (Sprint B1)', () => {
 
     it('throws BadRequestException when the invitation was REVOKED', async () => {
       repositoryMock.findInvitationById.mockResolvedValue({ ...validInvitation, status: 'REVOKED' });
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('throws BadRequestException when the invitation has expired, even if still marked PENDING', async () => {
       repositoryMock.findInvitationById.mockResolvedValue({ ...validInvitation, expiresAt: new Date(Date.now() - 100_000) });
+      userRepositoryMock.findById.mockResolvedValue(theRecipient);
 
       await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
 
       expect(repositoryMock.acceptInvitation).not.toHaveBeenCalled();
     });
 
-    it('CRITICAL: throws ForbiddenException when the accepting user\'s email does NOT match the invited email — prevents accepting someone else\'s invitation', async () => {
+    /**
+     * F1 — THIS USED TO BE A 403, WHICH IS WHAT MADE THE ROUTE AN ORACLE.
+     *
+     * A 403 here means «this id is real, and it is not yours» — and combined
+     * with the 404 for an unknown id and the 400s above, it let any
+     * authenticated user enumerate invitation ids platform-wide and read back
+     * their status. The control itself (a stranger cannot accept) is unchanged
+     * and still asserted; what changed is that the refusal no longer answers a
+     * question the caller was not entitled to ask.
+     */
+    it('CRITICAL: a user the invitation was NOT sent to is answered exactly as for an id that does not exist', async () => {
       repositoryMock.findInvitationById.mockResolvedValue(validInvitation);
       userRepositoryMock.findById.mockResolvedValue({ id: 'user-1', email: 'someone-else@example.com' });
 
-      await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.acceptInvitation('inv-1', 'user-1')).rejects.toBeInstanceOf(NotFoundException);
 
       expect(repositoryMock.acceptInvitation).not.toHaveBeenCalled();
     });

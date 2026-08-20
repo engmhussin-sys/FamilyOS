@@ -2,15 +2,17 @@ import { Inject, Injectable, ForbiddenException } from '@nestjs/common';
 
 import { ChildrenService } from '../../../children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER, ILifeTimelineWriter } from '../../domain/life-timeline.types';
-import {
-  RUNTIME_ALERT_REPOSITORY,
-  type IRuntimeAlertRepository,
-} from '../../../pairing/application/ports/runtime-alert.repository.port';
+import { TIMELINE_COPY_AR } from '../../domain/life-timeline-copy';
+import { forRecurringSignal } from '../../../../shared/notifications/notification-source-key';
 import { PrismaDigitalWellbeingRepository } from '../../infrastructure/repositories/prisma-digital-wellbeing.repository';
 import { ConsentCheckService } from '../../../consent-check/application/consent-check.service';
 import { BaselineCalculatorService } from './baseline-calculator.service';
 import { PatternDetectionService } from './pattern-detection.service';
 import { AnomalyDetectionService } from './anomaly-detection.service';
+import { ChildSignalService } from './child-signal.service';
+import { SmartNotificationEngineService } from '../../../notification-engine/application/services/smart-notification-engine.service';
+import { FamilyDateService } from '../../../../common/time/family-date.service';
+import { getBusinessDate, getBusinessDayOfWeek } from '../../../../common/time/family-date';
 import {
   BehaviorPatternCode,
   IBehavioralSnapshotSummary,
@@ -55,11 +57,44 @@ export class DigitalWellbeingEngineService {
     private readonly repository: PrismaDigitalWellbeingRepository,
     private readonly childrenService: ChildrenService,
     @Inject(LIFE_TIMELINE_WRITER) private readonly timeline: ILifeTimelineWriter,
-    @Inject(RUNTIME_ALERT_REPOSITORY) private readonly runtimeAlerts: IRuntimeAlertRepository,
+    /** PHASE E (`PD-N-004`) — the one gate, replacing a direct
+     * `IRuntimeAlertRepository` write. That repository is still the writer;
+     * this producer simply no longer reaches it without passing the
+     * quiet-hours classification first. */
+    /**
+     * PHASE F (`F6-003`, closing `PF-E-001`) — the DECISION layer. Phase E
+     * routed this producer through the delivery gate; this phase routes it
+     * through the layer that decides, records and WORDS the notification. The
+     * gate itself is unchanged and is still what the engine calls.
+     */
+    private readonly notifications: SmartNotificationEngineService,
     private readonly consentCheck: ConsentCheckService,
     private readonly baselineCalculator: BaselineCalculatorService,
     private readonly patternDetection: PatternDetectionService,
     private readonly anomalyDetection: AnomalyDetectionService,
+    private readonly familyDate: FamilyDateService,
+    /**
+     * SPRINT F1 — THE FIVE CHILD-FACING KEYS THAT HAD NO PRODUCER, and the
+     * reason their producer is called from HERE.
+     *
+     * `HYDRATION_REMINDER`, `STUDY_REMINDER`, `EXERCISE_ENCOURAGEMENT`,
+     * `GOAL_DEADLINE_NEAR` and `STREAK_AT_RISK` are all statements about a day
+     * that is STILL IN PROGRESS. The 02:00 rollover — the product's only
+     * scheduled per-family moment — judges days that have CLOSED and runs
+     * inside every household's quiet hours, so a child reminder produced there
+     * would be correctly suppressed every night forever.
+     *
+     * This method is the one recurring intra-day, server-side moment this
+     * product actually has: the child app posts it on startup, every four
+     * hours, and after every further fifteen minutes of screen time. It also
+     * already carries the exact figure the hydration condition is about, and it
+     * is already a `handleEvent` producer, so nothing new is introduced but the
+     * question.
+     *
+     * `ChildSignalService.sweepChild` never throws and writes nothing itself —
+     * see its header. A reminder problem cannot cost this child their upload.
+     */
+    private readonly childSignals: ChildSignalService,
   ) {}
 
   /** The daily batch upload — one call per device per day, carrying
@@ -69,6 +104,16 @@ export class DigitalWellbeingEngineService {
     familyId: string,
     deviceId: string,
     input: IDailyUsageSummaryInput,
+    /**
+     * SPRINT F1 — `now` IS A PARAMETER, for the reason every decision on this
+     * path takes one (`PHASE D`): the sweep below asks whether the family's
+     * local clock is inside a habit's window and how many hours of the family's
+     * day are left, and a function that reads the clock inside itself cannot be
+     * proven correct across a midnight or a DST boundary without faking the
+     * timers the database driver needs. Defaulted, so no existing caller
+     * changes.
+     */
+    now: Date = new Date(),
   ): Promise<IDailyUsageSummary> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
@@ -81,13 +126,44 @@ export class DigitalWellbeingEngineService {
 
     const result = await this.repository.upsertDailySummary(childId, deviceId, input);
 
+    /**
+     * SPRINT F1 — THE CHILD'S OWN FOUR SIGNALS, ASKED AT THE MOMENT THE DEVICE
+     * SAYS IT IS THERE.
+     *
+     * BEFORE the `isFirstEver` return below, and deliberately: that branch
+     * exists because the DETECTION pipeline has no baseline on day one, and
+     * none of the four conditions this sweep asks needs a baseline. A child who
+     * is behind on water on their first day is behind on water.
+     *
+     * THE SCREEN FIGURE IS ONLY USED WHEN IT IS ABOUT TODAY. `usageDate` is the
+     * DEVICE'S own local calendar day, written by the child app from
+     * `DateTime.now()`; the family's day is the server's, derived from
+     * `Family.timezone`. When they disagree — a queued upload drained after
+     * midnight, a device in another zone — the figure is withheld rather than
+     * trusted, because «you have been on screen a long time TODAY» must not be
+     * said on the strength of yesterday's total. `null` is an honest absence:
+     * the hydration condition simply does not hold, and the other three
+     * signals, which do not read it, are unaffected.
+     */
+    const businessDate = await this.familyDate.getBusinessDate(familyId, now);
+    await this.childSignals.sweepChild({
+      familyId,
+      childId,
+      now,
+      screenMinutesToday:
+        String(input.usageDate).slice(0, 10) === businessDate ? input.totalScreenMinutes : null,
+      // The device is talking to this server right now, which is the fact
+      // `RELEVANCE` is scored on. Stated by the caller that observed it.
+      isEngagedNow: true,
+    });
+
     if (isFirstEver) {
       await this.timeline.record({
         childId,
         sourceEngine: 'digital-wellbeing',
         category: 'HABITS',
         eventType: 'first_wellbeing_snapshot',
-        title: 'Started tracking daily digital wellbeing',
+        title: TIMELINE_COPY_AR.firstWellbeingSnapshot(),
       });
       // A brand-new child has zero baseline yet — nothing more for
       // the pipeline below to meaningfully do on day one.
@@ -121,7 +197,7 @@ export class DigitalWellbeingEngineService {
         sessionCount: input.sessionCount ?? null,
         averageSessionMinutes: input.averageSessionMinutes ?? null,
         longestSessionMinutes: input.longestSessionMinutes ?? null,
-        isWeekend: this.isWeekend(usageDate),
+        isWeekend: this.isWeekend(input.usageDate),
       },
       baseline,
     );
@@ -153,7 +229,7 @@ export class DigitalWellbeingEngineService {
           sourceEngine: 'digital-wellbeing',
           category: 'HABITS',
           eventType: 'behavior_pattern_detected',
-          title: `Recurring pattern: ${anomaly.code.replace(/_/g, ' ').toLowerCase()}`,
+          title: TIMELINE_COPY_AR.recurringPattern(anomaly.code),
           metadata: { code: anomaly.code, consecutiveDays: anomaly.consecutiveDays, explanation: anomaly.explanation },
         });
       }
@@ -164,7 +240,7 @@ export class DigitalWellbeingEngineService {
         sourceEngine: 'digital-wellbeing',
         category: 'HABITS',
         eventType: 'healthy_usage_pattern',
-        title: 'Healthy digital wellbeing pattern observed',
+        title: TIMELINE_COPY_AR.healthyUsagePattern(),
         metadata: { patterns: positivePatterns },
       });
     }
@@ -174,31 +250,108 @@ export class DigitalWellbeingEngineService {
     return appBreakdown.filter((a) => a.category === category).reduce((sum, a) => sum + a.minutes, 0);
   }
 
-  private isWeekend(date: Date): boolean {
-    const day = date.getUTCDay();
+  /**
+   * B2. The day-of-week now comes from `getBusinessDayOfWeek`, which reads a
+   * `YYYY-MM-DD` business date as a calendar day rather than re-deriving it
+   * from a `Date`'s UTC fields.
+   *
+   * STILL OPEN, AND STATED RATHER THAN QUIETLY FIXED: this returns
+   * Saturday/Sunday. The weekend in both launch markets is Friday/Saturday
+   * (Egypt and Saudi Arabia both). That is a PRODUCT definition, not a
+   * timezone defect, it changes which days a `WEEKEND_*` behaviour pattern
+   * fires on, and it is out of scope for B1+B2 — it is recorded in the
+   * report's `افتراضات ومخاطر مفتوحة`.
+   */
+  private isWeekend(businessDate: string): boolean {
+    const day = getBusinessDayOfWeek(businessDate, 'UTC');
     return day === 0 || day === 6;
   }
 
-  /** The near-real-time critical-event channel — mirrors
-   * RuntimeAlertService's own transition-based pattern (Sprint 6)
-   * exactly, generalized to the five event types the brief asked for,
-   * reusing the SAME underlying repository/Notification mechanism. */
+  /**
+   * The near-real-time critical-event channel.
+   *
+   * PHASE E (`PD-N-004`) — THIS PRODUCER NOW GOES THROUGH THE GATE.
+   *
+   * It used to call `createForFamilyOwner` directly. Phase D built the
+   * quiet-hours matrix, the deferral queue and the release job, classified
+   * `SCREEN_TIME_EXCEEDED`, `POLICY_VIOLATION` and `CHILD_REQUEST` as `DEFER`
+   * with a written justification each — and recorded, honestly, that this
+   * method reached none of it. A parent in Cairo could be woken at 02:00 by a
+   * SCREEN-TIME LIMIT: not a safety risk, precisely the product failure the
+   * phase existed to remove, on three of its five types.
+   *
+   * TWO THINGS CHANGE BESIDES THE ROUTE, and both were latent defects the
+   * route was hiding:
+   *
+   *   1. `type` IS NOW SENT. This call passed no `type`, so every wellbeing
+   *      alert was stored as the generic `RUNTIME_ALERT` and the real event
+   *      type survived only inside `data.alertType`. The matrix keys on type,
+   *      so even a routed call would have classified all five identically —
+   *      and the per-type dedup window, cooldown and category cap were all
+   *      counting five different events as one.
+   *   2. `now` IS A PARAMETER. A deferral computes a persisted instant on the
+   *      family's calendar, and Phase D named an injectable clock here as the
+   *      minimum precondition for this fix, because the alternative is a suite
+   *      whose result depends on what time CI runs. Defaulted, so the one
+   *      production call site is unchanged.
+   *
+   * The two DELIVER-class types (`ACCESSIBILITY_DISABLED`,
+   * `PROTECTION_BYPASS_ATTEMPT`) still bypass quiet hours AND the fatigue
+   * caps — see `evaluateAndDeliver`, where that bypass now happens before the
+   * guard rather than behind it. Safety behaviour is preserved deliberately;
+   * what changed is that the three types nobody argued should wake a household
+   * no longer do.
+   */
   async recordCriticalEvent(
     childId: string,
     familyId: string,
     input: ICriticalWellbeingEventInput,
+    now: Date = new Date(),
   ): Promise<void> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const priority: 'CRITICAL' | 'NORMAL' = input.eventType === 'CHILD_REQUEST' ? 'NORMAL' : 'CRITICAL';
-
-    await this.runtimeAlerts.createForFamilyOwner({
+    // B9 (PA-B-007 / PA-B-008) — the causal key is composed HERE, by the
+    // producer, and is unchanged: the discriminator is the EVENT TYPE, so two
+    // DIFFERENT critical events inside the same window are two notifications
+    // while the same event retried by a flaky device sync is one. Carrying it
+    // through the gate is what makes that hold across a deferral too — the key
+    // composed at 00:30 is the key inserted at 07:00.
+    // PHASE F (`F6-003`) — AND THE TITLE AND BODY ARE NO LONGER THE CALLER'S.
+    //
+    // `input.title` and `input.body` arrive on a DTO from
+    // `POST /life-intelligence/:childId/wellbeing/critical-event`, which a
+    // paired DEVICE calls. They were written verbatim into a parent's
+    // notification. Routing through the engine replaces them with the
+    // `COPY_CATALOGUE` entry for the type — «انتهى وقت الشاشة المخصص لـ محمد
+    // اليوم. التفاصيل داخل التطبيق.» — so the parent-facing sentence is written
+    // in this repository rather than supplied by a client, and it names the
+    // child, which the DTO could not do without being told the name.
+    //
+    // The caller's text is NOT discarded: `input.title` still labels the
+    // timeline entry below, where it is the device's own account of what it
+    // observed and is read inside the app by an authenticated parent.
+    //
+    // AND THE `priority` THIS METHOD USED TO COMPUTE IS GONE, deliberately.
+    // It was `eventType === 'CHILD_REQUEST' ? 'NORMAL' : 'CRITICAL'` — the
+    // pre-Phase-D implicit rule, kept alive as a fallback for a type nobody
+    // had classified. All five of this producer's types ARE classified by
+    // name in `notification-class.ts` (two DELIVER, three DEFER, each with a
+    // written justification), so `quietHoursClassOf` reaches the table before
+    // it ever reaches the CRITICAL rule and the value could not change any
+    // outcome. Priority now follows the SCORED BAND, which is the axis it was
+    // pretending to be — and the safety bypass is unchanged, because the
+    // provider's DELIVER override reads the type, never the priority.
+    await this.notifications.handleEvent({
       familyId,
       childId,
-      title: input.title,
-      body: input.body,
+      eventType: input.eventType,
+      sourceEventId: forRecurringSignal('wellbeing', childId, input.eventType, now),
+      trigger: 'SAFETY_SIGNAL',
+      // PHASE E (`PD-N-004`) — the producer's payload, carried verbatim into
+      // `notifications.data`, where the parent app reads a wellbeing alert's
+      // specifics. The engine passes it through untouched.
       data: { alertType: input.eventType, ...input.metadata },
-      priority,
+      now,
     });
 
     if (input.eventType !== 'CHILD_REQUEST') {
@@ -220,7 +373,7 @@ export class DigitalWellbeingEngineService {
   async getBehavioralSnapshotSummary(childId: string, familyId: string): Promise<IBehavioralSnapshotSummary | null> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
 
-    const since = this.daysAgo(SNAPSHOT_WINDOW_DAYS);
+    const since = await this.daysAgo(familyId, SNAPSHOT_WINDOW_DAYS);
     const snapshots = await this.repository.findSnapshotsInWindow(childId, since);
 
     if (snapshots.length === 0) return null;
@@ -240,7 +393,7 @@ export class DigitalWellbeingEngineService {
 
   async getTopAppsToday(childId: string, familyId: string, deviceId: string): Promise<Array<{ packageName: string; minutes: number }>> {
     await this.childrenService.assertChildBelongsToFamily(childId, familyId);
-    return this.repository.getTopAppsToday(childId, deviceId, this.today());
+    return this.repository.getTopAppsToday(childId, deviceId, await this.todayColumn(familyId));
   }
 
   /** Sprint 14 — Parent Insights. Deterministic template, not an LLM
@@ -265,7 +418,7 @@ export class DigitalWellbeingEngineService {
         sessionCount: snapshot.sessionCount,
         averageSessionMinutes: snapshot.averageSessionMinutes,
         longestSessionMinutes: snapshot.longestSessionMinutes,
-        isWeekend: this.isWeekend(new Date(date)),
+        isWeekend: this.isWeekend(date),
       },
       baseline,
     );
@@ -306,14 +459,17 @@ export class DigitalWellbeingEngineService {
     return `Screen time was in line with this child's usual pattern today.`;
   }
 
-  private today(): Date {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  /** B2: `DailyBehavioralSnapshot.usageDate` is a `@db.Date` holding a business
+   * date, so "today" is the family's calendar day anchored at UTC midnight. */
+  private async todayColumn(familyId: string): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(getBusinessDate(new Date(), tz));
   }
 
-  private daysAgo(days: number): Date {
-    const d = this.today();
-    d.setUTCDate(d.getUTCDate() - days);
-    return d;
+  private async daysAgo(familyId: string, days: number): Promise<Date> {
+    const tz = await this.familyDate.timeZoneOf(familyId);
+    return FamilyDateService.toDateColumn(
+      FamilyDateService.addDays(getBusinessDate(new Date(), tz), -days),
+    );
   }
 }

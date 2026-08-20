@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.PendingIntentCompat
+import com.aifamilycoach.child_app.R
 
 /**
  * AWAITING REAL DEVICE VALIDATION. Distinct from
@@ -27,7 +28,7 @@ class RuntimeAlertNotifier(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Protection Alerts",
+                context.getString(R.string.notif_channel_protection_alerts),
                 NotificationManager.IMPORTANCE_HIGH,
             )
             val manager = context.getSystemService(NotificationManager::class.java)
@@ -44,8 +45,8 @@ class RuntimeAlertNotifier(private val context: Context) {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle("Protection turned off")
-            .setContentText("Accessibility Service was disabled. Tap to re-enable protection.")
+            .setContentTitle(context.getString(R.string.alert_protection_off_title))
+            .setContentText(context.getString(R.string.alert_protection_off_text))
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

@@ -1,18 +1,29 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/errors/api_failure.dart';
 import '../../../core/storage/secure_session_storage.dart';
 import '../api/auth_api.dart';
 
 enum AuthStatus { unknown, authenticated, unauthenticated }
 
 class AuthState {
-  const AuthState({this.status = AuthStatus.unknown, this.errorMessage});
+  const AuthState({this.status = AuthStatus.unknown, this.failure});
 
   final AuthStatus status;
-  final String? errorMessage;
 
-  AuthState copyWith({AuthStatus? status, String? errorMessage}) =>
-      AuthState(status: status ?? this.status, errorMessage: errorMessage);
+  /// THE B3 ENVELOPE, NOT `e.toString()`.
+  ///
+  /// This used to be a `String? errorMessage` holding the result of
+  /// `e.toString()` — so a parent whose login was rejected read
+  /// «ApiException: Instance of 'DioException'» instead of the Arabic
+  /// sentence the server wrote for exactly that case. Carrying the failure
+  /// itself lets the screen render `messageAr` (Arabic first, verbatim,
+  /// never through `t()`) and lets a caller branch on `code` rather than on
+  /// a sentence.
+  final ApiFailure? failure;
+
+  AuthState copyWith({AuthStatus? status, ApiFailure? failure}) =>
+      AuthState(status: status ?? this.status, failure: failure);
 }
 
 /// The Splash Screen's own logic lives here, not in the widget:
@@ -38,7 +49,7 @@ class AuthController extends StateNotifier<AuthState> {
       state = const AuthState(status: AuthStatus.authenticated);
       return true;
     } catch (e) {
-      state = AuthState(status: AuthStatus.unauthenticated, errorMessage: e.toString());
+      state = AuthState(status: AuthStatus.unauthenticated, failure: ApiFailure.from(e));
       return false;
     }
   }
@@ -53,7 +64,7 @@ class AuthController extends StateNotifier<AuthState> {
       state = const AuthState(status: AuthStatus.authenticated);
       return true;
     } catch (e) {
-      state = AuthState(status: AuthStatus.unauthenticated, errorMessage: e.toString());
+      state = AuthState(status: AuthStatus.unauthenticated, failure: ApiFailure.from(e));
       return false;
     }
   }

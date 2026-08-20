@@ -14,6 +14,9 @@ dist/
 build/
 .next/
 out/
+# Stage logs written by scripts/mobile-build.sh|.ps1 (one directory per
+# invocation). Diagnostics, never source — and never worth committing.
+build-logs/
 
 # Environment files — NEVER commit real secrets
 .env
@@ -59,3 +62,17 @@ Thumbs.db
 # Misc
 *.pem
 .turbo/
+
+# B5 (PA-B-019) — the LOCAL-DISK evidence storage root. Uploaded recitations
+# and artifacts are child data; they belong on a disk or in a bucket, never in
+# a git history. `EVIDENCE_STORAGE_ROOT` overrides the location; this is the
+# default `LocalDiskEvidenceStorage` uses, and the e2e suite really writes here.
+apps/backend/.evidence-store/
+
+# Phase C — the Flutter static-preflight scripts are plain Python; their
+# bytecode cache is a build artifact of running them, not source.
+scripts/__pycache__/
+
+# Redis snapshot artefact - never a source file
+dump.rdb
+**/dump.rdb

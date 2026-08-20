@@ -3,6 +3,8 @@ import { lifeIntelligenceApi, coachingQueryKey, CoachingRecommendation } from '.
 import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi';
 import { Card } from '../../../shared/components/Card';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — this panel had no error branch.
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 const TRACK_LABEL_KEY: Record<CoachingRecommendation['track'], string> = {
   PARENT: 'coaching.track.parent',
@@ -12,7 +14,7 @@ const TRACK_LABEL_KEY: Record<CoachingRecommendation['track'], string> = {
 
 function ChildCoachingPanel({ childId, childName }: { childId: string; childName: string }) {
   const { t } = useTranslation();
-  const { data: recommendations, isLoading } = useQuery<CoachingRecommendation[]>({
+  const { data: recommendations, isLoading, error, refetch } = useQuery<CoachingRecommendation[]>({
     queryKey: coachingQueryKey(childId),
     queryFn: () => lifeIntelligenceApi.getCoachingRecommendations(childId),
   });
@@ -21,10 +23,14 @@ function ChildCoachingPanel({ childId, childName }: { childId: string; childName
     <div className="rounded-card border border-sand-200 p-3">
       <p className="text-sm font-medium text-ink">{childName}</p>
 
-      {isLoading && <p className="mt-2 text-sm text-ink-soft">{t('common.loading')}</p>}
-      {recommendations && recommendations.length === 0 && <p className="mt-2 text-sm text-ink-soft">{t('coaching.empty')}</p>}
-
-      {recommendations && recommendations.length > 0 && (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => void refetch()}
+        isEmpty={recommendations?.length === 0}
+        emptyHint={t('coaching.empty')}
+      >
+        {recommendations && recommendations.length > 0 && (
         <ul className="mt-2 flex flex-col gap-2">
           {recommendations.map((rec, i) => (
             <li key={i} className="rounded-card bg-sand-50 p-3">
@@ -34,7 +40,8 @@ function ChildCoachingPanel({ childId, childName }: { childId: string; childName
             </li>
           ))}
         </ul>
-      )}
+        )}
+      </AsyncBoundary>
     </div>
   );
 }

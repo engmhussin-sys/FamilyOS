@@ -1,7 +1,32 @@
-export type SubscriptionPlanTier = 'FREE' | 'PREMIUM' | 'FAMILY' | 'ENTERPRISE';
-export type SubscriptionStatusValue = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'EXPIRED';
+/** PHASE D: `BASIC` added — CONTEXT.md §6 names four consumer tiers. */
+export type SubscriptionPlanTier = 'FREE' | 'BASIC' | 'PREMIUM' | 'FAMILY' | 'ENTERPRISE';
+/**
+ * The PERSISTED spelling — what the `SubscriptionStatus` PostgreSQL enum
+ * holds. PHASE D added PENDING / GRACE_PERIOD / REFUNDED and deliberately did
+ * NOT rename TRIALING or CANCELED; the brief's `TRIAL` / `CANCELLED`
+ * vocabulary lives in `subscription-status.ts`, which owns the one
+ * bidirectional mapping. This alias is kept identical to
+ * `PersistedSubscriptionStatus` so every Sprint 8 caller still compiles.
+ */
+export type SubscriptionStatusValue =
+  | 'TRIALING'
+  | 'ACTIVE'
+  | 'PAST_DUE'
+  | 'CANCELED'
+  | 'EXPIRED'
+  | 'PENDING'
+  | 'GRACE_PERIOD'
+  | 'REFUNDED';
 export type InvoiceStatusValue = 'DRAFT' | 'OPEN' | 'PAID' | 'VOID' | 'UNCOLLECTIBLE';
-export type PaymentProviderValue = 'STRIPE' | 'PAYMOB' | 'FAWRY' | 'MANUAL' | 'APPLE_IAP' | 'GOOGLE_PLAY';
+/** PHASE D: `MOYASAR` added — the Saudi card/mada gateway slot (Q16). */
+export type PaymentProviderValue =
+  | 'STRIPE'
+  | 'PAYMOB'
+  | 'FAWRY'
+  | 'MANUAL'
+  | 'APPLE_IAP'
+  | 'GOOGLE_PLAY'
+  | 'MOYASAR';
 
 export interface IPlanDefinition {
   id: string;

@@ -1,0 +1,15 @@
+{
+  "name": "@abny/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ABNY shared contracts — domain event catalogue, event envelope, CompletionEvent, and the /events/batch wire contract. Consumed by apps/backend, apps/admin-dashboard, and (via codegen) the Flutter apps.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./events": "./src/index.ts"
+  },
+  "sideEffects": false,
+  "dependencies": {},
+  "devDependencies": {}
+}

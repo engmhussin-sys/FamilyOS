@@ -8,6 +8,9 @@ import { PrismaLearningRepository } from '../../src/modules/life-intelligence/in
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { HealthEngineService } from '../../src/modules/life-intelligence/application/services/health-engine.service';
 import { HabitEngineService } from '../../src/modules/life-intelligence/application/services/habit-engine.service';
+import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
+import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
+import { familyDateProvider } from '../common/family-date.testing';
 
 describe('SmartTaskEngineService', () => {
   const repositoryMock = { createMany: jest.fn(), listForChildOnDate: jest.fn(), findById: jest.fn(), updateStatus: jest.fn() };
@@ -19,7 +22,7 @@ describe('SmartTaskEngineService', () => {
   const familyId = 'family-1';
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
     const moduleRef = await Test.createTestingModule({
       providers: [
         SmartTaskEngineService,
@@ -27,6 +30,8 @@ describe('SmartTaskEngineService', () => {
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: HealthEngineService, useValue: healthEngineMock },
         { provide: HabitEngineService, useValue: habitEngineMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(SmartTaskEngineService);
@@ -107,7 +112,7 @@ describe('SmartTaskEngineService', () => {
     });
 
     it('HONEST LIMITATION: screenTimeOverLimit is always false — documented, not an unfounded guess', async () => {
-      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: 9 } });
+      healthEngineMock.computeAndStoreHealthScore.mockResolvedValue({ breakdown: { sleepHours: 5 } }); // insufficient sleep -- a real trigger, ensuring at least one suggestion is generated so createMany is actually called
       healthEngineMock.getDailyProgress.mockResolvedValue({ hydration: { isAchieved: true } });
       habitEngineMock.getMissedHabitsSignal.mockResolvedValue([]);
       repositoryMock.createMany.mockResolvedValue(1);
@@ -165,19 +170,29 @@ describe('LearningEngineService', () => {
     countSessionsInWindow: jest.fn(),
     sumSessionMinutesInWindow: jest.fn(),
     averageAssessmentScoreInWindow: jest.fn(),
+    findDistinctSessionDates: jest.fn(),
   };
   const childrenServiceMock = { assertChildBelongsToFamily: jest.fn() };
+  const rewardTriggerMock = { trigger: jest.fn() };
   let service: LearningEngineService;
   const childId = 'child-1';
   const familyId = 'family-1';
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
+    repositoryMock.findDistinctSessionDates.mockResolvedValue([]);
     const moduleRef = await Test.createTestingModule({
       providers: [
         LearningEngineService,
         { provide: PrismaLearningRepository, useValue: repositoryMock },
         { provide: ChildrenService, useValue: childrenServiceMock },
+        { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        // B4: `completeGoal` writes the goal completion to the SAME Unified
+        // Timeline every other engine writes to — the existing
+        // LIFE_TIMELINE_WRITER token, not a new one.
+        { provide: LIFE_TIMELINE_WRITER, useValue: { record: jest.fn() } },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider()
       ],
     }).compile();
     service = moduleRef.get(LearningEngineService);

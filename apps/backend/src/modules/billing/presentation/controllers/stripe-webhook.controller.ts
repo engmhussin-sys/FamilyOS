@@ -4,6 +4,7 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 
 import { StripeWebhookService } from '../../application/services/stripe-webhook.service';
+import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 
 /**
  * Follow-up to the master completeness audit — CLOSES A REAL GAP
@@ -21,6 +22,10 @@ export class StripeWebhookController {
   constructor(private readonly webhookService: StripeWebhookService) {}
 
   @Post()
+  @SystemRoute(
+    'BILLING_WEBHOOK',
+    'Stripe is a server-to-server caller with no session; the family is resolved from the payload only AFTER verifySignature() passes, three lines below.',
+  )
   @Throttle({ default: { limit: 100, ttl: 60_000 } })
   async handleWebhook(@Req() req: RawBodyRequest<Request>, @Headers('stripe-signature') signature: string | undefined) {
     if (!req.rawBody) {

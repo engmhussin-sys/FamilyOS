@@ -2,6 +2,8 @@ import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { SettingsService } from '../../src/modules/settings/application/settings.service';
 import { SETTINGS_REPOSITORY } from '../../src/modules/settings/domain/settings.types';
+import { familyDateProvider } from '../common/family-date.testing';
+import { countryCatalogueProvider } from '../common/country-catalogue.testing';
 
 describe('SettingsService', () => {
   const repositoryMock = { findByFamilyId: jest.fn(), update: jest.fn() };
@@ -10,7 +12,16 @@ describe('SettingsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
-      providers: [SettingsService, { provide: SETTINGS_REPOSITORY, useValue: repositoryMock }],
+      providers: [
+        SettingsService,
+        { provide: SETTINGS_REPOSITORY, useValue: repositoryMock },
+        // B2: SettingsService now invalidates the timezone cache on write.
+        familyDateProvider(),
+        // F1: SettingsService now checks the country against the catalogue and
+        // reconciles it with the timezone. The REAL service over a fake
+        // two-row catalogue — see `country-catalogue.testing.ts`.
+        countryCatalogueProvider(),
+      ],
     }).compile();
     service = moduleRef.get(SettingsService);
   });

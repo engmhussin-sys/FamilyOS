@@ -5,7 +5,19 @@ import {
   getPersistedLocale,
   persistLocale,
   DEFAULT_LOCALE,
+  FALLBACK_LOCALE,
 } from '../../src/shared/i18n/localizationEngine';
+import en from '../../src/shared/i18n/translations/en.json';
+import ar from '../../src/shared/i18n/translations/ar.json';
+
+function flatten(obj: Record<string, unknown>, prefix = ''): string[] {
+  return Object.entries(obj).flatMap(([key, value]) => {
+    const full = prefix ? `${prefix}.${key}` : key;
+    return typeof value === 'object' && value !== null
+      ? flatten(value as Record<string, unknown>, full)
+      : [full];
+  });
+}
 
 describe('localizationEngine', () => {
   describe('translate', () => {
@@ -55,6 +67,34 @@ describe('localizationEngine', () => {
     it('falls back to the base key when count is provided but no plural forms exist', () => {
       const result = translate('en', 'common.save', { count: 5 });
       expect(result).toBe('Save'); // no common.save_other exists, base key used
+    });
+  });
+
+  /**
+   * A3. The Dashboard used to fall back to `en` while both Flutter engines
+   * fell back to their default locale (`ar`) under a header claiming the
+   * three used the same strategy. The Dashboard is the side that moved.
+   */
+  describe('the fallback locale', () => {
+    it('IS the default locale — one chain, not two', () => {
+      expect(FALLBACK_LOCALE).toBe(DEFAULT_LOCALE);
+      expect(FALLBACK_LOCALE).toBe('ar');
+    });
+
+    it('never actually fires today: en.json and ar.json are at full key parity', () => {
+      // The guard that keeps the change above free of consequences. If this
+      // ever goes red, a missing key now surfaces ARABIC inside an English
+      // screen rather than English inside an Arabic one — deliberate, and
+      // stated here so the trade-off is not rediscovered by surprise.
+      const enKeys = flatten(en as Record<string, unknown>).sort();
+      const arKeys = flatten(ar as Record<string, unknown>).sort();
+      expect(arKeys).toEqual(enKeys);
+      expect(enKeys.length).toBeGreaterThan(0);
+    });
+
+    it('a key missing from BOTH files still renders as the key, never blank', () => {
+      expect(translate('en', 'absent.in.both.files')).toBe('absent.in.both.files');
+      expect(translate('ar', 'absent.in.both.files')).toBe('absent.in.both.files');
     });
   });
 

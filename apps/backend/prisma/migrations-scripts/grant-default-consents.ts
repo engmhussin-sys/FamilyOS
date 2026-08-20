@@ -55,6 +55,10 @@ async function main() {
 
       await prisma.parentalConsent.create({
         data: {
+          // This is a maintenance script running outside any request, so the
+          // tenant comes from the row being backfilled — server-derived, never
+          // from an operator-supplied argument.
+          familyId: child.familyId,
           childId: child.id,
           consentType,
           granted: true,

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RECOVERY NOTE (Sprint 17.3): standard Flutter template Manifest,
+     with only the two permissions this app's own real dependencies
+     genuinely need: INTERNET (every API call) and
+     POST_NOTIFICATIONS (firebase_messaging, confirmed real in
+     pubspec.yaml). No speculative permissions added. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- F1: supportsRtl is required for Arabic, which is this product's
+         FIRST language (CONTEXT §1), not an afterthought. Without it the
+         platform-level layout mirroring Flutter relies on is off. -->
+    <!-- F2 (audit MA-004): identical treatment to the child app — see
+         res/xml/network_security_config.xml for the full rationale.
+         Short version: API 28+ denies cleartext by default, so a debug
+         APK pointed at http://10.0.2.2:3000 could not reach the backend
+         at all; and a release APK must never be able to fall back to
+         plaintext. Resolves per variant (debug -> src/debug/res/xml). -->
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:localeConfig="@xml/locales_config">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- THE `abny://` SCHEME. It was never declared, and the whole
+                 notification product is built on it: the backend's
+                 `notification-destination.ts` resolves an
+                 `abny://<surface>[/<id>]` for EVERY notification and both
+                 Flutter routers answer every surface. In-app taps worked
+                 because the link travels on the FCM `data` payload and is
+                 parsed in Dart — but any `abny://` link arriving from OUTSIDE
+                 the app (a browser, a message, an e-mail, `adb shell am start`)
+                 resolved to nothing at all, because the OS had never been told
+                 this package answers the scheme.
+
+                 A SECOND FILTER ON THE LAUNCHER ACTIVITY, NOT A DEDICATED ONE.
+                 This app has exactly one Activity and it is the one hosting the
+                 Flutter engine. A dedicated deep-link Activity would mean a
+                 second FlutterActivity — a second engine and a second Dart
+                 isolate — which would then have to hand the link across to the
+                 running one, i.e. a second resolver, which is precisely what
+                 `deep_link.dart` / `deep_link_router.dart` exist to prevent.
+                 With `launchMode="singleTop"` (already set above) the SAME
+                 activity and the SAME engine receive both the cold-start intent
+                 (`getIntent()`) and every later one (`onNewIntent`), so one
+                 handler covers both — see MainActivity.kt.
+
+                 IT IS A SEPARATE <intent-filter> ELEMENT, and that is not
+                 cosmetic. Android matches an intent against a filter AS A
+                 WHOLE: moving VIEW/BROWSABLE/<data> into the MAIN/LAUNCHER
+                 filter above would make the launcher entry itself conditional
+                 on that data element, which is the documented way to lose the
+                 launcher icon. The filter above is untouched and still stands
+                 alone.
+
+                 NO android:autoVerify. That attribute is for App Links — https
+                 URLs verified against /.well-known/assetlinks.json on a domain
+                 we control. `abny` is a custom scheme: there is nothing to
+                 verify and the attribute would be cargo-cult.
+
+                 NO android:host AND NO android:path. In `abny://goals` the
+                 surface is the URI HOST, so host filters would have to list all
+                 twelve of `DEEP_LINK_SURFACES` and be maintained in lockstep
+                 with the backend registry — and the failure mode of falling
+                 behind is a link the server emits and the OS drops. One scheme
+                 entry is right for BOTH apps: each router already answers every
+                 surface, `parseDeepLink` is total, and a surface that means
+                 nothing to this app degrades to a real screen rather than to
+                 nothing. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="abny" />
+            </intent-filter>
+        </activity>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+</manifest>

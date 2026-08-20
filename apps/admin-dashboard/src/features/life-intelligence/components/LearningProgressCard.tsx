@@ -3,6 +3,9 @@ import { lifeIntelligenceApi, learningProgressQueryKey, LearningProgressSummary 
 import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi';
 import { Card } from '../../../shared/components/Card';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — this panel had no error branch, so a
+// failed fetch was indistinguishable from "nothing recorded yet".
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 /**
  * CLOSES A REAL GAP: mirrors the Parent App's own LearningProgressScreen
@@ -13,7 +16,7 @@ import { useTranslation } from '../../../shared/i18n/LocaleProvider';
  */
 function ChildLearningPanel({ childId, childName }: { childId: string; childName: string }) {
   const { t } = useTranslation();
-  const { data: progress, isLoading } = useQuery<LearningProgressSummary>({
+  const { data: progress, isLoading, error, refetch } = useQuery<LearningProgressSummary>({
     queryKey: learningProgressQueryKey(childId),
     queryFn: () => lifeIntelligenceApi.getLearningProgress(childId),
   });
@@ -27,9 +30,13 @@ function ChildLearningPanel({ childId, childName }: { childId: string; childName
         )}
       </div>
 
-      {isLoading && <p className="mt-2 text-sm text-ink-soft">{t('common.loading')}</p>}
-
-      {progress && (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => void refetch()}
+        isEmpty={!isLoading && !error && !progress}
+      >
+        {progress && (
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink-soft">
           <div>
             <dt>{t('learningProgress.sessions')}</dt>
@@ -46,7 +53,8 @@ function ChildLearningPanel({ childId, childName }: { childId: string; childName
             </dd>
           </div>
         </dl>
-      )}
+        )}
+      </AsyncBoundary>
     </div>
   );
 }

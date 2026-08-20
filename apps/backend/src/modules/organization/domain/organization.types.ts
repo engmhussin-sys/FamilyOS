@@ -12,6 +12,44 @@ export type OrganizationRoleValue = 'OWNER' | 'ADMIN' | 'MANAGER' | 'MEMBER' | '
 export type InvitationStatusValue = 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
 export type PartnerCampaignTypeValue = 'REFERRAL' | 'COUPON' | 'TRIAL_EXTENSION' | 'DISCOUNT' | 'QR_CODE';
 
+/**
+ * PHASE E (`PC-S-007`) — THE ROLE HIERARCHY, MOVED HERE FROM
+ * `RbacEngineService`'s private static so that there is exactly ONE ordering
+ * of organisation roles in this codebase.
+ *
+ * It moved because a second consumer appeared and a second consumer is how a
+ * hierarchy becomes two hierarchies that disagree: `OrganizationService` has
+ * to compare a GRANTED role against the GRANTER's role (an escalation check),
+ * which is a different question from «does this role clear this action's
+ * minimum level» (`RbacEngineService`'s question) but must be answered by the
+ * same ladder. The ranks are unchanged, and `RbacEngineService` now reads
+ * this table rather than owning a copy of it.
+ */
+export const ORGANIZATION_ROLE_RANK: Readonly<Record<OrganizationRoleValue, number>> = {
+  OWNER: 4,
+  ADMIN: 3,
+  MANAGER: 2,
+  MEMBER: 1,
+  GUEST: 0,
+};
+
+/**
+ * «Can an actor holding `actorRole` grant `grantedRole`?»
+ *
+ * EQUALITY IS ALLOWED and that is a deliberate product call, not an
+ * oversight: an OWNER naming a co-OWNER is a legitimate B2B arrangement (a
+ * school with two principals), and forbidding it would make every
+ * organisation permanently dependent on a single person, with no in-product
+ * way to recover from that person leaving. What is forbidden is granting
+ * ABOVE oneself, which is the escalation.
+ */
+export function canGrantOrganizationRole(
+  actorRole: OrganizationRoleValue,
+  grantedRole: OrganizationRoleValue,
+): boolean {
+  return ORGANIZATION_ROLE_RANK[actorRole] >= ORGANIZATION_ROLE_RANK[grantedRole];
+}
+
 export interface IOrganization {
   id: string;
   type: OrganizationTypeValue;

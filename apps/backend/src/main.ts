@@ -1,12 +1,15 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import compression from 'compression';
 import * as Sentry from '@sentry/node';
 
 import { AppModule } from './app.module';
-import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { applyGlobalHttpPipeline } from './common/http/global-pipeline';
+import { configureTrustProxy } from './common/http/trust-proxy';
+import { OutboxRelay } from './modules/events/application/outbox.relay';
+import { SchedulerService } from './modules/scheduler/application/scheduler.service';
 
 /**
  * Sprint 4 (Observability) — CLOSES A REAL GAP: before this, a real
@@ -29,7 +32,11 @@ Sentry.init({
 
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
+
+  // SA-004: must run before anything reads req.ip — see trust-proxy.ts for
+  // why this is a hop count and not `true`.
+  configureTrustProxy(app);
 
   // Sprint 9: stricter helmet config than the bare default \u2014 a real CSP
   // for a JSON API (no inline scripts/styles ever served from here) plus
@@ -52,39 +59,41 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
 
-  // Global validation: every DTO is validated against its class-validator
-  // decorators before it ever reaches a controller method. `whitelist`
-  // strips unknown properties instead of accepting them — the backend
-  // never trusts client input beyond what a DTO explicitly declares.
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
-
-  // Sprint 9: every error response gets the same shape, and 5xx errors
-  // never leak an internal message/stack to the client — see the
-  // filter's own docstring.
-  app.useGlobalFilters(new GlobalExceptionFilter());
-  // Sprint 9: one structured JSON log line per request — see the
-  // interceptor's own docstring for exactly what is and isn't logged.
-  app.useGlobalInterceptors(new LoggingInterceptor());
-
-  app.setGlobalPrefix('api/v1', {
-    // Health checks are probed by infrastructure (Docker/Railway), which
-    // does not know or care about this API's versioned prefix — excluded
-    // so `/health/live` and `/health/ready` work at the bare path.
-    exclude: ['health/live', 'health/ready'],
-  });
+  // B3 (PA-B-022): the four things that shape the JSON a real client receives —
+  // the strict ValidationPipe (with B3's structured `VALIDATION_FAILED`
+  // exception factory), the GlobalExceptionFilter, the LoggingInterceptor and
+  // the `api/v1` prefix — now live in ONE function, shared with the e2e
+  // suites. They used to be inlined here and re-approximated (loosely, and
+  // WITHOUT the filter) inside each e2e spec, which is precisely how PA-B-021
+  // shipped past 45 green assertions. See `common/http/global-pipeline.ts`.
+  applyGlobalHttpPipeline(app);
 
   // Sprint 9: SIGTERM/SIGINT now trigger Nest's shutdown lifecycle
   // (OnModuleDestroy on PrismaService/RedisService, etc.) — without this,
   // a container orchestrator's graceful-shutdown grace period is wasted;
   // the process would be killed mid-request instead of draining cleanly.
   app.enableShutdownHooks();
+
+  // F3 (R3): start the Outbox relay HERE and not in `OutboxRelay.onModuleInit`.
+  // `AppModule` is instantiated by test/app.module.spec.ts and by the
+  // cross-tenant probe; a relay that started itself on module init would open
+  // database handles in suites that never asked for one and would keep Jest
+  // alive. Starting it at the process entry point means exactly one thing
+  // starts it — a real server — and tests drive `tick()` directly, which is
+  // also what makes relay behaviour assertable rather than timing-dependent.
+  //
+  // `enableShutdownHooks()` above already calls its `onModuleDestroy`, which
+  // clears the timer, so SIGTERM stops the poller before Prisma disconnects.
+  app.get(OutboxRelay).start();
+
+  // PHASE C P4 (PA-B-031): the scheduler, started HERE and for the identical
+  // reason. Before this line, `DataRetentionEnforcementService.enforceAll()`
+  // and `HabitEngineService.markMissedHabits()` had zero production callers —
+  // retention was a policy document with an unexecuted implementation beneath
+  // it, which Phase B classified as a compliance condition rather than a gap.
+  // Every replica may call this; the `scheduled_jobs` lease decides which one
+  // actually runs each job.
+  app.get(SchedulerService).start();
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);

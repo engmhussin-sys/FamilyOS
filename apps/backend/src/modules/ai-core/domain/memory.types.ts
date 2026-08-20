@@ -1,4 +1,16 @@
-export type AiMemoryCategory = 'HABIT' | 'PREFERENCE' | 'VIOLATION' | 'RECOMMENDATION' | 'CONFIDENCE';
+/** B8 adds `DISTRESS_SIGNAL` — an EVENT category (use `record`, never
+ * `upsert`): each signal is its own occurrence and collapsing them into one
+ * overwritten row would erase exactly the history a review queue needs. The
+ * stored value is `{ code, businessDate, detectedAt }` and never the child's
+ * text (`distress.ts`, §11.4). The schema already declares this column a plain
+ * string precisely so a new category costs no migration. */
+export type AiMemoryCategory =
+  | 'HABIT'
+  | 'PREFERENCE'
+  | 'VIOLATION'
+  | 'RECOMMENDATION'
+  | 'CONFIDENCE'
+  | 'DISTRESS_SIGNAL';
 
 export interface IAiMemoryRecord {
   id: string;

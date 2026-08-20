@@ -5,20 +5,27 @@ import { runtimeApi, timelineQueryKey } from '../api/runtimeApi';
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — this list had no error branch, so a
+// failed timeline read said «لا توجد أحداث».
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 function TimelineList({ deviceId }: { deviceId: string }) {
   const { t, locale } = useTranslation();
-  const { data: events, isLoading } = useQuery({
+  const { data: events, isLoading, error, refetch } = useQuery({
     queryKey: timelineQueryKey(deviceId),
     queryFn: () => runtimeApi.getTimeline(deviceId),
   });
 
-  if (isLoading) return <p className="text-sm text-ink-soft">{t('common.loading')}</p>;
-  if (!events || events.length === 0) return <p className="text-sm text-ink-soft">{t('timeline.empty')}</p>;
-
   return (
-    <ol className="mt-2 flex flex-col gap-2 border-r border-sand-200 pr-3">
-      {events.slice(0, 20).map((event) => (
+    <AsyncBoundary
+      isLoading={isLoading}
+      error={error}
+      onRetry={() => void refetch()}
+      isEmpty={!events || events.length === 0}
+      emptyHint={t('timeline.empty')}
+    >
+    <ol className="mt-2 flex flex-col gap-2 border-s border-sand-200 ps-3">
+      {events?.slice(0, 20).map((event) => (
         <li key={event.id} className="text-xs">
           <span className="font-medium text-ink">{event.eventType}</span>
           <span className="mx-1 text-ink-soft">·</span>
@@ -28,6 +35,7 @@ function TimelineList({ deviceId }: { deviceId: string }) {
         </li>
       ))}
     </ol>
+    </AsyncBoundary>
   );
 }
 

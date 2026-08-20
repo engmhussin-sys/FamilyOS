@@ -6,6 +6,10 @@ import { PrismaHabitRepository } from '../../src/modules/life-intelligence/infra
 import { ChildrenService } from '../../src/modules/children/application/services/children.service';
 import { LIFE_TIMELINE_WRITER } from '../../src/modules/life-intelligence/domain/life-timeline.types';
 import { REWARD_TRIGGER_WRITER } from '../../src/modules/life-intelligence/domain/reward-trigger.types';
+import { familyDateProvider } from '../common/family-date.testing';
+import { addBusinessDays, getBusinessDate } from '../../src/common/time/family-date';
+import { composeIdempotencyKey } from '../../src/shared/events/idempotency';
+import { GrowthEventEmitter } from '../../src/modules/analytics/application/growth-event-emitter.service';
 
 describe('HabitEngineService', () => {
   const habitRepositoryMock = {
@@ -28,7 +32,7 @@ describe('HabitEngineService', () => {
   const habit = { id: 'habit-1', childId, title: 'Drink water', category: 'health', isCustom: true, isShared: false, isActive: true, createdAt: new Date() };
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks(); // FIXES A REAL ROOT CAUSE: clearAllMocks() only resets call history, not configured mockResolvedValue/mockRejectedValue implementations -- resetAllMocks() resets both.
     habitRepositoryMock.findDistinctCompletionDates.mockResolvedValue([]);
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -37,6 +41,13 @@ describe('HabitEngineService', () => {
         { provide: ChildrenService, useValue: childrenServiceMock },
         { provide: LIFE_TIMELINE_WRITER, useValue: timelineMock },
         { provide: REWARD_TRIGGER_WRITER, useValue: rewardTriggerMock },
+        // B2: the REAL FamilyDateService over a stub Prisma (see the helper).
+        familyDateProvider(),
+        // PHASE D (GROWTH). `GrowthEventEmitter.emit` never throws by contract
+        // (see its class docstring: analytics must never be able to fail a
+        // reward, a habit or an AI answer), so a resolving double is a faithful
+        // stand-in and these suites stay about the business path.
+        { provide: GrowthEventEmitter, useValue: { emit: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = moduleRef.get(HabitEngineService);
@@ -95,17 +106,91 @@ describe('HabitEngineService', () => {
       expect(timelineMock.record).not.toHaveBeenCalled();
     });
 
+    /**
+     * CHANGED IN B1 (PA-B-004). The original passed `'2026-01-01'` with no
+     * actor and asserted the string reached the repository verbatim. That was
+     * the defect: `/self/habits/:id/complete` is a DEVICE route, and the date it
+     * supplied composed the reward idempotency key
+     * (`habit-completion:{habitId}:{date}`). The test's original PURPOSE —
+     * "two completions for the same day hit the repository twice with the same
+     * date, and the unique constraint, not this service, is what deduplicates"
+     * — is preserved exactly; only the SOURCE of the date changed.
+     */
     it('passes the same date through to the repository, twice, for the same-day case (idempotency is the repository unique-constraint\u2019s job, verified separately)', async () => {
       habitRepositoryMock.findById.mockResolvedValue(habit);
       habitRepositoryMock.recordCompletion.mockResolvedValue({ id: 'c1', habitId: 'habit-1', childId, date: new Date(), completedAt: new Date() });
       habitRepositoryMock.countCompletionsInWindow.mockResolvedValue(1);
 
-      await service.completeHabit('habit-1', childId, familyId, '2026-01-01');
-      await service.completeHabit('habit-1', childId, familyId, '2026-01-01');
+      // A DEVICE caller — the date is DERIVED, and the one it sent is ignored.
+      await service.completeHabit('habit-1', childId, familyId, '2026-01-01', 'DEVICE');
+      await service.completeHabit('habit-1', childId, familyId, '2026-01-01', 'DEVICE');
 
+      const today = new Date(`${getBusinessDate(new Date(), 'UTC')}T00:00:00.000Z`);
       expect(habitRepositoryMock.recordCompletion).toHaveBeenCalledTimes(2);
-      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(1, 'habit-1', childId, new Date('2026-01-01'));
-      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(2, 'habit-1', childId, new Date('2026-01-01'));
+      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(1, 'habit-1', childId, today, 'COMPLETED');
+      expect(habitRepositoryMock.recordCompletion).toHaveBeenNthCalledWith(2, 'habit-1', childId, today, 'COMPLETED');
+    });
+
+    it('B1 (PA-B-004): a DEVICE cannot choose the completion day — 200 different dates collapse to ONE key', async () => {
+      habitRepositoryMock.findById.mockResolvedValue(habit);
+      habitRepositoryMock.recordCompletion.mockResolvedValue({ id: 'c1', habitId: 'habit-1', childId, date: new Date(), completedAt: new Date() });
+      habitRepositoryMock.countCompletionsInWindow.mockResolvedValue(1);
+
+      for (let i = 0; i < 200; i++) {
+        const forged = `2026-${String((i % 12) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}`;
+        await service.completeHabit('habit-1', childId, familyId, forged, 'DEVICE');
+      }
+
+      /**
+       * Every reward trigger carried the SAME key, so the ledger's unique
+       * constraint has one row to collide on rather than 200 to fill.
+       *
+       * THE EXPECTED KEY IS `composeIdempotencyKey`, NOT A LITERAL. This line
+       * used to pin `habit-completion:habit-1:{day}` — the shape this service
+       * hand-wrote while `POST /events/batch` composed
+       * `child:{c}:habit:{habitId}:{day}` for the SAME tick, which paid one
+       * habit 10 + 10 XP against real PostgreSQL. The literal was pinning the
+       * retired shape; the 200-forged-dates invariant this test exists for is
+       * unchanged and still asserted below.
+       */
+      const expectedKey = composeIdempotencyKey('HABIT_COMPLETED', {
+        childId,
+        sourceId: 'habit-1',
+        localDate: getBusinessDate(new Date(), 'UTC'),
+      });
+      const keys = new Set(
+        rewardTriggerMock.trigger.mock.calls
+          .map((c: unknown[]) => (c[2] as { idempotencyKey?: string }).idempotencyKey)
+          .filter((k: string | undefined): k is string => typeof k === 'string' && k.includes(':habit:')),
+      );
+      expect(keys.size).toBe(1);
+      expect([...keys][0]).toBe(expectedKey);
+    });
+
+    it('B1 (PA-B-004): a PARENT may back-date, but never into the future and never past the window', async () => {
+      habitRepositoryMock.findById.mockResolvedValue(habit);
+      habitRepositoryMock.recordCompletion.mockResolvedValue({ id: 'c1', habitId: 'habit-1', childId, date: new Date(), completedAt: new Date() });
+      habitRepositoryMock.countCompletionsInWindow.mockResolvedValue(1);
+
+      const today = getBusinessDate(new Date(), 'UTC');
+      const yesterday = addBusinessDays(today, -1);
+
+      await service.completeHabit('habit-1', childId, familyId, yesterday, 'PARENT');
+      expect(habitRepositoryMock.recordCompletion).toHaveBeenLastCalledWith(
+        'habit-1', childId, new Date(`${yesterday}T00:00:00.000Z`), 'COMPLETED',
+      );
+
+      // The future is clamped to today.
+      await service.completeHabit('habit-1', childId, familyId, addBusinessDays(today, 5), 'PARENT');
+      expect(habitRepositoryMock.recordCompletion).toHaveBeenLastCalledWith(
+        'habit-1', childId, new Date(`${today}T00:00:00.000Z`), 'COMPLETED',
+      );
+
+      // Beyond the 30-day scoring window is clamped to its edge.
+      await service.completeHabit('habit-1', childId, familyId, addBusinessDays(today, -400), 'PARENT');
+      expect(habitRepositoryMock.recordCompletion).toHaveBeenLastCalledWith(
+        'habit-1', childId, new Date(`${addBusinessDays(today, -30)}T00:00:00.000Z`), 'COMPLETED',
+      );
     });
   });
 

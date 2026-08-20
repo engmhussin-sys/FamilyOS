@@ -4,6 +4,7 @@ import type { ParentalConsent } from '@prisma/client';
 import { PrismaService } from '../../../../common/prisma/prisma.service';
 import type { ConsentTypeValue } from '../../domain/compliance.types';
 import type { IConsentRepository } from '../../application/ports/consent.repository.port';
+import { tenantIdForWrite } from '../../../../common/tenancy/tenant-context';
 
 @Injectable()
 export class PrismaConsentRepository implements IConsentRepository {
@@ -26,6 +27,7 @@ export class PrismaConsentRepository implements IConsentRepository {
     return this.prisma.parentalConsent.upsert({
       where: { childId_consentType: { childId, consentType } },
       create: {
+        familyId: tenantIdForWrite(),
         childId,
         consentType,
         granted,

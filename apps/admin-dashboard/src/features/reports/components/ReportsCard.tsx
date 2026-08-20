@@ -5,6 +5,9 @@ import { reportsApi } from '../api/reportsApi';
 import { Card } from '../../../shared/components/Card';
 import { Button } from '../../../shared/components/Button';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: shared four-state boundary — a failed report read used to render
+// nothing at all under the device buttons.
+import { AsyncBoundary, LoadingBlock } from '../../../shared/components/AsyncState';
 
 export function ReportsCard() {
   const { t } = useTranslation();
@@ -14,10 +17,15 @@ export function ReportsCard() {
 
   const selectedDevice = devices?.find((d) => d.id === selectedDeviceId);
 
-  const { data: report, isLoading } = useQuery({
+  const { data: report, isLoading, error, refetch } = useQuery({
     queryKey: ['report', selectedDeviceId],
-    queryFn: () => reportsApi.getReport(selectedDevice!.childId, selectedDeviceId!),
-    enabled: !!selectedDeviceId,
+    // `selectedDevice`, not `selectedDeviceId`. The query reads
+    // `selectedDevice.childId`, and the two can disagree: the device list
+    // refetches, and a device that was unpaired or deleted while this card was
+    // open leaves an id selected with no row behind it. The gate now names the
+    // thing the query actually dereferences.
+    queryFn: () => reportsApi.getReport(selectedDevice!.childId, selectedDevice!.id),
+    enabled: !!selectedDevice,
   });
 
   if (!devices || devices.length === 0) return null;
@@ -47,16 +55,26 @@ export function ReportsCard() {
         ))}
       </div>
 
-      {isLoading && <p className="mt-3 text-sm text-ink-soft">{t('reports.generating')}</p>}
-
-      {report && (
-        <div className="mt-3 rounded-card border border-sand-200 p-3 text-sm">
+      {selectedDevice && (
+        <div className="mt-3">
+          <AsyncBoundary
+            isLoading={isLoading}
+            error={error}
+            onRetry={() => void refetch()}
+            isEmpty={!isLoading && !error && !report}
+            skeleton={<LoadingBlock label={t('reports.generating')} />}
+          >
+            {report && (
+        <div className="rounded-card border border-sand-200 p-3 text-sm">
           <p>{t('reports.trustLevel')}: {report.trustLevel ?? t('devices.notSet')}</p>
           <p>{t('reports.dailyLimit')}: {report.screenTimePolicy?.dailyLimitMinutes ?? t('devices.notSet')}</p>
           <p>{t('reports.recentViolations')}: {report.recentViolationCount}</p>
           <Button className="mt-3" variant="secondary" onClick={handleExport} isLoading={isExporting}>
             {t('reports.exportCsv')}
           </Button>
+        </div>
+            )}
+          </AsyncBoundary>
         </div>
       )}
     </Card>

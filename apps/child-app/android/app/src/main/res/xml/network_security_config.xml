@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    PRODUCTION network security configuration (audit MA-004).
+
+    This file is the one that ships. It is deliberately the STRICT one:
+    no cleartext, anywhere, ever.
+
+    THE VARIANT SPLIT (this is the whole design, read it once):
+      src/main/res/xml/network_security_config.xml  <- THIS FILE, ships
+      src/debug/res/xml/network_security_config.xml <- debug builds only
+
+    AGP resource merging gives a same-named resource in the `debug`
+    source set higher priority than `main`, so `assembleDebug` (and
+    therefore `flutter build apk` in debug mode) picks up the
+    permissive-for-localhost file, and `assembleRelease` / `assembleProfile`
+    can only ever see this one. There is no build flag to get this wrong,
+    and no way to accidentally ship the debug allowances: the debug file
+    is not part of the release variant's resource set at all.
+
+    WHY THIS EXISTS AT ALL
+    Since Android 9 (API 28) cleartext HTTP is denied by default. The
+    app's own default base URL is http://10.0.2.2:3000 (the emulator's
+    alias for the host machine). Without the debug counterpart to this
+    file, every single API call from a debug APK fails with
+    `CLEARTEXT communication to 10.0.2.2 not permitted by network
+    security policy` — the app installs, opens, and can do nothing.
+    That was MA-004: "builds" and "works" were not the same thing.
+
+    WHY NOT JUST android:usesCleartextTraffic="true"
+    Because it is app-wide and survives into release. The manifest still
+    carries android:usesCleartextTraffic="false" as a second, belt-and-
+    braces statement of intent for readers and for API 27 and below
+    (where this config's cleartext flag is not enforced); on API 28+ the
+    config file below is what the platform actually enforces.
+
+    USER-ADDED CA CERTIFICATES ARE NOT TRUSTED HERE
+    Only the system trust store. This is what stops a parent-installed
+    or attacker-installed root certificate from silently intercepting a
+    child's traffic — a real threat model for this product, not a
+    theoretical one (audit A4). Debug builds do trust user CAs, because
+    that is how a developer runs Charles/mitmproxy against a dev backend.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

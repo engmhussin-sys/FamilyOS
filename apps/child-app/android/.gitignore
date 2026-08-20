@@ -1,0 +1,27 @@
+# RECOVERY NOTE (Sprint 17.3): deliberately does NOT ignore gradlew,
+# gradlew.bat, or gradle-wrapper.jar — Sprint 17.2's own root-cause
+# finding was that this project's Gradle scaffold (INCLUDING the
+# wrapper) had never been committed at all. Ignoring the wrapper
+# again here would silently reintroduce the exact same bug.
+/.gradle
+/captures/
+local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+key.properties
+
+# PHASE G — RELEASE SIGNING. NEVER COMMIT KEY MATERIAL.
+#
+# `signing.properties` holds the keystore path and three passwords and is read
+# by app/build.gradle. `signing.properties.example` IS committed (note the
+# negation below) because it is the template and carries the keytool command.
+#
+# The keystore extensions are ignored by pattern rather than by name so that a
+# developer who calls theirs `abny-upload-2027.jks` is covered too. There is no
+# safe filename for a private key in a repository.
+signing.properties
+!signing.properties.example
+*.jks
+*.keystore
+*.p12
+*.pepk

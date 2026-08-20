@@ -3,7 +3,41 @@ import ar from './translations/ar.json';
 
 export type Locale = 'en' | 'ar';
 export const SUPPORTED_LOCALES: Locale[] = ['en', 'ar'];
-export const DEFAULT_LOCALE: Locale = 'en';
+/**
+ * Arabic-first, not Arabic-also. CONTEXT §1: the first markets are Egypt and
+ * Saudi Arabia and the first language is Arabic with real RTL — and
+ * `index.html` has shipped `lang="ar" dir="rtl"` since Phase B, so an English
+ * default made the very first paint disagree with the document element.
+ */
+export const DEFAULT_LOCALE: Locale = 'ar';
+/**
+ * A3 — THE FALLBACK IS THE DEFAULT LOCALE, AND IT DID NOT USE TO BE.
+ *
+ * This constant was `'en'` while `DEFAULT_LOCALE` was `'ar'`, and the two
+ * Flutter engines (`apps/parent-app` and `apps/child-app`,
+ * `lib/core/localization/localization_engine.dart`) fall back to their
+ * default locale — Arabic — under a header that says, in those words, "Same
+ * fallback strategy as the Dashboard's `translate()`". One of the three had
+ * to move for that sentence to be true, and this is the one this change owns.
+ *
+ * WHY ARABIC RATHER THAN ENGLISH. The reason the Flutter side gives (audit
+ * MA-016) applies here identically: a key missing from `ar.json` used to
+ * surface an ENGLISH string inside an otherwise-Arabic, RTL screen — a
+ * visibly foreign sentence in the product's first language, in the two
+ * markets it launches in. Falling back to the default locale keeps the screen
+ * in one language; a key missing from BOTH files still renders as the raw key
+ * rather than blank, which is unchanged.
+ *
+ * WHAT THIS CHANGES TODAY: nothing that renders. `en.json` and `ar.json` are
+ * at full key parity and a test in `test/i18n/localizationEngine.spec.ts`
+ * asserts that, so this path is unreachable until parity breaks. That is the
+ * point of converging it while it is still free.
+ *
+ * NOT TOUCHED, DELIBERATELY: the two Flutter engines. They already fall back
+ * to Arabic and are owned elsewhere; the only thing left for their owner is
+ * that their header now describes the Dashboard accurately.
+ */
+export const FALLBACK_LOCALE: Locale = DEFAULT_LOCALE;
 export const RTL_LOCALES: Locale[] = ['ar'];
 
 const RESOURCES: Record<Locale, Record<string, unknown>> = { en, ar };
@@ -53,9 +87,11 @@ function interpolate(template: string, options?: TranslateOptions): string {
 
 /**
  * The localization engine's public translate function. Fallback
- * strategy: requested locale -> DEFAULT_LOCALE -> the raw key itself
+ * strategy: requested locale -> the default locale (`FALLBACK_LOCALE`,
+ * which IS `DEFAULT_LOCALE` \u2014 see A3 there) -> the raw key itself
  * (never a blank string \u2014 a missing translation should be visibly
- * wrong, not silently empty).
+ * wrong, not silently empty). This is the same chain the two Flutter
+ * engines implement, which is what their headers already claim.
  *
  * Pluralization support: a Sprint-8-scoped simple two-form system
  * (`_one` / `_other` suffix keys, falling back to the base key if
@@ -64,12 +100,12 @@ function interpolate(template: string, options?: TranslateOptions): string {
  * case only, flagged as a real simplification, not hidden).
  */
 export function translate(locale: Locale, key: string, options?: TranslateOptions): string {
-  const resources = FLATTENED[locale] ?? FLATTENED[DEFAULT_LOCALE];
+  const resources = FLATTENED[locale] ?? FLATTENED[FALLBACK_LOCALE];
   const resolvedKey = resolvePluralKey(key, options?.count, resources);
 
   const template =
     resources[resolvedKey] ??
-    FLATTENED[DEFAULT_LOCALE][resolvedKey] ??
+    FLATTENED[FALLBACK_LOCALE][resolvedKey] ??
     key;
 
   return interpolate(template, options);

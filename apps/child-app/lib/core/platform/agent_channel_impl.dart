@@ -72,6 +72,18 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
     return _invoke<bool>(AgentChannelConstants.methodAreNotificationsGranted);
   }
 
+  @override
+  Future<String> requestNotificationsPermission() async {
+    return _invoke<String>(
+      AgentChannelConstants.methodRequestNotificationsPermission,
+    );
+  }
+
+  @override
+  Future<bool> openNotificationSettings() async {
+    return _invoke<bool>(AgentChannelConstants.methodOpenNotificationSettings);
+  }
+
   // --- Sprint 4: Device Capability Engine ---
 
   @override
@@ -150,6 +162,20 @@ class MethodChannelAgentPlatform implements AgentPlatformChannel {
   @override
   Future<void> startEnforcementService() async {
     await _invokeVoid(AgentChannelConstants.methodStartEnforcementService);
+  }
+
+  // --- F2 (audit verdict R7): OEM background-restriction onboarding ---
+
+  @override
+  Future<Map<Object?, Object?>> getOemBackgroundRestrictionInfo() async {
+    return _invoke<Map<Object?, Object?>>(
+      AgentChannelConstants.methodGetOemBackgroundRestrictionInfo,
+    );
+  }
+
+  @override
+  Future<String> openOemBackgroundSettings() async {
+    return _invoke<String>(AgentChannelConstants.methodOpenOemBackgroundSettings);
   }
 
   /// Void-returning calls still go through the same MissingPluginException/

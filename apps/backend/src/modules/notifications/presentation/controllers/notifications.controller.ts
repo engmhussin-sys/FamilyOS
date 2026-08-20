@@ -4,6 +4,7 @@ import { NotificationsService } from '../../application/services/notifications.s
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../../common/decorators/current-user.decorator';
 import type { IJwtPayload } from '../../../auth/domain/auth.types';
+import { ParentSurface } from '../../../../common/authz/roles.decorator';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
@@ -11,21 +12,25 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Get()
+  @ParentSurface()
   list(@Query('unreadOnly') unreadOnly: string | undefined, @CurrentUser() user: IJwtPayload) {
     return this.notificationsService.list(user.sub, unreadOnly === 'true');
   }
 
   @Get('unread-count')
+  @ParentSurface()
   countUnread(@CurrentUser() user: IJwtPayload) {
     return this.notificationsService.countUnread(user.sub);
   }
 
   @Patch(':id/read')
+  @ParentSurface()
   markAsRead(@Param('id') id: string, @CurrentUser() user: IJwtPayload) {
     return this.notificationsService.markAsRead(id, user.sub);
   }
 
   @Post('read-all')
+  @ParentSurface()
   markAllAsRead(@CurrentUser() user: IJwtPayload) {
     return this.notificationsService.markAllAsRead(user.sub);
   }

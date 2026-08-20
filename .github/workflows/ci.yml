@@ -10,6 +10,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Callable, so the staging deploy runs THESE gates rather than a second copy
+  # of them. `.github/workflows/deploy-staging.yml` calls this workflow and
+  # deploys only if `ci-gate` below reports success. Adding this trigger
+  # changes nothing about how the workflow runs on push or on a pull request.
+  workflow_call:
 
 jobs:
   backend:
@@ -41,6 +46,14 @@ jobs:
       REDIS_URL: redis://localhost:6379
       JWT_ACCESS_SECRET: ci-only-access-secret-not-a-real-secret-32chars
       JWT_REFRESH_SECRET: ci-only-refresh-secret-not-a-real-secret-32ch
+      # Separate names, deliberately: the integration suites REFUSE to run
+      # (they skip loudly) unless these are set, so they can never
+      # accidentally point at a developer's own database. Set here because
+      # this job really does have a throwaway Postgres and Redis.
+      # Without them, DA-002's concurrency proofs and SA-002's token-family
+      # proof would be silently skipped in CI.
+      INTEGRATION_DATABASE_URL: postgresql://afdc:afdc_ci_password@localhost:5432/afdc_ci?schema=public
+      INTEGRATION_REDIS_URL: redis://localhost:6379
     defaults:
       run:
         working-directory: apps/backend
@@ -59,10 +72,43 @@ jobs:
       - run: npx prisma migrate deploy
       - name: Type check
         run: npx tsc --noEmit
+      # F2 (R8) — BLOCKING. Static half of the tenant-isolation guard: fails the
+      # build on an un-extended PrismaClient, on raw SQL that touches a
+      # tenant-scoped table without mentioning family_id, on a client-supplied
+      # familyId, and on any model in schema.prisma that has not been
+      # classified in tenant-model-registry.ts.
+      - name: Tenant-scoping static guard
+        run: npm run ci:tenant-guard
+      # F3 (R3) — BLOCKING. The ratchet described in
+      # docs/architecture/EVENT_PIPELINE.md: a new module cannot write
+      # child-achievement state without either emitting through the Outbox or
+      # being added, by hand and with a written reason, to KNOWN_UNWIRED. It
+      # also forbids writing the three event tables from outside the events
+      # module. It deliberately does NOT claim to verify that an event is
+      # emitted in the SAME transaction as the write — see the script's own
+      # header for why that is not statically decidable here.
+      - name: Event-emission static guard
+        run: npm run ci:event-emission
       - name: Unit + DI-graph tests
-        run: npx jest --testPathIgnorePatterns=test/database --coverage
+        run: npx jest --testPathIgnorePatterns=test/database --testPathIgnorePatterns=test/tenancy --testPathIgnorePatterns=test/events --coverage
       - name: Database integration test
         run: npx jest test/database --forceExit
+      # F2 (R8) — BLOCKING. Dynamic half: the deny-by-default proof, the RLS
+      # proof, the R14 guard-coverage sweep over every controller, and the
+      # GENERATED cross-tenant probe suite, which boots the real application,
+      # registers two families over HTTP and replays every id-taking route with
+      # family A's token against family B's resources, requiring 404.
+      # Runs last because it is the slowest and the most informative when red.
+      - name: Tenant isolation proofs (deny-by-default, RLS, cross-tenant probe)
+        run: npx jest test/tenancy --forceExit --runInBand
+      # F3 (R3) — BLOCKING. The event pipeline end to end against the real
+      # PostgreSQL and the real Redis: a batch ingested over HTTP with a real
+      # device token, the relay dispatching it, the Rewards Engine granting
+      # once, exactly one notification, and the same batch replayed producing
+      # zero new rewards and zero new notifications. --runInBand because the
+      # suite owns the clock and the throttler counters in Redis.
+      - name: Event pipeline proofs (ingest -> bus -> reward -> notification)
+        run: npx jest test/events --forceExit --runInBand
       - name: Build
         run: npx nest build
 
@@ -87,26 +133,30 @@ jobs:
       - name: Build
         run: npx vite build
 
-  child-app:
-    name: Child Agent (Flutter)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/child-app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: "stable"
-      - run: flutter pub get
-      - name: Static analysis
-        run: flutter analyze --fatal-infos
-      - name: Format check
-        run: dart format --output=none --set-exit-if-changed .
-      - name: Unit tests
-        run: flutter test
-      - name: Build (debug APK, no signing needed for CI verification)
-        run: flutter build apk --debug
+  # =========================================================================
+  # FLUTTER — PHASE C.
+  #
+  # This job used to be two hand-maintained copies (child-app, parent-app),
+  # both with `continue-on-error` on `flutter analyze`, on `dart format` and
+  # on `flutter test`, and neither building the parent APK at all. Every one
+  # of those TODO(F2) markers is now discharged: the gate is strict, and it
+  # lives in exactly ONE file so the two workflows cannot drift apart.
+  #
+  # .github/workflows/build-apk.yml is that file. It runs, for BOTH apps:
+  #   flutter pub get -> flutter analyze -> flutter test
+  #     -> flutter build apk --debug -> upload APK
+  # fails on analyzer errors, test failures or build failures, and captures
+  # the full output of every stage as an artifact and into the job summary so
+  # that one run answers everything instead of stopping at the first error.
+  #
+  # `secrets: inherit` passes GOOGLE_SERVICES_JSON through when it exists. Its
+  # absence no longer blocks the parent app — see that workflow's Firebase
+  # step and apps/parent-app/android/app/build.gradle.
+  # =========================================================================
+  flutter:
+    name: Flutter (parent-app + child-app)
+    uses: ./.github/workflows/build-apk.yml
+    secrets: inherit
 
   docker:
     name: Docker Build (Sprint 9 — Production Image)
@@ -115,7 +165,74 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build production image
-        run: docker build -t afdc-backend:ci apps/backend
+        # Context is the repository ROOT — see apps/backend/Dockerfile's
+        # header for why. The deploy hosts build it exactly this way, so a
+        # green job here is evidence about the image staging will run.
+        run: docker build -f apps/backend/Dockerfile -t afdc-backend:ci .
       # Not pushed anywhere from CI — this job's only job is to catch a
       # broken Dockerfile before it reaches a deploy step, per Sprint 9's
       # "Docker Production Readiness" requirement.
+
+  # =========================================================================
+  # THE PIPELINE GATE (§27) — ONE JOB THAT CANNOT BE SKIPPED.
+  #
+  # THE PROBLEM IT REMOVES. Without this job, "the pipeline is green" is not
+  # the same statement as "every gate ran and passed". Four ways they come
+  # apart, all of them real on GitHub Actions:
+  #
+  #   * `docker` has `needs: backend`. If backend fails, docker is SKIPPED —
+  #     and a skipped job has no conclusion, so the Docker image was never
+  #     built and nothing says so.
+  #   * a job cancelled by a concurrency group ends `cancelled`, not `failure`.
+  #   * a reusable workflow whose matrix expression evaluates to an empty list
+  #     produces zero jobs and a green run that built nothing at all.
+  #   * branch protection can only require status checks by NAME, and matrix
+  #     job names change with their inputs, so a renamed matrix silently stops
+  #     being required.
+  #
+  # `if: always()` runs this in every one of those cases and it accepts only
+  # the literal string `success` from each dependency. A pipeline that did not
+  # ANSWER a question must be red, not green — that is the whole of §27.
+  #
+  # THIS is the job to mark as the required status check on `main`.
+  # =========================================================================
+  ci-gate:
+    name: CI gate (every job must have actually run)
+    if: always()
+    needs: [backend, admin-dashboard, flutter, docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verdict
+        run: |
+          declare -A R=(
+            [backend]="${{ needs.backend.result }}"
+            [admin-dashboard]="${{ needs['admin-dashboard'].result }}"
+            [flutter]="${{ needs.flutter.result }}"
+            [docker]="${{ needs.docker.result }}"
+          )
+          {
+            echo "## CI gate"
+            echo ""
+            echo "Only \`success\` is accepted. \`skipped\` and \`cancelled\` are"
+            echo "failures here on purpose: they mean the pipeline did not answer"
+            echo "the question, which is not the same as answering it well."
+            echo ""
+            echo "| job | result |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          fail=0
+          for job in backend admin-dashboard flutter docker; do
+            res="${R[$job]}"
+            echo "| $job | \`$res\` |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$res" != "success" ]; then
+              echo "::error::Job '$job' did not succeed (result: $res). If that reads 'skipped' or 'cancelled', this pipeline produced NO evidence about '$job' at all — and a run that measured nothing must not be green."
+              fail=1
+            fi
+          done
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$fail" = "0" ]; then
+            echo "All four gates ran and passed: backend tests + build, admin tests + build, both Flutter apps through pub get -> analyze -> test -> build apk --debug, and the production Docker image." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $fail

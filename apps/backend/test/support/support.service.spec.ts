@@ -86,13 +86,16 @@ describe('SupportService', () => {
       createdAt: new Date(),
     });
 
-    await service.submit({
-      email: 'parent@example.com',
-      subject: 'Billing question',
-      message: 'Why was I charged twice?',
-      familyId: 'family-1',
-      userId: 'user-1',
-    });
+    // F2: the identity is now a SECOND argument, built by the controller from
+    // the verified token — it can no longer be smuggled in through the body.
+    await service.submit(
+      {
+        email: 'parent@example.com',
+        subject: 'Billing question',
+        message: 'Why was I charged twice?',
+      },
+      { familyId: 'family-1', userId: 'user-1' },
+    );
 
     expect(repositoryMock.create).toHaveBeenCalledWith(
       expect.objectContaining({ familyId: 'family-1', userId: 'user-1' }),
@@ -113,13 +116,10 @@ describe('SupportService', () => {
         createdAt: new Date(),
       });
 
-      await service.submit({
-        email: 'vip@example.com',
-        subject: 'Urgent',
-        message: 'Need help now.',
-        familyId: 'family-1',
-        userId: 'user-1',
-      });
+      await service.submit(
+        { email: 'vip@example.com', subject: 'Urgent', message: 'Need help now.' },
+        { familyId: 'family-1', userId: 'user-1' },
+      );
 
       expect(entitlementsMock.hasFeature).toHaveBeenCalledWith('family-1', 'priority_support');
       expect(repositoryMock.create).toHaveBeenCalledWith(expect.objectContaining({ isPriority: true }));

@@ -3,10 +3,14 @@ import { lifeIntelligenceApi, healthScoreQueryKey, HealthScoreBreakdown } from '
 import { childrenApi, CHILDREN_QUERY_KEY } from '../../children/api/childrenApi';
 import { Card } from '../../../shared/components/Card';
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
+// A2: one component decides loading / error / empty / data. Before this,
+// this panel had a loading line and NO error branch, so a failed health
+// fetch rendered an empty box that read as "nothing logged".
+import { AsyncBoundary } from '../../../shared/components/AsyncState';
 
 function ChildHealthPanel({ childId, childName }: { childId: string; childName: string }) {
   const { t } = useTranslation();
-  const { data: health, isLoading } = useQuery<HealthScoreBreakdown>({
+  const { data: health, isLoading, error, refetch } = useQuery<HealthScoreBreakdown>({
     queryKey: healthScoreQueryKey(childId),
     queryFn: () => lifeIntelligenceApi.getHealthScore(childId),
   });
@@ -18,9 +22,16 @@ function ChildHealthPanel({ childId, childName }: { childId: string; childName: 
         {health && <span className="text-lg font-semibold text-ink">{health.score}</span>}
       </div>
 
-      {isLoading && <p className="mt-2 text-sm text-ink-soft">{t('common.loading')}</p>}
-
-      {health && (
+      <AsyncBoundary
+        isLoading={isLoading}
+        error={error}
+        onRetry={() => void refetch()}
+        isEmpty={!isLoading && !error && !health}
+      >
+        {/* The `health &&` guard stays: JSX children are built eagerly, so
+            the boundary chooses which branch to RENDER but does not stop
+            this subtree from being CONSTRUCTED. */}
+        {health && (
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink-soft">
           <div>
             <dt>{t('healthTrend.hydration')}</dt>
@@ -41,7 +52,8 @@ function ChildHealthPanel({ childId, childName }: { childId: string; childName: 
             <dd className="font-medium text-ink">{health.breakdown.nutritionLogsCount}</dd>
           </div>
         </dl>
-      )}
+        )}
+      </AsyncBoundary>
     </div>
   );
 }

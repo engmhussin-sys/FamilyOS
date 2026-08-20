@@ -237,14 +237,38 @@ describe('PairingStateMachineService', () => {
   });
 
   describe('revocation and removal', () => {
-    it('allows DEVICE_REVOKED from HEALTHY, DEGRADED, or SUSPENDED', async () => {
-      for (const fromState of ['HEALTHY', 'DEGRADED', 'SUSPENDED']) {
+    /**
+     * `ACTIVATED` was ADDED to this list, and its absence was a hole rather
+     * than a deliberate omission.
+     *
+     * A device sits in `ACTIVATED` from the moment the parent confirms it until
+     * its FIRST heartbeat — seconds when the child's phone is switched on, hours
+     * or days when it is in a drawer or was never the right phone to begin with.
+     * That is exactly the window in which a parent who typed a code into the
+     * wrong device wants to undo it, and it was the one window in which
+     * revocation answered 409 and left them waiting for the mis-paired device to
+     * phone home before they could unlink it.
+     */
+    it('allows DEVICE_REVOKED from ACTIVATED, HEALTHY, DEGRADED, or SUSPENDED', async () => {
+      for (const fromState of ['ACTIVATED', 'HEALTHY', 'DEGRADED', 'SUSPENDED']) {
         repositoryMock.findLatest.mockResolvedValue({ toState: fromState });
         repositoryMock.record.mockResolvedValue({ id: 'x', fromState, toState: 'REVOKED' });
 
         await expect(
           service.transition({ childId: 'child-1', deviceId: 'device-1', event: 'DEVICE_REVOKED', actorType: 'USER' }),
         ).resolves.toBeDefined();
+      }
+    });
+
+    it('still refuses DEVICE_REVOKED from a state where no device can exist yet', async () => {
+      // Widening the allowed-from list must not turn it into "any state". A
+      // child whose pairing has only been INVITED has no device to revoke.
+      for (const fromState of ['INVITATION_SENT', 'AUTHENTICATING', 'REVOKED', 'REJECTED']) {
+        repositoryMock.findLatest.mockResolvedValue({ toState: fromState });
+
+        await expect(
+          service.transition({ childId: 'child-1', deviceId: 'device-1', event: 'DEVICE_REVOKED', actorType: 'USER' }),
+        ).rejects.toBeInstanceOf(InvalidPairingTransitionException);
       }
     });
 

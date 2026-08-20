@@ -8,7 +8,9 @@ import '../platform/agent_channel_impl.dart';
 import '../storage/secure_token_storage.dart';
 import '../../features/pairing/api/pairing_api.dart';
 import '../../features/pairing/application/device_registration_service.dart';
+import '../../features/pairing/data/pairing_repository.dart';
 import '../../features/pairing/application/heartbeat_service.dart';
+import '../../features/pairing/application/push_token_registration_service.dart';
 import '../../features/device_status/application/capability_reporting_service.dart';
 import '../../plugins/permissions/application/permission_status_service.dart';
 import '../../plugins/policy/application/policy_cache_service.dart';
@@ -23,6 +25,25 @@ import '../../plugins/screen_time/contracts/i_app_usage_collector.dart';
 import '../../plugins/screen_time/infrastructure/platform_app_usage_collector.dart';
 import '../../plugins/screen_time/application/digital_wellbeing_service.dart';
 import '../../plugins/screen_time/application/critical_event_coordinator.dart';
+import '../../features/onboarding/application/onboarding_consent_store.dart';
+import '../../features/onboarding/application/oem_background_service.dart';
+import '../../features/coach/api/coach_api.dart';
+import '../../features/coach/application/coach_controller.dart';
+import '../../features/coach/data/coach_repository.dart';
+import '../../features/goals/api/achievements_api.dart';
+import '../../features/goals/api/catalogue_api.dart';
+import '../../features/goals/application/goal_session_controller.dart';
+import '../../features/goals/application/progress_controller.dart';
+import '../../features/goals/application/today_goals_controller.dart';
+import '../../features/goals/data/achievements_repository.dart';
+import '../../features/goals/data/evidence_capture_source.dart';
+import '../../features/goals/data/platform_evidence_capture_source.dart';
+import '../../features/goals/data/catalogue_repository.dart';
+import '../../features/goals/domain/catalogue_domain.dart';
+import '../../features/goals/domain/child_achievement.dart';
+import '../../features/goals/domain/child_goal.dart';
+import '../../features/goals/domain/child_rewards.dart';
+import '../state/ui_state.dart';
 
 /// Mirrors AuthModule/ChildrenModule/etc.'s provider-binding pattern on
 /// the backend: each provider below is the ONE place that knows which
@@ -68,6 +89,22 @@ final antiTamperProvider = Provider<IAntiTamper>((ref) {
   return PlatformAntiTamper(ref.watch(agentPlatformChannelProvider));
 });
 
+/// The child device's push-token registration — `POST
+/// /pairing/device/push-token`, a route that shipped with no consumer.
+///
+/// DELIBERATELY HAS NO CALLER YET. Token ACQUISITION (FCM) is a separate
+/// workstream and this app declares no `firebase_messaging` dependency; when
+/// that lands, its `onTokenRefresh` callback calls
+/// `ref.read(pushTokenRegistrationServiceProvider).onTokenAvailable(token)`.
+/// Nothing here fabricates a token to fill the gap — see the service's own
+/// header for the whole boundary.
+final pushTokenRegistrationServiceProvider = Provider<PushTokenRegistrationService>((ref) {
+  return PushTokenRegistrationService(
+    ref.watch(pairingApiProvider),
+    ref.watch(secureStorageProvider),
+  );
+});
+
 final deviceRegistrationServiceProvider = Provider<DeviceRegistrationService>((ref) {
   return DeviceRegistrationService(
     ref.watch(pairingApiProvider),
@@ -76,6 +113,13 @@ final deviceRegistrationServiceProvider = Provider<DeviceRegistrationService>((r
     ref.watch(antiTamperProvider),
   );
 });
+
+/// The boundary `PairingScreen` now reads through, so `ApiException` ->
+/// `ApiFailure` happens below the widget layer rather than inside it. The
+/// service provider above is untouched — nothing else needed rewiring.
+final childPairingRepositoryProvider = Provider<ChildPairingRepository>(
+  (ref) => ChildPairingRepository(ref.watch(deviceRegistrationServiceProvider)),
+);
 
 // --- Sprint 5: Runtime Enforcement Engine ---
 
@@ -174,4 +218,138 @@ final criticalEventCoordinatorProvider = Provider<CriticalEventCoordinator>((ref
   );
   ref.onDispose(coordinator.dispose);
   return coordinator;
+});
+
+// --- F2: onboarding (Play prominent disclosure + OEM survival) ---
+
+/// Local record that the first-run disclosure was shown and acknowledged
+/// on THIS device (audit A3 §4/P2, verdict risk R5). Not the backend's
+/// ParentalConsent record — see the store's own docstring.
+final onboardingConsentStoreProvider = Provider<OnboardingConsentStore>((ref) {
+  return const SharedPreferencesOnboardingConsentStore();
+});
+
+/// Typed wrapper over the native OEM autostart/battery deep links
+/// (verdict risk R7). Reuses the single agentPlatformChannelProvider like
+/// every other native-facing service here.
+final oemBackgroundServiceProvider = Provider<OemBackgroundService>((ref) {
+  return OemBackgroundService(ref.watch(agentPlatformChannelProvider));
+});
+
+// ---------------------------------------------------------------------------
+// B7 — THE F4 CHILD SURFACE (Smart Learning & Reward)
+//
+// Six endpoints, all previously unconsumed (audit PA-M-001, ⛔ Critical).
+// Wired onto the EXISTING `apiClientProvider`: same device-token auth, same
+// coordinated single refresh on 401, same B3 error-envelope parsing. No
+// second HTTP client exists in this app and none was added.
+// ---------------------------------------------------------------------------
+
+final childAchievementsApiProvider = Provider<ChildAchievementsApi>((ref) {
+  return ChildAchievementsApi(ref.watch(apiClientProvider));
+});
+
+final childAchievementsRepositoryProvider = Provider<ChildAchievementsRepository>((ref) {
+  return ChildAchievementsRepository(ref.watch(childAchievementsApiProvider));
+});
+
+/// Today's goals — the child's first screen.
+final todayGoalsControllerProvider =
+    StateNotifierProvider<TodayGoalsController, UiState<List<TodayGoal>>>((ref) {
+  return TodayGoalsController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+// --- The real learning catalogue — `GET /self/catalogue/domains` ---
+
+final childCatalogueApiProvider = Provider<ChildCatalogueApi>((ref) {
+  return ChildCatalogueApi(ref.watch(apiClientProvider));
+});
+
+final childCatalogueRepositoryProvider = Provider<ChildCatalogueRepository>((ref) {
+  return ChildCatalogueRepository(ref.watch(childCatalogueApiProvider));
+});
+
+/// The domain vocabulary for the chooser row.
+///
+/// A `FutureProvider` rather than a `UiState` controller ON PURPOSE: this list
+/// is not a screen, it is a decoration on one. There is no loading spinner and
+/// no error state for it anywhere, because a child whose catalogue call failed
+/// must still get a working chooser over the goals they actually have —
+/// `TodayGoalsScreen` reads `valueOrNull` and `domainsFromCatalogue` falls back
+/// to `domainsOf(goals)`. The catalogue is age-derived and effectively static
+/// per child, so it is deliberately NOT `autoDispose`: switching tabs should
+/// not re-hit a throttled route for an answer that cannot have changed.
+final catalogueDomainsProvider = FutureProvider<List<CatalogueDomainRow>>((ref) {
+  return ref.watch(childCatalogueRepositoryProvider).domains();
+});
+
+final myAttemptsControllerProvider =
+    StateNotifierProvider.autoDispose<MyAttemptsController, UiState<List<MyAttempt>>>((ref) {
+  return MyAttemptsController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+/// F1 — THE RECORDER AND THE TWO PICKERS.
+///
+/// `autoDispose` plus `ref.onDispose` is what releases the native recorder:
+/// `AudioRecorder` owns a platform-side object, and one leaked per goal
+/// session is a microphone this app never hands back. The provider lives
+/// exactly as long as some goal session is watching it, which is the only
+/// window in which anything here can record.
+final evidenceCaptureSourceProvider = Provider.autoDispose<EvidenceCaptureSource>((ref) {
+  final source = PlatformEvidenceCaptureSource();
+  ref.onDispose(source.dispose);
+  return source;
+});
+
+/// ONE SESSION PER GOAL, keyed by the goal itself.
+///
+/// `autoDispose` is deliberate and load-bearing here: it is what stops a
+/// `ForegroundStopwatch` (and its 1-second `Timer`) from outliving the
+/// screen that owns it. `GoalSessionController.dispose` cancels the ticker
+/// and detaches the `WidgetsBindingObserver` — and, since F1, cancels the
+/// recording ticker and discards a half-finished recitation too.
+final goalSessionControllerProvider = StateNotifierProvider.autoDispose
+    .family<GoalSessionController, GoalSessionState, TodayGoal>((ref, goal) {
+  return GoalSessionController(
+    ref.watch(childAchievementsRepositoryProvider),
+    goal,
+    ref.watch(evidenceCaptureSourceProvider),
+  );
+});
+
+final progressControllerProvider =
+    StateNotifierProvider<ProgressController, UiState<ProgressSnapshot>>((ref) {
+  return ProgressController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+final childRewardsControllerProvider =
+    StateNotifierProvider<ChildRewardsController, UiState<ChildRewardsSnapshot>>((ref) {
+  return ChildRewardsController(ref.watch(childAchievementsRepositoryProvider));
+});
+
+// ---------------------------------------------------------------------------
+// THE CHILD'S COACH — `/self/coach/*`
+//
+// Four routes that shipped complete and had ZERO Flutter consumers: today's
+// encouragement, the nine-question closed vocabulary, the per-code answer,
+// and the check-in safety path. Child MVP capability 13 was a backend that
+// nothing called. Wired onto the EXISTING `apiClientProvider` — same
+// device-token auth, same coordinated refresh on 401, same B3 error-envelope
+// parsing. No second HTTP client was added.
+// ---------------------------------------------------------------------------
+
+final childCoachApiProvider = Provider<ChildCoachApi>((ref) {
+  return ChildCoachApi(ref.watch(apiClientProvider));
+});
+
+final childCoachRepositoryProvider = Provider<ChildCoachRepository>((ref) {
+  return ChildCoachRepository(ref.watch(childCoachApiProvider));
+});
+
+/// DELIBERATELY NOT `autoDispose`. Once a child has read today's card and
+/// opened a question, switching tabs and coming back should not re-hit a
+/// throttled endpoint, and should not silently discard the answer they were
+/// part-way through reading.
+final coachControllerProvider = StateNotifierProvider<CoachController, CoachState>((ref) {
+  return CoachController(ref.watch(childCoachRepositoryProvider));
 });

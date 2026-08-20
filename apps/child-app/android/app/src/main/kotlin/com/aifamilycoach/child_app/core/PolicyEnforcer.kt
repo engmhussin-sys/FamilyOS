@@ -1,10 +1,27 @@
 package com.aifamilycoach.child_app.core
 
+import com.aifamilycoach.child_app.R
 import java.util.Calendar
 
 enum class EnforcementDecision { ALLOW, BLOCK }
 
-data class EnforcementResult(val decision: EnforcementDecision, val reason: String)
+/**
+ * @param decision  what the enforcement loop should do.
+ * @param reasonRes STRING RESOURCE ID of the child-facing sentence. It is
+ *   a resource id, never a literal, so the copy is localised (Arabic first
+ *   — CONTEXT §1) and so the non-punitive tone rule (CONTEXT §3 principle
+ *   7) is enforced in one reviewable place, `res/values*/strings.xml`,
+ *   instead of being scattered across Kotlin string literals.
+ * @param diagnostic SHORT, STABLE, ENGLISH tag for logs, telemetry and
+ *   tests only. Never rendered to a child. Kept separate on purpose: the
+ *   thing the child reads and the thing an engineer greps for have
+ *   different audiences and must be allowed to diverge.
+ */
+data class EnforcementResult(
+    val decision: EnforcementDecision,
+    val reasonRes: Int,
+    val diagnostic: String,
+)
 
 /**
  * The native mirror of `plugins/local_ai/application/deterministic_rule_engine.dart`'s
@@ -25,19 +42,35 @@ object PolicyEnforcer {
         now: Calendar = Calendar.getInstance(),
     ): EnforcementResult {
         if (policy.blockedPackages.contains(packageName)) {
-            return EnforcementResult(EnforcementDecision.BLOCK, "App is on the blocked list")
+            return EnforcementResult(
+                EnforcementDecision.BLOCK,
+                R.string.enforcement_reason_not_in_plan,
+                "not_in_plan",
+            )
         }
 
         if (isWithinBedtime(policy.bedtimeStart, policy.bedtimeEnd, now)) {
-            return EnforcementResult(EnforcementDecision.BLOCK, "Bedtime hours")
+            return EnforcementResult(
+                EnforcementDecision.BLOCK,
+                R.string.enforcement_reason_bedtime,
+                "bedtime",
+            )
         }
 
         val limit = policy.dailyLimitMinutes
         if (limit != null && minutesUsedToday >= limit) {
-            return EnforcementResult(EnforcementDecision.BLOCK, "Daily screen time limit reached")
+            return EnforcementResult(
+                EnforcementDecision.BLOCK,
+                R.string.enforcement_reason_daily_limit,
+                "daily_limit",
+            )
         }
 
-        return EnforcementResult(EnforcementDecision.ALLOW, "Within policy")
+        return EnforcementResult(
+            EnforcementDecision.ALLOW,
+            R.string.enforcement_reason_within_policy,
+            "within_policy",
+        )
     }
 
     private fun isWithinBedtime(start: String?, end: String?, now: Calendar): Boolean {

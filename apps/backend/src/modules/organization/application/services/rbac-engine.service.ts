@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import type { IRbacEngine, IPermissionCheck } from '../ports/rbac-engine.port';
 import { ORGANIZATION_REPOSITORY, type IOrganizationRepository } from '../ports/organization.repository.port';
-import type { OrganizationRoleValue } from '../../domain/organization.types';
+import { ORGANIZATION_ROLE_RANK, type OrganizationRoleValue } from '../../domain/organization.types';
 
 /** Sprint B1 — CLOSES A REAL GAP: RbacEngineService did not exist at
  * all before this; IRbacEngine (Sprint 9) was a declared-only
@@ -26,13 +26,12 @@ export class RbacEngineService implements IRbacEngine {
     @Inject(ORGANIZATION_REPOSITORY) private readonly organizationRepository: IOrganizationRepository,
   ) {}
 
-  private static readonly ROLE_HIERARCHY: Record<OrganizationRoleValue, number> = {
-    OWNER: 4,
-    ADMIN: 3,
-    MANAGER: 2,
-    MEMBER: 1,
-    GUEST: 0,
-  };
+  /** PHASE E (`PC-S-007`): the ladder itself now lives in
+   * `organization.types.ts` because `OrganizationService` has to consult the
+   * SAME ordering to refuse a grant above the granter's own role. Same ranks,
+   * one definition. */
+  private static readonly ROLE_HIERARCHY: Readonly<Record<OrganizationRoleValue, number>> =
+    ORGANIZATION_ROLE_RANK;
 
   private static readonly ACTION_MIN_LEVEL: Record<IPermissionCheck['action'], number> = {
     READ: 0,

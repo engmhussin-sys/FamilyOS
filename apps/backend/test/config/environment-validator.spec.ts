@@ -60,4 +60,37 @@ describe('EnvironmentValidator', () => {
       expect(newIssues.every((i) => i.severity === 'WARNING')).toBe(true);
     });
   });
+
+  describe('B8 (PA-B-027): the provider chain’s secondary ring', () => {
+    it('warns when Anthropic is configured but OpenAI is not — failover you do not have', () => {
+      const issues = validator.validate({ ...validBaseEnv, ANTHROPIC_API_KEY: 'sk-ant-real' });
+      const issue = issues.find((i) => i.key === 'OPENAI_API_KEY');
+      expect(issue).toBeDefined();
+      expect(issue!.severity).toBe('WARNING');
+      expect(issue!.message).toContain('NO secondary ring');
+    });
+
+    it('is silent once BOTH rings are configured', () => {
+      const issues = validator.validate({
+        ...validBaseEnv,
+        ANTHROPIC_API_KEY: 'sk-ant-real',
+        OPENAI_API_KEY: 'sk-openai-real',
+      });
+      expect(issues.find((i) => i.key === 'OPENAI_API_KEY')).toBeUndefined();
+    });
+
+    it('does not nag about a fallback when there is no primary either — one warning, not two', () => {
+      // A deployment with no AI at all already gets the ANTHROPIC_API_KEY
+      // warning; adding a second about the ring behind it is noise, and noise
+      // is how a WARNING list stops being read.
+      const issues = validator.validate(validBaseEnv);
+      expect(issues.find((i) => i.key === 'ANTHROPIC_API_KEY')).toBeDefined();
+      expect(issues.find((i) => i.key === 'OPENAI_API_KEY')).toBeUndefined();
+    });
+
+    it('never raises a FATAL for either provider — single-provider is supported', () => {
+      const issues = validator.validate({ ...validBaseEnv, ANTHROPIC_API_KEY: 'sk-ant-real' });
+      expect(issues.filter((i) => i.severity === 'FATAL')).toHaveLength(0);
+    });
+  });
 });

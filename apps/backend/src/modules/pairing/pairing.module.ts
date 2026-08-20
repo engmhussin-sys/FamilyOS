@@ -4,6 +4,7 @@ import { ChildrenModule } from '../children/children.module';
 import { AuthModule } from '../auth/auth.module';
 import { ScreenTimeModule } from '../screen-time/screen-time.module';
 import { BillingModule } from '../billing/billing.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PairingController } from './presentation/controllers/pairing.controller';
 import { RegistrationTokenGuard } from './presentation/guards/registration-token.guard';
 import { PairingStateMachineService } from './application/services/pairing-state-machine.service';
@@ -33,7 +34,19 @@ import { RUNTIME_ALERT_REPOSITORY } from './application/ports/runtime-alert.repo
  * DeviceJwtAuthGuard available where the controller references them.
  */
 @Module({
-  imports: [ChildrenModule, AuthModule, ScreenTimeModule, BillingModule],
+  /**
+   * `NotificationsModule` — for `EngineBypassDecisionRecorder`, the decision
+   * ledger's entry point for the producers that reach `notifications` without
+   * the Smart Notification Engine. `PrismaRuntimeAlertRepository` is the single
+   * writer they all reach, so the receipt is written there and the two SYSTEM
+   * entries on `ENGINE_BYPASS_ALLOWLIST` are covered at once.
+   *
+   * THE GRAPH STAYS ACYCLIC AND IT IS NOT CLOSE: `NotificationsModule` imports
+   * NOTHING AT ALL — it owns the notification tables and depends on no module —
+   * which is the same property that lets `LifeIntelligenceModule` and
+   * `NotificationEngineModule` both import it without a `forwardRef`.
+   */
+  imports: [ChildrenModule, AuthModule, ScreenTimeModule, BillingModule, NotificationsModule],
   controllers: [PairingController],
   providers: [
     PairingStateMachineService,

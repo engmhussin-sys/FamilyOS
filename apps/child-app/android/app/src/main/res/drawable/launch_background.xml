@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RECOVERY NOTE (Sprint 17.3): standard Flutter template launch
+     background — a plain white splash, matching Flutter's own
+     official default exactly, not a custom design decision. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@android:color/white" />
+</layer-list>

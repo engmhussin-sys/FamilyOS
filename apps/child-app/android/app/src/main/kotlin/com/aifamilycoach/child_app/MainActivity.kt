@@ -5,10 +5,12 @@ import android.os.Build
 import com.aifamilycoach.child_app.core.AgentChannel
 import com.aifamilycoach.child_app.core.AntiTamperDetector
 import com.aifamilycoach.child_app.core.ChildGuardForegroundService
+import com.aifamilycoach.child_app.core.DeepLinkChannel
 import com.aifamilycoach.child_app.core.DeviceCapabilityEngine
 import com.aifamilycoach.child_app.core.DeviceIdentityKeyManager
 import com.aifamilycoach.child_app.core.NativePolicy
 import com.aifamilycoach.child_app.core.NativePolicyStore
+import com.aifamilycoach.child_app.core.OemBackgroundRestrictionManager
 import com.aifamilycoach.child_app.core.PermissionManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -28,13 +30,142 @@ import io.flutter.plugin.common.MethodChannel
  * AgentCapabilityNotImplementedException — never a silent fake success.
  */
 class MainActivity : FlutterActivity() {
+
+    /**
+     * THE COLD-START HALF OF `abny://` — non-null between
+     * [configureFlutterEngine] and [cleanUpFlutterEngine].
+     *
+     * AndroidManifest.xml now declares `<data android:scheme="abny">`, so the OS
+     * resolves an external `abny://…` link to this app. Without this channel
+     * that resolution merely LAUNCHES the app and the link is dropped:
+     * `Intent.getData()` read by nobody, the child landing on their normal home
+     * screen as if the icon had been tapped.
+     *
+     * The URI is forwarded verbatim; `parseDeepLink` in
+     * `lib/core/routing/deep_link.dart` is the one parser and it is total. Every
+     * detail of the two arrival paths is argued in the parent app's
+     * MainActivity, which is the same thirty lines for the same reason.
+     */
+    private var deepLinkChannel: MethodChannel? = null
+
+    /** The cold-start URI, held until Dart pulls it exactly once. */
+    private var pendingLink: String? = null
+
+    /**
+     * G18. Android delivers the POST_NOTIFICATIONS answer here, not to the
+     * MethodChannel call that asked for it, so the two must be bridged.
+     *
+     * `super` IS STILL CALLED IN EVERY CASE, and deliberately: Flutter's own
+     * plugin machinery dispatches permission results through this same override
+     * (a future plugin that requests a permission would otherwise never hear
+     * back, which is the classic way adding one override quietly breaks an
+     * unrelated plugin). The requester consumes only its own REQUEST_CODE and
+     * reports whether it did.
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        NotificationPermissionRequester.onRequestPermissionsResult(
+            this,
+            requestCode,
+            permissions,
+            grantResults,
+        )
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
+    /**
+     * A pending reply must not outlive the engine it would reply into: a
+     * MethodChannel reply after the engine is gone is a crash, and a retained
+     * callback leaks this Activity across a configuration change.
+     */
+    override fun onDestroy() {
+        NotificationPermissionRequester.reset()
+        super.onDestroy()
+    }
+
+    /**
+     * A WARM-START `abny://` LINK. `launchMode="singleTop"` (AndroidManifest.xml)
+     * delivers it to THIS instance instead of creating a second one, so it
+     * arrives here rather than through `getIntent()`.
+     *
+     * `super` is called first and unconditionally: Flutter's own plugin
+     * machinery dispatches new intents through this override too, exactly as it
+     * does for permission results above.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        val link = linkFrom(intent) ?: return
+        val channel = deepLinkChannel
+        if (channel == null) {
+            // The engine is not configured yet (a re-delivery during a
+            // configuration change). Park it; the pull below still finds it.
+            pendingLink = link
+            return
+        }
+        channel.invokeMethod(DeepLinkChannel.METHOD_ON_DEEP_LINK, link)
+    }
+
+    /**
+     * A reply into a dead engine is a crash, and a retained handler leaks this
+     * Activity across a configuration change — the same rule [onDestroy] above
+     * applies to the permission requester.
+     */
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        deepLinkChannel?.setMethodCallHandler(null)
+        deepLinkChannel = null
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    /**
+     * The URI of a VIEW intent, or null for every other way this Activity is
+     * started — the launcher icon above all, which carries ACTION_MAIN and no
+     * data and must never be mistaken for a deep link.
+     */
+    private fun linkFrom(intent: Intent?): String? {
+        if (intent == null || intent.action != Intent.ACTION_VIEW) return null
+        return intent.data?.toString()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // --- `abny://` cold start. Registered FIRST, before the agent channel,
+        // because it is the one channel Dart calls during its own startup.
+        if (pendingLink == null) {
+            pendingLink = linkFrom(intent)
+        }
+        val deepLink = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DeepLinkChannel.CHANNEL_NAME,
+        )
+        deepLink.setMethodCallHandler { call, result ->
+            when (call.method) {
+                DeepLinkChannel.METHOD_CONSUME_INITIAL_LINK -> {
+                    // CONSUMED, not merely read: a hot restart must not
+                    // re-navigate to a link the child already followed.
+                    val link = pendingLink
+                    pendingLink = null
+                    result.success(link)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+        deepLinkChannel = deepLink
 
         val permissionManager = PermissionManager(applicationContext)
         val capabilityEngine = DeviceCapabilityEngine(applicationContext)
         val antiTamperDetector = AntiTamperDetector(applicationContext)
         val nativePolicyStore = NativePolicyStore(applicationContext)
+        // F2 (verdict risk R7): OEM autostart / background-restriction
+        // deep links. Uses applicationContext like every other manager
+        // here; each Intent inside carries FLAG_ACTIVITY_NEW_TASK.
+        val oemRestrictions = OemBackgroundRestrictionManager(applicationContext)
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -66,11 +197,10 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 AgentChannel.METHOD_IS_ACCESSIBILITY_SERVICE_ENABLED -> {
-                    result.success(
-                        permissionManager.isAccessibilityServiceEnabled(
-                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                        ),
-                    )
+                    // F2 (audit MA-008 / R6): no flattened-string argument
+                    // any more — PermissionManager derives its own
+                    // ComponentName from the service class.
+                    result.success(permissionManager.isChildGuardAccessibilityServiceEnabled())
                 }
                 AgentChannel.METHOD_OPEN_ACCESSIBILITY_SETTINGS -> {
                     permissionManager.openAccessibilitySettings()
@@ -94,11 +224,50 @@ class MainActivity : FlutterActivity() {
                     result.success(permissionManager.areNotificationsGranted())
                 }
 
+                // --- G18: the POST_NOTIFICATIONS runtime request ---
+                // The one permission this app needs that is a NORMAL runtime
+                // permission rather than a Settings deep-link, and the one that
+                // was DECLARED IN THE MANIFEST SINCE SPRINT 4 AND NEVER
+                // REQUESTED — which on Android 13+ silently dropped every
+                // notification this app posts, the entire Smart Notification
+                // Engine's output included.
+                //
+                // `this` (the Activity), not applicationContext: the platform
+                // requires an Activity to show the dialog, which is precisely
+                // why PermissionManager could not own this call.
+                //
+                // The reply is asynchronous. NotificationPermissionRequester
+                // guarantees `result` is answered EXACTLY ONCE — including when
+                // the dialog is cancelled, when a second request arrives while
+                // the first is open, and when the request cannot be dispatched
+                // at all.
+                AgentChannel.METHOD_REQUEST_NOTIFICATIONS_PERMISSION -> {
+                    NotificationPermissionRequester.request(this) { outcome ->
+                        result.success(outcome)
+                    }
+                }
+
+                AgentChannel.METHOD_OPEN_NOTIFICATION_SETTINGS -> {
+                    result.success(permissionManager.openNotificationSettings())
+                }
+
+                // --- F2 (verdict risk R7): OEM background-restriction step ---
+                // Both handlers are total: an unknown manufacturer yields
+                // oemKey="generic" and hasOemIntent=false rather than an
+                // error, and openBestAvailableScreen() is documented as
+                // never throwing. There is deliberately NO error branch
+                // here, because "this OEM has no such screen" is a normal
+                // outcome, not a failure.
+                AgentChannel.METHOD_GET_OEM_BACKGROUND_RESTRICTION_INFO -> {
+                    result.success(oemRestrictions.info())
+                }
+                AgentChannel.METHOD_OPEN_OEM_BACKGROUND_SETTINGS -> {
+                    result.success(oemRestrictions.openBestAvailableScreen())
+                }
+
                 // --- Sprint 4: Device Capability Engine ---
                 AgentChannel.METHOD_GET_CAPABILITY_REPORT -> {
-                    val report = capabilityEngine.collect(
-                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                    )
+                    val report = capabilityEngine.collect()
                     result.success(
                         mapOf(
                             "manufacturer" to report.manufacturer,
@@ -115,11 +284,7 @@ class MainActivity : FlutterActivity() {
                 }
 
                 AgentChannel.METHOD_CHECK_TAMPER_SIGNALS -> {
-                    result.success(
-                        antiTamperDetector.checkAll(
-                            AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                        ),
-                    )
+                    result.success(antiTamperDetector.checkAll())
                 }
 
                 AgentChannel.METHOD_GET_RUNTIME_HEALTH -> {
@@ -286,9 +451,8 @@ class MainActivity : FlutterActivity() {
                 }
 
                 AgentChannel.METHOD_GET_ENFORCEMENT_STATUS -> {
-                    val accessibilityEnabled = permissionManager.isAccessibilityServiceEnabled(
-                        AgentChannel.ACCESSIBILITY_SERVICE_COMPONENT_NAME,
-                    )
+                    val accessibilityEnabled =
+                        permissionManager.isChildGuardAccessibilityServiceEnabled()
                     val lastSyncedAt = nativePolicyStore.lastSyncedAtMillis()
                     result.success(
                         mapOf(

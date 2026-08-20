@@ -17,6 +17,26 @@ class DashboardApi {
     return result['data'] as List<dynamic>;
   }
 
+  /// `GET /children/:childId` — `ChildrenController.getOne`
+  /// (`apps/backend/src/modules/children/presentation/controllers/children.controller.ts:47`),
+  /// `@ParentSurface()`, and scoped to `user.familyId` taken from the verified
+  /// access token rather than from the path. An id belonging to another family
+  /// answers `ChildNotFoundException` — a 404 carrying a server-authored Arabic
+  /// sentence — instead of leaking a row, which is what makes it safe to open
+  /// this route from an id that arrived on a deep link.
+  ///
+  /// It sits beside [getChildren] because it is the same resource on the same
+  /// controller; a separate `ChildrenApi` for one route would give `/children`
+  /// two clients inside one app.
+  ///
+  /// Returns the raw body on purpose. `ChildProfileRepository.getChild` is what
+  /// turns it into a typed value: the row carries columns this app has no
+  /// business rendering (`pinCodeHash`, `familyId`), and a screen holding the
+  /// raw map is a screen one line away from putting one of them on a label.
+  Future<Map<String, dynamic>> getChild(String childId) {
+    return _client.get('/children/$childId');
+  }
+
   Future<List<dynamic>> getDevices() async {
     final result = await _client.get('/pairing/devices');
     return result['data'] as List<dynamic>;

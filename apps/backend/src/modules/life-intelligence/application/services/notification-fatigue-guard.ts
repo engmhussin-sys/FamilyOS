@@ -12,12 +12,39 @@
  * The caller (a real service, querying the existing Notification
  * table — no new table needed) is responsible for fetching that
  * history; this function only decides.
+ *
+ * PHASE E (`PD-N-004`) — THE ONE IMPORT, and it is to a framework-free data
+ * table (`shared/notifications/notification-class.ts`), never to a service.
+ * The function stays pure: it reads a constant, performs no I/O, and every
+ * caller still gets the same answer for the same inputs. Importing it is the
+ * point — the quiet-hours question now has ONE answer in this codebase,
+ * instead of a justified table in one file and a `priority !== 'CRITICAL'`
+ * shortcut quietly overriding it in another.
  */
+import { quietHoursClassOf } from '../../../../shared/notifications/notification-class';
+import { forAudience } from '../../../../shared/notifications/notification-source-key';
 
 export interface IRecentNotification {
   type: string;
   priority: 'CRITICAL' | 'HIGH' | 'NORMAL' | 'LOW';
   createdAt: Date;
+  /**
+   * THE CAUSAL KEY the row was written under, AS PERSISTED — i.e. already
+   * carrying its audience facet, because that is the string the table holds.
+   *
+   * It exists so the DUPLICATE rule below can ask «is this the same CAUSE?»
+   * rather than «is this the same TYPE?» — two questions that give different
+   * answers whenever one type carries more than one cause, which
+   * `DAILY_GOAL_COMPLETED` (hydration / activity) and `REWARD_GRANTED_CHILD`
+   * (three causes) both do. `INotificationRepository.findRecentForChild` states
+   * the same reason on the same field, and `DUPLICATE_PENALTY` one layer up was
+   * fixed for exactly this in `ee02f16`.
+   *
+   * OPTIONAL, so no existing caller or test double has to invent a key to keep
+   * compiling: an absent one reads as «identity unknown» and the rule falls
+   * back to the type comparison it used before this field.
+   */
+  sourceEventId?: string | null;
 }
 
 export interface ICandidateNotification {
@@ -34,6 +61,19 @@ export interface ICandidateNotification {
    * FamilyCommunicationService.draftAiMessage, which enforces the
    * real approval gate). */
   targetAudience: 'PARENT' | 'CHILD';
+  /**
+   * THE CANDIDATE'S OWN CAUSAL KEY, UNFACETED — the form a producer composes.
+   * The rule below applies `forAudience` to it before comparing, so it is
+   * compared against the history's PERSISTED key by construction rather than by
+   * a caller remembering to facet it.
+   *
+   * Optional for the same reason as `IRecentNotification.sourceEventId`:
+   * `ICandidateNotification` is the input to a PURE function whose unit tests
+   * construct it directly, and a caller with no key still gets the pre-existing
+   * type comparison. `IDeliverableNotification` — the shape that actually
+   * reaches a table — declares it REQUIRED.
+   */
+  sourceEventId?: string;
 }
 
 export interface IFatiguePolicy {
@@ -42,6 +82,43 @@ export interface IFatiguePolicy {
   categoryDailyMax: number;
   quietHoursStart: string;
   quietHoursEnd: string;
+
+  /**
+   * PHASE F (`F6-002`) — THE THREE FIELDS THAT MAKE THIS POLICY CONFIGURATION
+   * INSTEAD OF A CONSTANT, AND WHY ALL THREE ARE OPTIONAL.
+   *
+   * Every caller written before F6 — `SmartNotificationIntegrationService` and
+   * `QuietHoursReleaseService`, both of which pass no policy argument at all —
+   * must keep `DEFAULT_FATIGUE_POLICY`'s exact previous behaviour. An absent
+   * field is therefore not «zero», it is «this rule did not exist for you», and
+   * each branch below is written that way. The values come from
+   * `notifications/domain/engine/notification-policy.ts` via `toFatiguePolicy`,
+   * which resolves them per family from `notification_policy_settings`.
+   *
+   * The guard stays a PURE function of (candidate, history, clock, policy).
+   * Nothing here reads a database or a wall clock.
+   */
+
+  /**
+   * Ceiling per rolling 60 minutes. THE GAP IT CLOSES: `dailyMax` alone made
+   * six notifications inside four minutes legal, followed by silence for the
+   * rest of the day — a burst and then a blackout, which is the exact shape of
+   * the complaint an anti-fatigue guard exists to prevent. Undefined = no
+   * hourly ceiling, precisely as before F6.
+   */
+  hourlyMax?: number;
+
+  /**
+   * Cooldown for a type with no entry in `cooldownMinutesByType`. Undefined =
+   * no cooldown for unlisted types, which was the pre-F6 behaviour: the three
+   * types Sprint 16 happened to name were the only ones with any cooldown at
+   * all, so `REWARD_GRANTED` and every type added after it had none.
+   */
+  defaultCooldownMinutes?: number;
+
+  /** The sliding duplicate window. Undefined = the five minutes this function
+   * has always used, and which `NOTIFICATION_DEDUPE_WINDOW_MS` also states. */
+  duplicateWindowMs?: number;
 }
 
 /** A reasonable, explicitly-stated, easily-adjustable-later default
@@ -62,7 +139,13 @@ export const DEFAULT_FATIGUE_POLICY: IFatiguePolicy = {
 
 export interface IFatigueDecision {
   allowed: boolean;
-  blockedReason?: 'COOLDOWN' | 'DAILY_MAX' | 'CATEGORY_MAX' | 'DUPLICATE' | 'QUIET_HOURS';
+  /** PHASE F — `HOURLY_MAX` is the one new member, and it is added to the union
+   * rather than folded into `DAILY_MAX` because `QuietHoursReleaseService`
+   * writes this value straight into `notification_deliveries.resolution_reason`
+   * and an operator reading «DAILY_MAX» about a household that received two
+   * notifications would be reading a lie. `ResolutionReason` gained the same
+   * member in the same commit. */
+  blockedReason?: 'COOLDOWN' | 'DAILY_MAX' | 'HOURLY_MAX' | 'CATEGORY_MAX' | 'DUPLICATE' | 'QUIET_HOURS';
 }
 
 /**
@@ -71,35 +154,145 @@ export interface IFatigueDecision {
  * explicitly (not read from Date.now() internally) — keeps this
  * function pure and deterministic, fully testable without faking the
  * system clock.
+ *
+ * B2 (PA-B-002), THE SERVER-LOCAL CLASS. `businessDayStart` is new and
+ * REQUIRED, and its absence was a real defect of a DIFFERENT kind from the UTC
+ * bugs elsewhere in this sprint.
+ *
+ * The daily and per-category caps used to bound "today" with
+ * `new Date(now); todayStart.setHours(0, 0, 0, 0)`. `setHours` reads the
+ * CONTAINER's timezone. `process.env.TZ` is unset in this image, so it happens
+ * to equal UTC — today, on this host, by accident. Deploy the same image to a
+ * host configured for `Africa/Cairo` and every family's daily cap silently
+ * resets at a different moment, with no code change and no way to tell from the
+ * code that it had happened. That is not a timezone bug, it is a behaviour that
+ * has no definition.
+ *
+ * It is now a required parameter, computed by the caller from
+ * `Family.timezone`, so the day a cap counts over is a stated fact rather than
+ * an ambient property of the machine. It is required rather than defaulted for
+ * the same reason: a default would be silently accepted by the next call site.
  */
 export function evaluateFatigue(
   candidate: ICandidateNotification,
   recentHistory: IRecentNotification[],
   now: Date,
   currentLocalTimeHHMM: string,
+  businessDayStart: Date,
   policy: IFatiguePolicy = DEFAULT_FATIGUE_POLICY,
 ): IFatigueDecision {
-  // CRITICAL bypasses quiet hours (escalation policy) but NOT
-  // duplicate prevention or cooldown — a genuine critical event
-  // firing twice in one minute due to a client retry is still a
-  // duplicate, not two real events.
-  if (candidate.priority !== 'CRITICAL' && isWithinQuietHours(currentLocalTimeHHMM, policy)) {
+  // PHASE E (`PD-N-004`) — THE BYPASS IS DECIDED BY THE MATRIX, NOT BY
+  // `priority`.
+  //
+  // This line read `candidate.priority !== 'CRITICAL'`, which is the implicit
+  // rule Phase D's `notification-class.ts` was written to replace and whose
+  // docstring explains why it is the wrong axis: priority describes how LOUD a
+  // notification is, not whether the fact it carries survives the night. Left
+  // in place it silently overrode the table — `SCREEN_TIME_EXCEEDED` is
+  // classified DEFER with a written justification and is raised at CRITICAL
+  // priority by its producer, so a screen-time limit went through at 02:00
+  // BECAUSE of a field that was never meant to answer this question.
+  //
+  // `quietHoursClassOf` preserves the old rule exactly where nothing has
+  // overridden it: an UNCLASSIFIED type at CRITICAL priority still resolves to
+  // DELIVER, so every caller that predates the matrix behaves identically. What
+  // changes is that an explicit classification now wins, which is the entire
+  // reason the classification exists.
+  //
+  // Bypassing quiet hours still does NOT bypass duplicate prevention or
+  // cooldown here — a genuine critical event firing twice in a minute from a
+  // client retry is still a duplicate, not two real events. (The full
+  // safety bypass, caps included, is applied one layer up in
+  // `evaluateAndDeliver`, which never reaches this function for a DELIVER-class
+  // type; the rule below is what protects a direct caller of this pure
+  // function.)
+  if (quietHoursClassOf(candidate.type, candidate.priority) !== 'DELIVER' && isWithinQuietHours(currentLocalTimeHHMM, policy)) {
     return { allowed: false, blockedReason: 'QUIET_HOURS' };
   }
 
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-  const todayHistory = recentHistory.filter((n) => n.createdAt >= todayStart);
+  /**
+   * HISTORY IS WHAT ALREADY HAPPENED — bounded ABOVE by `now`, and this line is
+   * a fix rather than a tidy-up.
+   *
+   * Every window below was open-ended in the future: `createdAt >=
+   * businessDayStart`, `createdAt >= hourAgo`, `now - createdAt <
+   * DUPLICATE_WINDOW_MS` (a NEGATIVE difference is smaller than any window, so
+   * a row from the future is always «two seconds ago»). `now` is a parameter of
+   * this function precisely so a decision is reproducible from the rows it was
+   * computed for — and a window with no upper bound is not a function of `now`
+   * at all: re-score the same decision later and it answers differently.
+   *
+   * It is not hypothetical and it is not only a test artifact. Any caller
+   * evaluating an instant that is not the wall clock — a replayed decision, a
+   * back-dated import, a released deferral evaluated at its scheduled instant,
+   * a replica whose clock is ahead of the database's — hands this function rows
+   * stamped AFTER `now`. Measured: `quiet-hours-deferral.e2e.spec.ts` §9 asks
+   * for a redelivery SIX MINUTES after the first, deliberately outside the
+   * five-minute duplicate window, and got `DUPLICATE` — because the persisted
+   * row carried the database's own `now()` while the decision carried a frozen
+   * January instant, so the difference was negative and every window swallowed
+   * it.
+   *
+   * ONE FILTER, AT THE TOP, rather than a bound repeated in four places: every
+   * rule below is then a statement about the past by construction.
+   */
+  const history = recentHistory.filter((n) => n.createdAt.getTime() <= now.getTime());
+
+  const todayHistory = history.filter((n) => n.createdAt >= businessDayStart);
 
   // Duplicate prevention: the exact same type sent within the last 5
   // minutes is treated as a duplicate (e.g. a retried request, a race
   // between two triggers), not a second real notification — tighter
   // than the per-type cooldown below, which governs normal repeat
   // frequency, not near-simultaneous duplicates.
-  const DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
-  const isDuplicate = recentHistory.some(
-    (n) => n.type === candidate.type && now.getTime() - n.createdAt.getTime() < DUPLICATE_WINDOW_MS,
-  );
+  //
+  // PHASE F — the five minutes is now the DEFAULT rather than the only value.
+  // It stays exactly five minutes for every caller that does not configure it,
+  // which is all of them today, and it stays deliberately equal to
+  // `NOTIFICATION_DEDUPE_WINDOW_MS`'s bucket width so the product behaviour and
+  // the database backstop keep agreeing.
+  const DUPLICATE_WINDOW_MS = policy.duplicateWindowMs ?? 5 * 60 * 1000;
+
+  /**
+   * «SAME CAUSE», NOT «SAME TYPE», WHENEVER BOTH SIDES CAN NAME ONE.
+   *
+   * THE DEFECT THIS CLOSES. The rule read `n.type === candidate.type`, and its
+   * own docstring above names its two examples — «a retried request, a race
+   * between two triggers» — both of which are the SAME CAUSE arriving twice.
+   * Type equality is a proxy for that, and it is wrong in one direction that
+   * matters: a type that carries more than one cause has its SECOND, GENUINELY
+   * DIFFERENT fact silently dropped inside five minutes. Measured, three ways:
+   * `DAILY_GOAL_COMPLETED` for the hydration crossing and then the activity
+   * crossing on the same day; `REWARD_GRANTED_CHILD`, which has three causes;
+   * two decisions for one household in one test minute. Each lost the second.
+   *
+   * `DUPLICATE_PENALTY` one layer up was fixed for exactly this in `ee02f16`,
+   * and `INotificationRepository.findRecentForChild` already carried the column
+   * to ask with. This is the same question, asked by the guard.
+   *
+   * `forAudience` IS WHAT MAKES THE TWO STRINGS COMPARABLE. The history row
+   * holds the key AS PERSISTED — `deliverNow` appends the `:child` facet before
+   * writing — and the candidate holds the producer's bare key. Composing the
+   * candidate's with the same, idempotent function `deliverNow` used is the
+   * same technique `NotificationContextAssembler` states for its own history:
+   * compose forwards, never try to invert a clamped suffix.
+   *
+   * THE FALLBACK IS THE OLD RULE, UNCHANGED, and it is reached whenever either
+   * side has no key — a pure-function caller, a pre-B9 producer, a test double.
+   * Nothing that worked before this field existed behaves differently.
+   */
+  const candidateCause =
+    candidate.sourceEventId !== undefined
+      ? forAudience(candidate.sourceEventId, candidate.targetAudience)
+      : null;
+
+  const isDuplicate = history.some((n) => {
+    if (now.getTime() - n.createdAt.getTime() >= DUPLICATE_WINDOW_MS) return false;
+    if (candidateCause !== null && n.sourceEventId != null) {
+      return n.sourceEventId === candidateCause;
+    }
+    return n.type === candidate.type;
+  });
   if (isDuplicate) {
     return { allowed: false, blockedReason: 'DUPLICATE' };
   }
@@ -108,14 +301,37 @@ export function evaluateFatigue(
     return { allowed: false, blockedReason: 'DAILY_MAX' };
   }
 
+  // PHASE F — THE HOURLY CEILING, and it is checked AFTER the daily one on
+  // purpose: when a household is over both, «you have had six today» is the
+  // more useful thing for an operator to read than «you have had three in the
+  // last hour», and the reason is written into `resolution_reason`.
+  //
+  // A ROLLING sixty minutes, not a clock hour. A clock hour would let three
+  // notifications at 10:58 be followed by three more at 11:01 — six in four
+  // minutes, which is the exact burst this rule exists to prevent, arriving
+  // legally through the rule meant to stop it.
+  if (policy.hourlyMax !== undefined) {
+    const hourAgo = now.getTime() - 60 * 60 * 1000;
+    const lastHourCount = history.filter((n) => n.createdAt.getTime() >= hourAgo).length;
+    if (lastHourCount >= policy.hourlyMax) {
+      return { allowed: false, blockedReason: 'HOURLY_MAX' };
+    }
+  }
+
   const categoryCountToday = todayHistory.filter((n) => n.type === candidate.type).length;
   if (categoryCountToday >= policy.categoryDailyMax) {
     return { allowed: false, blockedReason: 'CATEGORY_MAX' };
   }
 
-  const cooldownMinutes = policy.cooldownMinutesByType[candidate.type];
+  // PHASE F — an unlisted type now falls back to `defaultCooldownMinutes` when
+  // one is configured. Before this, `cooldownMinutesByType` named three types
+  // and every other type in the product — `REWARD_GRANTED`, `BADGE_EARNED`,
+  // every safety type — had NO cooldown whatsoever; the daily and category caps
+  // were the only thing between a misbehaving producer and a stream. Still
+  // `undefined` when nobody configured it, so pre-F6 behaviour is unchanged.
+  const cooldownMinutes = policy.cooldownMinutesByType[candidate.type] ?? policy.defaultCooldownMinutes;
   if (cooldownMinutes !== undefined) {
-    const lastOfType = recentHistory
+    const lastOfType = history
       .filter((n) => n.type === candidate.type)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
     if (lastOfType) {
@@ -131,7 +347,14 @@ export function evaluateFatigue(
 
 /** Handles the overnight-wraparound case (e.g. 21:00-07:00) correctly
  * — a plain start<time<end comparison would be wrong whenever the
- * window crosses midnight. */
+ * window crosses midnight.
+ *
+ * B2: this logic was always right. What was wrong was `currentHHMM`, which the
+ * caller built from `now.getHours()` — the container's clock. With the default
+ * 21:00-07:00 policy evaluated against UTC, a Cairo family's quiet hours ran
+ * 00:00-10:00 LOCAL in summer: notifications silenced all morning and fully
+ * permitted in the three hours before local midnight. Inverted precisely at the
+ * boundary the feature exists to protect. */
 function isWithinQuietHours(currentHHMM: string, policy: IFatiguePolicy): boolean {
   const current = toMinutes(currentHHMM);
   const start = toMinutes(policy.quietHoursStart);
