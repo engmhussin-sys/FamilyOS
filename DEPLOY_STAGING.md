@@ -327,6 +327,36 @@ Before you press enter, confirm all three: the URL is staging and **not** the pr
 
 ## §7b — TROUBLESHOOTING: build failures seen on a real Railway build
 
+### FIRST, AND MOST LIKELY: the root `railway.json` applies to EVERY service
+
+**This repository is a monorepo with more than one deployable.** The Railway project `humble-love` was observed on 2026-08-20 to contain at least:
+
+| Service | Root Directory | What it is |
+|---|---|---|
+| `Redis` | — | the cache |
+| `familyos-dashboard` | `apps/admin-dashboard` | the React admin dashboard |
+| the backend | *(a separate service)* | the NestJS API |
+
+`railway.json` at the repository root says `"dockerfilePath": "apps/backend/Dockerfile"`. It was written **for the backend service and only for it**. But Railway reads a service's config-as-code file by path, so **any service pointed at the root `railway.json` will try to build the backend's Dockerfile** — regardless of its own Root Directory.
+
+That is what the failing builds were. The signature is unmistakable and worth learning:
+
+```
+[inf]  load build definition from apps/backend/Dockerfile     <- SUCCEEDS
+[err]  COPY apps/backend/package.json …                       <- fails
+[err]  COPY apps/backend/prisma  ·  COPY apps/backend/src     <- fails
+```
+
+The Dockerfile loads because Railway resolves `dockerfilePath` from the repository root. Every `COPY` then fails because the **build context** is the service's Root Directory — `apps/admin-dashboard/`, inside which `apps/backend/src` does not exist. A Dockerfile that reads fine while every one of its COPYs misses means **the context and the Dockerfile came from two different places.**
+
+**Fix, on the dashboard service:** Settings → **Config-as-code** → clear the path (or point it at a file of its own). It was `Online` and serving throughout, so reverting it to whatever it did before is safe — a failed build never replaces a running deployment.
+
+**Then find the actual backend service** and configure that one: Root Directory `/`, config-as-code `railway.json`.
+
+> **A note on the environment selector.** The screenshot showed `production` selected. Every setting you change while that is selected changes production. Switch the environment picker to staging before touching anything, and re-read §3.
+
+---
+
 ### `failed to compute cache key: "/apps/backend/src": not found`
 
 **Observed on a real Railway build, 2026-08-20.** The build reaches the builder stage, copies a few files, then dies on this. It reads like a missing source file. It is not — every path in that Dockerfile exists.

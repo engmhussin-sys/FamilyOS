@@ -26,6 +26,25 @@
 # that job, not this comment, is the proof.
 #
 # -----------------------------------------------------------------------------
+# THE ROOT `railway.json` NAMES THIS FILE — AND IT IS NOT SERVICE-SPECIFIC
+# -----------------------------------------------------------------------------
+# This is a monorepo with more than one deployable. `railway.json` at the
+# repository root sets `dockerfilePath` to THIS file, and it was written for
+# the backend service alone. Any OTHER Railway service pointed at that same
+# config-as-code file will also try to build this Dockerfile — with its own
+# Root Directory as the context.
+#
+# That happened on 2026-08-20: the `familyos-dashboard` service (Root Directory
+# `apps/admin-dashboard`) read the root `railway.json`, loaded this file
+# successfully, and then failed every COPY, because `apps/backend/src` does not
+# exist inside `apps/admin-dashboard/`. See DEPLOY_STAGING.md §7b.
+#
+# THE TELL: if the build log shows `load build definition from
+# apps/backend/Dockerfile` SUCCEEDING while every COPY below fails, the
+# Dockerfile and the context came from two different directories. That is a
+# service-configuration fault, never a fault in this file.
+#
+# -----------------------------------------------------------------------------
 # OBSERVED ON A REAL RAILWAY BUILD, 2026-08-20 — READ BEFORE "FIXING" A COPY
 # -----------------------------------------------------------------------------
 # A Railway build died with:
