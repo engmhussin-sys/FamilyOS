@@ -26,8 +26,8 @@ import { renderWithLocale } from '../growth/renderWithLocale';
  *   has to be ABOVE the number, because a caveat under a green zero is a caveat
  *   nobody reads.
  *
- *   An AI cost figure counts SUCCESSES ONLY, and has no household attribution
- *   to give, because the writer omits the family id.
+ *   An AI cost figure counts CALLS THAT ANSWERED, and offers no per-household
+ *   grouping — though the family id is recorded, so the grouping is buildable.
  *
  * Every one of those is asserted below as a REFUSAL, not as a rendering.
  */
@@ -335,11 +335,16 @@ describe('the AI cost screen', () => {
     expect(screen.getAllByText('$0.4231')).toHaveLength(2);
   });
 
-  it('A2 — it refuses to imply per-household attribution or total spend', async () => {
+  it('A2 — it refuses to imply a per-household breakdown or a total spend', async () => {
     renderWithLocale(<AiUsagePage />);
 
-    expect(await screen.findByText(/لا يمكن نسبة أي رقم هنا إلى أسرة/)).toBeInTheDocument();
-    expect(screen.getByText(/هذا ما كلّفه الناجح/)).toBeInTheDocument();
+    // Corrected after a false finding: the family id IS recorded under a tenant
+    // context (the tenant extension stamps it). The honest gap is narrower —
+    // this endpoint offers no grouping by household — and the copy must say the
+    // narrow thing, not the dramatic one.
+    expect(await screen.findByText(/لا يوجد هنا تفصيل لكل أسرة/)).toBeInTheDocument();
+    expect(screen.getByText(/معرّف الأسرة يُسجَّل فعلًا/)).toBeInTheDocument();
+    expect(screen.getByText(/هذا ما كلّفه ما أجاب/)).toBeInTheDocument();
   });
 
   it('A3 — changing the window re-asks the backend rather than re-slicing on the client', async () => {

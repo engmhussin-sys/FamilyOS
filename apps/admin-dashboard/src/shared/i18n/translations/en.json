@@ -970,7 +970,7 @@
     "feature": "Feature",
     "noUsage": "No AI call was recorded in this window.",
     "notMeasured": "What this screen cannot tell you",
-    "gapFamilyReason": "No figure here can be attributed to a household. The service that writes the usage row omits the family id entirely, so every row in the table has none.",
-    "gapFailureReason": "This is what SUCCEEDED cost. A call that timed out, was refused by the safety layer, or fell through to the deterministic template writes no row at all — failures are not a smaller number here, they are absent from the table."
+    "gapFamilyReason": "No per-household breakdown is offered here. The family id IS recorded on every call made in a household's context — the tenant layer stamps it — and is left empty only for calls made by a platform job, where empty is the honest value. So the breakdown is buildable; this endpoint simply groups by feature and by nothing else.",
+    "gapFailureReason": "This is what ANSWERED cost. A call that timed out, was refused by the safety layer, tripped the circuit breaker, or fell through to the deterministic template writes no row at all — failures are not a smaller number here, they are absent from the table."
   }
 }
