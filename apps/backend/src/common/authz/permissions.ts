@@ -1,0 +1,142 @@
+import type { OperatorRole } from '@prisma/client';
+
+/**
+ * ===========================================================================
+ * WHAT A MEMBER OF STAFF MAY DO — as a closed vocabulary, not as a role check.
+ * ===========================================================================
+ *
+ * Before this file the answer was one bit: hold `INTERNAL_ADMIN_API_KEY` and
+ * you may do all forty-five things. A support agent reading a ticket held the
+ * same secret that edits prices and suspends households.
+ *
+ * ── WHY PERMISSIONS AND NOT `if (role === 'SUPER_ADMIN')` ──────────────
+ *
+ * A role check scattered across handlers is a policy that exists in forty-five
+ * places and can be read in none. The set below is the whole policy, in one
+ * file, and `permissions.spec.ts` asserts properties OF IT rather than of any
+ * handler: that READ_ONLY holds no write, that only SAFETY may read a child's
+ * safety content, that every role's grant is a subset of SUPER_ADMIN's.
+ *
+ * ── THE NAMING RULE, WHICH IS LOad-BEARING ─────────────────────────────
+ *
+ * `<domain>.<verb>`, and READ IS ALWAYS ITS OWN PERMISSION, never implied by a
+ * write. `safety.review` does not include `safety.read_content`, because those
+ * are two different questions — one is «may this person act on an alert» and
+ * the other is «may this person see what a distressed child wrote» — and a
+ * product for children may not answer the second by accident while answering
+ * the first.
+ *
+ * ── FOUR ROLES, AND THE THREE THAT ARE MISSING ON PURPOSE ──────────────
+ *
+ * `OPERATIONS`, `BILLING` and `ANALYST` were specified and are not here. A role
+ * with no holder is a matrix nobody exercises and no test defends. Adding one
+ * is a single entry in `ROLE_PERMISSIONS` below, and the exhaustiveness test
+ * fails until it is written — which is the point.
+ */
+
+export const PERMISSIONS = [
+  // -- households -----------------------------------------------------------
+  'families.read',
+  'families.suspend',
+  // -- children and devices -------------------------------------------------
+  'children.read',
+  'devices.read',
+  'devices.revoke',
+  // -- child safety ---------------------------------------------------------
+  /** The queue: category, severity, when, which household. NOT the content. */
+  'safety.read',
+  /**
+   * The alert's title and description — words about a distressed child.
+   * SEPARATE FROM `safety.read` because the queue is a workload and the
+   * content is a person's private difficulty, and the second is not a
+   * convenience granted by the first.
+   */
+  'safety.read_content',
+  'safety.review',
+  'safety.escalate',
+  // -- money ----------------------------------------------------------------
+  'billing.read',
+  'billing.grant',
+  'billing.catalogue.write',
+  // -- platform -------------------------------------------------------------
+  'jobs.read',
+  'jobs.run',
+  'outbox.read',
+  'outbox.retry',
+  'notifications.read',
+  'feature_flags.read',
+  'feature_flags.update',
+  'ai.read',
+  'support.read',
+  'audit.read',
+  // -- staff ----------------------------------------------------------------
+  'operators.read',
+  'operators.manage',
+] as const;
+
+export type Permission = (typeof PERMISSIONS)[number];
+
+/** Every permission whose name is a read. Used by the tests, and by the
+ * READ_ONLY grant below, so the two cannot drift apart. */
+export const READ_PERMISSIONS: readonly Permission[] = PERMISSIONS.filter(
+  (p) => p.endsWith('.read') || p.endsWith('.read_content'),
+);
+
+/**
+ * THE MATRIX. Deliberately written out rather than derived, because a derived
+ * matrix is one whose exceptions live in the derivation.
+ */
+export const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly Permission[]>> = {
+  /** Everything. The only role that may create or revoke another operator. */
+  SUPER_ADMIN: PERMISSIONS,
+
+  /**
+   * The support desk. Reads households, works the queue, and may see that a
+   * safety alert EXISTS — so that «my child's alert was ignored» can be
+   * answered — but never what it says. Suspends nothing, grants nothing,
+   * changes no price.
+   */
+  SUPPORT: [
+    'families.read',
+    'children.read',
+    'devices.read',
+    'safety.read',
+    'billing.read',
+    'notifications.read',
+    'support.read',
+    'jobs.read',
+    'outbox.read',
+    'ai.read',
+  ],
+
+  /**
+   * The child-safety desk. The ONLY role that may read an alert's content, and
+   * the only one that may act on it. Deliberately holds no billing permission
+   * at all: the person who reads a child's distress has no business in the
+   * household's money, and keeping those two apart is what makes the content
+   * permission defensible.
+   */
+  SAFETY: [
+    'families.read',
+    'children.read',
+    'devices.read',
+    'safety.read',
+    'safety.read_content',
+    'safety.review',
+    'safety.escalate',
+    'support.read',
+    'notifications.read',
+  ],
+
+  /**
+   * Reads, everywhere, and writes nowhere — including no `safety.read_content`.
+   * An auditor needs to see that the safety queue is being worked, not what is
+   * in it.
+   */
+  READ_ONLY: READ_PERMISSIONS.filter((p) => p !== 'safety.read_content'),
+};
+
+/** The one question a guard asks. */
+export function roleHasPermission(role: OperatorRole, permission: Permission): boolean {
+  return ROLE_PERMISSIONS[role].includes(permission);
+}

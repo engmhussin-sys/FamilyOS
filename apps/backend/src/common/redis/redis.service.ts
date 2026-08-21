@@ -60,6 +60,18 @@ export class RedisService implements OnModuleDestroy {
     return result as string | null;
   }
 
+  /**
+   * SPRINT F2. A plain delete, which this class's own header has claimed to
+   * offer since it was written («set-with-ttl, get, delete») and did not: the
+   * only removal available was `getAndDelete`, whose atomic read-and-consume is
+   * right for a one-time pairing code and wrong for signing an operator out —
+   * there, the read is pointless and the delete must happen whether or not a
+   * value was there.
+   */
+  async delete(key: string): Promise<void> {
+    await this.client.del(key);
+  }
+
   /** SA-004. The one deliberate exception to this class's "don't expose
    * the raw client" rule: `RedisThrottlerStorage` implements Nest's
    * `ThrottlerStorage` interface with a Lua script, which needs the

@@ -198,6 +198,11 @@ enum ActorType {
   USER
   DEVICE
   SYSTEM
+  // SPRINT F2. A member of THIS PLATFORM'S STAFF acting on a household from the
+  // operator console. Until now every such action was recorded as SYSTEM, which
+  // put a scheduled sweep and a support agent's suspension in the same bucket —
+  // so «who did this» had no answer that a compliance review could accept.
+  OPERATOR
 }
 
 // --- Secure Pairing (Step 2.2.1) — see docs/architecture/pairing-*.md ---
@@ -1154,6 +1159,78 @@ model AiAlert {
 
 /// Append-only. Never updated or soft-deleted — this is the compliance
 /// trail (GDPR "right to access", security incident investigation).
+/// ===========================================================================
+/// A MEMBER OF THIS PLATFORM'S STAFF, AS A ROW.
+/// ===========================================================================
+///
+/// WHAT IT REPLACES. One shared `INTERNAL_ADMIN_API_KEY`, held in every
+/// operator's browser memory, which was simultaneously the authentication, the
+/// authorization and the identity of all forty-five operator routes. Three
+/// consequences, none of them acceptable past a team of one:
+///
+///   NOBODY COULD BE NAMED. Every audit row said SYSTEM. «Which of my staff
+///   suspended this account» had no answer anywhere in the database.
+///   NOBODY COULD BE REMOVED. Revoking one person's access meant rotating the
+///   key and re-issuing it to everyone else.
+///   EVERYBODY COULD DO EVERYTHING. `@PlatformAdminSurface()` is one role, so
+///   a support agent reading a ticket held the same key that edits prices.
+///
+/// THE SHARED KEY IS NOT DELETED — it becomes the OUTER gate, the thing that
+/// says «this request reached the console at all». This table is the inner one,
+/// and it is the one that has a name.
+///
+/// NOT A `User`. An operator is staff, not a member of a household: they have
+/// no family, no children, no subscription, and they must never be resolvable
+/// by the family-facing login. Putting them in `users` would mean one row that
+/// two entirely different authentication paths both accept, which is the shape
+/// of every privilege-escalation bug ever written.
+model Operator {
+  id           String         @id @default(uuid()) @db.Uuid
+  /// Lowercased at the service boundary so a login cannot be case-shadowed.
+  email        String         @unique
+  fullName     String         @map("full_name")
+  role         OperatorRole
+  /// Argon2id, the same PasswordService the family surface uses. Never a
+  /// shared secret and never reversible.
+  passwordHash String         @map("password_hash")
+  status       OperatorStatus @default(ACTIVE)
+  lastLoginAt  DateTime?      @map("last_login_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  /// Set once and never cleared. Revocation is a fact about a person's access
+  /// that an audit trail must keep, so this is a tombstone rather than a
+  /// delete: the audit rows they wrote still name an operator that exists.
+  revokedAt    DateTime?      @map("revoked_at")
+
+  @@index([status])
+  @@map("operators")
+}
+
+/// FOUR ROLES, NOT SEVEN, and the shortfall is deliberate. A role with no
+/// holder is a permission matrix nobody exercises and no test defends; the
+/// three that were proposed and left out (OPERATIONS, BILLING, ANALYST) can be
+/// added the day a real person needs one, and `permissions.ts` is written so
+/// that adding one is a single map entry.
+enum OperatorRole {
+  /// Everything, including managing other operators.
+  SUPER_ADMIN
+  /// Reads households, works the support queue, reads safety METADATA.
+  SUPPORT
+  /// The child-safety desk: the only role that may read a safety alert's
+  /// CONTENT, and the only one that may review, escalate or resolve one.
+  SAFETY
+  /// Reads. Writes nothing, anywhere. For analysts and for auditors.
+  READ_ONLY
+}
+
+enum OperatorStatus {
+  ACTIVE
+  /// Temporarily barred; sessions are killed immediately and login refuses.
+  SUSPENDED
+  /// Permanently barred. `revokedAt` carries the instant.
+  REVOKED
+}
+
 model AuditLog {
   familyId  String? @map("family_id") @db.Uuid
   id         String    @id @default(uuid()) @db.Uuid
@@ -1166,6 +1243,29 @@ model AuditLog {
   ipAddress  String?   @map("ip_address")
   createdAt  DateTime  @default(now()) @map("created_at")
 
+  /// SPRINT F2 — WHICH MEMBER OF STAFF. Null for every non-operator actor, and
+  /// that is the honest value: a login by a parent has no operator.
+  operatorId    String?       @map("operator_id") @db.Uuid
+  /// DENORMALISED ON PURPOSE, both of them. An operator can be renamed, have
+  /// their role changed, or be revoked entirely; an audit row must say who they
+  /// WERE AND WHAT THEY HELD AT THE INSTANT THEY ACTED. Joining to `operators`
+  /// for the answer would silently rewrite history every time a role changed.
+  operatorEmail String?       @map("operator_email")
+  operatorRole  OperatorRole? @map("operator_role")
+  /// WHY. Mandatory for every operator mutation, enforced in the service rather
+  /// than by a NOT NULL, because the same table also stores `auth.login`, which
+  /// has no reason and should not be forced to invent one.
+  reason        String?
+  /// Correlates this row with the request that produced it, and with anything
+  /// else that request wrote.
+  requestId     String?       @map("request_id")
+
+  /// NOT ADDED, DELIBERATELY: `before`, `after`, `userAgent`, `result`. Each was
+  /// specified and each would have had NO WRITER in this slice, and a nullable
+  /// column whose only writer is «nothing yet» is precisely what this
+  /// repository's dormancy ledger exists to refuse. They land with the
+  /// mutations that actually record them.
+
   actorUser User? @relation("AuditActorUser", fields: [actorUserId], references: [id])
 
   family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
@@ -1174,6 +1274,9 @@ model AuditLog {
   @@index([actorUserId])
   @@index([familyId])
   @@index([familyId, createdAt])
+  /// «Everything this member of staff has ever done», which is the query a
+  /// compliance review opens with. A JSON scan could not answer it.
+  @@index([operatorId, createdAt])
   @@map("audit_logs")
 }
 

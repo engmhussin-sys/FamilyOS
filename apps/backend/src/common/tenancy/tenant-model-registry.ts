@@ -264,6 +264,10 @@ export const GLOBAL_MODELS: ReadonlyMap<TenantModelName, string> = new Map([
     'Identity, not tenant data. Login resolves a user by email BEFORE any family context can exist, and a user may (by schema) belong to more than one family. Exposure is controlled at the route layer — no endpoint lists users.',
   ],
   [
+    'Operator',
+    'SPRINT F2: a member of PLATFORM STAFF. Deliberately not family tenancy at all — an operator has no household, and login resolves one by email before any context exists. It is not in PLATFORM_ANNOTATED either: that class means «a row that MAY lack a tenant», and this one can never have had one.',
+  ],
+  [
     'RefreshToken',
     'Auth artefact looked up by a secret SHA-256 hash before a tenant is known. The hash is the capability; a tenant filter would add nothing.',
   ],

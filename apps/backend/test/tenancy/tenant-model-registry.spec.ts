@@ -95,6 +95,7 @@ describe('tenant model registry', () => {
   // cooldowns and quiet hours, which turns `DEFAULT_FATIGUE_POLICY`'s five
   // constants into configuration. Both are one household's business and neither
   // has a tenant-less case.
+  // SPRINT F2, migration 0032: 101 -> 102. `Operator` — see GLOBAL_MODELS below.
   // G16, migration 0021: 100 -> 101. `PilotInvite` is the controlled-pilot
   // allow-list — one row per invited household, created BEFORE that household
   // exists. GLOBAL for a reason of TIMING rather than convenience: the gate runs
@@ -102,8 +103,8 @@ describe('tenant model registry', () => {
   // so a `family_id` column could only ever be NULL at the single moment it is
   // read. The backward link is `redeemed_by_family_id`, and it is indexed. The
   // full argument is in the registry entry itself.
-  it('the schema still has 101 models — the number this classification was built against', () => {
-    expect(prismaModels).toHaveLength(101);
+  it('the schema still has 102 models — the number this classification was built against', () => {
+    expect(prismaModels).toHaveLength(102);
   });
 
   it.each([...STRICT_TENANT_MODELS])(
@@ -187,6 +188,10 @@ describe('tenant model registry', () => {
     expect(STRICT_TENANT_MODELS.size).toBe(68);
     expect(SHARED_NULL_TENANT_MODELS.size + PLATFORM_ANNOTATED_MODELS.size).toBe(9);
     expect(SELF_TENANT_MODELS.size).toBe(1);
-    expect(GLOBAL_MODELS.size).toBe(23);
+    // SPRINT F2, migration 0032: 23 -> 24. `Operator` is platform STAFF —
+    // no household, resolved by email before any context exists, and
+    // deliberately not `PLATFORM_ANNOTATED` because that class means «may lack
+    // a tenant» and this one can never have had one.
+    expect(GLOBAL_MODELS.size).toBe(24);
   });
 });

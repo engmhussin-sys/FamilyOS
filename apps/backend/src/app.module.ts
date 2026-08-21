@@ -33,6 +33,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { SearchModule } from './modules/search/search.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './modules/health/health.module';
+import { OperatorsModule } from './modules/operators/operators.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { SystemDiagnosticsModule } from './modules/system-diagnostics/system-diagnostics.module';
 import { DataRetentionModule } from './modules/data-retention/data-retention.module';
@@ -47,6 +48,10 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
     ConfigurationModule,
     AuditModule,
+    // SPRINT F2. Identity for platform staff. No controller yet — see the
+    // module header for why the forty-five existing routes are not moved in
+    // the same change that creates the way in.
+    OperatorsModule,
     // Application-wide default rate limit. Individual endpoints (login,
     // register, pairing/accept) override this with a stricter @Throttle()
     // — see AuthController / PairingController.
