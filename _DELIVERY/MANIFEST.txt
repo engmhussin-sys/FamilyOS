@@ -1,8 +1,8 @@
 ABNY — DELIVERY MANIFEST
 range   : HEAD~1..HEAD
-head    : 5e32e7bde86d245b6c39c5e25152bc2c90f95dbe
+head    : 73a29ac7b4af00fa8c5efc367e42f6623618b24e
 branch  : abny/sprint-f1-unblock
-files   : 12 changed, 0 to delete
+files   : 6 changed, 1 to delete
 
 HOW TO APPLY
   1. Run _DELIVERY/DELETE.ps1 (Windows) or DELETE.sh — ONLY if it lists files.
@@ -12,19 +12,14 @@ HOW TO APPLY
 
 CHANGED (extract these)
 M	.github/workflows/ci.yml
-M	DEPLOY_STAGING.md
-A	apps/backend/src/modules/system-diagnostics/application/migration-status.service.ts
-M	apps/backend/src/modules/system-diagnostics/presentation/controllers/system-diagnostics.controller.ts
-M	apps/backend/src/modules/system-diagnostics/system-diagnostics.module.ts
-A	apps/backend/test/system-diagnostics/deploy-doctor.e2e.spec.ts
-A	apps/backend/test/system-diagnostics/migration-status.service.spec.ts
-M	apps/backend/test/tenancy/prisma-test-client.ts
-A	scripts/deploy-doctor.ps1
-A	scripts/deploy-doctor.sh
-A	scripts/verify_doctor_parity.py
-A	حالة-النشر.md
+A	P3005.md
+A	apps/backend/test/deploy/db-baseline.spec.ts
+A	scripts/db-baseline.ps1
+A	scripts/db-baseline.sh
+R076	scripts/verify_doctor_parity.py	scripts/verify_ops_script_parity.py
 
-DELETED — none. Nothing to remove for this delivery.
+DELETED (a zip cannot remove these — run the DELETE script)
+scripts/verify_doctor_parity.py
 
 COMMITS
-5e32e7b deploy: measure which build and which schema a host is actually running
+73a29ac deploy: P3005 — baseline the database, and refuse when that would be a lie

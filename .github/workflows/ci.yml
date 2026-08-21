@@ -101,17 +101,18 @@ jobs:
       # header for why that is not statically decidable here.
       - name: Event-emission static guard
         run: npm run ci:event-emission
-      # BLOCKING. `scripts/deploy-doctor.sh` and its PowerShell twin decide
-      # whether a deploy is believed, and only the bash half can be EXECUTED
-      # where this project is developed — there is no PowerShell in that
-      # sandbox, so the .ps1 half is read and never run. The halves are
-      # therefore compared structurally: same check ids, same possible grades,
-      # same verdict tokens. A gate that gates on Linux and shrugs on Windows
-      # is the exact failure this step exists to prevent, and Windows is the
-      # machine that actually ships this project.
-      - name: Deploy-doctor halves agree (bash / PowerShell)
+      # BLOCKING. Two scripts ship as a bash/PowerShell pair — the deploy
+      # doctor, which decides whether a deploy is believed, and the database
+      # baseliner, which decides whether to record migrations as applied. Only
+      # the bash halves can be EXECUTED where this project is developed (there
+      # is no PowerShell in that sandbox), so the .ps1 halves are read and
+      # never run. They are therefore compared structurally: same check ids,
+      # same possible grades, same verdict and refusal tokens. A gate that
+      # gates on Linux and shrugs on Windows is the exact failure this step
+      # prevents — and Windows is the machine that actually ships this project.
+      - name: Ops script halves agree (bash / PowerShell)
         working-directory: .
-        run: python3 scripts/verify_doctor_parity.py
+        run: python3 scripts/verify_ops_script_parity.py
       - name: Unit + DI-graph tests
         run: npx jest --testPathIgnorePatterns=test/database --testPathIgnorePatterns=test/tenancy --testPathIgnorePatterns=test/events --coverage
       - name: Database integration test

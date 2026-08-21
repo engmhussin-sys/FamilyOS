@@ -2,4 +2,8 @@
 # Removals for: HEAD~1..HEAD
 # Run from the project root BEFORE extracting the zip.
 set -u
-echo "No files were deleted in this delivery. Nothing to do."
+for f in \
+  "scripts/verify_doctor_parity.py" \
+  ; do
+  if [ -f "$f" ]; then rm -f "$f"; echo "removed : $f"; else echo "absent (fine) : $f"; fi
+done
