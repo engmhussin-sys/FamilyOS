@@ -1,6 +1,6 @@
 ABNY — DELIVERY MANIFEST
 range   : HEAD~1..HEAD
-head    : 0bb7c59854377e5b537031f0aec8addf8e71d966
+head    : a3df535152e984aa8c5553852eba1c2b8adf87f6
 branch  : abny/sprint-f1-unblock
 files   : 2 changed, 0 to delete
 
@@ -11,10 +11,10 @@ HOW TO APPLY
   3. Delete the _DELIVERY folder. It is notes, not source.
 
 CHANGED (extract these)
-M	DEPLOY_STAGING.md
-A	احذف-الملفات-القديمة.md
+M	احذف-الملفات-القديمة.md
+M	رفع-الكود.md
 
 DELETED — none. Nothing to remove for this delivery.
 
 COMMITS
-0bb7c59 docs: the stale files that now break the compile, and why no line joins the dashboard
+a3df535 docs: the local check needs prisma generate — omitting it costs 290 scary errors
