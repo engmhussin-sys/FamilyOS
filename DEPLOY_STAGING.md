@@ -95,6 +95,31 @@ Two notes that catch people:
 
 Payments are **not** on any of these lists. Leave every payment variable empty: each adapter reports "not configured", throws a typed `503` rather than calling anything, and never returns `verified: true` for a signature it could not check. Empty is the safe state.
 
+### The dashboard and the backend — why no line joins them, and what still must be set
+
+Railway draws a line between two services when one **references the other's variables**. The backend references PostgreSQL and Redis, so those lines exist. **The dashboard has no line to the backend, and that is correct:** the dashboard is a React bundle. It never talks to the backend server-to-server — the *operator's browser* does, over the public internet, after the bundle is delivered to it.
+
+So the absence of a line is not a missing connection. But two settings still have to be right, and **neither of them draws a line either**, which is exactly why they get missed:
+
+| Where | Variable | Value |
+|---|---|---|
+| **Dashboard** service → Variables | `VITE_API_BASE_URL` | `https://<STAGING_BACKEND_HOST>/api/v1` |
+| **Backend** service → Variables | `CORS_ALLOWED_ORIGINS` | `https://<STAGING_DASHBOARD_HOST>` |
+
+Three things about that pair are worth stating, because each has its own failure that looks like something else:
+
+1. **`/api/v1` is part of the URL, not decoration.** Without it every call 404s while the dashboard loads perfectly — a fault that reads like a broken backend and is a missing suffix. `apps/admin-dashboard/RUN.md` records this as the most common form of wrong.
+2. **`VITE_API_BASE_URL` is read at BUILD time, not run time.** Vite substitutes `import.meta.env.*` into the bundle when it compiles. Changing it later does nothing until the dashboard is **redeployed** — the running bundle already has the old value baked in.
+3. **An empty `CORS_ALLOWED_ORIGINS` means "no origin is allowed", not "all".** `main.ts` reads `process.env.CORS_ALLOWED_ORIGINS?.split(',') ?? []` — the default is the empty list. The browser then blocks every call and the dashboard shows errors on every panel while the backend is entirely healthy. Use the dashboard's **origin only** — scheme and host, no path, no trailing slash.
+
+**A better way to set the first one:** instead of pasting the backend's host, use a Railway reference so it cannot go stale:
+
+```
+VITE_API_BASE_URL = https://${{FamilyOS.RAILWAY_PUBLIC_DOMAIN}}/api/v1
+```
+
+That makes the dashboard genuinely reference the backend — so Railway **will** draw the line — and it keeps working if the backend's domain ever changes. Substitute your backend service's actual name for `FamilyOS` if it differs.
+
 ---
 
 ## §3 — CONFIRM THE TARGET IS STAGING, BEFORE THE FIRST RUN
