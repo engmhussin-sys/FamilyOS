@@ -216,4 +216,111 @@ describeIfDb('the accounts console', () => {
     expect(res.body.rows).toHaveLength(1);
     expect(res.body.rows[0].ownerEmail).toBe(households[1].email);
   }, 60_000);
+
+  /**
+   * ============================ THE DRILL-DOWN =============================
+   *
+   * A8/A9/A10 cover the half that turns a list into a console: one household in
+   * detail, and the two reversible actions an owner must be able to take on an
+   * account. The privacy line is asserted here too, and more strictly than on
+   * the list: a detail view is exactly where "we could show it" becomes
+   * "we show it".
+   */
+  it('A8 — one household in detail: members, children, devices, entitlements, audit', async () => {
+    const list = await listAs({ search: households[0].email });
+    const familyId = list.body.rows[0].familyId;
+
+    const res = await request(http)
+      .get(`${P}/system/accounts/${familyId}`)
+      .set('x-internal-admin-key', key);
+
+    expect(res.status).toBe(200);
+    expect(res.body.familyId).toBe(familyId);
+    expect(res.body.members.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.members[0].email).toBe(households[0].email);
+    expect(res.body.children.length).toBeGreaterThanOrEqual(1);
+    // The grant made in A3 is visible as an entitlement AND as an audit entry —
+    // a console that can act and cannot show what it did is one nobody can be
+    // held to.
+    expect(res.body.entitlements.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.audit.some((row: any) => row.action === 'billing.operator_grant')).toBe(true);
+  }, 90_000);
+
+  it('A9 — the detail view shows a child’s age band and never a date of birth', async () => {
+    const list = await listAs({ search: households[0].email });
+    const res = await request(http)
+      .get(`${P}/system/accounts/${list.body.rows[0].familyId}`)
+      .set('x-internal-admin-key', key);
+
+    const child = res.body.children[0];
+    expect(child.firstName).toEqual(expect.any(String));
+    expect(typeof child.ageYears === 'number' || child.ageYears === null).toBe(true);
+
+    const body = JSON.stringify(res.body);
+    for (const forbidden of ['dateOfBirth', 'date_of_birth', '2016-05-05', '2019-01-01']) {
+      expect({ forbidden, present: body.includes(forbidden) }).toEqual({ forbidden, present: false });
+    }
+  }, 90_000);
+
+  it('A10 — suspend and reactivate are reversible, audited, and refuse an unknown user', async () => {
+    const list = await listAs({ search: households[1].email });
+    const familyId = list.body.rows[0].familyId;
+    const detail = await request(http)
+      .get(`${P}/system/accounts/${familyId}`)
+      .set('x-internal-admin-key', key);
+    const userId = detail.body.members[0].userId;
+
+    const suspendedFrom = (status: string) => status;
+    const act = (status: 'ACTIVE' | 'SUSPENDED', reason: string) =>
+      request(http)
+        .post(`${P}/system/accounts/actions/status`)
+        .set('x-internal-admin-key', key)
+        .send({ userId, status, reason });
+
+    /**
+     * A newly registered user is PENDING_VERIFICATION, not ACTIVE — which is
+     * exactly why reactivation has to RESTORE rather than set. The prior status
+     * is read from the response instead of assumed, and the restore is then
+     * asserted to return to that same value.
+     */
+    const before = suspendedFrom(detail.body.members[0].status);
+    const suspended = await act('SUSPENDED', 'accounts console probe');
+    expect(suspended.status).toBe(200);
+    expect(suspended.body).toMatchObject({ from: before, to: 'SUSPENDED' });
+
+    const afterSuspend = await listAs({ search: households[1].email });
+    expect(afterSuspend.body.rows[0].ownerStatus).toBe('SUSPENDED');
+
+    // Asking for the status it already has is reported, not silently swallowed:
+    // "already suspended" and "just suspended" differ when two people are
+    // working the same ticket.
+    const again = await act('SUSPENDED', 'accounts console probe');
+    expect(again.body).toMatchObject({ from: 'SUSPENDED', to: 'SUSPENDED' });
+
+    const reactivated = await act('ACTIVE', 'probe finished');
+    // Restored to what it WAS, not promoted to ACTIVE. A support click must
+    // never be able to mark an unverified email as verified.
+    expect(reactivated.body).toMatchObject({ from: 'SUSPENDED', to: before });
+    const afterReactivate = await listAs({ search: households[1].email });
+    expect(afterReactivate.body.rows[0].ownerStatus).toBe(before);
+
+    // Both directions are on the trail.
+    const trail = await request(http)
+      .get(`${P}/system/accounts/${familyId}`)
+      .set('x-internal-admin-key', key);
+    const actions = trail.body.audit.map((row: any) => row.action);
+    expect(actions).toContain('account.operator_suspended');
+    expect(actions).toContain('account.operator_reactivated');
+
+    const anonymous = await request(http)
+      .post(`${P}/system/accounts/actions/status`)
+      .send({ userId, status: 'SUSPENDED', reason: 'no key' });
+    expect(anonymous.status).toBe(401);
+
+    const unknown = await request(http)
+      .post(`${P}/system/accounts/actions/status`)
+      .set('x-internal-admin-key', key)
+      .send({ userId: '00000000-0000-4000-8000-000000000000', status: 'SUSPENDED', reason: 'probe' });
+    expect(unknown.status).toBe(404);
+  }, 120_000);
 });
