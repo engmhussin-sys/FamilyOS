@@ -35,6 +35,10 @@ const OPERATIONS_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
   // platform in aggregate; an owner starts from «who is this», and a register
   // filed below the decision log is a register nobody opens.
   { to: '/platform/accounts', labelKey: 'accounts.nav' },
+  // Health second: it is the screen an operator opens during an incident, and
+  // an incident is when hunting through a rail costs the most.
+  { to: '/platform/health', labelKey: 'health.nav' },
+  { to: '/platform/plans', labelKey: 'catalogue.nav' },
   { to: '/notifications/decisions', labelKey: 'notifications.decisions.nav' },
 ];
 

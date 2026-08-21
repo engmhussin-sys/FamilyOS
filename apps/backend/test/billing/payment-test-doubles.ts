@@ -593,6 +593,33 @@ export class InMemoryBillingRepository implements IBillingRepository {
     return this.plan(tier);
   }
 
+  /**
+   * The operator catalogue view. This double answers from `PLAN_FEATURES`,
+   * which is deliberately NOT what a real database does on a fresh install —
+   * `plan_definitions` there is empty, because nothing seeds it. Suites that
+   * care about the empty case must use the real repository; this one exists so
+   * the payment pipelines under test have a catalogue to price against.
+   */
+  async findAllPlans(): Promise<IPlanDefinition[]> {
+    return (Object.keys(PLAN_FEATURES) as SubscriptionPlanTier[]).map((tier) => this.plan(tier));
+  }
+
+  async upsertPlan(input: {
+    tier: SubscriptionPlanTier;
+    name: string;
+    priceCents: number;
+    currency: string;
+    billingIntervalMonths: number;
+    features: string[];
+    isActive: boolean;
+  }): Promise<IPlanDefinition> {
+    this.upsertedPlans.set(input.tier, { id: `plan-${input.tier}`, ...input });
+    return this.upsertedPlans.get(input.tier) as IPlanDefinition;
+  }
+
+  /** What `upsertPlan` was asked to write, for suites that assert on it. */
+  readonly upsertedPlans = new Map<SubscriptionPlanTier, IPlanDefinition>();
+
   private plan(tier: SubscriptionPlanTier): IPlanDefinition {
     return {
       id: `plan-${tier}`,

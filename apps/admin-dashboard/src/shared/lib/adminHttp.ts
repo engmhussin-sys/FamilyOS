@@ -38,7 +38,7 @@ export function isAdminKeyRejection(error: unknown): boolean {
 
 async function adminRequest<T>(
   path: string,
-  init: { method?: 'GET' | 'POST'; body?: unknown } = {},
+  init: { method?: 'GET' | 'POST' | 'PUT'; body?: unknown } = {},
 ): Promise<T> {
   const key = adminKeyStore.peek();
   if (key === null) throw new AdminKeyMissingError();
@@ -66,6 +66,17 @@ export function adminGet<T>(path: string): Promise<T> {
 
 export function adminPost<T>(path: string, body: unknown): Promise<T> {
   return adminRequest<T>(path, { method: 'POST', body });
+}
+
+/**
+ * PUT, for the one operator surface that replaces a whole record rather than
+ * appending an action: the plan catalogue, where writing PREMIUM twice must
+ * leave one PREMIUM. The verb is the backend's — see
+ * `BillingOperationsController.upsertPlan` — and it is mirrored here rather
+ * than smuggled through POST so the two halves describe the same operation.
+ */
+export function adminPut<T>(path: string, body: unknown): Promise<T> {
+  return adminRequest<T>(path, { method: 'PUT', body });
 }
 
 /** Query-string builder shared by every admin client: skips absent values so

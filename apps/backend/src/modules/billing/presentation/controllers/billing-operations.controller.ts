@@ -1,9 +1,11 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, Query, UseGuards } from '@nestjs/common';
 
 import { InternalAdminGuard } from '../../../../common/guards/internal-admin.guard';
 import { PlatformAdminSurface } from '../../../../common/authz/roles.decorator';
 import { SystemRoute } from '../../../../common/tenancy/system-route.decorator';
 import { OperatorGrantService } from '../../application/services/operator-grant.service';
+import { PlanCatalogueService } from '../../application/services/plan-catalogue.service';
+import { UpsertPlanDto } from '../dto/plan-catalogue.dto';
 import { OperatorGrantDto, OperatorGrantFeaturesDto, OperatorRevokeDto } from '../dto/operator-grant.dto';
 import { OperatorLookupDto } from '../dto/operator-lookup.dto';
 
@@ -43,7 +45,48 @@ import { OperatorLookupDto } from '../dto/operator-lookup.dto';
  */
 @Controller('system/billing')
 export class BillingOperationsController {
-  constructor(private readonly grants: OperatorGrantService) {}
+  constructor(
+    private readonly grants: OperatorGrantService,
+    private readonly catalogue: PlanCatalogueService,
+  ) {}
+
+  /**
+   * THE PLAN CATALOGUE. It is on this controller rather than one of its own
+   * because it is the same operator, the same key, and the same question:
+   * "what does this platform sell, and what has this household got".
+   *
+   * Returns EVERY tier including inactive ones — `findAllActivePlans` is the
+   * customer-facing list, and a tier somebody deactivated is precisely the row
+   * an operator has come to look at.
+   */
+  @Get('plans')
+  @PlatformAdminSurface()
+  @SystemRoute(
+    'ADMIN_CONSOLE',
+    'Operator plan catalogue; plan_definitions is a global table with no family_id, and is behind InternalAdminGuard.',
+  )
+  @UseGuards(InternalAdminGuard)
+  listPlans() {
+    return this.catalogue.list();
+  }
+
+  /**
+   * CREATE OR REPLACE ONE TIER. There is deliberately NO DELETE: existing
+   * subscriptions point at a tier, and removing its row would leave them
+   * pointing at nothing. `isActive: false` retires a plan from the customer
+   * list while keeping every reference to it valid.
+   */
+  @Put('plans')
+  @PlatformAdminSurface()
+  @SystemRoute(
+    'ADMIN_CONSOLE',
+    'Operator writes one row of the global plan catalogue; touches no tenant-scoped table and is behind InternalAdminGuard.',
+  )
+  @UseGuards(InternalAdminGuard)
+  @HttpCode(HttpStatus.OK)
+  upsertPlan(@Body() dto: UpsertPlanDto) {
+    return this.catalogue.upsert(dto);
+  }
 
   /**
    * WHAT IS LIVE ON THIS HOUSEHOLD RIGHT NOW — read this before granting and

@@ -18,6 +18,8 @@ import { ReferralPage } from '../features/growth/pages/ReferralPage';
 import { ProductAiPage } from '../features/growth/pages/ProductAiPage';
 import { NotificationDecisionsPage } from '../features/notifications/pages/NotificationDecisionsPage';
 import { AccountsPage } from '../features/platform/pages/AccountsPage';
+import { PlatformHealthPage } from '../features/platform/pages/PlatformHealthPage';
+import { PlanCataloguePage } from '../features/platform/pages/PlanCataloguePage';
 import { ProtectedRoute } from './ProtectedRoute';
 import { NotFoundPage } from './NotFoundPage';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
@@ -140,6 +142,14 @@ export function App() {
             <Route
               path="/platform/accounts"
               element={<PlatformAdminScreen><AccountsPage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/health"
+              element={<PlatformAdminScreen><PlatformHealthPage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/plans"
+              element={<PlatformAdminScreen><PlanCataloguePage /></PlatformAdminScreen>}
             />
             <Route
               path="/notifications/decisions"

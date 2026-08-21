@@ -8,6 +8,7 @@ import { PaymentWebhookController } from './presentation/controllers/payment-web
 import { SubscriptionController } from './presentation/controllers/subscription.controller';
 import { BillingOperationsController } from './presentation/controllers/billing-operations.controller';
 import { OperatorGrantService } from './application/services/operator-grant.service';
+import { PlanCatalogueService } from './application/services/plan-catalogue.service';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { StripeWebhookService } from './application/services/stripe-webhook.service';
@@ -112,6 +113,7 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
     // The operator comp surface. Delete this line, its controller, its service
     // and its DTOs to remove the feature entirely — nothing else depends on it.
     OperatorGrantService,
+    PlanCatalogueService,
     // -- Sprint 8, unchanged --
     PlanService,
     TrialManager,

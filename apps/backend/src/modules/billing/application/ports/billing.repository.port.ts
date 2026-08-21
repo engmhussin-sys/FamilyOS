@@ -22,6 +22,32 @@ export interface IBillingRepository {
   findAllActivePlans(): Promise<IPlanDefinition[]>;
   findPlanByTier(tier: SubscriptionPlanTier): Promise<IPlanDefinition | null>;
 
+  /**
+   * EVERY plan, active or not — the operator catalogue view.
+   *
+   * `findAllActivePlans` is the CUSTOMER-facing list and filters on
+   * `is_active`, which is right for a pricing page and wrong for an editor: a
+   * tier someone deactivated is exactly the row an operator has come to look
+   * at, and hiding it makes the catalogue look emptier than it is.
+   */
+  findAllPlans(): Promise<IPlanDefinition[]>;
+
+  /**
+   * Create or replace one tier. `tier` is UNIQUE in the schema, so this is an
+   * upsert on it rather than an id — an operator editing "PREMIUM" is editing
+   * the one PREMIUM row that can exist, and asking them to find its uuid first
+   * would be asking them to hold a fact the database already holds.
+   */
+  upsertPlan(input: {
+    tier: SubscriptionPlanTier;
+    name: string;
+    priceCents: number;
+    currency: string;
+    billingIntervalMonths: number;
+    features: string[];
+    isActive: boolean;
+  }): Promise<IPlanDefinition>;
+
   findSubscriptionByFamily(familyId: string): Promise<ISubscriptionRecord | null>;
   /** CLOSES A REAL GAP (previously NOT VERIFIED in the master audit,
    * confirmed as genuinely missing: zero payment webhook architecture
