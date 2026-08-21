@@ -1,8 +1,8 @@
 ABNY — DELIVERY MANIFEST
-range   : HEAD~2..HEAD
-head    : 4199b2b359a5e2953f587474a55574a1c772b2ac
+range   : HEAD~1..HEAD
+head    : bc827a61c3ce64414d5e6745c0ae6b9a17b9e433
 branch  : abny/sprint-f1-unblock
-files   : 3 changed, 0 to delete
+files   : 2 changed, 0 to delete
 
 HOW TO APPLY
   1. Run _DELIVERY/DELETE.ps1 (Windows) or DELETE.sh — ONLY if it lists files.
@@ -11,12 +11,10 @@ HOW TO APPLY
   3. Delete the _DELIVERY folder. It is notes, not source.
 
 CHANGED (extract these)
-A	apps/backend/Dockerfile.context-probe
-M	scripts/make-delivery-zip.sh
-A	عطل-البناء.md
+M	DEPLOY_STAGING.md
+M	apps/backend/Dockerfile
 
 DELETED — none. Nothing to remove for this delivery.
 
 COMMITS
-4199b2b fix(delivery): the zip tool dropped every Arabic filename, silently
-0433498 chore(deploy): a context probe, because guessing costs a build per guess
+bc827a6 docs(deploy): the root railway.json is not service-specific, and it hijacked the dashboard
