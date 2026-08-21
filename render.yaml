@@ -77,7 +77,14 @@ services:
     # this same image, before the new version receives any traffic; a non-zero
     # exit fails the deploy and leaves the previous version serving. See
     # DEPLOY_STAGING.md §5 for why this is not in the container's CMD.
-    preDeployCommand: npx prisma migrate deploy
+    #
+    # It is `scripts/predeploy.sh` and no longer `npx prisma migrate deploy`
+    # directly: the bare command answered P3005 nine times over three days on a
+    # database with tables and no migration ledger, and had no way to say
+    # anything except "no". The script runs the same `migrate deploy` first and
+    # is a no-op on a healthy database; it only does more when that fails with
+    # P3005 specifically. See the script's own header.
+    preDeployCommand: sh scripts/predeploy.sh
     # Deploys are triggered deliberately (by the GitHub workflow, after the
     # test gates), never by a push landing on a branch.
     autoDeploy: false

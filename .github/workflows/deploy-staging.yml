@@ -388,8 +388,18 @@ jobs:
               problems.append(f"render.yaml dockerContext must be {CONTEXT} and must exist, got: {web['dockerContext']}")
           if os.path.dirname(render_dockerfile) != render_context:
               problems.append('render.yaml dockerfilePath is not inside its own dockerContext')
-          if 'prisma migrate deploy' not in web.get('preDeployCommand', ''):
-              problems.append('render.yaml no longer runs the migration before traffic')
+          # BOTH HOSTS MUST RUN THE SAME RELEASE STEP, and it must exist in the
+          # image. A host that quietly went back to a bare `migrate deploy`
+          # would lose the P3005 handling — and would lose it silently, since
+          # a healthy database makes the two behave identically. The failure
+          # only appears on the database that needs the difference.
+          RELEASE_STEP = 'scripts/predeploy.sh'
+          if not os.path.isfile(f'{CONTEXT}/{RELEASE_STEP}'):
+              problems.append(f'the release step is missing: {CONTEXT}/{RELEASE_STEP}')
+          if RELEASE_STEP not in ' '.join(railway['deploy'].get('preDeployCommand') or []):
+              problems.append(f'{CONTEXT}/railway.json preDeployCommand no longer runs {RELEASE_STEP}')
+          if RELEASE_STEP not in web.get('preDeployCommand', ''):
+              problems.append(f'render.yaml preDeployCommand no longer runs {RELEASE_STEP}')
 
           # The two local builds must name the same context as the two hosts.
           compose = yaml.safe_load(open('docker-compose.yml'))
