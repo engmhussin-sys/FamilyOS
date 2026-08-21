@@ -176,12 +176,29 @@ const HEALTHY_PROBE = JSON.stringify({
   tablesWithRowLevelSecurity: 56,
   baseTables: 101,
   migrationLedgerPresent: false,
+  rows: { families: 96, users: 92, children: 82 },
 });
+/** The shape production was actually measured in on 2026-08-21. */
 const DB_PUSH_PROBE = JSON.stringify({
   tenantIsolationPolicies: 0,
   tablesWithRowLevelSecurity: 0,
-  baseTables: 101,
+  baseTables: 57,
   migrationLedgerPresent: false,
+  rows: { families: 0, users: 0, children: 0 },
+});
+const DB_PUSH_PROBE_WITH_DATA = JSON.stringify({
+  tenantIsolationPolicies: 0,
+  tablesWithRowLevelSecurity: 0,
+  baseTables: 57,
+  migrationLedgerPresent: false,
+  rows: { families: 12, users: 19, children: 24 },
+});
+const DB_PUSH_PROBE_NO_TABLES = JSON.stringify({
+  tenantIsolationPolicies: 0,
+  tablesWithRowLevelSecurity: 0,
+  baseTables: 3,
+  migrationLedgerPresent: false,
+  rows: { families: null, users: null, children: null },
 });
 const DRIFT_SQL = 'ALTER TABLE "notification_decisions" ADD COLUMN "ai_model" TEXT;';
 
@@ -243,6 +260,39 @@ describeIfPosix('predeploy.sh — the release step, under a strict POSIX shell',
     expect(result.calls.filter((c) => c.startsWith('migrate diff'))).toEqual([]);
     expect(resolved(result)).toEqual([]);
   }, 90_000);
+
+  /**
+   * Every refusal ends in the same question — "is there anything in this
+   * database worth keeping?" — and until this line existed the only way to
+   * answer it was to open a SQL console by hand, which on 2026-08-21 meant
+   * a person doing it from a phone. Three states, three different sentences,
+   * and "the table does not exist" is deliberately not flattened into "zero".
+   */
+  it('P3b — the refusal reports what the database CONTAINS, in all three states', async () => {
+    const empty = await run(
+      makeStubs({ deploy: { out: P3005, exit: 1 } }, { out: DB_PUSH_PROBE, exit: 0 }),
+    );
+    expect(empty.stdout).toContain('0 families, 0 users');
+    expect(empty.stdout).toContain('HOLDS NO HOUSEHOLDS');
+
+    const populated = await run(
+      makeStubs({ deploy: { out: P3005, exit: 1 } }, { out: DB_PUSH_PROBE_WITH_DATA, exit: 0 }),
+    );
+    expect(populated.stdout).toContain('12 families, 19 users');
+    expect(populated.stdout).toContain('Do not reset it');
+    expect(populated.stdout).not.toContain('HOLDS NO HOUSEHOLDS');
+
+    const absent = await run(
+      makeStubs({ deploy: { out: P3005, exit: 1 } }, { out: DB_PUSH_PROBE_NO_TABLES, exit: 0 }),
+    );
+    expect(absent.stdout).toContain('do not exist in this schema');
+    // A missing table must never be reported as an empty one — that reads as
+    // "safe to wipe" about a database nobody has measured.
+    expect(absent.stdout).not.toContain('HOLDS NO HOUSEHOLDS');
+
+    // None of the three writes anything: this is a refusal branch throughout.
+    for (const r of [empty, populated, absent]) expect(resolved(r)).toEqual([]);
+  }, 150_000);
 
   it('P4 — drift is refused and printed in full', async () => {
     const stubs = makeStubs(

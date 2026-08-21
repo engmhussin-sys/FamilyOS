@@ -1,13 +1,9 @@
-CATCH-UP DELIVERY — computed against github.com/engmhussin-sys/FamilyOS @ main (694f183)
-These are exactly the files that repository is missing or has an older copy of.
+CATCH-UP — computed against github.com/engmhussin-sys/FamilyOS @ main (fd8273e, "23")
 
-NEW       apps/backend/scripts/predeploy.sh
-NEW       apps/backend/scripts/predeploy-schema-probe.js
-MODIFIED  apps/backend/railway.json
-MODIFIED  apps/backend/.dockerignore
-MODIFIED  apps/backend/Dockerfile
-MODIFIED  render.yaml
-MODIFIED  .github/workflows/deploy-staging.yml
-NEW       apps/backend/test/deploy/predeploy.spec.ts
+MODIFIED  apps/backend/scripts/predeploy.sh                 (reports what the database contains)
+MODIFIED  apps/backend/scripts/predeploy-schema-probe.js     (row counts for families/users/children)
+MODIFIED  apps/backend/test/deploy/predeploy.spec.ts         (the three contents branches)
 
-DELETE    scripts/verify_doctor_parity.py   (see _DELIVERY/DELETE.ps1)
+Nothing to delete. Optional: this only improves the LOG. The decision it
+supports can be made right now from the numbers already measured:
+  57 base tables, 0 tenant_isolation policies.

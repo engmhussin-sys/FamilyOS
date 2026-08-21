@@ -119,7 +119,24 @@ say "probe: $(cat "$PROBE_OUT")"
 
 POLICIES="$(sed -n 's/.*"tenantIsolationPolicies":\([0-9][0-9]*\).*/\1/p' "$PROBE_OUT")"
 TABLES="$(sed -n 's/.*"baseTables":\([0-9][0-9]*\).*/\1/p' "$PROBE_OUT")"
+# `null` (the table does not exist in this schema) deliberately does not match,
+# and stays empty — "absent" is a different answer from "zero" and the line
+# below says so rather than flattening both to 0.
+FAMILIES="$(sed -n 's/.*"families":\([0-9][0-9]*\).*/\1/p' "$PROBE_OUT")"
+USERS="$(sed -n 's/.*"users":\([0-9][0-9]*\).*/\1/p' "$PROBE_OUT")"
 rm -f "$PROBE_OUT"
+
+# THE LINE THAT DECIDES WHAT A HUMAN DOES NEXT. Every refusal below ends in
+# the same question — "is there anything in this database worth keeping?" —
+# and until this line existed the only way to answer it was to open a SQL
+# console by hand. It is one query; it belongs in the log.
+if [ -z "$FAMILIES" ] || [ -z "$USERS" ]; then
+  say "contents: the families/users tables do not exist in this schema at all."
+elif [ "$FAMILIES" -eq 0 ] && [ "$USERS" -eq 0 ]; then
+  say "contents: 0 families, 0 users — THIS DATABASE HOLDS NO HOUSEHOLDS."
+else
+  say "contents: $FAMILIES families, $USERS users — THIS DATABASE HOLDS REAL DATA. Do not reset it."
+fi
 
 if [ -z "$POLICIES" ]; then
   say "BLOCKED: the probe produced no readable policy count. Refusing to baseline on an unreadable measurement."

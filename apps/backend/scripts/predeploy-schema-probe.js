@@ -73,6 +73,18 @@ async function main() {
       return typeof value === 'boolean' ? value : Number(value);
     };
 
+    /**
+     * The table name is checked against `to_regclass` and then interpolated —
+     * so it is never taken from input of any kind. The three names below are
+     * literals in this file. Nothing here reads a name from the environment,
+     * the database or an argument, and nothing should start.
+     */
+    const countOrNull = async (table) => {
+      const exists = await one(`SELECT to_regclass('public.${table}') IS NOT NULL`);
+      if (!exists) return null;
+      return one(`SELECT count(*) FROM "${table}"`);
+    };
+
     const result = {
       /**
        * THE DECIDING NUMBER. Zero means no migration SQL has ever run against
@@ -93,6 +105,26 @@ async function main() {
       migrationLedgerPresent: await one(
         `SELECT to_regclass('public._prisma_migrations') IS NOT NULL`,
       ),
+      /**
+       * IS THERE ANYTHING HERE WORTH KEEPING? — the question every refusal
+       * above forces a human to answer, and the one the log could not answer
+       * for them.
+       *
+       * On 2026-08-21 the release step correctly refused to baseline a
+       * production database, and the only way to decide what to do next was to
+       * open a SQL console and count rows by hand. That is a step nobody
+       * should have to take on a phone at midnight, and it is one query.
+       *
+       * `null` means the table does not exist in this schema — which is itself
+       * an answer, and a different one from zero. A 57-table schema does not
+       * have every table this build expects, so asking for a count of a table
+       * that was never created must not take the whole probe down.
+       */
+      rows: {
+        families: await countOrNull('families'),
+        users: await countOrNull('users'),
+        children: await countOrNull('children'),
+      },
     };
 
     process.stdout.write(JSON.stringify(result) + '\n');
