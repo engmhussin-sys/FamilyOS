@@ -30,6 +30,11 @@ const GROWTH_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
  * «Growth & commerce» is how an operator fails to find it during an incident.
  */
 const OPERATIONS_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
+  // FIRST, because it is the only screen in this dashboard that lists
+  // households as rows. Every other operator view answers a question about the
+  // platform in aggregate; an owner starts from «who is this», and a register
+  // filed below the decision log is a register nobody opens.
+  { to: '/platform/accounts', labelKey: 'accounts.nav' },
   { to: '/notifications/decisions', labelKey: 'notifications.decisions.nav' },
 ];
 
