@@ -1,8 +1,8 @@
 ABNY — DELIVERY MANIFEST
-range   : HEAD~1..HEAD
-head    : bc827a61c3ce64414d5e6745c0ae6b9a17b9e433
+range   : HEAD~2..HEAD
+head    : 0d988523d51f33cfd1dd822cf18495448dfb0a62
 branch  : abny/sprint-f1-unblock
-files   : 2 changed, 0 to delete
+files   : 11 changed, 2 to delete
 
 HOW TO APPLY
   1. Run _DELIVERY/DELETE.ps1 (Windows) or DELETE.sh — ONLY if it lists files.
@@ -11,10 +11,22 @@ HOW TO APPLY
   3. Delete the _DELIVERY folder. It is notes, not source.
 
 CHANGED (extract these)
+M	.github/workflows/ci.yml
+M	.github/workflows/deploy-staging.yml
 M	DEPLOY_STAGING.md
+M	apps/backend/.dockerignore
 M	apps/backend/Dockerfile
+M	apps/backend/Dockerfile.context-probe
+R087	railway.json	apps/backend/railway.json
+M	docker-compose.yml
+M	render.yaml
+M	رفع-الكود.md
+M	عطل-البناء.md
 
-DELETED — none. Nothing to remove for this delivery.
+DELETED (a zip cannot remove these — run the DELETE script)
+.dockerignore
+railway.json
 
 COMMITS
-bc827a6 docs(deploy): the root railway.json is not service-specific, and it hijacked the dashboard
+0d98852 docs: the two Arabic guides described the layout that broke
+e132b6b deploy: make the backend build subdirectory-native (context = apps/backend)

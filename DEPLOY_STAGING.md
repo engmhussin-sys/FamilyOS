@@ -59,9 +59,9 @@ Four things follow from that table, and each is worth knowing before you touch a
 | File | What it is |
 |---|---|
 | `.github/workflows/deploy-staging.yml` | The only automated way to deploy. Runs the production interlock first, then the whole CI pipeline, and refuses to deploy unless both passed. |
-| `apps/backend/Dockerfile` | The production image. Multi-stage; the final layer has no TypeScript, no Nest CLI, no test tooling; runs as a non-root user; `NODE_ENV=production`; accepts `ARG GIT_COMMIT_SHA`. **Build context is the repository root.** |
-| `.dockerignore` | Keeps the two Flutter apps, the dashboard, every `node_modules` and every build output out of that context. |
-| `railway.json` | The host configuration: Dockerfile build, the pre-deploy migration, the `/health/ready` probe, one replica, restart on failure. |
+| `apps/backend/Dockerfile` | The production image. Multi-stage; the final layer has no TypeScript, no Nest CLI, no test tooling; runs as a non-root user; `NODE_ENV=production`; accepts `ARG GIT_COMMIT_SHA`. **Build context is `apps/backend` — its own directory** (§7b). |
+| `apps/backend/.dockerignore` | The deny list for that context: every `node_modules`, every build output, the test material, local state and secrets. It sits in the context because that is the only directory Docker reads it from. |
+| `apps/backend/railway.json` | The backend service's host configuration: Dockerfile build, the pre-deploy migration, the `/health/ready` probe, one replica, restart on failure. Inside `apps/backend/` so that it configures the backend service and no sibling (§7b). |
 | `render.yaml` | A complete alternative host, kept so "we are on Railway" stays a choice with a stated exit. `STATIC VERIFIED` only — no Render account exists. |
 | `.env.staging.example` | Every variable the backend actually reads, each marked `OPERATOR MUST SUPPLY` or `SAFE DEFAULT`, each with what happens when it is missing. |
 
@@ -136,7 +136,7 @@ If `<STAGING_HOST>` is blank, unknown, or resolves to the production host, **you
 
 ### 3.4 — What the pipeline will do if you get it wrong
 
-The workflow's first job is `interlock`, and it runs **before** the contract check, **before** CI, **before** the image is built, and therefore before `railway.json`'s `preDeployCommand` can execute a single migration. It refuses when:
+The workflow's first job is `interlock`, and it runs **before** the contract check, **before** CI, **before** the image is built, and therefore before `apps/backend/railway.json`'s `preDeployCommand` can execute a single migration. It refuses when:
 
 | Rule | Fires when |
 |---|---|
@@ -180,11 +180,11 @@ What happens, in order:
 | # | Job | What it does |
 |---|---|---|
 | 1 | `interlock` | Refuses if the target looks like production (§3.4). Nothing has been built or touched yet. |
-| 2 | `contract` | Checks that every secret and variable name the workflow uses is documented in `.env.staging.example`; that `railway.json` and `render.yaml` parse and point at files that exist; and that the Dockerfile still accepts and exports `GIT_COMMIT_SHA`. |
+| 2 | `contract` | Checks that every secret and variable name the workflow uses is documented in `.env.staging.example`; that `apps/backend/railway.json` and `render.yaml` parse, name the same build context, and point at files that exist; and that the Dockerfile still accepts and exports `GIT_COMMIT_SHA`. |
 | 3 | `ci` | **Calls** `ci.yml` — backend suites, the tenant-isolation and event-emission guards, the admin dashboard, both Flutter apps, the production image. Called, not copied: a second copy of the gates would drift, and the drifting copy is always the one guarding the deploy. Deploys only if it concluded `success`; a skipped or cancelled gate answered nothing. |
 | 4 | `deploy` | Re-asserts the interlock against the environment-scoped values, stamps `GIT_COMMIT_SHA` onto the service, runs `railway up --detach`, then polls `STAGING_HEALTH_URL` for up to ten minutes and fails the run if it never answers `200`. |
 
-**Where migrations run.** `prisma migrate deploy` runs as Railway's **pre-deploy step**, from the *same image* as the code, and must exit zero before the new version receives traffic — `railway.json`'s `preDeployCommand`. Not in the container's `CMD`, for three reasons in order of what they cost when ignored:
+**Where migrations run.** `prisma migrate deploy` runs as Railway's **pre-deploy step**, from the *same image* as the code, and must exit zero before the new version receives traffic — `apps/backend/railway.json`'s `preDeployCommand`. Not in the container's `CMD`, for three reasons in order of what they cost when ignored:
 
 1. **A migration that races the app is a data problem.** In the entrypoint, every replica migrates at boot; Prisma's advisory lock keeps them from corrupting each other, but the instance that *loses* the race starts serving HTTP against a partly-applied schema, and the requests it answers wrongly are already gone by the time the migration finishes.
 2. **A failed migration must fail the deployment, not the process.** In the entrypoint a bad migration is a crash-loop and the previous good version is already gone. As a pre-deploy step, a non-zero exit fails the deploy and **leaves the previous version serving**.
@@ -209,7 +209,7 @@ curl -i https://<STAGING_HOST>/health/ready
 
 Expect `200` and `{"status":"ok"}` from the first; `200` with `"database":true,"redis":true` from the second. A `503` on `/health/ready` names which dependency is missing — that is the answer, not a failure of the check.
 
-Both routes are deliberately excluded from the `api/v1` prefix (`src/common/http/global-pipeline.ts`), so they sit at the root and do not move when the API version does. The platform probe (`railway.json`) points at `/health/ready`; the Docker `HEALTHCHECK` inside the image uses `/health/live`. They ask different questions on purpose.
+Both routes are deliberately excluded from the `api/v1` prefix (`src/common/http/global-pipeline.ts`), so they sit at the root and do not move when the API version does. The platform probe (`apps/backend/railway.json`) points at `/health/ready`; the Docker `HEALTHCHECK` inside the image uses `/health/live`. They ask different questions on purpose.
 
 ### 5.2 — Confirm you deployed what you think you deployed
 
@@ -327,53 +327,47 @@ Before you press enter, confirm all three: the URL is staging and **not** the pr
 
 ## §7b — TROUBLESHOOTING: build failures seen on a real Railway build
 
-### FIRST, AND MOST LIKELY: the root `railway.json` applies to EVERY service
+### THE LAYOUT THIS EXPECTS
 
-**This repository is a monorepo with more than one deployable.** The Railway project `humble-love` was observed on 2026-08-20 to contain at least:
+The backend is **self-contained in `apps/backend`**. Its build context is that directory, its host config is `apps/backend/railway.json`, and its context filter is `apps/backend/.dockerignore`. Every `COPY` in `apps/backend/Dockerfile` is relative to that directory — `COPY src ./src`, not `COPY apps/backend/src ./src`. Nothing outside `apps/backend/` is needed to build the image.
 
-| Service | Root Directory | What it is |
-|---|---|---|
-| `Redis` | — | the cache |
-| `familyos-dashboard` | `apps/admin-dashboard` | the React admin dashboard |
-| the backend | *(a separate service)* | the NestJS API |
+Settings on the **backend** service (Railway → the service → Settings), with the environment picker on **staging**:
 
-`railway.json` at the repository root says `"dockerfilePath": "apps/backend/Dockerfile"`. It was written **for the backend service and only for it**. But Railway reads a service's config-as-code file by path, so **any service pointed at the root `railway.json` will try to build the backend's Dockerfile** — regardless of its own Root Directory.
+| Setting | Value |
+|---|---|
+| Source → **Root Directory** | `apps/backend` |
+| Build → **Config-as-code** | `railway.json` — it resolves *inside* the Root Directory, i.e. `apps/backend/railway.json` |
+| Builder | Dockerfile. `railway.json` says `"dockerfilePath": "Dockerfile"` — the file beside it |
 
-That is what the failing builds were. The signature is unmistakable and worth learning:
+Sibling services (`familyos-dashboard` and anything added later) keep their own Root Directory and their own config. A config file inside `apps/backend` cannot be picked up as any other service's config by accident, which is the whole point of putting it there.
 
-```
-[inf]  load build definition from apps/backend/Dockerfile     <- SUCCEEDS
-[err]  COPY apps/backend/package.json …                       <- fails
-[err]  COPY apps/backend/prisma  ·  COPY apps/backend/src     <- fails
-```
-
-The Dockerfile loads because Railway resolves `dockerfilePath` from the repository root. Every `COPY` then fails because the **build context** is the service's Root Directory — `apps/admin-dashboard/`, inside which `apps/backend/src` does not exist. A Dockerfile that reads fine while every one of its COPYs misses means **the context and the Dockerfile came from two different places.**
-
-**Fix, on the dashboard service:** Settings → **Config-as-code** → clear the path (or point it at a file of its own). It was `Online` and serving throughout, so reverting it to whatever it did before is safe — a failed build never replaces a running deployment.
-
-**Then find the actual backend service** and configure that one: Root Directory `/`, config-as-code `railway.json`.
-
-> **A note on the environment selector.** The screenshot showed `production` selected. Every setting you change while that is selected changes production. Switch the environment picker to staging before touching anything, and re-read §3.
+**The short history, so nobody re-does it.** A `railway.json` at the **repository root**, naming `apps/backend/Dockerfile`, was tried first. A root config is not service-specific: the `familyos-dashboard` service (Root Directory `apps/admin-dashboard`) picked it up on 2026-08-20, loaded the backend's Dockerfile, and failed every `COPY` — six builds, because `apps/backend/src` does not exist inside `apps/admin-dashboard/`. The config was moved into `apps/backend/` and the Dockerfile rewritten for that context. If the dashboard service still has a config-as-code path pointing at the old root file: Settings → **Config-as-code** → clear it (or point it at one of its own). It stayed `Online` and serving throughout — a failed build never replaces a running deployment.
 
 ---
 
-### `failed to compute cache key: "/apps/backend/src": not found`
+### THE DIAGNOSTIC TELL — worth memorising
 
-**Observed on a real Railway build, 2026-08-20.** The build reaches the builder stage, copies a few files, then dies on this. It reads like a missing source file. It is not — every path in that Dockerfile exists.
+```
+[inf]  load build definition from …/Dockerfile     <- SUCCEEDS
+[err]  COPY package.json …                         <- fails
+[err]  COPY prisma  ·  COPY src                    <- fails
+Build Failed: failed to compute cache key: "/src": not found
+```
 
-**Cause: the service's Root Directory is `apps/backend`, not `/`.**
+**A Dockerfile that loads while every one of its COPYs misses means the Dockerfile and the context came from two different directories.** It is never a fault in the COPY lines, and never a missing source file. Note also that the named path *changes between attempts* (`src`, then `prisma`, then back): buildkit evaluates COPY steps in parallel and reports whichever lost the race, so "one path is missing" is really "all of them are".
 
-With Root Directory set to a subdirectory, Railway never reads the root `railway.json` at all. It falls back to auto-detection, finds `apps/backend/Dockerfile`, and builds it with `apps/backend/` as the build **context**. Every `COPY apps/backend/…` line in that file is written for a **repository-root** context, so each one misses by exactly one path segment. `src` is simply the first one the builder reports.
+When you see it, check in this order:
 
-**Fix — one setting, no code change:**
+1. **Root Directory** — Settings → Source. It must be `apps/backend`. If it is `/`, the context is the repository root and the COPYs miss by one path segment in the other direction.
+2. **Config-as-code** — Settings → Build. The path is resolved inside the Root Directory. A path that reaches outside it (`../`, or a leading `/`) is the failure this migration removed.
+3. **Which service you are actually editing** — the build log does not name it. A misconfigured sibling produces exactly this signature.
+4. **Whether the migration step runs at all.** A successful build that never runs `npx prisma migrate deploy` means `railway.json` was not read — the build fell back to auto-detection. A build that succeeds while the schema is never applied is worse than a clean failure.
 
-1. Railway → your service → **Settings → Source**
-2. Set **Root Directory** to `/` (or clear it entirely)
-3. Redeploy
+**Do not answer this by rewriting COPY paths.** One context is named in five places that agree — `apps/backend/Dockerfile`, `apps/backend/railway.json`, `apps/backend/.dockerignore`, `render.yaml` (`dockerContext: ./apps/backend`), `docker-compose.yml` — plus CI's `docker build … apps/backend`. Reshaping the Dockerfile for a different context breaks all of them at once. Change the setting, or change all six deliberately.
 
-Then confirm Railway is now reading the right config: the build log should use `apps/backend/Dockerfile` **and** honour `railway.json`'s `preDeployCommand` (`npx prisma migrate deploy`). **If no migration step runs, the Root Directory is still wrong** — the build may succeed while the schema is never applied, which is worse than a clean failure.
+### If the log does not tell you enough: the probe
 
-**Do not "fix" this by rewriting the COPY paths.** One build context is named in four files that all agree — `apps/backend/Dockerfile`, `railway.json`, `render.yaml`, `docker-compose.yml` — plus the CI build. Reshaping the Dockerfile for a subdirectory context breaks all of them, and turns one wrong setting into four broken things.
+`apps/backend/Dockerfile.context-probe` copies the **whole context** and lists it, instead of failing on one path. Point the service's Dockerfile path at `Dockerfile.context-probe`, deploy (it fails on purpose, which is how the output survives in the log), read the blocks, then set the path back to `Dockerfile`. Its header explains how to read every outcome.
 
 ### Which service did that build run against?
 
@@ -385,6 +379,7 @@ The build log does not name the service. **Before redeploying, confirm the targe
 
 Stated plainly, because the rest of this document is confident and this part is not.
 
+- **The subdirectory layout is `STATIC VERIFIED`, not `BUILD VERIFIED`.** `apps/backend` as the single build context is named identically in `apps/backend/Dockerfile`, `apps/backend/railway.json`, `render.yaml`, `docker-compose.yml` and CI, and every COPY source was listed and confirmed to exist inside `apps/backend/`. What no one here can prove is how Railway resolves the config file and the Dockerfile path against a service's Root Directory — that takes one real build. If it comes back wrong, §7b's tell says which of the two moved.
 - **The image has never been built here.** No Docker daemon exists in the environment this was written in. Paths, stages, the non-root user, the entrypoint and the new `GIT_COMMIT_SHA` argument are `STATIC VERIFIED` by reading. CI's `docker` job builds it on every push — that job is where `BUILD VERIFIED` comes from, not from here.
 - **The interlock's logic is `STATIC VERIFIED` by execution, its wiring is `NOT TESTED`.** The decision script was extracted and run against twenty crafted inputs — blank variables, a trailing slash, a trailing dot, a port, uppercase, a renamed service, a custom domain over the production label, a mismatched pair, and six override permutations — and refused every one it should. What has never run is the *workflow* around it: that `vars.*` arrive as expected and that the environment-scope assertion behaves on a real `environment: staging`. The first run is the proof.
 - **`railway variables --set` is `NOT TESTED`.** The commit-stamping step is `continue-on-error` on purpose: a deploy must not be lost because a diagnostic label could not be written. If the CLI in use does not support that flag, the step warns and `commit` stays `null` until you set the variable by hand.

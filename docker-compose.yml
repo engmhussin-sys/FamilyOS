@@ -45,12 +45,14 @@ services:
   backend:
     profiles: ["full"]
     build:
-      # The build context is the REPOSITORY ROOT, matching
-      # apps/backend/Dockerfile's header, `.github/workflows/ci.yml` and the
-      # two deployment configs. One context everywhere: an image that builds
-      # here and an image that builds on the host are then the same image.
-      context: .
-      dockerfile: apps/backend/Dockerfile
+      # The build context is `apps/backend` — the backend is self-contained,
+      # and every COPY in its Dockerfile is relative to that directory.
+      # Matches apps/backend/Dockerfile's header, apps/backend/railway.json,
+      # render.yaml's dockerContext and `.github/workflows/ci.yml`. One context
+      # everywhere: an image that builds here and an image that builds on the
+      # host are then the same image.
+      context: apps/backend
+      dockerfile: Dockerfile
     container_name: afdc-backend
     restart: unless-stopped
     depends_on:

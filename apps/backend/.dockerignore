@@ -1,9 +1,49 @@
-node_modules
-dist
+# Build context filter for `docker build -f apps/backend/Dockerfile … apps/backend`
+# — the context is THIS directory (see the Dockerfile's header), so every
+# pattern here is relative to `apps/backend/`, not to the repository root.
+#
+# This file replaces the repository-root `.dockerignore`, which was written for
+# a root context that no longer exists. The entries that excluded sibling
+# deployables (`apps/parent-app`, `apps/child-app`, `apps/admin-dashboard`) are
+# gone: none of them is inside this context, so none of them can reach the
+# image, and a pattern that cannot match is a claim nobody can check.
+#
+# Deliberately a DENY list, not an allow list: `**` + re-inclusions is clever,
+# unreadable, and impossible to verify without a Docker daemon — which this
+# repository's authoring environment does not have.
+
+# Dependencies and build output — reinstalled/rebuilt inside the image. A host
+# node_modules leaking into the context is how a sandbox-specific binary (or a
+# broken Prisma shim) reaches a production image.
+**/node_modules
+**/dist
+**/build
+tsconfig.build.tsbuildinfo
+
+# Secrets and local state — never in a build context, never in a layer.
+# `.env.example` is documentation; the image needs neither it nor a real .env.
+**/.env
+**/.env.*
+**/*.pem
+**/*.jks
+**/*.keystore
+**/google-services.json
+
+# Local runtime artefacts
+**/dump.rdb
+.evidence-store
+**/coverage
+**/.nyc_output
+**/*.log
+
+# Editors and OS droppings
+.vscode
+.idea
+**/.DS_Store
+
+# Test material: the production image runs no tests. (`tsconfig.build.json`
+# already excludes `test` and `scripts` from the compile; this keeps them out
+# of the uploaded context as well — `scripts/` holds the CI guards, which are
+# ts-node executables that the application never imports.)
 test
-.env
-.env.*
-!.env.example
-*.log
-.git
-coverage
+scripts

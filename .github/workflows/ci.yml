@@ -165,10 +165,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build production image
-        # Context is the repository ROOT — see apps/backend/Dockerfile's
-        # header for why. The deploy hosts build it exactly this way, so a
-        # green job here is evidence about the image staging will run.
-        run: docker build -f apps/backend/Dockerfile -t afdc-backend:ci .
+        # Context is `apps/backend`, the same directory the deploy hosts use
+        # (apps/backend/railway.json, render.yaml's dockerContext,
+        # docker-compose.yml) — see apps/backend/Dockerfile's header for why
+        # the backend is self-contained. Because the context matches, a green
+        # job here is evidence about the image staging will actually run.
+        run: docker build -f apps/backend/Dockerfile -t afdc-backend:ci apps/backend
       # Not pushed anywhere from CI — this job's only job is to catch a
       # broken Dockerfile before it reaches a deploy step, per Sprint 9's
       # "Docker Production Readiness" requirement.

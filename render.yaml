@@ -1,8 +1,9 @@
 # =============================================================================
 # ABNY — STAGING ON RENDER. THE ALTERNATIVE, NOT THE PRIMARY.
 #
-# The primary host is Railway (`railway.json`); the argument for it, and the
-# argument for keeping this file, are both in DEPLOY_STAGING.md §2. In short:
+# The primary host is Railway (`apps/backend/railway.json`); the argument for
+# it, and the argument for keeping this file, are both in DEPLOY_STAGING.md
+# §2. In short:
 # this file exists so that "we are on Railway" is a choice with a stated exit,
 # not a lock-in. Everything ABNY needs from a host — a managed PostgreSQL, a
 # managed Redis-compatible store, a Docker build, a release step that runs
@@ -59,9 +60,14 @@ services:
     runtime: docker
     region: frankfurt
     dockerfilePath: ./apps/backend/Dockerfile
-    # The build context is the repository root, matching the Dockerfile's
-    # header, docker-compose.yml and CI.
-    dockerContext: .
+    # The build context is `apps/backend`, matching the Dockerfile's header,
+    # apps/backend/railway.json, docker-compose.yml and CI. Render resolves
+    # BOTH of these keys from the repository root, which is why the Dockerfile
+    # path keeps its `apps/backend/` prefix while the context names the same
+    # directory outright. Every COPY inside the Dockerfile is relative to
+    # dockerContext, never to dockerfilePath — that is the whole distinction
+    # the six failed Railway builds turned on.
+    dockerContext: ./apps/backend
     # /health/ready checks PostgreSQL and Redis and answers 503 when either is
     # down, so a container that cannot serve is never given traffic. It is
     # excluded from the `api/v1` prefix in the application itself, so this path

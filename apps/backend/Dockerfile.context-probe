@@ -1,50 +1,70 @@
 # =============================================================================
-# BUILD CONTEXT PROBE — a throwaway Dockerfile that answers one question.
+# BUILD CONTEXT PROBE — a throwaway Dockerfile that answers one question:
+# WHAT DID THE HOST ACTUALLY UPLOAD AS THE BUILD CONTEXT?
 #
 # WHY THIS EXISTS
 # ---------------
-# Two Railway builds of `apps/backend/Dockerfile` failed on 2026-08-20 with:
+# Six Railway builds of `apps/backend/Dockerfile` failed on 2026-08-20 with,
+# alternating between two paths:
 #
-#     failed to compute cache key: "/apps/backend/src": not found      (23:45:25)
-#     failed to compute cache key: "/apps/backend/prisma": not found   (23:45:12)
+#     failed to compute cache key: "/apps/backend/src": not found
+#     failed to compute cache key: "/apps/backend/prisma": not found
 #
 # A DIFFERENT path each time, and `COPY apps/backend/package.json …` was marked
-# [err] in both. That is not one missing directory — buildkit evaluates COPY
-# steps in parallel and reports whichever lost the race. **Every COPY from the
-# build context is failing**, which means the context does not contain `apps/`
-# at all.
+# [err] in all of them. That is not one missing directory — buildkit evaluates
+# COPY steps in parallel and reports whichever lost the race. **Every COPY from
+# the build context was failing.**
 #
-# What the same logs prove is working: `load build definition from
-# apps/backend/Dockerfile` and `load .dockerignore` both succeed. So Railway
-# IS reading `railway.json` and IS finding this directory. The Dockerfile is
-# not the problem; what got uploaded as the context is.
+# Meanwhile `load build definition from apps/backend/Dockerfile` and
+# `load .dockerignore` both SUCCEEDED. That combination is the tell, and it is
+# worth memorising: a Dockerfile that loads while every one of its COPYs misses
+# means **the Dockerfile and the context came from two different directories**.
+# Never a fault in the COPY lines.
 #
-# Guessing which of those it is costs a build per guess. This file costs one
-# build total and prints the answer.
+# THE LAYOUT HAS SINCE CHANGED, AND SO HAS THE EXPECTED ANSWER. The backend is
+# now built with `apps/backend` as the context: `package.json`, `prisma/` and
+# `src/` sit at the CONTEXT ROOT, and there is no `apps/` directory in the
+# context at all. Its config (`apps/backend/railway.json`) lives inside that
+# same directory. So the reading below is inverted from what it was before the
+# migration — read it carefully rather than from memory.
+#
+# Guessing costs one build per guess. This file costs one build total and
+# prints the answer.
 #
 # HOW TO USE IT
 # -------------
-#   1. Railway → service → Settings → Build → set the Dockerfile path to:
-#          apps/backend/Dockerfile.context-probe
+#   1. Railway → the BACKEND service → Settings → Build → set the Dockerfile
+#      path to:
+#          Dockerfile.context-probe
+#      (relative to the service's Root Directory, `apps/backend` — the same
+#      way `railway.json` names `Dockerfile`).
 #   2. Deploy. It is MEANT to fail at the last line — that is how the output
 #      stays in the log instead of being swallowed by a successful build.
 #   3. Read the `===` blocks in the build log.
-#   4. Set the Dockerfile path back to `apps/backend/Dockerfile`.
+#   4. Set the Dockerfile path back to `Dockerfile`.
 #
 # HOW TO READ THE OUTPUT
 # ----------------------
-#   `apps/` listed, `apps/backend/src` listed
-#       The context is correct and the real Dockerfile should work. Something
-#       else changed between probe and build — re-run the real one.
+#   `package.json`, `prisma/`, `src/` at the CONTEXT ROOT
+#       CORRECT — this is what the current Dockerfile expects. If the real
+#       build still fails, the cause is inside the build itself (npm, prisma,
+#       tsc), not the context. Read the failing step's own output.
 #
-#   `apps/` MISSING, but `src/` and `prisma/` at the context root
-#       Root Directory is still `apps/backend`. The context starts one level
-#       too deep. Fix: Settings → Source → Root Directory = `/`.
+#   An `apps/` directory at the context root
+#       The context is the REPOSITORY ROOT, one level too shallow. The service
+#       is not using the backend's own directory. Fix: Settings → Source →
+#       Root Directory = `apps/backend`, and Config-as-code =
+#       `railway.json` (which then resolves to `apps/backend/railway.json`).
 #
-#   `apps/` present but `apps/backend/src` MISSING
-#       The upload is filtered. Check `.dockerignore` in the repo Railway is
-#       building, and check that `apps/backend/src` is actually committed —
-#       `git ls-files apps/backend/src | head` on your machine.
+#   Context root has neither `apps/` nor `package.json`
+#       Wrong directory entirely — the Root Directory names some other
+#       service's folder. Check Settings → Source → Root Directory, and check
+#       you are looking at the BACKEND service and not a sibling.
+#
+#   `package.json` present but `src/` or `prisma/` MISSING
+#       The upload is filtered. Check `apps/backend/.dockerignore` (the deny
+#       list that applies to this context) and confirm the directories are
+#       actually committed — `git ls-files apps/backend/src | head`.
 #
 #   Context root nearly EMPTY
 #       Railway is building a different branch or a stale snapshot. Check
@@ -58,52 +78,57 @@
 
 FROM node:20-alpine
 
-# The one COPY that always succeeds. Whatever Railway uploaded lands here.
+# The one COPY that always succeeds. Whatever the host uploaded lands here.
 COPY . /ctx
 
 RUN set -eux; \
     echo ""; \
     echo "=================================================================="; \
-    echo "=== 1. BUILD CONTEXT ROOT — this is what Railway uploaded      ==="; \
+    echo "=== 1. BUILD CONTEXT ROOT — this is what the host uploaded     ==="; \
     echo "=================================================================="; \
     ls -la /ctx; \
     echo ""; \
     echo "=================================================================="; \
-    echo "=== 2. IS THERE AN apps/ DIRECTORY?                            ==="; \
+    echo "=== 2. THE PATHS THE REAL DOCKERFILE COPIES                    ==="; \
+    echo "===    (all PRESENT => the context is apps/backend: CORRECT)   ==="; \
     echo "=================================================================="; \
-    if [ -d /ctx/apps ]; then ls -la /ctx/apps; else echo ">>> NO apps/ IN CONTEXT — Root Directory is probably not '/'"; fi; \
-    echo ""; \
-    echo "=================================================================="; \
-    echo "=== 3. THE FOUR PATHS THE REAL DOCKERFILE COPIES               ==="; \
-    echo "=================================================================="; \
-    for p in apps/backend/package.json apps/backend/package-lock.json apps/backend/prisma apps/backend/src; do \
+    for p in package.json package-lock.json prisma src tsconfig.json tsconfig.build.json nest-cli.json; do \
       if [ -e "/ctx/$p" ]; then echo "PRESENT : $p"; else echo "MISSING : $p"; fi; \
     done; \
     echo ""; \
     echo "=================================================================="; \
-    echo "=== 4. SAME PATHS WITHOUT THE apps/backend PREFIX              ==="; \
-    echo "===    (all PRESENT here => Root Directory is apps/backend)    ==="; \
+    echo "=== 3. IS THIS THE REPOSITORY ROOT BY MISTAKE?                 ==="; \
     echo "=================================================================="; \
-    for p in package.json package-lock.json prisma src; do \
-      if [ -e "/ctx/$p" ]; then echo "PRESENT : $p"; else echo "MISSING : $p"; fi; \
-    done; \
+    if [ -d /ctx/apps ]; then \
+      echo ">>> apps/ IS IN THE CONTEXT — the context is the REPO ROOT, one level too shallow."; \
+      echo ">>> Fix: Settings -> Source -> Root Directory = apps/backend"; \
+      ls -la /ctx/apps; \
+    else \
+      echo "no apps/ directory — expected, the context should be apps/backend itself"; \
+    fi; \
+    echo ""; \
+    echo "=================================================================="; \
+    echo "=== 4. WHICH CONFIG IS IN THE CONTEXT?                         ==="; \
+    echo "=================================================================="; \
+    if [ -f /ctx/railway.json ]; then \
+      echo "railway.json present in the context — this is the backend's own config:"; \
+      cat /ctx/railway.json; \
+    else \
+      echo ">>> NO railway.json in the context. The service is reading a config from"; \
+      echo ">>> outside its own directory, or none at all. A config from outside the"; \
+      echo ">>> context is exactly what broke a sibling service in Aug 2026."; \
+    fi; \
+    if [ -f /ctx/.dockerignore ]; then echo ".dockerignore present (filters this context)"; else echo ".dockerignore ABSENT from the context"; fi; \
     echo ""; \
     echo "=================================================================="; \
     echo "=== 5. FILE COUNT AND DEPTH-2 TREE                             ==="; \
     echo "=================================================================="; \
     echo "files in context: $(find /ctx -type f | wc -l)"; \
-    find /ctx -maxdepth 2 -not -path '*/node_modules*' | sort | head -60; \
-    echo ""; \
-    echo "=================================================================="; \
-    echo "=== 6. WHICH COMMIT IS THIS?                                   ==="; \
-    echo "=================================================================="; \
-    if [ -f /ctx/CONVENTIONS.md ]; then echo "CONVENTIONS.md present — context is at or after commit 292"; \
-    else echo "CONVENTIONS.md ABSENT — the context predates commit 292, so Railway is building an OLDER push than you think"; fi; \
-    if [ -f /ctx/railway.json ]; then echo "railway.json present"; else echo "railway.json ABSENT from context root"; fi
+    find /ctx -maxdepth 2 -not -path '*/node_modules*' | sort | head -60
 
 # Deliberate failure. A probe that succeeds gets its log folded away by the
 # platform; a probe that fails leaves everything above on screen.
 RUN echo "" && \
-    echo "PROBE COMPLETE — read the six blocks above, then set the Dockerfile" && \
-    echo "path back to apps/backend/Dockerfile. This failure is intentional." && \
+    echo "PROBE COMPLETE — read the five blocks above, then set the Dockerfile" && \
+    echo "path back to Dockerfile. This failure is intentional." && \
     exit 1

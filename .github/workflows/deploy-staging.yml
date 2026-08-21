@@ -40,8 +40,8 @@ name: Deploy — staging
 #
 # So the `interlock` job below runs FIRST — before `contract`, before `ci`,
 # before the image is built, before `railway up`, and therefore before
-# `railway.json`'s `preDeployCommand` can run a single migration. It decides
-# from the VALUES THEMSELVES, not from a job name or a branch.
+# `apps/backend/railway.json`'s `preDeployCommand` can run a single migration.
+# It decides from the VALUES THEMSELVES, not from a job name or a branch.
 # -----------------------------------------------------------------------------
 # =============================================================================
 
@@ -346,7 +346,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in apps/backend/Dockerfile railway.json render.yaml .env.staging.example .dockerignore DEPLOY_STAGING.md; do
+          for f in apps/backend/Dockerfile apps/backend/railway.json apps/backend/.dockerignore render.yaml .env.staging.example DEPLOY_STAGING.md; do
             [ -f "$f" ] || { echo "::error::missing $f"; fail=1; }
           done
           python3 - <<'PY'
@@ -355,19 +355,51 @@ jobs:
 
           problems = []
 
-          railway = json.load(open('railway.json'))
+          # ONE BUILD CONTEXT, NAMED IN EVERY FILE THAT NAMES ONE. The backend
+          # is built with `apps/backend` as the context; a config that says
+          # otherwise is the failure mode this check exists to catch, because
+          # it is invisible until a host build dies on every COPY at once.
+          CONTEXT = 'apps/backend'
+
+          # Railway config lives INSIDE the context and is read by the service
+          # whose Root Directory is that directory, so its paths are relative
+          # to it — never to the repository root. A root-relative value here is
+          # what broke a sibling service in Aug 2026 (DEPLOY_STAGING.md §7b).
+          railway = json.load(open(f'{CONTEXT}/railway.json'))
           dockerfile = railway['build']['dockerfilePath']
-          if not os.path.isfile(dockerfile):
-              problems.append(f'railway.json dockerfilePath does not exist: {dockerfile}')
+          if os.path.isabs(dockerfile) or dockerfile.startswith('apps/'):
+              problems.append(f'{CONTEXT}/railway.json dockerfilePath must be relative to {CONTEXT}/, got: {dockerfile}')
+          if not os.path.isfile(os.path.join(CONTEXT, dockerfile)):
+              problems.append(f'{CONTEXT}/railway.json dockerfilePath does not exist: {CONTEXT}/{dockerfile}')
           if railway['deploy']['healthcheckPath'] not in ('/health/live', '/health/ready'):
               problems.append('railway.json healthcheckPath is not one of the two prefix-excluded health routes')
+          if os.path.exists('railway.json'):
+              problems.append('a repository-root railway.json is back: it is not service-specific and every Railway service in the project can pick it up')
 
+          # Render resolves both keys from the repository root, so the context
+          # is spelled out and the Dockerfile must sit inside it.
           render = yaml.safe_load(open('render.yaml'))
           web = [s for s in render['services'] if s.get('type') == 'web'][0]
-          if not os.path.isfile(web['dockerfilePath'].lstrip('./')):
+          render_dockerfile = os.path.normpath(web['dockerfilePath'])
+          render_context = os.path.normpath(web['dockerContext'])
+          if not os.path.isfile(render_dockerfile):
               problems.append(f"render.yaml dockerfilePath does not exist: {web['dockerfilePath']}")
+          if render_context != CONTEXT or not os.path.isdir(render_context):
+              problems.append(f"render.yaml dockerContext must be {CONTEXT} and must exist, got: {web['dockerContext']}")
+          if os.path.dirname(render_dockerfile) != render_context:
+              problems.append('render.yaml dockerfilePath is not inside its own dockerContext')
           if 'prisma migrate deploy' not in web.get('preDeployCommand', ''):
               problems.append('render.yaml no longer runs the migration before traffic')
+
+          # The two local builds must name the same context as the two hosts.
+          compose = yaml.safe_load(open('docker-compose.yml'))
+          compose_build = compose['services']['backend']['build']
+          if os.path.normpath(compose_build['context']) != CONTEXT:
+              problems.append(f"docker-compose.yml backend build context must be {CONTEXT}, got: {compose_build['context']}")
+          if compose_build['dockerfile'] != 'Dockerfile':
+              problems.append("docker-compose.yml backend dockerfile must be 'Dockerfile' (it is resolved inside the context)")
+          if f'-t afdc-backend:ci {CONTEXT}' not in open('.github/workflows/ci.yml').read():
+              problems.append(f'.github/workflows/ci.yml no longer builds the image with {CONTEXT} as the context')
 
           # The build stamp must stay wired end to end: the Dockerfile has to
           # accept the argument and surface it under the name the application
@@ -431,8 +463,8 @@ jobs:
       # So this asserts equality against what was actually approved. Any
       # difference at all — including a value that appears only here — stops
       # the run before the CLI is invoked, before the image is built on
-      # Railway, and therefore before `railway.json`'s `preDeployCommand` runs
-      # `prisma migrate deploy` against anything.
+      # Railway, and therefore before `apps/backend/railway.json`'s
+      # `preDeployCommand` runs `prisma migrate deploy` against anything.
       # -----------------------------------------------------------------------
       - name: The values in THIS job are the values the interlock approved
         env:
@@ -526,17 +558,21 @@ jobs:
           Set GIT_COMMIT_SHA by hand in the Railway service variables if you need the stamp."
           fi
 
-      - name: Deploy the repository root as the build context
+      - name: Upload this checkout and deploy the backend service
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_NAME: ${{ vars.RAILWAY_SERVICE_NAME }}
         run: |
-          # `railway up` uploads this checkout and builds it with the
-          # Dockerfile named in railway.json, from the repository root — the
-          # same context CI's docker job builds. The build, the migration
-          # (railway.json's preDeployCommand) and the health check all happen
-          # on Railway; `--detach` returns once the deployment is accepted,
-          # which is why the verification step below is not optional.
+          # `railway up` uploads this checkout. The SERVICE's Root Directory
+          # (`apps/backend`) is what selects the build context inside that
+          # upload, and `apps/backend/railway.json` — the config that lives in
+          # the context — names the Dockerfile beside it. That is the same
+          # context CI's docker job builds. If the Root Directory is not
+          # `apps/backend`, the build log shows the Dockerfile loading while
+          # every COPY fails; see DEPLOY_STAGING.md §7b. The build, the
+          # migration (railway.json's preDeployCommand) and the health check
+          # all happen on Railway; `--detach` returns once the deployment is
+          # accepted, which is why the verification step below is not optional.
           #
           # By the time this line runs, the interlock has passed twice: once on
           # the repository-scoped values, once on the values visible inside
