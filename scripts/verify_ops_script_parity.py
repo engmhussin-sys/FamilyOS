@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-THE TWO HALVES OF A DOCTOR MUST NOT DRIFT.
+THE TWO HALVES OF AN OPS SCRIPT MUST NOT DRIFT.
 
-`scripts/deploy-doctor.sh` and `scripts/deploy-doctor.ps1` answer the same
-question on two operating systems, and only one of them can be executed in this
-project's sandbox — there is no PowerShell here. So the .sh half is RUNTIME
-VERIFIED against a really-listening application (see
-apps/backend/test/system-diagnostics/deploy-doctor.e2e.spec.ts) and the .ps1
-half is, at best, read carefully.
+Two scripts in this repository ship as a bash/PowerShell pair — the deploy
+doctor and the database baseliner — and only the bash half of either can be
+EXECUTED in this project's sandbox, because there is no PowerShell here. Both
+bash halves are RUNTIME VERIFIED by jest suites that run the real script
+(`test/system-diagnostics/deploy-doctor.e2e.spec.ts`,
+`test/deploy/db-baseline.spec.ts`); both PowerShell halves are, at best, read
+carefully.
 
 That asymmetry is exactly how a twin script rots: a check gets added, fixed or
 regraded on the half someone can run, and the other half keeps answering last
@@ -25,6 +26,12 @@ interpreter:
      on Windows is a gate that does not gate on Windows.
   3. THE TERMINAL VERDICT TOKENS are the same literals in both, because a
      pipeline gating on `| tail -1` compares against a string.
+
+For `db-baseline` there are no graded rows to compare, so the comparison is
+its VERDICT AND REFUSAL TOKENS: both halves must be able to say "safe",
+"complete" and "blocked", and must carry the same refusal wording an operator
+will search for. A PowerShell baseliner that cannot print BLOCKED is a
+baseliner that cannot refuse.
 
 It deliberately does NOT try to parse PowerShell. A half-built parser that
 silently matched nothing would be a green check measuring nothing at all, which
@@ -44,6 +51,21 @@ PS = REPO_ROOT / "scripts" / "deploy-doctor.ps1"
 
 VERDICT_OK = "DEPLOY VERIFIED"
 VERDICT_BAD = "DO NOT SHIP"
+
+# The second pair. It has no graded rows, so what is compared is the set of
+# literals an operator or a pipeline keys off — including the refusal wording,
+# because a half that cannot print BLOCKED is a half that cannot refuse.
+BASELINE_SH = REPO_ROOT / "scripts" / "db-baseline.sh"
+BASELINE_PS = REPO_ROOT / "scripts" / "db-baseline.ps1"
+BASELINE_TOKENS = (
+    "SAFE TO BASELINE",
+    "BASELINE COMPLETE",
+    "BLOCKED",
+    "DOES NOT MATCH",
+    "disagree",
+    "DATABASE_URL is not set",
+    "failed to run",
+)
 
 # bash:  `pass liveness "..."`, and also `200) pass liveness "..." ;;` inside a
 # case, and `|| { block toolchain "..."; }` — so the row may begin a line or
@@ -128,6 +150,15 @@ def main() -> int:
             if token not in text:
                 problems.append(f"{name} never prints the verdict token '{token}'")
 
+    for path in (BASELINE_SH, BASELINE_PS):
+        if not path.exists():
+            problems.append(f"MISSING: {path.relative_to(REPO_ROOT)}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for token in BASELINE_TOKENS:
+            if token not in text:
+                problems.append(f"{path.name} never prints '{token}'")
+
     if problems:
         print("DOCTOR HALVES DISAGREE")
         for problem in problems:
@@ -140,6 +171,7 @@ def main() -> int:
         print(f"  {check_id:<18} {'/'.join(sorted(sh[check_id]))}")
     for check_id in exempted:
         print(f"  {check_id:<18} one-sided, exempted: {EXEMPT[check_id]}")
+    print(f"db-baseline parity OK — both halves carry all {len(BASELINE_TOKENS)} verdict and refusal tokens.")
     return 0
 
 
