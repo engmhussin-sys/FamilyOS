@@ -41,6 +41,15 @@ const OPERATIONS_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
   { to: '/platform/plans', labelKey: 'catalogue.nav' },
   { to: '/platform/support', labelKey: 'support.nav' },
   { to: '/notifications/decisions', labelKey: 'notifications.decisions.nav' },
+  // The runtime block, filed after the register and the catalogue because an
+  // operator reaches for them in an incident rather than in a day's work —
+  // and within it, ordered by how loudly a failure here is felt: a scheduled
+  // job that never ran, then an event that never got delivered, then a
+  // notification that never arrived, then what the model cost.
+  { to: '/platform/jobs', labelKey: 'jobs.nav' },
+  { to: '/platform/outbox', labelKey: 'outbox.nav' },
+  { to: '/platform/deliveries', labelKey: 'deliveries.nav' },
+  { to: '/platform/ai-usage', labelKey: 'aiUsage.nav' },
 ];
 
 export function DashboardShell({ children }: { children: ReactNode }) {

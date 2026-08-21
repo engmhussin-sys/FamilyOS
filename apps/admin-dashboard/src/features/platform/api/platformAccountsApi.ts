@@ -93,6 +93,26 @@ export const platformAccountsApi = {
     return adminPost<GrantResult>('/system/billing/grants/features', input);
   },
 
+  /**
+   * GRANT A WHOLE TIER — `POST /system/billing/grants`, the route that has been
+   * built, guarded and audited since the operator console landed and that no
+   * button in this dashboard has ever called.
+   *
+   * It grants whatever the TIER says, read from `plan_definitions`, which is
+   * the difference that matters: a feature grant comps six named keys, while
+   * this comps «PREMIUM, as PREMIUM is currently defined», and follows the
+   * catalogue if the catalogue is later edited.
+   *
+   * IT FAILS WITH A NAMED CODE ON AN EMPTY CATALOGUE. `PLAN_CATALOGUE_EMPTY`
+   * (409) is not an error to smooth over — it is the backend saying «this
+   * platform has not decided what PREMIUM includes». The panel surfaces it as
+   * itself and points at the catalogue screen, because granting a tier that
+   * lists no features would write rows that unlock nothing and look successful.
+   */
+  grantPlan(input: { email: string; planTier: string; days: number; reason: string }): Promise<GrantResult> {
+    return adminPost<GrantResult>('/system/billing/grants', input);
+  },
+
   revoke(input: { email: string; reason: string }): Promise<{ familyId: string; revokedCount: number }> {
     return adminPost<{ familyId: string; revokedCount: number }>('/system/billing/grants/revoke', input);
   },

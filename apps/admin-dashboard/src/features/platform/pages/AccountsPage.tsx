@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 import { AsyncBoundary } from '../../../shared/components/AsyncState';
+import { ConfirmDialog } from '../../../shared/components/ConfirmDialog';
+import { ApiError } from '../../../shared/lib/httpClient';
 import {
   ENTITLEMENT_KEYS,
   householdApi,
@@ -10,6 +13,17 @@ import {
   type AccountRow,
   type EntitlementKey,
 } from '../api/platformAccountsApi';
+
+/**
+ * The tiers an operator may comp, mirroring `GRANTABLE_TIERS` in
+ * `apps/backend/src/modules/billing/presentation/dto/operator-grant.dto.ts`.
+ * `FREE` is absent there and absent here for the same reason: granting the free
+ * tier is not a grant, it is what a household already has, and offering it
+ * invites a "downgrade" with a tool that cannot downgrade. The way to end a
+ * comp is to revoke it.
+ */
+const GRANTABLE_TIERS = ['BASIC', 'PREMIUM', 'FAMILY', 'ENTERPRISE'] as const;
+type GrantableTier = (typeof GRANTABLE_TIERS)[number];
 
 /**
  * ===========================================================================
@@ -205,11 +219,23 @@ export function AccountsPage() {
 }
 
 /**
- * THE GRANT PANEL. Named features rather than a plan tier, deliberately: the
- * tier path reads `plan_definitions`, which no migration seeds, so on a fresh
- * environment granting a tier writes nothing and the backend answers
- * `PLAN_CATALOGUE_EMPTY`. The six keys are a closed vocabulary in code and work
- * everywhere.
+ * THE GRANT PANEL — two grants, and the reason both exist.
+ *
+ * BY TIER (`POST /system/billing/grants`) comps «PREMIUM, as PREMIUM is
+ * currently defined», reading `plan_definitions`. It is the right grant when
+ * the catalogue is filled in, because it follows the catalogue: edit the tier
+ * later and the household follows.
+ *
+ * BY FEATURE (`POST /system/billing/grants/features`) comps six named keys from
+ * a closed vocabulary in code, and works on a database whose catalogue is
+ * empty — which is every database built from this repository's migrations,
+ * because nothing seeds that table.
+ *
+ * THE TIER ROUTE WAS BUILT, GUARDED AND AUDITED AND HAD NO BUTTON until now;
+ * the feature route was the only one wired. Offering both, with the
+ * `PLAN_CATALOGUE_EMPTY` refusal surfaced as itself rather than smoothed into
+ * a generic failure, is what makes the empty catalogue visible at the moment it
+ * actually costs something.
  */
 function GrantPanel({
   email,
@@ -223,10 +249,14 @@ function GrantPanel({
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const [mode, setMode] = useState<'FEATURES' | 'PLAN'>('FEATURES');
   const [features, setFeatures] = useState<EntitlementKey[]>(['multiple_children']);
+  const [planTier, setPlanTier] = useState<GrantableTier>('PREMIUM');
   const [days, setDays] = useState(30);
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState<string | null>(null);
+  const [catalogueEmpty, setCatalogueEmpty] = useState(false);
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false);
 
   const state = useQuery({
     queryKey: ['platform-entitlements', email],
@@ -234,23 +264,38 @@ function GrantPanel({
   });
 
   const grant = useMutation({
-    mutationFn: () => platformAccountsApi.grantFeatures({ email, features, planTier: 'PREMIUM', days, reason }),
+    mutationFn: () =>
+      mode === 'PLAN'
+        ? platformAccountsApi.grantPlan({ email, planTier, days, reason })
+        : platformAccountsApi.grantFeatures({ email, features, planTier, days, reason }),
     onSuccess: (result) => {
+      setCatalogueEmpty(false);
       setMessage(`${t('grants.granted')} — ${new Date(result.validUntil).toLocaleDateString()}`);
       state.refetch();
       onChanged();
     },
-    onError: (error: Error) => setMessage(error.message),
+    onError: (error: Error) => {
+      // The one refusal worth naming rather than displaying raw. It means the
+      // platform has not decided what this tier includes, and the remedy is a
+      // different screen — so the panel says which one.
+      const isEmptyCatalogue = error instanceof ApiError && error.code === 'PLAN_CATALOGUE_EMPTY';
+      setCatalogueEmpty(isEmptyCatalogue);
+      setMessage(isEmptyCatalogue ? t('grants.catalogueEmpty') : error.message);
+    },
   });
 
   const revoke = useMutation({
     mutationFn: () => platformAccountsApi.revoke({ email, reason }),
     onSuccess: (result) => {
+      setConfirmingRevoke(false);
       setMessage(`${t('grants.revoked')} — ${result.revokedCount}`);
       state.refetch();
       onChanged();
     },
-    onError: (error: Error) => setMessage(error.message),
+    onError: (error: Error) => {
+      setConfirmingRevoke(false);
+      setMessage(error.message);
+    },
   });
 
   // Both buttons need a reason: it is what the audit row carries, and an
@@ -290,22 +335,58 @@ function GrantPanel({
       </section>
 
       <fieldset>
-        <legend>{t('grants.features')}</legend>
-        {ENTITLEMENT_KEYS.map((key) => (
-          <label key={key}>
-            <input
-              type="checkbox"
-              checked={features.includes(key)}
-              onChange={(event) =>
-                setFeatures((current) =>
-                  event.target.checked ? [...current, key] : current.filter((item) => item !== key),
-                )
-              }
-            />
-            {key}
-          </label>
-        ))}
+        <legend>{t('grants.mode')}</legend>
+        <label>
+          <input
+            type="radio"
+            name="grant-mode"
+            checked={mode === 'FEATURES'}
+            onChange={() => setMode('FEATURES')}
+          />
+          {t('grants.modeFeatures')}
+        </label>
+        <label>
+          <input type="radio" name="grant-mode" checked={mode === 'PLAN'} onChange={() => setMode('PLAN')} />
+          {t('grants.modePlan')}
+        </label>
+        <p>{mode === 'PLAN' ? t('grants.modePlanHint') : t('grants.modeFeaturesHint')}</p>
       </fieldset>
+
+      {/* The tier is asked for in BOTH modes, because `entitlements.plan_tier`
+          is not nullable and a comp should say which tier it stood in for —
+          even when the grant is by named feature and the tier decides nothing. */}
+      <label htmlFor="grant-tier">{t('grants.planTier')}</label>
+      <select
+        id="grant-tier"
+        value={planTier}
+        onChange={(event) => setPlanTier(event.target.value as GrantableTier)}
+      >
+        {GRANTABLE_TIERS.map((tier) => (
+          <option key={tier} value={tier}>
+            {tier}
+          </option>
+        ))}
+      </select>
+
+      {mode === 'FEATURES' ? (
+        <fieldset>
+          <legend>{t('grants.features')}</legend>
+          {ENTITLEMENT_KEYS.map((key) => (
+            <label key={key}>
+              <input
+                type="checkbox"
+                checked={features.includes(key)}
+                onChange={(event) =>
+                  setFeatures((current) =>
+                    event.target.checked ? [...current, key] : current.filter((item) => item !== key),
+                  )
+                }
+              />
+              {key}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
 
       <label htmlFor="grant-days">{t('grants.days')}</label>
       <input
@@ -321,23 +402,46 @@ function GrantPanel({
       <input id="grant-reason" value={reason} onChange={(event) => setReason(event.target.value)} />
       <p>{t('grants.reasonHint')}</p>
 
-      <button type="button" disabled={!canSubmit || features.length === 0} onClick={() => grant.mutate()}>
-        {t('grants.grant')}
-      </button>
       <button
         type="button"
-        disabled={!canSubmit}
-        onClick={() => {
-          // Revoking ends EVERY entitlement on the household, including one
-          // from a real payment. The confirmation says so rather than asking
-          // "are you sure" about an action whose blast radius is invisible.
-          if (window.confirm(t('grants.revokeConfirm'))) revoke.mutate();
-        }}
+        disabled={!canSubmit || (mode === 'FEATURES' && features.length === 0)}
+        onClick={() => grant.mutate()}
       >
+        {t('grants.grant')}
+      </button>
+      <button type="button" disabled={!canSubmit} onClick={() => setConfirmingRevoke(true)}>
         {t('grants.revoke')}
       </button>
 
       {message ? <p role="status">{message}</p> : null}
+      {/* The remedy, named, at the moment the refusal happens. A 409 that only
+          says "conflict" leaves an operator retrying the same button. */}
+      {catalogueEmpty ? (
+        <p role="alert">
+          <Link to="/platform/plans">{t('grants.catalogueEmptyAction')}</Link>
+        </p>
+      ) : null}
+
+      {/* Revoking ends EVERY entitlement on the household, including one from a
+          real payment. The dialog says so — `window.confirm` could not say it
+          in Arabic, in the page's direction, or at that length. */}
+      <ConfirmDialog
+        open={confirmingRevoke}
+        destructive
+        title={t('grants.revoke')}
+        body={
+          <>
+            <p>{t('grants.revokeConfirm')}</p>
+            <p className="mt-2" dir="ltr">
+              {email}
+            </p>
+          </>
+        }
+        confirmLabel={t('grants.revoke')}
+        isPending={revoke.isPending}
+        onCancel={() => setConfirmingRevoke(false)}
+        onConfirm={() => revoke.mutate()}
+      />
     </aside>
   );
 }
