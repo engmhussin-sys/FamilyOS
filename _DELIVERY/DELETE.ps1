@@ -1,9 +1,3 @@
-# Removals for: HEAD~2..HEAD
+# Removals for: HEAD~1..HEAD
 # Run from the project root BEFORE extracting the zip.
-@(
-  ".dockerignore",
-  "railway.json"
-) | ForEach-Object {
-  if (Test-Path $_) { Remove-Item $_ -Force; "removed : $_" }
-  else { "absent (fine) : $_" }
-}
+"No files were deleted in this delivery. Nothing to do."
