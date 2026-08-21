@@ -225,6 +225,23 @@ What happens, in order:
 
 Run all four. Nothing below is "probably fine", and a green workflow run only proves the first one.
 
+### 5.0 — The one command that runs 5.1 and 5.2 for you
+
+```bash
+scripts/deploy-doctor.sh   https://<STAGING_HOST> --key "$INTERNAL_ADMIN_API_KEY"   # macOS / Linux / CI
+```
+```powershell
+.\scripts\deploy-doctor.ps1 https://<STAGING_HOST> -Key $env:INTERNAL_ADMIN_API_KEY  # Windows
+```
+
+Read-only. Prints `PASS` / `WARN` / `BLOCKED` per check and, when it is not `PASS`, one actionable line. Its last line is `DEPLOY VERIFIED` or `DO NOT SHIP`, so `| tail -1` is a usable gate.
+
+**It answers one thing the manual curls below cannot: WHICH BUILD is serving, without a key.** `GET /api/v1/system/diagnostics` is behind `InternalAdminGuard` in the current code and was anonymous before it, so an unauthenticated call is a build fingerprint — `401` is current code, and `200`/`500`/`503` all mean an older build whose operator console is open to the internet. Measured on staging on 2026-08-21: `500` and `503`. See `حالة-النشر.md`.
+
+**And one the deploy log cannot: WHICH SCHEMA.** `schema.appliedCount` / `schema.latestName` / `schema.unfinishedCount` come from `_prisma_migrations` on every call, so "the `preDeployCommand` never ran" and "a migration died half-way" both become rows in the output instead of a 500 three days later. `/health/ready` cannot see this — it asks whether Postgres answers `SELECT 1`, which a schema thirty migrations behind answers just as cheerfully.
+
+The manual steps below remain the reference for what each check means, and 5.3/5.4 are not covered by the doctor.
+
 ### 5.1 — The health probes
 
 ```bash
