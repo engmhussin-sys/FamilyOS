@@ -76,3 +76,9 @@ scripts/__pycache__/
 # Redis snapshot artefact - never a source file
 dump.rdb
 **/dump.rdb
+
+# Credentials for throwaway test households, written by
+# scripts/seed-test-accounts.{sh,ps1}. The accounts are disposable; the habit
+# of not committing a password is not. The script says so in its own output,
+# and this line is what makes saying so true.
+TEST-ACCOUNTS.txt

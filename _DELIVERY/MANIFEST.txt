@@ -1,9 +1,10 @@
-CATCH-UP — computed against github.com/engmhussin-sys/FamilyOS @ main (fd8273e, "23")
+TEST ACCOUNTS — computed against origin/main
 
-MODIFIED  apps/backend/scripts/predeploy.sh                 (reports what the database contains)
-MODIFIED  apps/backend/scripts/predeploy-schema-probe.js     (row counts for families/users/children)
-MODIFIED  apps/backend/test/deploy/predeploy.spec.ts         (the three contents branches)
+NEW       scripts/seed-test-accounts.ps1     <- run this one on Windows
+NEW       scripts/seed-test-accounts.sh
+NEW       apps/backend/test/deploy/seed-test-accounts.e2e.spec.ts
+MODIFIED  scripts/verify_ops_script_parity.py  (guards the new pair)
+MODIFIED  .gitignore                          (TEST-ACCOUNTS.txt)
+MODIFIED  apps/backend/scripts/predeploy.sh    (the refusal now names the non-destructive option)
 
-Nothing to delete. Optional: this only improves the LOG. The decision it
-supports can be made right now from the numbers already measured:
-  57 base tables, 0 tenant_isolation policies.
+Nothing to delete.
