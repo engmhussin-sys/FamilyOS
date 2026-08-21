@@ -1,6 +1,7 @@
 import { Controller, Get, HttpStatus, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { MigrationStatusService } from '../../application/migration-status.service';
 import { ReadinessCheckService } from '../../application/readiness-check.service';
 import { ConfigurationService } from '../../../../config/configuration.service';
 import { FeatureFlagService } from '../../../feature-flags/application/feature-flag.service';
@@ -58,6 +59,7 @@ export class SystemDiagnosticsController {
     private readonly readinessCheck: ReadinessCheckService,
     private readonly configurationService: ConfigurationService,
     private readonly featureFlagService: FeatureFlagService,
+    private readonly migrationStatus: MigrationStatusService,
   ) {}
 
   @Get('readiness')
@@ -88,7 +90,10 @@ export class SystemDiagnosticsController {
   async diagnostics() {
     const memoryUsage = process.memoryUsage();
     const validationReport = this.configurationService.getValidationReport();
-    const flags = await this.featureFlagService.listAll();
+    const [flags, schema] = await Promise.all([
+      this.featureFlagService.listAll(),
+      this.migrationStatus.read(),
+    ]);
 
     return {
       version: process.env.npm_package_version ?? '0.1.0',
@@ -97,6 +102,14 @@ export class SystemDiagnosticsController {
       // set in this sandbox, honestly reported as null rather than guessed.
       commit: process.env.GIT_COMMIT_SHA ?? null,
       environment: process.env.NODE_ENV ?? 'development',
+      /**
+       * WHICH SCHEMA THIS BUILD IS ACTUALLY SITTING ON. `commit` above names
+       * the code; without this, nothing named the database underneath it, and
+       * a deploy whose `preDeployCommand` never ran looked identical to one
+       * whose did. Read from `_prisma_migrations` on every call — see
+       * MigrationStatusService for why no expected count is compiled in here.
+       */
+      schema,
       uptimeSeconds: Math.floor(process.uptime()),
       memory: {
         rssMb: Math.round(memoryUsage.rss / 1024 / 1024),

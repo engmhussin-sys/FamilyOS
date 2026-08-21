@@ -31,11 +31,20 @@ export function integrationDatabaseUrl(): string | undefined {
   return process.env.INTEGRATION_DATABASE_URL;
 }
 
-export function createTestPrisma(): TestPrismaHandle {
+/**
+ * `overrideUrl` exists for ONE case: a suite that must observe a database
+ * OTHER than the configured integration one — `migration-status.service.spec`
+ * points a second client at a deliberately empty database to prove the
+ * "`_prisma_migrations` is missing" branch is reported and not thrown. It is
+ * an override and not a new function so that both callers keep sharing the
+ * native/WASM mode selection below; a private copy of these thirty lines in
+ * one spec is exactly the duplication this helper was extracted to end.
+ */
+export function createTestPrisma(overrideUrl?: string): TestPrismaHandle {
   // INTEGRATION_DATABASE_URL is the deliberate opt-in for the tenancy proofs;
   // DATABASE_URL is the fallback for the pre-existing schema suite, which has
   // always run against whatever database the developer configured.
-  const url = process.env.INTEGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
+  const url = overrideUrl ?? process.env.INTEGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!url) throw new Error('INTEGRATION_DATABASE_URL or DATABASE_URL is required for this suite.');
 
   if (process.env.PRISMA_DRIVER_ADAPTER === 'pg') {

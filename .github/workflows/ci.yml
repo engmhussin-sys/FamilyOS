@@ -54,6 +54,18 @@ jobs:
       # proof would be silently skipped in CI.
       INTEGRATION_DATABASE_URL: postgresql://afdc:afdc_ci_password@localhost:5432/afdc_ci?schema=public
       INTEGRATION_REDIS_URL: redis://localhost:6379
+      # NOT A SECRET AND NOT PRETENDING TO BE ONE: a throwaway value for a
+      # throwaway container, named so that nobody can mistake it for the
+      # operator key of a real environment (which lives only in Railway's
+      # variables and is never committed — CONVENTIONS.md C-2).
+      #
+      # It is set because two suites are OTHERWISE VACUOUS without it.
+      # `system-diagnostics-anonymous.e2e` proves the operator surface still
+      # ANSWERS the right key — a guard nobody can get past is a deletion, not
+      # a fix — and `deploy-doctor.e2e` needs a key to reach the rows that read
+      # the deployed schema. With the variable unset, the guard fails closed and
+      # both suites can only ever prove the refusal half.
+      INTERNAL_ADMIN_API_KEY: ci-only-internal-admin-key-not-a-real-secret
     defaults:
       run:
         working-directory: apps/backend
@@ -89,6 +101,17 @@ jobs:
       # header for why that is not statically decidable here.
       - name: Event-emission static guard
         run: npm run ci:event-emission
+      # BLOCKING. `scripts/deploy-doctor.sh` and its PowerShell twin decide
+      # whether a deploy is believed, and only the bash half can be EXECUTED
+      # where this project is developed — there is no PowerShell in that
+      # sandbox, so the .ps1 half is read and never run. The halves are
+      # therefore compared structurally: same check ids, same possible grades,
+      # same verdict tokens. A gate that gates on Linux and shrugs on Windows
+      # is the exact failure this step exists to prevent, and Windows is the
+      # machine that actually ships this project.
+      - name: Deploy-doctor halves agree (bash / PowerShell)
+        working-directory: .
+        run: python3 scripts/verify_doctor_parity.py
       - name: Unit + DI-graph tests
         run: npx jest --testPathIgnorePatterns=test/database --testPathIgnorePatterns=test/tenancy --testPathIgnorePatterns=test/events --coverage
       - name: Database integration test

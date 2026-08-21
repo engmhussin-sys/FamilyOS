@@ -1,8 +1,8 @@
 ABNY — DELIVERY MANIFEST
 range   : HEAD~1..HEAD
-head    : a3df535152e984aa8c5553852eba1c2b8adf87f6
+head    : 5e32e7bde86d245b6c39c5e25152bc2c90f95dbe
 branch  : abny/sprint-f1-unblock
-files   : 2 changed, 0 to delete
+files   : 12 changed, 0 to delete
 
 HOW TO APPLY
   1. Run _DELIVERY/DELETE.ps1 (Windows) or DELETE.sh — ONLY if it lists files.
@@ -11,10 +11,20 @@ HOW TO APPLY
   3. Delete the _DELIVERY folder. It is notes, not source.
 
 CHANGED (extract these)
-M	احذف-الملفات-القديمة.md
-M	رفع-الكود.md
+M	.github/workflows/ci.yml
+M	DEPLOY_STAGING.md
+A	apps/backend/src/modules/system-diagnostics/application/migration-status.service.ts
+M	apps/backend/src/modules/system-diagnostics/presentation/controllers/system-diagnostics.controller.ts
+M	apps/backend/src/modules/system-diagnostics/system-diagnostics.module.ts
+A	apps/backend/test/system-diagnostics/deploy-doctor.e2e.spec.ts
+A	apps/backend/test/system-diagnostics/migration-status.service.spec.ts
+M	apps/backend/test/tenancy/prisma-test-client.ts
+A	scripts/deploy-doctor.ps1
+A	scripts/deploy-doctor.sh
+A	scripts/verify_doctor_parity.py
+A	حالة-النشر.md
 
 DELETED — none. Nothing to remove for this delivery.
 
 COMMITS
-a3df535 docs: the local check needs prisma generate — omitting it costs 290 scary errors
+5e32e7b deploy: measure which build and which schema a host is actually running
