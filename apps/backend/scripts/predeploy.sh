@@ -159,14 +159,25 @@ if [ "$POLICIES" -eq 0 ]; then
 [predeploy] would never be created on this host. Nothing would report it. The
 [predeploy] application would work.
 [predeploy]
-[predeploy] So nothing was written. Two honest ways forward:
+[predeploy] So nothing was written. Read the `contents:` line above, then:
 [predeploy]
-[predeploy]   NO REAL DATA HERE (staging, scratch):
+[predeploy]   BEST, AND IT DESTROYS NOTHING — point this service at a NEW,
+[predeploy]   EMPTY database and leave this one exactly where it is:
+[predeploy]     1. add a new Postgres to this environment
+[predeploy]     2. set DATABASE_URL to a reference to it
+[predeploy]     3. redeploy
+[predeploy]   An empty database never raises P3005 at all: `migrate deploy`
+[predeploy]   builds it from the full history — every table, every RLS policy,
+[predeploy]   and a ledger Prisma writes itself. The database being refused
+[predeploy]   here stays untouched and readable, so this choice is reversible
+[predeploy]   and needs no answer about what it holds.
+[predeploy]
+[predeploy]   IF YOU ARE CERTAIN NOTHING HERE MATTERS (scratch only):
 [predeploy]     DROP SCHEMA public CASCADE; CREATE SCHEMA public;
-[predeploy]     then redeploy — `migrate deploy` builds it from empty, ledger
-[predeploy]     and policies and all, and P3005 can never recur here.
+[predeploy]     Same end state, but it is destructive and irreversible. Prefer
+[predeploy]     the option above unless you want the old rows gone.
 [predeploy]
-[predeploy]   REAL HOUSEHOLDS HERE (production):
+[predeploy]   IF THIS DATABASE HOLDS DATA YOU MUST CARRY FORWARD:
 [predeploy]     Do not reset and do not baseline. The migrations that were
 [predeploy]     never run have to be applied deliberately, in order, with the
 [predeploy]     data in place. Send this log for review.
