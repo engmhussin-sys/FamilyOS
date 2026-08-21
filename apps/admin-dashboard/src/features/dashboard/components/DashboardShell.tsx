@@ -39,6 +39,7 @@ const OPERATIONS_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
   // an incident is when hunting through a rail costs the most.
   { to: '/platform/health', labelKey: 'health.nav' },
   { to: '/platform/plans', labelKey: 'catalogue.nav' },
+  { to: '/platform/support', labelKey: 'support.nav' },
   { to: '/notifications/decisions', labelKey: 'notifications.decisions.nav' },
 ];
 

@@ -120,10 +120,38 @@ for (const file of files) {
  * reason. It is compared against the verified token and answers 404 on a
  * mismatch (see LifeIntelligenceController.getFamilyStore).
  */
-const CLIENT_FAMILY_ID_ALLOWED = new Map<string, string>([
+/**
+ * A `:familyId` path parameter is allowed in exactly two situations, and each
+ * entry below has to say which one it is. `mustContain`, where present, is what
+ * turns the stated reason into a CHECKED FACT: an entry claiming to be an
+ * operator surface is only accepted while the file really does carry
+ * `InternalAdminGuard`, so removing the guard breaks the build instead of
+ * silently converting an operator route into an open one.
+ *
+ *   1. TENANT ROUTE — the param is compared against the verified token and
+ *      answers 404 on mismatch. It is never used as a query key.
+ *   2. OPERATOR ROUTE — there is no token to compare against, because the
+ *      caller is the platform operator and has no family at all. The route
+ *      reads across the tenant boundary on purpose, is behind
+ *      `InternalAdminGuard`, and says so with `@SystemRoute('ADMIN_CONSOLE')`.
+ *
+ * Both are per-file, hand-written and reviewable. Nothing here is inferred.
+ */
+const CLIENT_FAMILY_ID_ALLOWED = new Map<string, { reason: string; mustContain?: string }>([
   [
     'src/modules/life-intelligence/presentation/controllers/life-intelligence.controller.ts',
-    'GET /life-intelligence/rewards/store/:familyId — legacy path shape. The param is compared to the verified token and answers 404 on mismatch; it is never used as a query key.',
+    {
+      reason:
+        'TENANT ROUTE. GET /life-intelligence/rewards/store/:familyId — legacy path shape. The param is compared to the verified token and answers 404 on mismatch; it is never used as a query key.',
+    },
+  ],
+  [
+    'src/modules/system-diagnostics/presentation/controllers/accounts-console.controller.ts',
+    {
+      reason:
+        'OPERATOR ROUTE. GET /system/accounts/:familyId is the platform owner household register: the caller is the operator, holds no token and belongs to no family, so there is nothing to compare the param against — reading a family the caller does not belong to IS the question being asked. Behind InternalAdminGuard and declared ADMIN_CONSOLE.',
+      mustContain: 'InternalAdminGuard',
+    },
   ],
 ]);
 
@@ -141,13 +169,25 @@ for (const file of files) {
       });
     }
 
-    if (/@Param\(\s*['"]familyId['"]/.test(line) && !CLIENT_FAMILY_ID_ALLOWED.has(r)) {
-      violations.push({
-        ...at,
-        rule: 'RULE 3 (client-supplied tenant)',
-        detail:
-          'A familyId path param is only acceptable when it is compared against the token and answers 404 on mismatch. Add the file to CLIENT_FAMILY_ID_ALLOWED with that reasoning if so.',
-      });
+    if (/@Param\(\s*['"]familyId['"]/.test(line)) {
+      const allowance = CLIENT_FAMILY_ID_ALLOWED.get(r);
+      if (!allowance) {
+        violations.push({
+          ...at,
+          rule: 'RULE 3 (client-supplied tenant)',
+          detail:
+            'A familyId path param is acceptable only when (1) it is compared against the verified token and answers 404 on mismatch, or (2) the route is an operator surface behind InternalAdminGuard with @SystemRoute(ADMIN_CONSOLE), where there is no token to compare against. Add the file to CLIENT_FAMILY_ID_ALLOWED with which one it is.',
+        });
+      } else if (allowance.mustContain && !lines.join('\n').includes(allowance.mustContain)) {
+        // The allowance claimed something about this file. It is checked, not
+        // believed: an operator exemption that outlives its guard is an open
+        // cross-tenant route with a comment saying otherwise.
+        violations.push({
+          ...at,
+          rule: 'RULE 3 (stale allowance)',
+          detail: `CLIENT_FAMILY_ID_ALLOWED says this file is an operator surface, but it no longer contains '${allowance.mustContain}'. Remove the allowance or restore the guard.`,
+        });
+      }
     }
 
     if (r.endsWith('.dto.ts') && /^\s*familyId\??\s*:/.test(line)) {

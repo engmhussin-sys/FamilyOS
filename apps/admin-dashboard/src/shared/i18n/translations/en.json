@@ -325,25 +325,13 @@
     "submit": "Permanently Delete My Account"
   },
   "support": {
-    "faqTitle": "Frequently Asked Questions",
-    "faq": {
-      "q1": "How do I pair my child's device?",
-      "a1": "Go to Add Child, generate a pairing code, then enter that code in the Child App on your child's device within the time shown.",
-      "q2": "Why does my child's status show as offline?",
-      "a2": "This usually means the device hasn't sent a heartbeat recently — check that the Child App has Battery Optimization disabled and Accessibility Service still enabled.",
-      "q3": "How do screen time limits work?",
-      "a3": "Limits you set are synced to the device and enforced even without an internet connection, using the last successfully synced policy.",
-      "q4": "Can I change my subscription plan?",
-      "a4": "Yes — go to Settings > Billing to see available plans and switch at any time.",
-      "q5": "Is my child's data private?",
-      "a5": "We collect only aggregated usage summaries, never raw message content, photos, or keystrokes."
-    },
-    "contactTitle": "Contact Support",
-    "email": "Your Email",
-    "subject": "Subject",
-    "message": "Message",
-    "send": "Send Message",
-    "sentBody": "We've received your message and will reply by email soon."
+    "nav": "Support queue",
+    "title": "Support queue",
+    "intro": "Requests households have sent. They have been accepted since Sprint 8 and, until this screen, nothing displayed them — a household writing in was writing into a table.",
+    "onlyPriority": "Priority only",
+    "priority": "PRIORITY",
+    "empty": "No support request.",
+    "cap": "The queue returns the most recent 200 requests."
   },
   "organization": {
     "title": "Organization",
@@ -843,5 +831,21 @@
     "saved": "Saved",
     "yes": "Yes",
     "no": "No"
+  },
+  "household": {
+    "title": "Household detail",
+    "members": "Members",
+    "children": "Children",
+    "years": "yrs",
+    "devices": "Devices",
+    "subscription": "Subscription",
+    "noSubscription": "No subscription record.",
+    "audit": "Activity",
+    "unverified": "email not verified",
+    "reason": "Reason",
+    "reasonHint": "Required before any action here. It is what the audit row carries, and what makes the action explainable later.",
+    "suspend": "Suspend",
+    "restore": "Restore",
+    "suspendConfirm": "Suspending blocks this person from signing in. It is reversible and removes nothing. Continue?"
   }
 }

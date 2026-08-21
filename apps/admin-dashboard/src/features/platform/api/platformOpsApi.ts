@@ -74,3 +74,29 @@ export const platformOpsApi = {
   plans: () => adminGet<PlanCatalogue>('/system/billing/plans'),
   upsertPlan: (plan: Omit<PlanDefinition, 'id'>) => adminPut<PlanDefinition>('/system/billing/plans', plan),
 };
+
+/**
+ * A support request as the queue returns it. `familyId` is nullable on purpose:
+ * a request can come from somebody not signed in, and `email` is captured
+ * explicitly so the reply has somewhere to go even if the account changes.
+ */
+export interface SupportRequest {
+  id: string;
+  familyId: string | null;
+  userId: string | null;
+  email: string;
+  subject: string;
+  message: string;
+  /**
+   * Computed at submission time from the household's entitlements, never
+   * client-supplied — so it is a fact about what they bought, not a claim about
+   * how urgent they feel.
+   */
+  isPriority: boolean;
+  createdAt: string;
+}
+
+export const supportApi = {
+  /** GET /support — behind InternalAdminGuard; the backend caps it at 200. */
+  list: () => adminGet<SupportRequest[]>('/support'),
+};

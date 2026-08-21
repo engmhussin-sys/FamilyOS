@@ -97,3 +97,57 @@ export const platformAccountsApi = {
     return adminPost<{ familyId: string; revokedCount: number }>('/system/billing/grants/revoke', input);
   },
 };
+
+/** One household in detail. Mirrors `IHouseholdDetail` on the backend. */
+export interface HouseholdDetail {
+  familyId: string;
+  familyName: string;
+  countryCode: string | null;
+  timezone: string;
+  createdAt: string;
+  members: {
+    userId: string;
+    email: string;
+    fullName: string;
+    role: string;
+    status: string;
+    emailVerifiedAt: string | null;
+    joinedAt: string;
+  }[];
+  /**
+   * A child appears by first name and AGE BAND. There is no date of birth in
+   * this type because there is none in the response — the backend query does
+   * not select the column at all.
+   */
+  children: { childId: string; firstName: string; ageYears: number | null; createdAt: string }[];
+  devices: { deviceId: string; platform: string | null; status: string | null; lastSeenAt: string | null }[];
+  subscription: {
+    planTier: string;
+    status: string;
+    trialEndsAt: string | null;
+    currentPeriodEnd: string | null;
+  } | null;
+  entitlements: { featureKey: string; status: string; source: string; validUntil: string | null }[];
+  audit: { action: string; actorType: string; createdAt: string; metadata: unknown }[];
+}
+
+export interface StatusChange {
+  userId: string;
+  familyId: string | null;
+  from: string;
+  to: string;
+}
+
+export const householdApi = {
+  detail: (familyId: string) => adminGet<HouseholdDetail>(`/system/accounts/${familyId}`),
+
+  /**
+   * `status: 'ACTIVE'` means RESTORE what suspension replaced, not "set to
+   * ACTIVE" — a newly registered user is PENDING_VERIFICATION, and promoting
+   * one to ACTIVE from here would mark an unverified email as verified. The
+   * backend reads the prior status from its own audit row and refuses when
+   * there is none.
+   */
+  setStatus: (input: { userId: string; status: 'ACTIVE' | 'SUSPENDED'; reason: string }) =>
+    adminPost<StatusChange>('/system/accounts/actions/status', input),
+};

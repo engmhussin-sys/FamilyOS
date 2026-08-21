@@ -20,6 +20,7 @@ import { NotificationDecisionsPage } from '../features/notifications/pages/Notif
 import { AccountsPage } from '../features/platform/pages/AccountsPage';
 import { PlatformHealthPage } from '../features/platform/pages/PlatformHealthPage';
 import { PlanCataloguePage } from '../features/platform/pages/PlanCataloguePage';
+import { SupportQueuePage } from '../features/platform/pages/SupportQueuePage';
 import { ProtectedRoute } from './ProtectedRoute';
 import { NotFoundPage } from './NotFoundPage';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
@@ -150,6 +151,10 @@ export function App() {
             <Route
               path="/platform/plans"
               element={<PlatformAdminScreen><PlanCataloguePage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/support"
+              element={<PlatformAdminScreen><SupportQueuePage /></PlatformAdminScreen>}
             />
             <Route
               path="/notifications/decisions"

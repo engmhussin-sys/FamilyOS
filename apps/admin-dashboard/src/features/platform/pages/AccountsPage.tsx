@@ -5,6 +5,7 @@ import { useTranslation } from '../../../shared/i18n/LocaleProvider';
 import { AsyncBoundary } from '../../../shared/components/AsyncState';
 import {
   ENTITLEMENT_KEYS,
+  householdApi,
   platformAccountsApi,
   type AccountRow,
   type EntitlementKey,
@@ -181,12 +182,23 @@ export function AccountsPage() {
       </nav>
 
       {selected && selected.ownerEmail ? (
-        <GrantPanel
-          email={selected.ownerEmail}
-          familyName={selected.familyName}
-          onClose={() => setSelected(null)}
-          onChanged={() => queryClient.invalidateQueries({ queryKey: ['platform-accounts'] })}
-        />
+        <>
+          {/*
+            The detail sits ABOVE the grant panel deliberately. An operator
+            about to comp a plan or suspend an account should be looking at
+            which household it is — who the members are, how many devices
+            report, what was last done to it — rather than at an email they
+            typed. A console that acts without showing is how the wrong family
+            gets the gesture.
+          */}
+          <HouseholdDetailPanel familyId={selected.familyId} />
+          <GrantPanel
+            email={selected.ownerEmail}
+            familyName={selected.familyName}
+            onClose={() => setSelected(null)}
+            onChanged={() => queryClient.invalidateQueries({ queryKey: ['platform-accounts'] })}
+          />
+        </>
       ) : null}
     </section>
   );
@@ -324,6 +336,131 @@ function GrantPanel({
       >
         {t('grants.revoke')}
       </button>
+
+      {message ? <p role="status">{message}</p> : null}
+    </aside>
+  );
+}
+
+/**
+ * ONE HOUSEHOLD, IN ENOUGH DETAIL TO INVESTIGATE — and the two reversible
+ * actions on its members.
+ *
+ * WHAT IS ABSENT IS THE POINT. There is no date of birth here because there is
+ * none in the response: the backend query does not select the column. No
+ * message content, no location, no screen-time detail. An operator
+ * investigating «the app stopped reporting on my son's phone» needs to know
+ * WHICH child and WHICH device, not when he was born.
+ */
+function HouseholdDetailPanel({ familyId }: { familyId: string }) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [reason, setReason] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+
+  const detail = useQuery({
+    queryKey: ['household-detail', familyId],
+    queryFn: () => householdApi.detail(familyId),
+  });
+
+  const setStatus = useMutation({
+    mutationFn: (input: { userId: string; status: 'ACTIVE' | 'SUSPENDED' }) =>
+      householdApi.setStatus({ ...input, reason }),
+    onSuccess: (result) => {
+      setMessage(`${result.from} → ${result.to}`);
+      detail.refetch();
+      queryClient.invalidateQueries({ queryKey: ['platform-accounts'] });
+    },
+    onError: (error: Error) => setMessage(error.message),
+  });
+
+  const canAct = reason.trim().length >= 3 && !setStatus.isPending;
+
+  return (
+    <aside aria-label={t('household.title')}>
+      <h2>{t('household.title')}</h2>
+
+      <AsyncBoundary
+        isLoading={detail.isLoading}
+        error={detail.isError ? (detail.error as Error) : null}
+        onRetry={() => detail.refetch()}
+      >
+        <p>
+          {detail.data?.familyName} · {detail.data?.timezone}
+          {detail.data?.countryCode ? ` · ${detail.data.countryCode}` : ''}
+        </p>
+
+        <label htmlFor="household-reason">{t('household.reason')}</label>
+        <input id="household-reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+        <p>{t('household.reasonHint')}</p>
+
+        <h3>{t('household.members')}</h3>
+        <ul>
+          {(detail.data?.members ?? []).map((member) => (
+            <li key={member.userId}>
+              {member.fullName} · {member.email} · {member.role} · <strong>{member.status}</strong>
+              {member.emailVerifiedAt ? '' : ` · ${t('household.unverified')}`}{' '}
+              {member.status === 'SUSPENDED' ? (
+                <button
+                  type="button"
+                  disabled={!canAct}
+                  onClick={() => setStatus.mutate({ userId: member.userId, status: 'ACTIVE' })}
+                >
+                  {t('household.restore')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!canAct}
+                  onClick={() => {
+                    if (window.confirm(t('household.suspendConfirm'))) {
+                      setStatus.mutate({ userId: member.userId, status: 'SUSPENDED' });
+                    }
+                  }}
+                >
+                  {t('household.suspend')}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <h3>{t('household.children')}</h3>
+        <ul>
+          {(detail.data?.children ?? []).map((child) => (
+            <li key={child.childId}>
+              {child.firstName}
+              {child.ageYears !== null ? ` · ${child.ageYears} ${t('household.years')}` : ''}
+            </li>
+          ))}
+        </ul>
+
+        <h3>{t('household.devices')}</h3>
+        <ul>
+          {(detail.data?.devices ?? []).map((device) => (
+            <li key={device.deviceId}>
+              {device.platform ?? '—'} · {device.status ?? '—'} ·{' '}
+              {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : t('accounts.never')}
+            </li>
+          ))}
+        </ul>
+
+        <h3>{t('household.subscription')}</h3>
+        <p>
+          {detail.data?.subscription
+            ? `${detail.data.subscription.planTier} · ${detail.data.subscription.status}`
+            : t('household.noSubscription')}
+        </p>
+
+        <h3>{t('household.audit')}</h3>
+        <ul>
+          {(detail.data?.audit ?? []).map((entry, index) => (
+            <li key={`${entry.action}-${entry.createdAt}-${index}`}>
+              {new Date(entry.createdAt).toLocaleString()} · {entry.action} · {entry.actorType}
+            </li>
+          ))}
+        </ul>
+      </AsyncBoundary>
 
       {message ? <p role="status">{message}</p> : null}
     </aside>
