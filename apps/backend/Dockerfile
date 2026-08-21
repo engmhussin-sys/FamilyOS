@@ -1,20 +1,37 @@
 # =============================================================================
-# ABNY BACKEND — PRODUCTION IMAGE (NestJS + Prisma). Sprint 9's multi-stage
-# build, corrected for a real deploy rather than a local `docker build`.
+# ABNY BACKEND — PRODUCTION IMAGE (NestJS + Prisma). Multi-stage.
 #
-# BUILD CONTEXT IS THE REPOSITORY ROOT, not `apps/backend`:
+# THE BUILD CONTEXT IS `apps/backend` — this file's own directory:
 #
-#   docker build -f apps/backend/Dockerfile -t abny-backend .
+#   docker build -f apps/backend/Dockerfile -t abny-backend apps/backend
 #
-# It changed for one reason. The deployment configuration (`railway.json`,
-# `render.yaml`) lives at the repository root, both hosts resolve
-# `dockerfilePath` from there, and a Dockerfile that only builds from a
-# subdirectory forces every host into a per-service "root directory" setting
-# that nothing in this repository can state, verify or review. One context,
-# named in three files that all agree: this one, `docker-compose.yml` and
-# `.github/workflows/ci.yml`. The root `.dockerignore` keeps the context
-# small — the two Flutter apps, every build output and every node_modules are
-# excluded.
+# Every COPY below is relative to that directory — `COPY src ./src`, and NOT
+# the repo-root-relative form that a root build context would need.
+#
+# WHY THIS DIRECTORY AND NOT THE REPOSITORY ROOT. This is a monorepo with
+# several deployables in one Railway project, and a deploy config at the
+# repository root is not service-specific: it names ONE Dockerfile, and any
+# sibling service pointed at that file inherits it. On 2026-08-20 a root
+# `railway.json` naming this Dockerfile was picked up by the
+# `familyos-dashboard` service (Root Directory `apps/admin-dashboard`), which
+# then tried to build the backend image inside the dashboard's directory —
+# six consecutive failed builds. So each deployable is now self-contained:
+# `apps/backend/railway.json`, `apps/backend/.dockerignore` and this file all
+# live in, and describe, the single directory that is the context. A service
+# whose Root Directory is `apps/backend` reads its own config and cannot
+# affect a sibling.
+#
+# Nothing outside `apps/backend/` is needed to build this image: the backend
+# depends on no other app and on nothing in `packages/`.
+#
+# THE DIAGNOSTIC TELL, WORTH KEEPING. If a build log shows `load build
+# definition from …/Dockerfile` SUCCEEDING while EVERY COPY fails
+# (`failed to compute cache key: "/…": not found`, naming a different path on
+# each attempt — buildkit evaluates COPYs in parallel and reports whichever
+# lost the race), then the Dockerfile and the context came from two different
+# directories. That is a service-configuration fault — a wrong Root Directory,
+# or a config file read from outside the context — never a fault in the COPY
+# lines below. `apps/backend/Dockerfile.context-probe` prints which.
 #
 # Stage 1 (builder) has the full dev toolchain (TypeScript compiler, Nest CLI,
 # Prisma CLI, all devDependencies). Stage 2 (runtime) has the compiled output,
@@ -22,46 +39,8 @@
 #
 # NOT BUILT HERE. This file is STATIC VERIFIED only: the environment it was
 # last edited in has no Docker daemon. Every COPY source was checked to exist
-# at the path written. `.github/workflows/ci.yml` builds it on every push —
-# that job, not this comment, is the proof.
-#
-# -----------------------------------------------------------------------------
-# THE ROOT `railway.json` NAMES THIS FILE — AND IT IS NOT SERVICE-SPECIFIC
-# -----------------------------------------------------------------------------
-# This is a monorepo with more than one deployable. `railway.json` at the
-# repository root sets `dockerfilePath` to THIS file, and it was written for
-# the backend service alone. Any OTHER Railway service pointed at that same
-# config-as-code file will also try to build this Dockerfile — with its own
-# Root Directory as the context.
-#
-# That happened on 2026-08-20: the `familyos-dashboard` service (Root Directory
-# `apps/admin-dashboard`) read the root `railway.json`, loaded this file
-# successfully, and then failed every COPY, because `apps/backend/src` does not
-# exist inside `apps/admin-dashboard/`. See DEPLOY_STAGING.md §7b.
-#
-# THE TELL: if the build log shows `load build definition from
-# apps/backend/Dockerfile` SUCCEEDING while every COPY below fails, the
-# Dockerfile and the context came from two different directories. That is a
-# service-configuration fault, never a fault in this file.
-#
-# -----------------------------------------------------------------------------
-# OBSERVED ON A REAL RAILWAY BUILD, 2026-08-20 — READ BEFORE "FIXING" A COPY
-# -----------------------------------------------------------------------------
-# A Railway build died with:
-#
-#     failed to compute cache key: "/apps/backend/src": not found
-#
-# The cause was NOT this file. The service's **Root Directory** was still
-# `apps/backend`, left from an earlier deployment. With that setting Railway
-# never reads the root `railway.json` at all — it auto-detects THIS file as a
-# bare `Dockerfile`, builds with `apps/backend/` as the context, and every COPY
-# above misses by exactly one path segment. The error names the symptom, not
-# the cause.
-#
-# The fix is the Root Directory setting: set it to `/`. Do NOT rewrite the COPY
-# paths to match a subdirectory context — that would break `railway.json`,
-# `render.yaml`, `docker-compose.yml` and the CI build simultaneously, and the
-# next person would face four broken things instead of one setting.
+# inside `apps/backend/`. `.github/workflows/ci.yml` builds it on every push,
+# with this same context — that job, not this comment, is the proof.
 # =============================================================================
 
 FROM node:20-alpine AS builder
@@ -77,8 +56,8 @@ RUN apk add --no-cache openssl1.1-compat || apk add --no-cache openssl
 
 # Dependencies first, and only the files that decide them, so a source-only
 # change does not re-run `npm ci`.
-COPY apps/backend/package.json apps/backend/package-lock.json ./
-COPY apps/backend/prisma ./prisma
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
 RUN npm ci
 
 # `argon2` is a native module and this is an Alpine (musl) image. It ships a
@@ -94,8 +73,8 @@ RUN npm ci
 # sandbox limitation ships the workaround and loses the real behaviour.
 RUN npx prisma generate
 
-COPY apps/backend/tsconfig.json apps/backend/tsconfig.build.json apps/backend/nest-cli.json ./
-COPY apps/backend/src ./src
+COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY src ./src
 RUN npm run build
 
 # DIAGNOSTIC (added after a real "Cannot find module /app/dist/main.js"
@@ -114,13 +93,13 @@ ENV NODE_ENV=production
 # runtime error itself.
 RUN apk add --no-cache openssl1.1-compat || apk add --no-cache openssl
 
-COPY apps/backend/package.json apps/backend/package-lock.json ./
+COPY package.json package-lock.json ./
 # The schema and the full migration history ship WITH the image on purpose:
 # the release step that runs `prisma migrate deploy` runs FROM this image, so
 # the migrations applied are always the ones that belong to the code being
 # deployed. Migrations run from anywhere else are a second version of the
 # truth.
-COPY apps/backend/prisma ./prisma
+COPY prisma ./prisma
 
 # Production dependencies only. No TypeScript, no Nest CLI, no jest, no
 # ts-node, no supertest — `--omit=dev` is what makes that sentence true, and
