@@ -2,8 +2,9 @@
 """
 THE TWO HALVES OF AN OPS SCRIPT MUST NOT DRIFT.
 
-Two scripts in this repository ship as a bash/PowerShell pair — the deploy
-doctor and the database baseliner — and only the bash half of either can be
+Three scripts in this repository ship as a bash/PowerShell pair — the deploy
+doctor, the database baseliner and the test-account seeder — and only the bash
+half of any of them can be
 EXECUTED in this project's sandbox, because there is no PowerShell here. Both
 bash halves are RUNTIME VERIFIED by jest suites that run the real script
 (`test/system-diagnostics/deploy-doctor.e2e.spec.ts`,
@@ -65,6 +66,24 @@ BASELINE_TOKENS = (
     "disagree",
     "DATABASE_URL is not set",
     "failed to run",
+)
+
+# The third pair. Its tokens include the two SENTENCES THAT MUST NOT QUIETLY
+# DISAPPEAR: that no operator account exists, and that a refused second child
+# is the paywall rather than a broken seeder. A half that stopped saying either
+# would hand someone a wrong mental model of the product.
+SEED_SH = REPO_ROOT / "scripts" / "seed-test-accounts.sh"
+SEED_PS = REPO_ROOT / "scripts" / "seed-test-accounts.ps1"
+SEED_TOKENS = (
+    "TEST ACCOUNTS READY",
+    "BLOCKED at:",
+    "created  parent account",
+    "created  session",
+    "PLAN_UPGRADE_REQUIRED",
+    "not a seeding failure",
+    "There is no account",
+    "INTERNAL_ADMIN_API_KEY",
+    "git-ignored",
 )
 
 # bash:  `pass liveness "..."`, and also `200) pass liveness "..." ;;` inside a
@@ -150,14 +169,16 @@ def main() -> int:
             if token not in text:
                 problems.append(f"{name} never prints the verdict token '{token}'")
 
-    for path in (BASELINE_SH, BASELINE_PS):
-        if not path.exists():
-            problems.append(f"MISSING: {path.relative_to(REPO_ROOT)}")
-            continue
-        text = path.read_text(encoding="utf-8")
-        for token in BASELINE_TOKENS:
-            if token not in text:
-                problems.append(f"{path.name} never prints '{token}'")
+    for pair, tokens in ((( BASELINE_SH, BASELINE_PS), BASELINE_TOKENS),
+                         ((SEED_SH, SEED_PS), SEED_TOKENS)):
+        for path in pair:
+            if not path.exists():
+                problems.append(f"MISSING: {path.relative_to(REPO_ROOT)}")
+                continue
+            text = path.read_text(encoding="utf-8")
+            for token in tokens:
+                if token not in text:
+                    problems.append(f"{path.name} never prints '{token}'")
 
     if problems:
         print("DOCTOR HALVES DISAGREE")
@@ -172,6 +193,7 @@ def main() -> int:
     for check_id in exempted:
         print(f"  {check_id:<18} one-sided, exempted: {EXEMPT[check_id]}")
     print(f"db-baseline parity OK — both halves carry all {len(BASELINE_TOKENS)} verdict and refusal tokens.")
+    print(f"seed-test-accounts parity OK — both halves carry all {len(SEED_TOKENS)} outcome tokens.")
     return 0
 
 
