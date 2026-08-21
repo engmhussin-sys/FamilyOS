@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 
 import { GrowthCaptureModule } from '../analytics/growth-capture.module';
 
@@ -6,6 +6,10 @@ import { BillingController } from './presentation/controllers/billing.controller
 import { StripeWebhookController } from './presentation/controllers/stripe-webhook.controller';
 import { PaymentWebhookController } from './presentation/controllers/payment-webhook.controller';
 import { SubscriptionController } from './presentation/controllers/subscription.controller';
+import { BillingOperationsController } from './presentation/controllers/billing-operations.controller';
+import { OperatorGrantService } from './application/services/operator-grant.service';
+import { AuditModule } from '../audit/audit.module';
+import { AuthModule } from '../auth/auth.module';
 import { StripeWebhookService } from './application/services/stripe-webhook.service';
 import { PlanService } from './application/services/plan.service';
 import { TrialManager } from './application/services/trial-manager.service';
@@ -82,9 +86,32 @@ import { PAYMENT_PROVIDER_REGISTRY } from './application/ports/payment-provider.
   // commercial growth events are emitted from the paths that already own the
   // fact, and revenue is still summed from `payment_transactions` and never
   // from an analytics event.
-  imports: [GrowthCaptureModule],
-  controllers: [BillingController, StripeWebhookController, PaymentWebhookController, SubscriptionController],
+  // AuditModule for AuditService, AuthModule for USER_REPOSITORY — both for
+  // ONE consumer: `OperatorGrantService`, which resolves a household from the
+  // parent's email using the SAME lookup login performs, and writes the audit
+  // row that makes a comped plan answerable months later.
+  //
+  // `forwardRef` ON AuthModule IS LOAD-BEARING, and it was put here by a
+  // failing test: the module graph already contains
+  // Auth -> Children -> Billing (Children asks Billing whether a family may
+  // add a second child), so importing AuthModule directly closed the cycle and
+  // Nest resolved it to `undefined` — "The module at index [2] of the
+  // BillingModule imports array is undefined". The alternative was to
+  // reimplement `findPrimaryFamilyMembership` here, which would have given an
+  // operator grant its own idea of which household an email belongs to. One
+  // lookup, resolved late.
+  imports: [GrowthCaptureModule, AuditModule, forwardRef(() => AuthModule)],
+  controllers: [
+    BillingController,
+    StripeWebhookController,
+    PaymentWebhookController,
+    SubscriptionController,
+    BillingOperationsController,
+  ],
   providers: [
+    // The operator comp surface. Delete this line, its controller, its service
+    // and its DTOs to remove the feature entirely — nothing else depends on it.
+    OperatorGrantService,
     // -- Sprint 8, unchanged --
     PlanService,
     TrialManager,

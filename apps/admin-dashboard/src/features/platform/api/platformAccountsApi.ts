@@ -1,0 +1,99 @@
+import { adminGet, adminPost, adminQuery as query } from '../../../shared/lib/adminHttp';
+
+/**
+ * THE PLATFORM OWNER'S TWO OPERATOR ENDPOINTS, transcribed from the
+ * controllers rather than from a document:
+ *
+ *   GET  /system/accounts
+ *     apps/backend/src/modules/system-diagnostics/presentation/controllers/accounts-console.controller.ts
+ *   GET  /system/billing/grants  ·  POST /system/billing/grants/features
+ *   POST /system/billing/grants/revoke
+ *     apps/backend/src/modules/billing/presentation/controllers/billing-operations.controller.ts
+ *
+ * Both are behind `InternalAdminGuard`, so both go through `adminHttp`, which
+ * attaches the operator key from memory and never from storage.
+ */
+
+/** One household. Every field exists on `IAccountRow` in the backend. */
+export interface AccountRow {
+  familyId: string;
+  familyName: string;
+  countryCode: string | null;
+  createdAt: string;
+  ownerEmail: string | null;
+  ownerStatus: string | null;
+  memberCount: number;
+  childCount: number;
+  deviceCount: number;
+  subscriptionStatus: string | null;
+  planTier: string | null;
+  lastSeenAt: string | null;
+  hasLiveEntitlement: boolean;
+}
+
+export interface AccountsPage {
+  rows: AccountRow[];
+  /** null when this is the last page — the ONLY signal that it is. */
+  nextCursor: string | null;
+}
+
+/**
+ * The six entitlement keys, mirroring `ENTITLEMENT_KEYS` in
+ * `apps/backend/src/modules/billing/domain/billing.types.ts`. The backend
+ * validates against its own copy and answers 400 naming the valid keys, so a
+ * drift here is a visible error rather than a silent grant of nothing.
+ */
+export const ENTITLEMENT_KEYS = [
+  'ai_diagnostics',
+  'family_insights',
+  'multiple_children',
+  'unlimited_devices_per_child',
+  'behavioral_trend_analysis',
+  'priority_support',
+] as const;
+
+export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number];
+
+export interface EntitlementState {
+  familyId: string;
+  features: EntitlementKey[];
+  validUntil: string | null;
+  planTier: string | null;
+}
+
+export interface GrantResult {
+  familyId: string;
+  planTier: string;
+  validUntil: string;
+  features: EntitlementKey[];
+}
+
+export const platformAccountsApi = {
+  list(params: { limit?: number; cursor?: string | null; search?: string | null }): Promise<AccountsPage> {
+    return adminGet<AccountsPage>(
+      `/system/accounts${query({
+        limit: params.limit,
+        cursor: params.cursor ?? undefined,
+        search: params.search ?? undefined,
+      })}`,
+    );
+  },
+
+  entitlements(email: string): Promise<EntitlementState> {
+    return adminGet<EntitlementState>(`/system/billing/grants${query({ email })}`);
+  },
+
+  grantFeatures(input: {
+    email: string;
+    features: EntitlementKey[];
+    planTier: string;
+    days: number;
+    reason: string;
+  }): Promise<GrantResult> {
+    return adminPost<GrantResult>('/system/billing/grants/features', input);
+  },
+
+  revoke(input: { email: string; reason: string }): Promise<{ familyId: string; revokedCount: number }> {
+    return adminPost<{ familyId: string; revokedCount: number }>('/system/billing/grants/revoke', input);
+  },
+};

@@ -17,6 +17,7 @@ import { AcquisitionPage } from '../features/growth/pages/AcquisitionPage';
 import { ReferralPage } from '../features/growth/pages/ReferralPage';
 import { ProductAiPage } from '../features/growth/pages/ProductAiPage';
 import { NotificationDecisionsPage } from '../features/notifications/pages/NotificationDecisionsPage';
+import { AccountsPage } from '../features/platform/pages/AccountsPage';
 import { ProtectedRoute } from './ProtectedRoute';
 import { NotFoundPage } from './NotFoundPage';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
@@ -131,6 +132,15 @@ export function App() {
                 `InternalAdminGuard`-only and has no family-scoped variant —
                 «which audience is the suppression in» is not a question a
                 tenant may ask. */}
+            {/*
+              THE PLATFORM OWNER'S REGISTER. Behind both gates like every other
+              operator screen: the parent session, then the operator key. It is
+              the only view in this dashboard that lists households as rows.
+            */}
+            <Route
+              path="/platform/accounts"
+              element={<PlatformAdminScreen><AccountsPage /></PlatformAdminScreen>}
+            />
             <Route
               path="/notifications/decisions"
               element={

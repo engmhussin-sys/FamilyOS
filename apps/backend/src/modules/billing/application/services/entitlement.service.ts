@@ -183,6 +183,42 @@ export class EntitlementService {
   }
 
   /**
+   * ONE FEATURE, GRANTED DIRECTLY — the path that does not consult
+   * `plan_definitions`.
+   *
+   * `grantForPlan` reads that table to learn which features a tier includes,
+   * and returns EMPTY when the tier has no row: on a database built from the
+   * migration history the table is empty, because nothing seeds it. That is
+   * correct for a payment (a purchase of a tier nobody defined should grant
+   * nothing) and useless for an operator, who needs to open a specific
+   * capability on a specific household today.
+   *
+   * So this takes the feature key itself. `ENTITLEMENT_KEYS` is a closed
+   * vocabulary in code, not business data — the keys exist whether or not
+   * anyone has decided what a plan costs — and `source` is fixed to `MANUAL`
+   * because there is no payment behind it. Everything downstream is unchanged:
+   * the same repository method, the same monotonic `valid_until`, and
+   * `hasFeature` still reads the row it writes.
+   */
+  async grantFeature(input: {
+    familyId: string;
+    featureKey: EntitlementKey;
+    planTier: SubscriptionPlanTier;
+    validFrom: Date;
+    validUntil: Date | null;
+  }): Promise<IEntitlementRecord> {
+    return this.payments.grantEntitlement({
+      familyId: input.familyId,
+      featureKey: input.featureKey,
+      planTier: input.planTier,
+      source: 'MANUAL',
+      subscriptionId: null,
+      validFrom: input.validFrom,
+      validUntil: input.validUntil,
+    });
+  }
+
+  /**
    * KEEPS THE FAMILY'S LIVE GRANTS VALID UNTIL `validUntil`, and only ever
    * forward.
    *
