@@ -5,6 +5,7 @@ import { InternalAdminGuard } from '../../common/guards/internal-admin.guard';
 import { OperatorService } from './application/operator.service';
 import { OperatorSessionService } from './application/operator-session.service';
 import { OperatorAuthGuard } from './presentation/guards/operator-auth.guard';
+import { OperatorAuthController } from './presentation/controllers/operator-auth.controller';
 
 /**
  * SPRINT F2 — WHO IS OPERATING THIS PLATFORM.
@@ -19,16 +20,27 @@ import { OperatorAuthGuard } from './presentation/guards/operator-auth.guard';
  * can DELEGATE the shared-key check to it. The outer gate keeps exactly the
  * behaviour it has today, including failing closed when the key is unset.
  *
- * NO CONTROLLER YET, and that is the honest state of this slice: the identity,
- * the sessions, the permission matrix and the guard exist and are tested, and
- * NOT ONE of the forty-five existing operator routes has been moved behind
- * them. Moving them is a second change that logs every operator out of a live
- * console, and it belongs in its own deploy with the sign-in screen that makes
- * it survivable.
+ * `OperatorAuthController` is the way in: sign in, sign out, who am I, and the
+ * self-closing bootstrap. Every one of its routes sits behind the shared key as
+ * well, which is what keeps the operator LOGIN itself off the public internet —
+ * a sign-in form anyone can reach is a password oracle for a console that can
+ * suspend households.
+ *
+ * NOT ONE of the forty-five EXISTING operator routes has been moved behind the
+ * new guard. Only the safety desk — the newest and most sensitive surface, and
+ * the one that should never have had a shared secret alone in front of it —
+ * uses it today. Moving the rest logs every operator out of a live console and
+ * belongs in its own deploy.
  */
 @Module({
   imports: [forwardRef(() => AuthModule)],
+  controllers: [OperatorAuthController],
   providers: [OperatorSessionService, OperatorService, OperatorAuthGuard, InternalAdminGuard],
-  exports: [OperatorSessionService, OperatorService, OperatorAuthGuard],
+  // `InternalAdminGuard` is exported alongside the guard that delegates to it:
+  // Nest instantiates a `@UseGuards(...)` class in the CONSUMING module's
+  // context, so any module mounting `OperatorAuthGuard` must be able to resolve
+  // its outer gate too. Caught by `app.module.spec.ts` the first time this was
+  // wired, which is exactly what that suite is for.
+  exports: [OperatorSessionService, OperatorService, OperatorAuthGuard, InternalAdminGuard],
 })
 export class OperatorsModule {}

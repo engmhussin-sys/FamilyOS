@@ -120,6 +120,11 @@ export const SECURITY_AUDIT_ACTION_PREFIXES: readonly string[] = [
   // rows are the only record that a named human — rather than a nightly sweep —
   // touched a household.
   'operator.',
+  // SPRINT F2: who read a child's distress alert, and who decided what to do
+  // about it. This is the most consequential trail in the product — it is the
+  // evidence in any dispute about whether a safety signal was acted on — and it
+  // must outlive the ordinary twenty-four months by a wide margin.
+  'safety.',
 ];
 
 /**

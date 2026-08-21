@@ -334,7 +334,6 @@ model User {
   refreshTokens     RefreshToken[]
   ownedDevices      Device[]          @relation("UserOwnedDevices")
   consentsGranted   ParentalConsent[] @relation("ConsentGrantedBy")
-  reviewedAlerts    AiAlert[]         @relation("AlertReviewedBy")
   organizationMemberships OrganizationMember[] @relation("OrganizationMemberships")
   notifications     Notification[]
   auditLogEntries   AuditLog[]        @relation("AuditActorUser")
@@ -398,6 +397,7 @@ model Family {
   locationEvents LocationEvent[]
   aiRiskScores AiRiskScore[]
   aiAlerts AiAlert[]
+  aiAlertNotes AiAlertNote[]
   aiMemoryEntries AiMemoryEntry[]
   notifications Notification[]
   notificationDeliveries NotificationDelivery[]
@@ -1136,13 +1136,25 @@ model AiAlert {
   /// payload returns it, and no producer may put a child's words in it.
   sourceEventId    String        @map("source_event_id") @db.VarChar(200)
   status           AlertStatus   @default(NEW)
-  reviewedByUserId String?       @map("reviewed_by_user_id") @db.Uuid
+  /// SPRINT F2. WHO REVIEWED IT — and it is an OPERATOR, not a parent.
+  ///
+  /// This replaces `reviewedByUserId`, which pointed at `users`, had NO WRITER
+  /// anywhere in `src/` for the entire life of this product, and was therefore
+  /// a reviewer column for a review flow that did not exist. Measured before
+  /// removing it: zero writers, zero readers in `src/`, one test asserting it
+  /// null. Nothing was lost because nothing was ever stored.
+  ///
+  /// Reviewing a child-distress signal is the safety desk's job, and the safety
+  /// desk is staff. Not a foreign key, for the same reason `audit_logs` has
+  /// none: this row must survive the reviewer's departure, and a safety record
+  /// may never be the reason a deletion is refused or, worse, cascades.
+  reviewedByOperatorId String?   @map("reviewed_by_operator_id") @db.Uuid
   reviewedAt       DateTime?     @map("reviewed_at")
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
 
   child          Child @relation(fields: [childId], references: [id], onDelete: Cascade)
-  reviewedByUser User? @relation("AlertReviewedBy", fields: [reviewedByUserId], references: [id])
+  notes          AiAlertNote[]
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
@@ -1150,6 +1162,10 @@ model AiAlert {
   @@index([childId, status])
   @@index([severity])
   @@index([familyId])
+  /// The queue's own order: everything unreviewed, worst and oldest first.
+  /// Cross-tenant by construction — the safety desk works one queue, not one
+  /// household — which is why it is not prefixed by `family_id`.
+  @@index([status, severity, createdAt])
   @@map("ai_alerts")
 }
 
@@ -1278,6 +1294,43 @@ model AuditLog {
   /// compliance review opens with. A JSON scan could not answer it.
   @@index([operatorId, createdAt])
   @@map("audit_logs")
+}
+
+/// AN OPERATOR'S NOTE ON A SAFETY ALERT.
+///
+/// WHY IT EXISTS: an escalation with no words is unactionable. «Escalated» tells
+/// the next person that somebody was worried and nothing about why, and the
+/// person who escalated it has usually gone home.
+///
+/// WHY IT IS ITS OWN TABLE AND NOT A COLUMN: notes accumulate, they are written
+/// by different people at different times, and each one must carry its own
+/// author and instant. A single `notes` column would be a field that the second
+/// writer overwrites the first in.
+///
+/// IT IS APPEND-ONLY BY CONSTRUCTION — no update, no delete, anywhere in `src/`.
+/// The directive is explicit that an operator may not delete safety history, and
+/// a note explaining why an alert was dismissed is exactly the history somebody
+/// would later want gone.
+model AiAlertNote {
+  familyId   String   @map("family_id") @db.Uuid
+  id         String   @id @default(uuid()) @db.Uuid
+  alertId    String   @map("alert_id") @db.Uuid
+  /// Denormalised, like every operator reference in this schema: the note must
+  /// still name its author after that author is revoked.
+  operatorId    String @map("operator_id") @db.Uuid
+  operatorEmail String @map("operator_email")
+  /// The status this note was written ALONGSIDE, so the trail reads as a story
+  /// rather than as a pile of comments.
+  transitionTo AlertStatus? @map("transition_to")
+  body       String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  alert  AiAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  family Family  @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, createdAt])
+  @@index([familyId])
+  @@map("ai_alert_notes")
 }
 
 model AiMemoryEntry {

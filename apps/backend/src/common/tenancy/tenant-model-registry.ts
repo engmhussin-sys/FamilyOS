@@ -54,6 +54,11 @@ export const STRICT_TENANT_MODELS: ReadonlySet<TenantModelName> = new Set([
   'LocationEvent',
   'AiRiskScore',
   'AiAlert',
+  // SPRINT F2: an operator's note about ONE household's alert. family_id is
+  // NOT NULL and the note is about that family's child; the safety desk reads
+  // it under the audited SystemContext bypass like every other cross-tenant
+  // operator read.
+  'AiAlertNote',
   'AiMemoryEntry',
   'Notification',
   // PHASE D (PC-D-005): a notification held for the end of a family's quiet
