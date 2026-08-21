@@ -124,6 +124,20 @@ COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 COPY --from=builder /app/dist ./dist
 
+# THE RELEASE STEP SHIPS WITH THE IMAGE — and only these two files out of
+# `scripts/`, not the directory, which also holds CI TypeScript that has no
+# business in a production image.
+#
+# `railway.json`'s preDeployCommand runs `sh scripts/predeploy.sh` FROM THIS
+# IMAGE, so the migrations it applies, the schema it diffs against and the
+# database it probes are all the ones belonging to the code being deployed —
+# the same reason `prisma/` is copied above. The probe is plain JavaScript
+# because there is no TypeScript and no ts-node in this stage, by design.
+#
+# Copied BEFORE the chown below, so the non-root user that runs the container
+# owns them too.
+COPY scripts/predeploy.sh scripts/predeploy-schema-probe.js ./scripts/
+
 # -----------------------------------------------------------------------------
 # THE BUILD STAMP. WHY IT EXISTS AND WHY IT IS THIS EXACT NAME.
 #

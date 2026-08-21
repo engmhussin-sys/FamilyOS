@@ -1,25 +1,13 @@
-ABNY — DELIVERY MANIFEST
-range   : HEAD~1..HEAD
-head    : 73a29ac7b4af00fa8c5efc367e42f6623618b24e
-branch  : abny/sprint-f1-unblock
-files   : 6 changed, 1 to delete
+CATCH-UP DELIVERY — computed against github.com/engmhussin-sys/FamilyOS @ main (694f183)
+These are exactly the files that repository is missing or has an older copy of.
 
-HOW TO APPLY
-  1. Run _DELIVERY/DELETE.ps1 (Windows) or DELETE.sh — ONLY if it lists files.
-  2. Extract this zip over the project root. Choose Replace when asked.
-     The paths inside are repo-relative: apps/... lands on apps/...
-  3. Delete the _DELIVERY folder. It is notes, not source.
+NEW       apps/backend/scripts/predeploy.sh
+NEW       apps/backend/scripts/predeploy-schema-probe.js
+MODIFIED  apps/backend/railway.json
+MODIFIED  apps/backend/.dockerignore
+MODIFIED  apps/backend/Dockerfile
+MODIFIED  render.yaml
+MODIFIED  .github/workflows/deploy-staging.yml
+NEW       apps/backend/test/deploy/predeploy.spec.ts
 
-CHANGED (extract these)
-M	.github/workflows/ci.yml
-A	P3005.md
-A	apps/backend/test/deploy/db-baseline.spec.ts
-A	scripts/db-baseline.ps1
-A	scripts/db-baseline.sh
-R076	scripts/verify_doctor_parity.py	scripts/verify_ops_script_parity.py
-
-DELETED (a zip cannot remove these — run the DELETE script)
-scripts/verify_doctor_parity.py
-
-COMMITS
-73a29ac deploy: P3005 — baseline the database, and refuse when that would be a lie
+DELETE    scripts/verify_doctor_parity.py   (see _DELIVERY/DELETE.ps1)

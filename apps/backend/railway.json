@@ -5,7 +5,9 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "preDeployCommand": ["npx prisma migrate deploy"],
+    "preDeployCommand": [
+      "sh scripts/predeploy.sh"
+    ],
     "healthcheckPath": "/health/ready",
     "healthcheckTimeout": 300,
     "numReplicas": 1,

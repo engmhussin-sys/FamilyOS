@@ -1,5 +1,5 @@
-# Removals for: HEAD~1..HEAD
-# Run from the project root BEFORE extracting the zip.
+# One stale file, left behind when scripts/verify_doctor_parity.py was renamed.
+# Nothing references it any more. Run from the project root.
 @(
   "scripts\verify_doctor_parity.py"
 ) | ForEach-Object {

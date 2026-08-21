@@ -43,7 +43,24 @@ tsconfig.build.tsbuildinfo
 
 # Test material: the production image runs no tests. (`tsconfig.build.json`
 # already excludes `test` and `scripts` from the compile; this keeps them out
-# of the uploaded context as well — `scripts/` holds the CI guards, which are
-# ts-node executables that the application never imports.)
+# of the uploaded context as well.)
 test
-scripts
+
+# `scripts/` IS EXCLUDED BY ITS CONTENTS, NOT AS A WHOLE — and that is a
+# deliberate change from the blanket `scripts` line that used to be here.
+#
+# The reason the directory was excluded was never "scripts": it was the CI
+# guards, ts-node executables the application never imports. But two files in
+# here now SHIP WITH THE IMAGE on purpose — the release step and its schema
+# probe, which `railway.json` runs as the preDeployCommand (see the Dockerfile
+# for why they must come from the image and not from anywhere else).
+#
+# Naming the exclusions instead of writing `scripts` then `!scripts/...`
+# avoids depending on how a builder resolves a re-inclusion inside an excluded
+# directory — behaviour that differs between .gitignore and .dockerignore and
+# between builder versions. Nothing here needs that subtlety to be right.
+#
+# A NEW SCRIPT ADDED TO THIS DIRECTORY IS INCLUDED BY DEFAULT. If it is
+# development-only, add it below.
+scripts/ci
+scripts/regen-prisma-client-offline.sh
