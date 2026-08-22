@@ -107,3 +107,22 @@ Where a tool blocks the toolchain, the tool is replaced rather than the toolchai
 ### The one thing "latest" does NOT mean
 
 **The runtime tracks Active LTS, not Current.** Node 26 is Current; the project runs **Node 24**, and `@types/node` is pinned to match it. Typing against a runtime that is not deployed lets a call to a non-existent API typecheck cleanly — which is the exact failure the types exist to prevent. This is the single standing exemption, and it moves the day Node 26 becomes Active LTS.
+
+### The mobile toolchain is guarded separately, because it hides in four files
+
+Flutter's version lives in a workflow variable, AGP's and Kotlin's in `apps/*/android/settings.gradle`, Gradle's in a wrapper properties file. None of them is a `package.json`, which is exactly how they went stale unnoticed. `scripts/ci/assert-mobile-toolchain-current.py` reads all four out of the repository, asks the authoritative source for each, and fails the build on a gap. `scripts/ci/test_mobile_toolchain_guard.py` proves the guard can still read this repository's pins — a guard that silently stops matching is worse than no guard.
+
+**These four upgrade together, in this order, or not at all:**
+
+```
+Flutter 3.27+ defaults compileSdk to 35
+  └─ AGP refuses:  "compileSdk 35 requires Android Gradle Plugin 8.6.0 or higher"
+      └─ newer AGP requires a newer Gradle wrapper
+          └─ and a Kotlin version its plugin accepts
+```
+
+Nobody upgrades one of these. Somebody upgrades all four, in order, then raises `compileSdk`/`targetSdk`, then **builds both apps** — `flutter analyze`, `flutter test`, and the APK job. A mobile toolchain bump that was not built is not an upgrade.
+
+### A version that cannot be obtained is never guessed
+
+C-5 governs here without exception. Where an environment cannot reach `storage.googleapis.com`, `dl.google.com`, `services.gradle.org` or `pub.dev`, the correct output is a named gap and a guard that will catch it on a machine that can — **never a version number written from memory.** A pin invented for two apps that run on children's phones, in an environment where nothing can build them, is the worst possible form of that mistake.

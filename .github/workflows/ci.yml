@@ -97,6 +97,18 @@ jobs:
       - name: Dependency currency guard
         run: npm run ci:deps-current
 
+      # CI RULE 4, mobile half. The npm guard above cannot see Flutter, AGP,
+      # Gradle or Kotlin — four pins in four files that are not package.json,
+      # which is precisely how they went stale. This asks the authoritative
+      # source for each and fails when one is behind. It is run from the
+      # backend job because that job already has a checkout and a Python; it
+      # needs neither Node nor a Flutter SDK.
+      - name: Mobile toolchain currency guard
+        working-directory: .
+        run: |
+          python3 scripts/ci/test_mobile_toolchain_guard.py
+          python3 scripts/ci/assert-mobile-toolchain-current.py
+
       - name: Tenant-scoping static guard
         run: npm run ci:tenant-guard
       # F3 (R3) — BLOCKING. The ratchet described in
