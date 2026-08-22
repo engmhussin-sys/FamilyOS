@@ -48,8 +48,8 @@ Each `BLOCKED` line names a check id. This table is the complete set of ids that
 
 | Check id | Dependency | Exact version | Source | Command | Verify |
 |---|---|---|---|---|---|
-| `flutter` | Flutter SDK | **3.47.0** stable | `docs.flutter.dev/get-started/install/windows` — or `scripts\setup-windows-dev.ps1` does it | Unzip to `C:\src\flutter`, add `C:\src\flutter\bin` to `PATH` | `flutter --version` → `Flutter 3.47.0` |
-| `dart` | Dart SDK | bundled in Flutter 3.47.0 (both apps require `>=3.3.0 <4.0.0`) | Comes with Flutter — **do not install separately** | none | `dart --version` |
+| `flutter` | Flutter SDK | **3.47.1** stable | `docs.flutter.dev/get-started/install/windows` — or `scripts\setup-windows-dev.ps1` does it | Unzip to `C:\src\flutter`, add `C:\src\flutter\bin` to `PATH` | `flutter --version` → `Flutter 3.47.1` |
+| `dart` | Dart SDK | bundled in Flutter 3.47.1 (both apps require `>=3.3.0 <4.0.0`) | Comes with Flutter — **do not install separately** | none | `dart --version` |
 | `java` | JDK | **17** (Temurin) | `adoptium.net/temurin/releases/?version=17` | Run the `.msi`, accept the defaults | `java -version` → `17.x` |
 | `java-home` | `JAVA_HOME` | points at the JDK 17 root | environment variable | `setx JAVA_HOME "C:\Program Files\Eclipse Adoptium\jdk-17…"` then reopen the terminal | `echo %JAVA_HOME%` and `%JAVA_HOME%\bin\java -version` |
 | `android-sdk` | Android SDK root | — | Android Studio, or `commandlinetools-win-11076708_latest.zip` from `developer.android.com/studio` | `setx ANDROID_HOME "%LOCALAPPDATA%\Android\Sdk"`, reopen the terminal | `echo %ANDROID_HOME%` and the folder contains `platform-tools` |

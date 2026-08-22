@@ -135,10 +135,10 @@ android {
     // chain forward in one commit:
     //
     //   compileSdk/targetSdk 36
-    //     <- AGP 9.3.0        (supports up to API 37; AGP 8.1.1 refused >34)
-    //       <- Gradle 9.7.1   (AGP 9.3.0's stated minimum is Gradle 9.5.0)
+    //     <- AGP 9.3.1        (supports up to API 37; AGP 8.1.1 refused >34)
+    //       <- Gradle 9.7.1   (AGP 9.3.1's stated minimum is Gradle 9.5.0)
     //         <- Kotlin 2.4.10
-    //           <- Flutter 3.47.0 (its templates target AGP 9+)
+    //           <- Flutter 3.47.1 (its templates target AGP 9+)
     //
     // ndkVersion is deliberately LEFT on flutter.ndkVersion: its correct
     // literal cannot be verified without a Flutter SDK, and a wrong NDK pin
@@ -169,7 +169,7 @@ android {
         // PHASE C, superseding the Sprint 17.3 recovery note that said this
         // was "deliberately flutter.minSdkVersion rather than guessing":
         // 21 was exactly the value Flutter 3.24.5 resolved flutter.minSdkVersion
-        // to. THE WORKFLOWS NOW PIN FLUTTER 3.47.0, whose own floor was not
+        // to. THE WORKFLOWS NOW PIN FLUTTER 3.47.1, whose own floor was not
         // verifiable in the environment that made this change, so 21 is left
         // written down rather than re-guessed: if 3.47 has raised its floor,
         // AGP fails the first build with the exact number it wants, which is a

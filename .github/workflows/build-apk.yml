@@ -97,7 +97,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # --- Flutter 3.47.0 — PINNED, and the pin is load-bearing ----------------
+  # --- Flutter 3.47.1 — PINNED, and the pin is load-bearing ----------------
   #
   # RAISED FROM 3.24.5 ON 2026-08-22, and the reason has a date on it rather
   # than a preference behind it: GOOGLE PLAY REQUIRES targetSdk 36 FROM
@@ -110,12 +110,12 @@ env:
   # resolved from its authoritative source rather than written from memory:
   #
   #   compileSdk/targetSdk 36  (Play, above)
-  #     <- AGP 9.3.0    developer.android.com/build/releases/gradle-plugin
+  #     <- AGP 9.3.1    developer.android.com/build/releases/gradle-plugin
   #                     July 2026 — min Gradle 9.5.0, min JDK 17, max API 37.
   #                     AGP 8.1.1 refused compileSdk > 34 outright.
   #       <- Gradle 9.7.1  docs.gradle.org/current/release-notes.html
   #         <- Kotlin 2.4.10 kotlinlang.org/docs/releases (14 July 2026)
-  #           <- Flutter 3.47.0 docs.flutter.dev/release/release-notes
+  #           <- Flutter 3.47.1 docs.flutter.dev/release/release-notes
   #                     Its release notes are explicit that 3.47's Android
   #                     templates moved to AGP 9+, which is what makes this a
   #                     coherent set rather than four separate bumps.
@@ -127,10 +127,10 @@ env:
   # API 35/36 tightened foreground-service rules (child-app declares
   # `specialUse`), and any pubspec plugin that has not moved to AGP 9 will say
   # so here. Those failures are the point; a green run is not assumed.
-  FLUTTER_VERSION: "3.47.0"
+  FLUTTER_VERSION: "3.47.1"
 
   # --- Java 17 — also load-bearing -----------------------------------------
-  # AGP 9.3.0 states JDK 17 as both its minimum and its default, Gradle 9.7.1
+  # AGP 9.3.1 states JDK 17 as both its minimum and its default, Gradle 9.7.1
   # runs on it, and app/build.gradle sets source/target compatibility 17.
   # Raising this is a separate decision from the toolchain bump and is not
   # taken here: 17 satisfies every stated requirement above.
@@ -172,7 +172,23 @@ env:
   # ABNY_VERSION_CODE_OFFSET to a value above the highest versionCode Play has
   # already accepted. Play's error for a reused versionCode names the number it
   # already has, so recovery is mechanical.
-  ORG_GRADLE_PROJECT_abnyVersionCode: ${{ fromJSON(vars.ABNY_VERSION_CODE_OFFSET || '0') + github.run_number }}
+  # ⚠ THIS LINE USED TO DO ARITHMETIC, AND GITHUB ACTIONS CANNOT.
+  #
+  # It read:
+  #   ${{ fromJSON(vars.ABNY_VERSION_CODE_OFFSET || '0') + github.run_number }}
+  #
+  # The expression language has no `+`. Its operators are exactly `!`, `<`,
+  # `<=`, `>`, `>=`, `==`, `!=`, `&&`, `||` — and nothing else. So this file
+  # was an INVALID WORKFLOW, and because ci.yml calls it with `uses:`, the
+  # error propagated: every ci.yml run since this line was written failed to
+  # PARSE, and not one job in it ever started. That is why CI showed red on
+  # commits that had nothing wrong with them.
+  #
+  # Only the offset is passed as an env var now. The sum is computed in the
+  # `flutter` job by a shell step, where arithmetic is ordinary, and written
+  # to $GITHUB_ENV so both Gradle and the later `${{ env.… }}` references
+  # still see `ORG_GRADLE_PROJECT_abnyVersionCode` exactly as before.
+  ABNY_VERSION_CODE_OFFSET: ${{ vars.ABNY_VERSION_CODE_OFFSET || '0' }}
 
 jobs:
   # =========================================================================
@@ -261,6 +277,18 @@ jobs:
       - id: vars
         run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      # The arithmetic the workflow-level `env:` block cannot do. Kept as its
+      # own step, before anything that reads the value, so that a failure here
+      # is legible instead of surfacing as a Gradle property that is silently
+      # empty.
+      - name: Compute versionCode (offset + run_number)
+        working-directory: .
+        run: |
+          set -euo pipefail
+          code=$(( ${ABNY_VERSION_CODE_OFFSET:-0} + GITHUB_RUN_NUMBER ))
+          echo "ORG_GRADLE_PROJECT_abnyVersionCode=$code" >> "$GITHUB_ENV"
+          echo "versionCode for this run: $code (offset ${ABNY_VERSION_CODE_OFFSET:-0} + run_number $GITHUB_RUN_NUMBER)"
+
       # setup-java MUST precede flutter-action: the Flutter tool caches the
       # JDK it sees when it first configures Gradle.
       - uses: actions/setup-java@v4
@@ -322,7 +350,7 @@ jobs:
 
           got_java=$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+).*/\1/')
           if [ "$got_java" != "${{ env.JAVA_VERSION }}" ]; then
-            echo "::error::JAVA VERSION MISMATCH — the runner has JDK $got_java but this repository needs ${{ env.JAVA_VERSION }}. AGP 9.3.0 states JDK 17 as its minimum, and app/build.gradle compiles at source/target 17; on the wrong JDK the Android build dies with 'Unsupported class file major version' before compiling anything."
+            echo "::error::JAVA VERSION MISMATCH — the runner has JDK $got_java but this repository needs ${{ env.JAVA_VERSION }}. AGP 9.3.1 states JDK 17 as its minimum, and app/build.gradle compiles at source/target 17; on the wrong JDK the Android build dies with 'Unsupported class file major version' before compiling anything."
             fail=1
           fi
 

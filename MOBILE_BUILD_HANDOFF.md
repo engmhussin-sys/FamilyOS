@@ -17,14 +17,14 @@ This is the **single authoritative build document**. Execute it top to bottom wi
 
 | # | Item | Value | Read from |
 |---|---|---|---|
-| 1 | Flutter | `3.47.0` | `.github/workflows/build-apk.yml` → `env.FLUTTER_VERSION` |
+| 1 | Flutter | `3.47.1` | `.github/workflows/build-apk.yml` → `env.FLUTTER_VERSION` |
 | 2 | Dart | constraint `>=3.3.0 <4.0.0`; ships inside Flutter | `apps/*/pubspec.yaml` → `environment.sdk` |
 | 3 | Android SDK platform | `platforms;android-36` + `platform-tools` | derived from compileSdk; installed by `scripts/setup-windows-dev.ps1` |
 | 4 | compileSdk | `34` | `apps/*/android/app/build.gradle` |
 | 5 | buildTools | **not declared** → derived `36.0.0` | derivation in `scripts/lib/repo-pins.sh` |
 | 6 | Gradle | `8.3` | `apps/*/android/gradle/wrapper/gradle-wrapper.properties` |
 | 7 | JDK | `17`, Temurin | `.github/workflows/build-apk.yml` → `env.JAVA_VERSION` |
-| 8 | Android Gradle Plugin | `9.3.0` | `apps/*/android/settings.gradle` |
+| 8 | Android Gradle Plugin | `9.3.1` | `apps/*/android/settings.gradle` |
 | 9 | Exact commands | §9 | — |
 | 10 | Expected output | §10 | — |
 | 11 | Environment variables | §11 | — |
@@ -41,17 +41,17 @@ Each is expanded below with the exact line it came from.
 
 ---
 
-## 1. Flutter version — `3.47.0`
+## 1. Flutter version — `3.47.1`
 
 `STATIC VERIFIED`. `.github/workflows/build-apk.yml`:
 
 ```yaml
-FLUTTER_VERSION: "3.47.0"
+FLUTTER_VERSION: "3.47.1"
 ```
 
 Install exactly this. The pin is load-bearing and that file says why in its own comment: Flutter, AGP (§8), the Gradle wrapper (§6) and the `compileSdk`/`targetSdk` literals (§4) are ONE CHAINED SET, and a build on a different Flutter proves nothing about the pinned one.
 
-**Raised from `3.24.5` on 2026-08-22.** The reason is a deadline, not a preference: Google Play requires `targetSdk 36` for every new app and every update from **31 August 2026** ([Play Console Help](https://support.google.com/googleplay/android-developer/answer/11926878)). `targetSdk 36` needs AGP 9, AGP 9.3.0 needs Gradle ≥ 9.5.0, and Flutter 3.47 is the release whose Android templates target AGP 9+. **`NOT TESTED`** — none of it was built where the change was made; `build-apk.yml` is what tests it, and the first run should be expected to surface real AGP 9 migration work. The same workflow re-measures the runner and fails the job on a mismatch (`FLUTTER VERSION MISMATCH`), so CI and your machine are held to the same number.
+**Raised from `3.24.5` on 2026-08-22.** The reason is a deadline, not a preference: Google Play requires `targetSdk 36` for every new app and every update from **31 August 2026** ([Play Console Help](https://support.google.com/googleplay/android-developer/answer/11926878)). `targetSdk 36` needs AGP 9, AGP 9.3.1 needs Gradle ≥ 9.5.0, and Flutter 3.47 is the release whose Android templates target AGP 9+. **`NOT TESTED`** — none of it was built where the change was made; `build-apk.yml` is what tests it, and the first run should be expected to surface real AGP 9 migration work. The same workflow re-measures the runner and fails the job on a mismatch (`FLUTTER VERSION MISMATCH`), so CI and your machine are held to the same number.
 
 Channel: `stable` — `.github/workflows/build-apk.yml`, the `subosito/flutter-action@v2` step (`channel: stable`).
 
@@ -67,7 +67,7 @@ environment:
   flutter: ">=3.19.0"
 ```
 
-**Do not install a standalone Dart SDK.** Dart is bundled with Flutter at `<flutter>\bin\dart.bat`; a separately installed one drifts from the Flutter pin and then `flutter pub get` and `flutter analyze` disagree about the language version. Which Dart 3.47.0 ships is deliberately NOT written down here: it was not measurable in the environment that made the 2026-08-22 bump, and an invented Dart version is worse than no statement. `flutter --version` on the installed SDK is the answer, and both apps' `pubspec.yaml` require `>=3.3.0 <4.0.0` — a range 3.47's Dart is inside. No `dart --version` has ever run against this repository.
+**Do not install a standalone Dart SDK.** Dart is bundled with Flutter at `<flutter>\bin\dart.bat`; a separately installed one drifts from the Flutter pin and then `flutter pub get` and `flutter analyze` disagree about the language version. Which Dart 3.47.1 ships is deliberately NOT written down here: it was not measurable in the environment that made the 2026-08-22 bump, and an invented Dart version is worse than no statement. `flutter --version` on the installed SDK is the answer, and both apps' `pubspec.yaml` require `>=3.3.0 <4.0.0` — a range 3.47's Dart is inside. No `dart --version` has ever run against this repository.
 
 ---
 
@@ -102,7 +102,7 @@ It is a **literal**, deliberately not `flutter.compileSdkVersion`, so the API le
 | | Value | Note (from the file's own comment) |
 |---|---|---|
 | `targetSdk` | `34` | 34 is what makes the child app's `FOREGROUND_SERVICE_SPECIAL_USE` declaration the correct form |
-| `minSdk` | `21` | Was Flutter 3.24.5's own floor, and satisfies the floor `com.google.firebase:firebase-bom:33.1.2` requires. **Left at 21 across the 3.47.0 bump on purpose** — 3.47's floor was not verifiable where the change was made, and a guessed `minSdk` is worse than a stale one. If 3.47 requires higher, AGP fails the first build naming the exact number |
+| `minSdk` | `21` | Was Flutter 3.24.5's own floor, and satisfies the floor `com.google.firebase:firebase-bom:33.1.2` requires. **Left at 21 across the 3.47.1 bump on purpose** — 3.47's floor was not verifiable where the change was made, and a guessed `minSdk` is worse than a stale one. If 3.47 requires higher, AGP fails the first build naming the exact number |
 
 `release-doctor` checks `minSdk <= targetSdk <= compileSdk` and `compileSdk` against the AGP ceiling as two separate rows.
 
@@ -110,7 +110,7 @@ It is a **literal**, deliberately not `flutter.compileSdkVersion`, so the API le
 
 ## 5. buildTools — NOT DECLARED ANYWHERE; derived as `36.0.0`
 
-`STATIC VERIFIED`. **Neither app declares `buildToolsVersion`.** Grep both `apps/*/android/app/build.gradle`: the property does not appear. AGP 9.3.0 therefore picks its own default, which its release notes give as `36.0.0`.
+`STATIC VERIFIED`. **Neither app declares `buildToolsVersion`.** Grep both `apps/*/android/app/build.gradle`: the property does not appear. AGP 9.3.1 therefore picks its own default, which its release notes give as `36.0.0`.
 
 The derivation used by every script here is `<compileSdk>.0.0` = **`36.0.0`**, and it is printed as derived wherever it is used (`scripts/lib/repo-pins.sh` sets `PIN_BUILD_TOOLS_DERIVED=yes`; `scripts/setup-windows-dev.ps1` prints `DERIVED from compileSdk — not declared anywhere in the repo`).
 
@@ -140,19 +140,19 @@ distributionUrl=https\://services.gradle.org/distributions/gradle-9.7.1-bin.zip
 |---|---|
 | `.github/workflows/build-apk.yml` | `JAVA_VERSION: "17"`, and `distribution: temurin` on the `actions/setup-java@v4` step |
 | `apps/*/android/app/build.gradle` | `sourceCompatibility JavaVersion.VERSION_17`, `targetCompatibility JavaVersion.VERSION_17`, `jvmTarget = JavaVersion.VERSION_17` |
-| `.github/workflows/build-apk.yml` (comment) | AGP 9.3.0 states JDK 17 as its minimum and default, Gradle 9.7.1 runs on it, and `app/build.gradle` compiles at source/target 17. On the wrong JDK the build dies with `Unsupported class file major version` before compiling anything |
+| `.github/workflows/build-apk.yml` (comment) | AGP 9.3.1 states JDK 17 as its minimum and default, Gradle 9.7.1 runs on it, and `app/build.gradle` compiles at source/target 17. On the wrong JDK the build dies with `Unsupported class file major version` before compiling anything |
 
 **Set `JAVA_HOME` to the JDK 17 root.** Gradle prefers `JAVA_HOME` over `PATH`; a machine with 17 on `PATH` and `JAVA_HOME` pointing at 21 builds with 21 and fails. `release-doctor` has a separate `java-home` row for precisely this.
 
 ---
 
-## 8. Android Gradle Plugin — `9.3.0` (with Kotlin `2.4.10`)
+## 8. Android Gradle Plugin — `9.3.1` (with Kotlin `2.4.10`)
 
 `STATIC VERIFIED`. Both `apps/*/android/settings.gradle`:
 
 ```groovy
 id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-id "com.android.application" version "9.3.0" apply false
+id "com.android.application" version "9.3.1" apply false
 id "org.jetbrains.kotlin.android" version "2.4.10" apply false
 ```
 
@@ -177,7 +177,7 @@ Other declared Gradle dependencies, for completeness:
 Run from the repository root in **PowerShell**. Nothing here is optional and nothing is a choice.
 
 ```powershell
-# 0. ONE-TIME TOOLCHAIN INSTALL (Flutter 3.47.0, Temurin 17, Android SDK 36)
+# 0. ONE-TIME TOOLCHAIN INSTALL (Flutter 3.47.1, Temurin 17, Android SDK 36)
 .\scripts\setup-windows-dev.ps1
 
 # 1. THE GATE. Repeat until it does not end on SHIP BLOCKED.

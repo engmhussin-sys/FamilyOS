@@ -153,10 +153,10 @@ android {
     // chain forward in one commit:
     //
     //   compileSdk/targetSdk 36
-    //     <- AGP 9.3.0        (supports up to API 37; AGP 8.1.1 refused >34)
-    //       <- Gradle 9.7.1   (AGP 9.3.0's stated minimum is Gradle 9.5.0)
+    //     <- AGP 9.3.1        (supports up to API 37; AGP 8.1.1 refused >34)
+    //       <- Gradle 9.7.1   (AGP 9.3.1's stated minimum is Gradle 9.5.0)
     //         <- Kotlin 2.4.10
-    //           <- Flutter 3.47.0 (its templates target AGP 9+)
+    //           <- Flutter 3.47.1 (its templates target AGP 9+)
     //
     // ndkVersion is deliberately LEFT on flutter.ndkVersion: its correct
     // literal cannot be verified without a Flutter SDK, and a wrong NDK pin
@@ -184,7 +184,7 @@ android {
         // com.google.firebase:firebase-bom:33.1.2 (pinned in `dependencies`
         // below), which firebase_core 3.x / firebase_messaging 15.x use.
         //
-        // LEFT AT 21 ACROSS THE FLUTTER 3.47.0 BUMP, deliberately: 3.47's own
+        // LEFT AT 21 ACROSS THE FLUTTER 3.47.1 BUMP, deliberately: 3.47's own
         // floor could not be verified without a Flutter SDK, and a guessed
         // minSdk is worse than a stale one — if 3.47 requires higher, the first
         // build says so with the exact number. Re-check it there, not here.
