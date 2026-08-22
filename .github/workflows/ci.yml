@@ -109,6 +109,17 @@ jobs:
           python3 scripts/ci/test_mobile_toolchain_guard.py
           python3 scripts/ci/assert-mobile-toolchain-current.py
 
+      # CI RULE 5 — BLOCKING, and added after the container was found unable to
+      # START. `@prisma/adapter-pg` (imported by PrismaService), `prisma` and
+      # `dotenv` (both imported by prisma.config.ts) were all in
+      # devDependencies, and the runtime image installs with
+      # `npm ci --omit=dev`. The suite could never see it: tests run with the
+      # full dev install, so the failure exists only in the image. This reads
+      # every import in src/ (plus the files the runtime stage copies) and
+      # fails when one names a package that is not a runtime dependency.
+      - name: Runtime dependency completeness guard
+        run: npm run ci:runtime-deps
+
       - name: Tenant-scoping static guard
         run: npm run ci:tenant-guard
       # F3 (R3) — BLOCKING. The ratchet described in

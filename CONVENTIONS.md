@@ -115,14 +115,71 @@ Flutter's version lives in a workflow variable, AGP's and Kotlin's in `apps/*/an
 **These four upgrade together, in this order, or not at all:**
 
 ```
-Flutter 3.27+ defaults compileSdk to 35
-  └─ AGP refuses:  "compileSdk 35 requires Android Gradle Plugin 8.6.0 or higher"
-      └─ newer AGP requires a newer Gradle wrapper
+Google Play requires targetSdk 36 from 31 August 2026
+  └─ AGP refuses a compileSdk above its own ceiling
+      └─ AGP 9.x requires Gradle 9.5.0 or newer
           └─ and a Kotlin version its plugin accepts
+              └─ and Flutter 3.47+ is the release whose templates target AGP 9+
 ```
 
 Nobody upgrades one of these. Somebody upgrades all four, in order, then raises `compileSdk`/`targetSdk`, then **builds both apps** — `flutter analyze`, `flutter test`, and the APK job. A mobile toolchain bump that was not built is not an upgrade.
 
+**Done once, on 2026-08-22**, and prompted by the Play deadline rather than by this guard — which is the failure mode the guard now exists to prevent a second time. The set landed was Flutter 3.47.0 · AGP 9.3.0 · Gradle 9.7.1 · Kotlin 2.4.10 · compileSdk/targetSdk 36, every number resolved from its authoritative source, and **it has not been built** — see `MOBILE_BUILD_HANDOFF.md` §1.
+
 ### A version that cannot be obtained is never guessed
 
 C-5 governs here without exception. Where an environment cannot reach `storage.googleapis.com`, `dl.google.com`, `services.gradle.org` or `pub.dev`, the correct output is a named gap and a guard that will catch it on a machine that can — **never a version number written from memory.** A pin invented for two apps that run on children's phones, in an environment where nothing can build them, is the worst possible form of that mistake.
+
+---
+
+## C-7 · WHAT PRODUCTION RUNS IS A *RUNTIME* DEPENDENCY
+
+The production image installs with `npm ci --omit=dev`. Anything imported by
+code that runs there — `apps/backend/src/**`, and the files the Dockerfile's
+runtime stage copies (`prisma.config.ts`, `scripts/predeploy.sh`) — **must be
+in `dependencies`, never `devDependencies`.**
+
+### Why this is a convention and not a note
+
+Three defects of this exact shape shipped into one branch, and **none of them
+was reachable by any test.** Tests run against the full dev install; the
+failure exists only in an image built with `--omit=dev`:
+
+| Package | Imported by | Consequence |
+|---|---|---|
+| `dotenv` | `prisma.config.ts` | the Prisma CLI in the image cannot load its own config — the release step dies |
+| `@prisma/adapter-pg` | `PrismaService` | **the container crashes on startup**: `Cannot find module 'pg'` |
+| `prisma` | `prisma.config.ts` (`defineConfig`) | present only via a hand-maintained `COPY` line in the Dockerfile |
+
+The second one was found by reproducing the Docker runtime stage on disk and
+booting it. It would otherwise have been found by Railway, in production, as a
+crash loop.
+
+### The guard
+
+`npm run ci:runtime-deps` (`apps/backend/scripts/ci/assert-runtime-deps.ts`),
+blocking in CI. It reads first-party imports and fails on any that names a
+package outside `dependencies`. `import type` is exempt, because it is erased
+by the compiler; an inline `import { type A, B }` is **not**, because `B` still
+emits a require.
+
+### What the guard does not prove, and the ten-minute check that does
+
+The guard reads *first-party* imports. It cannot prove the whole production
+dependency tree resolves — `pg` is never imported by `src/`, it arrives through
+`@prisma/adapter-pg`. **Before a release, boot the runtime stage:**
+
+```sh
+# from apps/backend, with a full install present
+SIM=/tmp/runtime-sim && rm -rf $SIM && mkdir -p $SIM/scripts
+cp package.json package-lock.json prisma.config.ts $SIM/
+cp -r prisma dist $SIM/ && cp scripts/predeploy.sh scripts/predeploy-schema-probe.js $SIM/scripts/
+cd $SIM && npm ci --omit=dev
+cp -r <full-install>/node_modules/.prisma  node_modules/.prisma
+cp -r <full-install>/node_modules/@prisma  node_modules/@prisma
+DATABASE_URL=… REDIS_URL=… node dist/main.js     # must reach "Nest application successfully started"
+curl -s localhost:3000/health/ready              # must be 200 with database:true, redis:true
+```
+
+That is not a substitute for building the image where Docker Hub is reachable.
+It is what to do where it is not — and it is strictly better than assuming.

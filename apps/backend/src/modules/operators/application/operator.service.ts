@@ -394,10 +394,25 @@ export class OperatorService {
         const sessionsKilled = await this.sessions.revokeAll(targetId);
 
         await this.prisma.$transaction(async (tx) => {
-          // THE LAST SUPER_ADMIN, enforced where it counts. If this change would
-          // stop the target from being an active SUPER_ADMIN, some OTHER active
-          // SUPER_ADMIN must remain — otherwise `operators.manage` has no holder
-          // and the console can never gain one again.
+          /**
+           * THE LAST SUPER_ADMIN. If this change would stop the target being an
+           * active SUPER_ADMIN, another active SUPER_ADMIN must remain —
+           * otherwise `operators.manage` has no holder and the console can
+           * never gain one again, because the bootstrap has closed for good.
+           *
+           * HONESTLY: no request can reach this today, and it is kept anyway.
+           * Only SUPER_ADMIN holds `operators.manage`, and the self-check above
+           * refuses first — so the only actor who could demote the last
+           * SUPER_ADMIN is that operator, and they are already refused. Verified
+           * at runtime against the built image: the attempt answers
+           * OPERATOR_CANNOT_MODIFY_SELF, not this rule.
+           *
+           * It stays because it is one query and it is the rule that survives a
+           * change to either of those two facts — a second role granted
+           * `operators.manage`, or a support path that relaxes the self-check.
+           * A guard that only matters after someone else's edit is exactly the
+           * guard that should be written before that edit.
+           */
           const losesSuperAdmin =
             previous.role === 'SUPER_ADMIN' &&
             previous.status === 'ACTIVE' &&

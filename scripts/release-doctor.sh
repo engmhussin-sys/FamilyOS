@@ -612,12 +612,38 @@ fi
 # "compileSdk 35 requires Android Gradle Plugin 8.6.0 or higher". Nothing here
 # is invented; the numbers on both sides are parsed out of the tree.
 # ===========================================================================
-AGP_CEILING_NOTE="apps/*/android/app/build.gradle records the rule: compileSdk 35 requires AGP 8.6.0 or higher."
-if [ "$PIN_COMPILE_SDK" -ge 35 ] 2>/dev/null && ! ver_ge "$PIN_AGP" "8.6.0"; then
+# THE CHAIN, CHECKED IN BOTH DIRECTIONS — kept identical to release-doctor.ps1.
+#
+#   compileSdk 35+ needs AGP 8.6.0+    (AGP's own refusal message says so)
+#   compileSdk 36+ needs AGP 9.0.0+    (36 is above AGP 8.x's ceiling)
+#   AGP 9.x        needs Gradle 9.5.0+ (developer.android.com/build/releases/
+#                                       gradle-plugin, read 2026-08-22)
+#
+# The Gradle half was missing from BOTH halves until the 2026-08-22 toolchain
+# bump. Its absence is how a repository can pin an AGP its own Gradle wrapper
+# cannot load — a failure that surfaces as an opaque plugin-resolution error
+# instead of as the sentence above.
+AGP_CEILING_NOTE="apps/*/android/app/build.gradle records the rule and its sources."
+AGP_FLOOR=""
+if [ "$PIN_COMPILE_SDK" -ge 36 ] 2>/dev/null; then
+  AGP_FLOOR="9.0.0"
+elif [ "$PIN_COMPILE_SDK" -ge 35 ] 2>/dev/null; then
+  AGP_FLOOR="8.6.0"
+fi
+if [ -n "$AGP_FLOOR" ] && ! ver_ge "$PIN_AGP" "$AGP_FLOOR"; then
   fail_row gradle-agp-sdk "compileSdk vs AGP" "compileSdk $PIN_COMPILE_SDK with AGP $PIN_AGP" \
-    "AGP $PIN_AGP refuses compileSdk $PIN_COMPILE_SDK outright. Either drop compileSdk back to 34 in apps/*/android/app/build.gradle or raise the AGP version in apps/*/android/settings.gradle to 8.6.0 or higher (which also moves the Gradle pin). $AGP_CEILING_NOTE"
+    "AGP $PIN_AGP refuses compileSdk $PIN_COMPILE_SDK outright - that level needs AGP $AGP_FLOOR or higher. Either lower compileSdk in apps/*/android/app/build.gradle or raise the AGP version in apps/*/android/settings.gradle (which also moves the Gradle wrapper pin). $AGP_CEILING_NOTE"
 else
   row PASS "compileSdk vs AGP" "compileSdk $PIN_COMPILE_SDK is inside AGP $PIN_AGP's ceiling" ""
+fi
+
+# AGP 9 cannot load on a Gradle below 9.5.0. Checked separately from the SDK
+# rule above because it is a different requirement with a different fix.
+if ver_ge "$PIN_AGP" "9.0.0" && ! ver_ge "$PIN_GRADLE" "9.5.0"; then
+  fail_row gradle-agp-sdk "AGP vs Gradle wrapper" "AGP $PIN_AGP with Gradle $PIN_GRADLE" \
+    "AGP 9.x states Gradle 9.5.0 as its minimum. Raise distributionUrl in apps/*/android/gradle/wrapper/gradle-wrapper.properties, or lower the AGP pin in apps/*/android/settings.gradle. Source: developer.android.com/build/releases/gradle-plugin"
+else
+  row PASS "AGP vs Gradle wrapper" "AGP $PIN_AGP runs on Gradle $PIN_GRADLE" ""
 fi
 
 if [ "$PIN_MIN_SDK" -le "$PIN_TARGET_SDK" ] 2>/dev/null && [ "$PIN_TARGET_SDK" -le "$PIN_COMPILE_SDK" ] 2>/dev/null; then
