@@ -85,3 +85,7 @@ dump.rdb
 # of not committing a password is not. The script says so in its own output,
 # and this line is what makes saying so true.
 TEST-ACCOUNTS.txt
+
+# Delivery bundles are transport, never source. One was committed by accident
+# on 2026-08-22 (a 6.6 MB blob) simply because nothing here refused it.
+*.bundle

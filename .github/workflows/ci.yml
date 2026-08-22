@@ -164,8 +164,13 @@ jobs:
       # suite owns the clock and the throttler counters in Redis.
       - name: Event pipeline proofs (ingest -> bus -> reward -> notification)
         run: npx jest test/events --forceExit --runInBand
+      # `npx nest build` until 2026-08-22, which had been BROKEN since
+      # @nestjs/cli was removed — no published tag of it supports TypeScript 7
+      # (CONVENTIONS.md C-6). It failed with "could not determine executable to
+      # run", so this gate proved nothing. `npm run build` is the real build:
+      # `tsc -p tsconfig.build.json`, the same command the Dockerfile uses.
       - name: Build
-        run: npx nest build
+        run: npm run build
 
   admin-dashboard:
     name: Admin Dashboard (React)

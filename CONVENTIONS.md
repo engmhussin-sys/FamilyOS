@@ -183,3 +183,33 @@ curl -s localhost:3000/health/ready              # must be 200 with database:tru
 
 That is not a substitute for building the image where Docker Hub is reachable.
 It is what to do where it is not — and it is strictly better than assuming.
+
+---
+
+## C-8 · THERE IS NO LINTER, AND THAT IS WRITTEN DOWN RATHER THAN IMPLIED
+
+`apps/backend/package.json` carried `"lint": "eslint ... --fix"` until
+2026-08-22. **ESLint was never a dependency and no `eslint.config.*` exists
+anywhere in this repository**, so the script downloaded a random ESLint from
+the network and then failed for want of a config. It was never in CI, and it
+had therefore never run.
+
+A command that cannot run is worse than no command: someone reads
+`npm run lint` in `package.json` and believes the code is linted. The script is
+removed, and this section is what replaces it.
+
+### What actually enforces quality here
+
+| | |
+|---|---|
+| Types | `tsc --noEmit`, blocking in CI, on both apps |
+| Behaviour | 246 suites / 5686 tests against real PostgreSQL and Redis |
+| Architecture | five static guards (tenant scoping, event emission, dependency currency, runtime dependencies, mobile toolchain) |
+| Ops scripts | bash/PowerShell parity, checked structurally |
+
+### If a linter is added later
+
+Add it as a real devDependency with a real `eslint.config.js`, wire it into
+`ci.yml` as a blocking step in the same commit, and fix the findings in that
+commit. **Adding the script without the other three is how this gap was created
+in the first place.** It is deliberately NOT being done on a release day.
