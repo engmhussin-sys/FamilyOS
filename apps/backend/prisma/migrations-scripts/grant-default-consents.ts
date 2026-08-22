@@ -16,9 +16,15 @@
  * same standing environment limitation documented throughout this
  * project since Sprint 13).
  */
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+// PRISMA 7: a client cannot be constructed without an adapter — `new PrismaClient()`
+// throws "A driver adapter is required". The connection no longer comes from
+// `datasource.url` in the schema; it comes from here.
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) throw new Error('DATABASE_URL is not set.');
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
 const BASELINE_CONSENT_TYPES = ['DATA_COLLECTION', 'LOCATION_TRACKING', 'APP_USAGE_MONITORING', 'AI_BEHAVIOR_ANALYSIS'] as const;
 

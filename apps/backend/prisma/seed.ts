@@ -1,10 +1,19 @@
 /**
  * Seeds `PlanDefinition` rows for all four `SubscriptionPlan` tiers.
  * PRICING IS PLACEHOLDER — flagged explicitly, not a real business
- * decision made on the project manager's behalf. Run via
- * `npx prisma db seed` after configuring `package.json`'s
- * `"prisma": { "seed": "ts-node prisma/seed.ts" }` (or run directly with
- * ts-node) once a real database is available — not run in this sandbox.
+ * decision made on the project manager's behalf.
+ *
+ * HOW TO RUN IT, AS OF PRISMA 7:
+ *
+ *     DATABASE_URL=... npx tsx prisma/seed.ts
+ *
+ * The instruction that used to be here — configure `package.json`'s
+ * `"prisma": { "seed": "ts-node prisma/seed.ts" }` and run `npx prisma db
+ * seed` — no longer works, and is corrected rather than left as a trap for the
+ * next person: Prisma 7 STOPPED READING the `prisma` key in `package.json`
+ * (configuration moved to `prisma.config.ts`), and `ts-node` was removed from
+ * this repository when the toolchain moved to TypeScript 7, which it does not
+ * support. `tsx` is what `seed:demo` already uses.
  *
  * CURRENCY: CLOSES A REAL GAP found during a proactive business
  * review — every plan was hardcoded USD despite this project's own
@@ -18,9 +27,15 @@
  * localized pricing per Gulf country — SAR/AED/etc.) is a genuine
  * future product investment, not attempted here.
  */
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+// PRISMA 7: a client cannot be constructed without an adapter — `new PrismaClient()`
+// throws "A driver adapter is required". The connection no longer comes from
+// `datasource.url` in the schema; it comes from here.
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) throw new Error('DATABASE_URL is not set.');
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 
 const PLANS = [
   {

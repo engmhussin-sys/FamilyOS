@@ -22,14 +22,31 @@ generator client {
   // both gone, and their absence is the upgrade's biggest win rather than a
   // deletion.
   //
-  // Prisma 7 makes DRIVER ADAPTERS THE DEFAULT and removes the native query
+  // Prisma 7 makes DRIVER ADAPTERS THE DEFAULT and removes the native QUERY
   // engine. The comment that used to live here described a real deploy-time
   // bug — a downloaded engine built for openssl-1.1.x refusing to load inside
   // node:20-alpine — and a second one described this repository's offline
   // WASM workaround, needed because `binaries.prisma.sh` answers 403 in our
-  // build environments. BOTH PROBLEMS ARE NOW STRUCTURALLY ABSENT: there is no
-  // binary to download, no libssl to match, and no checksum to fetch. The
-  // client talks to PostgreSQL through `pg`, which is plain JavaScript.
+  // build environments. AT RUNTIME both problems are now structurally absent:
+  // no query-engine binary to download, no libssl to match. The client talks
+  // to PostgreSQL through `pg`, which is plain JavaScript.
+  //
+  // WHAT IS NOT GONE — corrected here, because an earlier version of this
+  // comment claimed it was: THE SCHEMA ENGINE IS STILL A NATIVE BINARY. The
+  // CLI fetches it on demand for `migrate` and `db push`, and in this
+  // repository's build environments that fetch still answers 403:
+  //
+  //   Failed to fetch sha256 checksum at https://binaries.prisma.sh/
+  //     all_commits/<hash>/debian-openssl-3.0.x/schema-engine.gz.sha256
+  //     — 403 Forbidden
+  //
+  // Reproduced 2026-08-22, with and without
+  // PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 (which skips the checksum and
+  // then fails on the engine itself). So the honest split is: the APPLICATION
+  // needs no binary, MIGRATIONS still do. Where the fetch is blocked, apply
+  // the committed `prisma/migrations/*/migration.sql` files with psql — the
+  // same statements `migrate deploy` would run, which is how this repository's
+  // integration suites get a schema.
 }
 
 datasource db {

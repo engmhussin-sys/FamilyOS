@@ -224,7 +224,7 @@ function buildPrismaSubstitute(): { service: any; close: () => Promise<void> } {
   const url = process.env.DATABASE_URL as string;
 
   if (process.env.PRISMA_DRIVER_ADAPTER === 'pg') {
-    const { PrismaClient } = require('@prisma/client/wasm');
+    const { PrismaClient } = require('@prisma/client');
     const { PrismaPg } = require('@prisma/adapter-pg');
     const { Pool } = require('pg');
     const pool = new Pool({ connectionString: url });
@@ -242,7 +242,12 @@ function buildPrismaSubstitute(): { service: any; close: () => Promise<void> } {
   }
 
   const { PrismaClient } = require('@prisma/client');
-  const raw = new PrismaClient({ datasources: { db: { url } } });
+  const raw = new PrismaClient({
+    // PRISMA 7: `datasources` was removed; the adapter is the connection.
+    adapter: new (require('@prisma/adapter-pg').PrismaPg)(
+      new (require('pg').Pool)({ connectionString: url }),
+    ),
+  });
   const service = raw.$extends(createTenantExtension());
   service.onModuleInit = async (): Promise<void> => {
     await raw.$connect();

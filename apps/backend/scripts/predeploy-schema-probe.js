@@ -49,19 +49,21 @@ async function main() {
 
   let prisma;
   let pool;
-  if (process.env.PRISMA_DRIVER_ADAPTER === 'pg') {
-    // The offline/sandbox path, identical in shape to the test helper: the
-    // native query engine cannot be downloaded there, so the WASM engine runs
-    // over node-postgres. This is how the suite exercises this file for real.
-    const { PrismaClient } = require('@prisma/client/wasm');
-    const { PrismaPg } = require('@prisma/adapter-pg');
-    const { Pool } = require('pg');
-    pool = new Pool({ connectionString: url });
-    prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-  } else {
-    const { PrismaClient } = require('@prisma/client');
-    prisma = new PrismaClient({ datasources: { db: { url } } });
-  }
+  // PRISMA 7: one way to build a client. The branch that used to live here
+  // chose between the WASM engine (`@prisma/client/wasm`) and a native one
+  // (`datasources: { db: { url } }`). Prisma 7 removed BOTH: there is no
+  // `./wasm` export any more, and `datasources` is rejected at construction
+  // with "Unknown property datasources provided to PrismaClient constructor".
+  //
+  // This file runs INSIDE the release step. Left as it was, it threw before
+  // measuring anything, `predeploy.sh` read that as "BLOCKED: could not measure
+  // the live schema", and the RLS-baseline safety check could never produce a
+  // measurement again.
+  const { PrismaClient } = require('@prisma/client');
+  const { PrismaPg } = require('@prisma/adapter-pg');
+  const { Pool } = require('pg');
+  pool = new Pool({ connectionString: url });
+  prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
   try {
     const one = async (sql) => {
