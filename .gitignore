@@ -72,6 +72,9 @@ apps/backend/.evidence-store/
 # Phase C — the Flutter static-preflight scripts are plain Python; their
 # bytecode cache is a build artifact of running them, not source.
 scripts/__pycache__/
+# `scripts/ci/` grew its own Python when the mobile-toolchain guard was added,
+# and the pattern above does not match a nested directory.
+scripts/ci/__pycache__/
 
 # Redis snapshot artefact - never a source file
 dump.rdb
