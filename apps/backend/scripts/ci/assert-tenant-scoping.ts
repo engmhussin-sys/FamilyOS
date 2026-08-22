@@ -92,16 +92,96 @@ for (const m of ALL_CLASSIFIED_MODELS) {
 }
 const strictTables = [...STRICT_TENANT_MODELS].map((m) => tableFor.get(m)).filter(Boolean) as string[];
 
+/**
+ * ---------------------------------------------------------------------------
+ * THE SQL CONSTANTS, RESOLVED — because the statement is often not at the call.
+ * ---------------------------------------------------------------------------
+ *
+ * `$executeRawUnsafe(SQL_MARK_DELIVERED, id)` shows the guard an identifier and
+ * no SQL. The statement it names lives in a `.sql.ts` file and DOES carry
+ * `family_id`, so reading only the call site produces a false accusation
+ * against correct code — and a guard that cries wolf is a guard somebody
+ * deletes. Every `SQL_*` template literal in `src` is collected once here and
+ * its body is appended to the window whenever the call names it.
+ */
+const sqlConstants = new Map<string, string>();
+for (const file of files) {
+  const text = fs.readFileSync(file, 'utf8');
+  const re = /\bconst\s+(SQL_[A-Z0-9_]+)\s*=\s*`([\s\S]*?)`/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) sqlConstants.set(m[1], m[2]);
+}
+
+/** How many statements were admitted by each escape hatch, printed at the end
+ * so neither one can grow quietly. */
+let admittedBySystemScope = 0;
+let admittedByConstant = 0;
+
 for (const file of files) {
   const text = fs.readFileSync(file, 'utf8');
   if (!/\$(queryRaw|executeRaw)/.test(text)) continue;
   const lines = text.split('\n');
   lines.forEach((line, i) => {
     if (!/\$(queryRaw|executeRaw)/.test(line)) return;
-    // Look at the statement and a small window after it — template literals wrap.
-    const window = lines.slice(i, i + 25).join('\n');
-    const touched = strictTables.filter((t) => new RegExp(`\\b${t}\\b`).test(window));
-    if (touched.length > 0 && !/family_id/.test(window)) {
+    /**
+     * A window of the CODE that follows, with comment lines removed.
+     *
+     * The window used to be the next 25 lines verbatim, and that made the rule
+     * satisfiable by PROSE: a statement with no `family_id` in it passed
+     * because a comment or a neighbouring statement 20 lines below happened to
+     * contain the string. It was caught when a long comment was added between
+     * two statements in `safety-review.service.ts` and a rule that had been
+     * "passing" started failing without any SQL changing.
+     *
+     * Comments are stripped so the rule measures the statement, not the essay
+     * around it. The window is widened to compensate for the lines removed.
+     */
+    const window = lines
+      .slice(i, i + 40)
+      .filter((l) => {
+        const t = l.trim();
+        return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.startsWith('*/'));
+      })
+      .join('\n');
+    /**
+     * Anything the window NAMES is pulled in too, so a statement kept in a
+     * `.sql.ts` file is judged by its SQL and not by its variable name.
+     */
+    const named = [...new Set(window.match(/\bSQL_[A-Z0-9_]+\b/g) ?? [])];
+    const resolved = named.map((n) => sqlConstants.get(n) ?? '').join('\n');
+    const statement = `${window}\n${resolved}`;
+
+    const touched = strictTables.filter((t) => new RegExp(`\\b${t}\\b`).test(statement));
+    if (touched.length === 0) return;
+
+    if (/family_id/.test(statement)) {
+      if (resolved && !/family_id/.test(window)) admittedByConstant += 1;
+      return;
+    }
+
+    /**
+     * THE STATED-REASON ESCAPE HATCH, which this rule's own message has always
+     * promised and never actually checked. A cross-tenant sweep — the outbox
+     * relay, a retention job — is legitimate raw SQL with no `family_id` in it,
+     * and `runAsSystem`/`runAsSystemAsync` is how this codebase requires such a
+     * statement to declare itself, with a reason string that is logged.
+     *
+     * Scanned BACKWARD over code (comments removed) from the call, because the
+     * wrapper opens above the statement it contains.
+     */
+    const before = lines
+      .slice(Math.max(0, i - 40), i)
+      .filter((l) => {
+        const t = l.trim();
+        return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*') || t.startsWith('*/'));
+      })
+      .join('\n');
+    if (/runAsSystem(Async)?\s*\(/.test(before)) {
+      admittedBySystemScope += 1;
+      return;
+    }
+
+    {
       violations.push({
         rule: 'RULE 2 (raw SQL not tenant-scoped)',
         file: rel(file),
@@ -260,6 +340,11 @@ console.log(`    shared-null                 : ${SHARED_NULL_TENANT_MODELS.size}
 console.log(`    platform-annotated          : ${PLATFORM_ANNOTATED_MODELS.size}`);
 console.log(`    self-tenant                 : ${SELF_TENANT_MODELS.size}`);
 console.log(`    global                      : ${GLOBAL_MODELS.size}`);
+// The two ways a raw statement passes RULE 2 without carrying `family_id` at
+// the call site. Printed, because an escape hatch nobody counts is one that
+// grows.
+console.log(`  raw SQL scoped via a named SQL_* constant : ${admittedByConstant}`);
+console.log(`  raw SQL admitted under runAsSystem        : ${admittedBySystemScope}`);
 console.log(`  violations               : ${violations.length}`);
 
 if (violations.length > 0) {

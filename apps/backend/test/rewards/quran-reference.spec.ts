@@ -141,18 +141,17 @@ describeIfDb('the SEEDED quran_surahs table equals the TypeScript constant', () 
       prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
       prisma.__pool = pool;
     } else {
+      // The pool is kept on the client so `afterAll` can end it. `$disconnect()`
+      // closes what Prisma opened and never a pool the caller supplied, so an
+      // anonymous pool here is a connection this suite leaks for the rest of
+      // the run — which is what `if (prisma.__pool)` below was already written
+      // to prevent, on a branch that never set it.
       const { PrismaClient } = require('@prisma/client');
-      prisma = new PrismaClient({
-    // PRISMA 7: `datasources` was removed from the constructor — driver
-    // adapters are the only mode, so the adapter IS the connection. This
-    // branch used to exist to AVOID the adapter; it now builds the same
-    // client the branch above does, which is the honest end state: a test
-    // must not reach the database through a different engine than
-    // production does.
-    adapter: new (require('@prisma/adapter-pg').PrismaPg)(
-      new (require('pg').Pool)({ connectionString: url }),
-    ),
-  });
+      const { PrismaPg } = require('@prisma/adapter-pg');
+      const { Pool } = require('pg');
+      const pool = new Pool({ connectionString: url });
+      prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+      prisma.__pool = pool;
     }
   });
 
