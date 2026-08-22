@@ -117,6 +117,17 @@ jobs:
       # full dev install, so the failure exists only in the image. This reads
       # every import in src/ (plus the files the runtime stage copies) and
       # fails when one names a package that is not a runtime dependency.
+      # CI RULE 6 — BLOCKING. Added after every ci.yml run in this repository's
+      # history failed to PARSE: build-apk.yml did arithmetic in a `${{ }}`
+      # expression, which the language has no operator for, and ci.yml `uses:`
+      # that file. No job ever started, and the red X was indistinguishable
+      # from a real test failure. This step cannot save a caller that is itself
+      # unparseable — run it by hand before changing a workflow — but it does
+      # catch the far commoner case of a called file going bad.
+      - name: Workflow expression syntax guard
+        working-directory: .
+        run: python3 scripts/ci/assert-workflow-expressions.py
+
       - name: Runtime dependency completeness guard
         run: npm run ci:runtime-deps
 

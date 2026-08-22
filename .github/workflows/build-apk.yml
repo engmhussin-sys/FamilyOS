@@ -172,7 +172,23 @@ env:
   # ABNY_VERSION_CODE_OFFSET to a value above the highest versionCode Play has
   # already accepted. Play's error for a reused versionCode names the number it
   # already has, so recovery is mechanical.
-  ORG_GRADLE_PROJECT_abnyVersionCode: ${{ fromJSON(vars.ABNY_VERSION_CODE_OFFSET || '0') + github.run_number }}
+  # ⚠ THIS LINE USED TO DO ARITHMETIC, AND GITHUB ACTIONS CANNOT.
+  #
+  # It read:
+  #   ${{ fromJSON(vars.ABNY_VERSION_CODE_OFFSET || '0') + github.run_number }}
+  #
+  # The expression language has no `+`. Its operators are exactly `!`, `<`,
+  # `<=`, `>`, `>=`, `==`, `!=`, `&&`, `||` — and nothing else. So this file
+  # was an INVALID WORKFLOW, and because ci.yml calls it with `uses:`, the
+  # error propagated: every ci.yml run since this line was written failed to
+  # PARSE, and not one job in it ever started. That is why CI showed red on
+  # commits that had nothing wrong with them.
+  #
+  # Only the offset is passed as an env var now. The sum is computed in the
+  # `flutter` job by a shell step, where arithmetic is ordinary, and written
+  # to $GITHUB_ENV so both Gradle and the later `${{ env.… }}` references
+  # still see `ORG_GRADLE_PROJECT_abnyVersionCode` exactly as before.
+  ABNY_VERSION_CODE_OFFSET: ${{ vars.ABNY_VERSION_CODE_OFFSET || '0' }}
 
 jobs:
   # =========================================================================
@@ -260,6 +276,18 @@ jobs:
 
       - id: vars
         run: echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # The arithmetic the workflow-level `env:` block cannot do. Kept as its
+      # own step, before anything that reads the value, so that a failure here
+      # is legible instead of surfacing as a Gradle property that is silently
+      # empty.
+      - name: Compute versionCode (offset + run_number)
+        working-directory: .
+        run: |
+          set -euo pipefail
+          code=$(( ${ABNY_VERSION_CODE_OFFSET:-0} + GITHUB_RUN_NUMBER ))
+          echo "ORG_GRADLE_PROJECT_abnyVersionCode=$code" >> "$GITHUB_ENV"
+          echo "versionCode for this run: $code (offset ${ABNY_VERSION_CODE_OFFSET:-0} + run_number $GITHUB_RUN_NUMBER)"
 
       # setup-java MUST precede flutter-action: the Flutter tool caches the
       # JDK it sees when it first configures Gradle.

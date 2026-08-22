@@ -213,3 +213,56 @@ Add it as a real devDependency with a real `eslint.config.js`, wire it into
 `ci.yml` as a blocking step in the same commit, and fix the findings in that
 commit. **Adding the script without the other three is how this gap was created
 in the first place.** It is deliberately NOT being done on a release day.
+
+---
+
+## C-9 · A RED CI THAT NEVER RAN A JOB IS NOT A TEST FAILURE
+
+On 2026-08-22 the Actions page showed **failure on every run, on every branch,
+for as long as anyone had looked.** The cause was one character:
+
+```yaml
+ORG_GRADLE_PROJECT_abnyVersionCode:
+  ${{ fromJSON(vars.ABNY_VERSION_CODE_OFFSET || '0') + github.run_number }}
+```
+
+The GitHub Actions expression language has **no arithmetic**. Its operators are
+exactly `!` `<` `<=` `>` `>=` `==` `!=` `&&` `||`. An invalid expression does not
+fail a step — it makes the whole FILE invalid, and `ci.yml` calls that file with
+`uses:`, so the error propagated to the caller:
+
+```
+Invalid workflow file: .github/workflows/ci.yml#L218
+error parsing called workflow ".github/workflows/build-apk.yml"
+(Line: 175, Col: 39): Unexpected symbol: '+'
+```
+
+**Not one job in ci.yml ever started.** Not the tests, not the guards, not the
+Docker build. Every commit that looked verified had been verified by nothing.
+
+### The rule
+
+**A failing CI run must be opened and read before it is attributed to the
+code.** «Invalid workflow file» and «a test broke» look identical from the
+outside — a red X — and only one of them means what people assume.
+
+The second half of the rule follows from the first: **a workflow file is code,
+and it is the only code here with no local way to run it.** So it gets a guard
+of its own.
+
+### The guard
+
+`python3 scripts/ci/assert-workflow-expressions.py` — CI RULE 6, blocking in
+`ci.yml`, and **run it by hand before pushing a workflow change**. A guard that
+lives inside the file it guards cannot save that file: if the workflow will not
+parse, the guard inside it never runs either.
+
+Its negative control is part of its acceptance: reinstating the original `+`
+makes it exit 1 and name the file and line.
+
+### What this cost, stated plainly
+
+Every claim of "CI is green" made about this repository before 2026-08-22 was
+false — not wrong about the code, but about whether anything had been checked
+at all. The 5686 tests are real and pass; they had simply never been run *by
+CI*. That distinction is why this section exists.
