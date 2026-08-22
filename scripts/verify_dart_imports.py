@@ -341,7 +341,7 @@ def check_delimiters(path: str, src: str) -> list:
 #                    can reach. Pinned 8.1.2 because it was the last release
 #                    on compileSdk 34, which the toolchain then required.
 #                    THAT REASON EXPIRED on 2026-08-22: the apps now build at
-#                    compileSdk 36 on AGP 9.3.0, so this pin is holding an old
+#                    compileSdk 36 on AGP 9.3.1, so this pin is holding an old
 #                    package for a constraint that no longer exists. Re-resolve
 #                    it on a machine that can reach pub.dev — not here, where
 #                    pub.dev answers 403 and any new version would be a guess.

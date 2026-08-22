@@ -259,10 +259,10 @@ Jest كان يطبع «did not exit one second after the test run» وكل حز�
 | | قبل | بعد | المصدر |
 |---|---|---|---|
 | compileSdk / targetSdk | 34 | **36** | شرط Google Play أعلاه |
-| Android Gradle Plugin | 8.1.1 | **9.3.0** | developer.android.com — يوليو 2026 |
+| Android Gradle Plugin | 8.1.1 | **9.3.1** | dl.google.com maven-metadata — الحارس قاسه في CI |
 | Gradle | 8.3 | **9.7.1** | docs.gradle.org — AGP 9.3 يشترط ≥ 9.5.0 |
 | Kotlin | 1.9.10 | **2.4.10** | kotlinlang.org — 14 يوليو 2026 |
-| Flutter | 3.24.5 | **3.47.0** | docs.flutter.dev — قوالبه انتقلت إلى AGP 9+ |
+| Flutter | 3.24.5 | **3.47.1** | docs.flutter.dev — قوالبه انتقلت إلى AGP 9+ |
 
 **اخترتُ أصغر تغيير يحقق الهدف، عمدًا.** AGP 9 يفعّل «Kotlin المدمج» و DSL جديدًا، وهو
 ما يستلزم حذف `kotlin-android` وإعادة كتابة `kotlinOptions`. لكن Flutter توثّق حالة

@@ -124,7 +124,7 @@ Google Play requires targetSdk 36 from 31 August 2026
 
 Nobody upgrades one of these. Somebody upgrades all four, in order, then raises `compileSdk`/`targetSdk`, then **builds both apps** — `flutter analyze`, `flutter test`, and the APK job. A mobile toolchain bump that was not built is not an upgrade.
 
-**Done once, on 2026-08-22**, and prompted by the Play deadline rather than by this guard — which is the failure mode the guard now exists to prevent a second time. The set landed was Flutter 3.47.0 · AGP 9.3.0 · Gradle 9.7.1 · Kotlin 2.4.10 · compileSdk/targetSdk 36, every number resolved from its authoritative source, and **it has not been built** — see `MOBILE_BUILD_HANDOFF.md` §1.
+**Done once, on 2026-08-22**, and prompted by the Play deadline rather than by this guard — which is the failure mode the guard now exists to prevent a second time. The set landed was Flutter 3.47.1 · AGP 9.3.1 · Gradle 9.7.1 · Kotlin 2.4.10 · compileSdk/targetSdk 36, every number resolved from its authoritative source, and **it has not been built** — see `MOBILE_BUILD_HANDOFF.md` §1.
 
 ### A version that cannot be obtained is never guessed
 

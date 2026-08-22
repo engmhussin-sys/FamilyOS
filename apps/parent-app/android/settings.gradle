@@ -22,12 +22,17 @@ plugins {
     // THE CHAIN, RESOLVED 2026-08-22 FROM ITS AUTHORITATIVE SOURCES.
     // Not one of these numbers was written from memory (C-5):
     //
-    //   AGP 9.3.0     developer.android.com/build/releases/gradle-plugin
-    //                 (July 2026; minimum Gradle 9.5.0, minimum JDK 17,
-    //                 supports up to API level 37)
+    //   AGP 9.3.1     dl.google.com/.../gradle/maven-metadata.xml
+    //                 (9.3.0 was what developer.android.com NAMED; the Maven
+    //                 metadata carries 9.3.1, and the metadata is what Gradle
+    //                 actually resolves. CI's currency guard measured it and
+    //                 failed the build — which is the guard working.
+    //                 Still: minimum Gradle 9.5.0, minimum JDK 17, API 37 max)
     //   Kotlin 2.4.10 kotlinlang.org/docs/releases (14 July 2026)
     //   Gradle 9.7.1  docs.gradle.org/current/release-notes.html
-    //   Flutter 3.47.0 docs.flutter.dev/release/release-notes
+    //   Flutter 3.47.1 storage.googleapis.com/.../releases_linux.json
+    //                 (3.47.0 was the release NOTES; 3.47.1 is the current
+    //                 stable hotfix, measured by the same guard)
     //
     // `org.jetbrains.kotlin.android` IS STILL DECLARED, and that is a
     // decision rather than an oversight. AGP 9 ships BUILT-IN KOTLIN and
@@ -41,7 +46,7 @@ plugins {
     //   docs.flutter.dev/release/breaking-changes/
     //     migrate-to-built-in-kotlin/for-app-developers
     // ---------------------------------------------------------------
-    id "com.android.application" version "9.3.0" apply false
+    id "com.android.application" version "9.3.1" apply false
     id "org.jetbrains.kotlin.android" version "2.4.10" apply false
     // RECOVERY NOTE (Sprint 17.3): required because pubspec.yaml
     // declares firebase_core + firebase_messaging as real dependencies.
