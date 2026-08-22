@@ -70,6 +70,17 @@ export const PERMISSIONS = [
   'support.read',
   'audit.read',
   // -- staff ----------------------------------------------------------------
+  /**
+   * SEEING AND ENDING YOUR OWN SESSION. Held by EVERY role, because it is not a
+   * privilege — it is the ability to look at your own badge and hand it back.
+   * It was originally folded into `operators.read`, and the consequence was
+   * found by review rather than by a test: SAFETY and SUPPORT could not call
+   * `GET /me` (so the console could not render for them) and could not call
+   * `DELETE /session` (so their eight-hour token could not be ended by the
+   * person holding it). The safety desk is the primary user of this console.
+   */
+  'operators.self',
+  /** The staff DIRECTORY — other people's identities. Genuinely privileged. */
   'operators.read',
   'operators.manage',
 ] as const;
@@ -81,6 +92,20 @@ export type Permission = (typeof PERMISSIONS)[number];
 export const READ_PERMISSIONS: readonly Permission[] = PERMISSIONS.filter(
   (p) => p.endsWith('.read') || p.endsWith('.read_content'),
 );
+
+/**
+ * NOT A PRIVILEGE OVER ANYBODY — what a person may do to their OWN session, and
+ * nothing else. Held by every role, and named as a set for one reason: the
+ * matrix tests classify a permission as a «write» by elimination (anything that
+ * is not a read), and `operators.self` is neither. Without this set,
+ * «READ_ONLY writes nothing» would either be false or would have to be softened
+ * into an assertion about names.
+ *
+ * Anything added here must be true of the WEAKEST role in the system. If a
+ * candidate is not something an auditor with no other access may do, it does not
+ * belong in this list.
+ */
+export const SELF_PERMISSIONS: readonly Permission[] = ['operators.self'];
 
 /**
  * THE MATRIX. Deliberately written out rather than derived, because a derived
@@ -97,6 +122,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly Permission
    * changes no price.
    */
   SUPPORT: [
+    'operators.self',
     'families.read',
     'children.read',
     'devices.read',
@@ -117,6 +143,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly Permission
    * permission defensible.
    */
   SAFETY: [
+    'operators.self',
     'families.read',
     'children.read',
     'devices.read',
@@ -133,8 +160,21 @@ export const ROLE_PERMISSIONS: Readonly<Record<OperatorRole, readonly Permission
    * An auditor needs to see that the safety queue is being worked, not what is
    * in it.
    */
-  READ_ONLY: READ_PERMISSIONS.filter((p) => p !== 'safety.read_content'),
+  READ_ONLY: ['operators.self', ...READ_PERMISSIONS.filter((p) => p !== 'safety.read_content')],
 };
+
+/**
+ * EVERY OPERATOR ROLE, DERIVED FROM THE MATRIX ITSELF — so a route that
+ * validates a role and the file that grants permissions to roles cannot drift.
+ *
+ * It is exported from HERE rather than written out at the call site for a second
+ * reason as well: `role-model.spec.ts` forbids any file outside `common/authz`
+ * from naming a bare `'SUPPORT'` string, because the FAMILY role of that name is
+ * a declared-but-unbuilt console. The operator role that shares the name is a
+ * different enum entirely, and importing this constant keeps that ratchet
+ * meaningful instead of teaching it an exception.
+ */
+export const OPERATOR_ROLES = Object.keys(ROLE_PERMISSIONS) as readonly OperatorRole[];
 
 /** The one question a guard asks. */
 export function roleHasPermission(role: OperatorRole, permission: Permission): boolean {

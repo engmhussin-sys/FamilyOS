@@ -6,6 +6,7 @@ import { OperatorService } from './application/operator.service';
 import { OperatorSessionService } from './application/operator-session.service';
 import { OperatorAuthGuard } from './presentation/guards/operator-auth.guard';
 import { OperatorAuthController } from './presentation/controllers/operator-auth.controller';
+import { OperatorAdminController } from './presentation/controllers/operator-admin.controller';
 
 /**
  * SPRINT F2 — WHO IS OPERATING THIS PLATFORM.
@@ -31,10 +32,16 @@ import { OperatorAuthController } from './presentation/controllers/operator-auth
  * the one that should never have had a shared secret alone in front of it —
  * uses it today. Moving the rest logs every operator out of a live console and
  * belongs in its own deploy.
+ *
+ * `OperatorAdminController` carries the routes for `operators.manage`. It was
+ * added by review rather than by plan: `create` and `update` had been written
+ * and tested with NO ROUTE REACHING THEM, so the single capability this sprint
+ * exists to deliver — revoking one person's access without revoking everyone's —
+ * could not be performed by anybody through the API.
  */
 @Module({
   imports: [forwardRef(() => AuthModule)],
-  controllers: [OperatorAuthController],
+  controllers: [OperatorAuthController, OperatorAdminController],
   providers: [OperatorSessionService, OperatorService, OperatorAuthGuard, InternalAdminGuard],
   // `InternalAdminGuard` is exported alongside the guard that delegates to it:
   // Nest instantiates a `@UseGuards(...)` class in the CONSUMING module's

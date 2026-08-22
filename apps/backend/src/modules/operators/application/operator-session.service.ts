@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { Injectable, Logger } from '@nestjs/common';
 import type { OperatorRole } from '@prisma/client';
@@ -82,6 +82,10 @@ export class OperatorSessionService {
     return `${KEY_PREFIX}${OperatorSessionService.hash(token)}`;
   }
 
+  private static indexKey(operatorId: string): string {
+    return `${INDEX_PREFIX}${operatorId}`;
+  }
+
   /**
    * Mints a session and returns the ONLY copy of the token that will ever
    * exist. It is never logged, never stored in plaintext and never returned
@@ -100,11 +104,16 @@ export class OperatorSessionService {
     // The reverse index carries HASHES, so it is no more dangerous than the
     // session store itself. Its own TTL matches, so it cannot outlive the
     // sessions it points at and become a set of dangling hashes.
-    const indexKey = `${INDEX_PREFIX}${session.operatorId}`;
-    const existing = await this.redis.get(indexKey);
-    const hashes = new Set<string>(existing ? (JSON.parse(existing) as string[]) : []);
-    hashes.add(OperatorSessionService.hash(token));
-    await this.redis.setWithTtl(indexKey, JSON.stringify([...hashes]), OPERATOR_SESSION_TTL_SECONDS);
+    //
+    // A REDIS SET, not a JSON array. The first version read the array, added a
+    // hash and wrote it back — and two sign-ins by the same person arriving
+    // together lose one hash, which leaves a live session `revokeAll` cannot
+    // see. `SADD` cannot lose a concurrent write.
+    await this.redis.addToSetWithTtl(
+      OperatorSessionService.indexKey(session.operatorId),
+      OperatorSessionService.hash(token),
+      OPERATOR_SESSION_TTL_SECONDS,
+    );
 
     return token;
   }
@@ -130,9 +139,24 @@ export class OperatorSessionService {
     }
   }
 
-  /** Sign-out. Idempotent: a token that is already gone is not an error. */
-  async close(token: string): Promise<void> {
+  /**
+   * Sign-out. Idempotent: a token that is already gone is not an error.
+   *
+   * `operatorId` is optional only because a caller may not have resolved the
+   * session; when it is known, the hash is also taken OUT OF THE REVERSE INDEX.
+   * Leaving it there is not a security hole — the session key is gone, so the
+   * dangling hash resolves to nothing — but it makes the count `revokeAll`
+   * reports a lie, and a revocation control whose count cannot be trusted is one
+   * nobody trusts.
+   */
+  async close(token: string, operatorId?: string): Promise<void> {
     await this.redis.delete(OperatorSessionService.key(token));
+    if (operatorId) {
+      await this.redis.removeFromSet(
+        OperatorSessionService.indexKey(operatorId),
+        OperatorSessionService.hash(token),
+      );
+    }
   }
 
   /**
@@ -141,32 +165,17 @@ export class OperatorSessionService {
    * carrying a claim that is no longer true.
    */
   async revokeAll(operatorId: string): Promise<number> {
-    const indexKey = `${INDEX_PREFIX}${operatorId}`;
-    const raw = await this.redis.getAndDelete(indexKey);
-    if (raw === null) return 0;
-
-    let hashes: string[];
-    try {
-      hashes = JSON.parse(raw) as string[];
-    } catch {
-      return 0;
+    // ONE atomic server-side step: the index and every session it names go
+    // together. The earlier version drained the index first and then deleted
+    // the session keys in a loop, which left a window — short, but real — in
+    // which a session had left the index and still authenticated a request.
+    const count = await this.redis.deleteSetAndItsMembers(
+      OperatorSessionService.indexKey(operatorId),
+      KEY_PREFIX,
+    );
+    if (count > 0) {
+      this.logger.log(JSON.stringify({ event: 'operator.sessions_revoked', operatorId, count }));
     }
-
-    for (const hash of hashes) {
-      await this.redis.delete(`${KEY_PREFIX}${hash}`);
-    }
-    this.logger.log(JSON.stringify({ event: 'operator.sessions_revoked', operatorId, count: hashes.length }));
-    return hashes.length;
+    return count;
   }
-}
-
-/**
- * Constant-time comparison for any secret an operator presents alongside a
- * session. Exported here rather than duplicated, and used by the guard so that
- * a wrong value costs the same time as a right one of the same length.
- */
-export function secretsMatch(presented: string, expected: string): boolean {
-  const a = createHash('sha256').update(presented).digest();
-  const b = createHash('sha256').update(expected).digest();
-  return timingSafeEqual(a, b);
 }

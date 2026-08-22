@@ -148,39 +148,120 @@ export class OperatorService {
       'ADMIN_CONSOLE',
       'Creates the first platform operator on a deployment that has none; operators belong to no household.',
       async () => {
-        const existing = await this.prisma.operator.count();
-        if (existing > 0) {
-          throw new ConflictException({
-            code: 'OPERATORS_ALREADY_EXIST',
-            message: 'This deployment already has operators. Use the managed create path.',
-          });
-        }
+        // Hashed BEFORE the transaction opens. Argon2 is deliberately slow, and
+        // holding a SERIALIZABLE transaction open for the length of a password
+        // hash is holding it open for the one thing in here that is not a
+        // database operation.
+        const passwordHash = await this.passwords.hash(input.password);
 
-        const created = await this.prisma.operator.create({
-          data: {
-            email: OperatorService.normalise(input.email),
-            fullName: input.fullName,
-            role: 'SUPER_ADMIN',
-            passwordHash: await this.passwords.hash(input.password),
+        const created = await this.prisma.$transaction(
+          async (tx) => {
+            /**
+             * COUNT-THEN-CREATE IS A RACE, AND THIS IS THE ONE PLACE IT MATTERS.
+             * Two requests arriving together with DIFFERENT emails both read
+             * zero and both create a SUPER_ADMIN — the unique index on `email`
+             * does not catch it, because the emails differ. On the one route
+             * that mints unrestricted access to a console over children's data,
+             * «probably only one» is not a property worth having.
+             *
+             * SERIALIZABLE makes the read part of the transaction's snapshot, so
+             * Postgres aborts the loser with a serialization failure and exactly
+             * one bootstrap survives. It is the correct isolation level here and
+             * an expensive one nearly everywhere else — which is why it appears
+             * on this method and no other.
+             */
+            const existing = await tx.operator.count();
+            if (existing > 0) {
+              throw new ConflictException({
+                code: 'OPERATORS_ALREADY_EXIST',
+                message: 'This deployment already has operators. Use the managed create path.',
+              });
+            }
+
+            const row = await tx.operator.create({
+              data: {
+                email: OperatorService.normalise(input.email),
+                fullName: input.fullName,
+                role: 'SUPER_ADMIN',
+                passwordHash,
+              },
+            });
+
+            // Audited as itself, not as a normal create: «the console was opened
+            // for the first time, by whoever held the deployment key» is a
+            // distinct and rare fact, and a reviewer should find it by name.
+            // In the SAME transaction, so the first operator cannot exist
+            // without the row that says how they came to.
+            await this.audit.record(
+              {
+                actorType: 'OPERATOR',
+                operatorId: row.id,
+                operatorEmail: row.email,
+                operatorRole: row.role,
+                action: 'operator.bootstrapped',
+                entityType: 'Operator',
+                entityId: row.id,
+                reason: 'First operator on a deployment that had none.',
+              },
+              tx,
+            );
+
+            return row;
           },
-        });
-
-        // Audited as itself, not as a normal create: «the console was opened
-        // for the first time, by whoever held the deployment key» is a distinct
-        // and rare fact, and a reviewer should be able to find it by name.
-        await this.audit.record({
-          actorType: 'OPERATOR',
-          operatorId: created.id,
-          operatorEmail: created.email,
-          operatorRole: created.role,
-          action: 'operator.bootstrapped',
-          entityType: 'Operator',
-          entityId: created.id,
-          reason: 'First operator on a deployment that had none.',
-        });
+          { isolationLevel: 'Serializable' },
+        );
 
         this.logger.warn(JSON.stringify({ event: 'operator.bootstrapped', email: created.email }));
         return { id: created.id, email: created.email };
+      },
+    );
+  }
+
+  /**
+   * THE STAFF DIRECTORY. Never returns `passwordHash`, and the field list is
+   * written out rather than spread: a `select` that names its columns cannot
+   * start leaking a column somebody adds to the model later.
+   */
+  async list(): Promise<
+    {
+      id: string;
+      email: string;
+      fullName: string;
+      role: OperatorRole;
+      status: string;
+      lastLoginAt: string | null;
+      revokedAt: string | null;
+      createdAt: string;
+    }[]
+  > {
+    return runAsSystemAsync(
+      'ADMIN_CONSOLE',
+      'The staff directory lists platform operators; operators belong to no household.',
+      async () => {
+        const rows = await this.prisma.operator.findMany({
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            role: true,
+            status: true,
+            lastLoginAt: true,
+            revokedAt: true,
+            createdAt: true,
+          },
+          orderBy: [{ status: 'asc' }, { email: 'asc' }],
+        });
+
+        return rows.map((row) => ({
+          id: row.id,
+          email: row.email,
+          fullName: row.fullName,
+          role: row.role,
+          status: row.status,
+          lastLoginAt: row.lastLoginAt ? row.lastLoginAt.toISOString() : null,
+          revokedAt: row.revokedAt ? row.revokedAt.toISOString() : null,
+          createdAt: row.createdAt.toISOString(),
+        }));
       },
     );
   }
@@ -195,34 +276,45 @@ export class OperatorService {
       'ADMIN_CONSOLE',
       'A platform operator creates another operator; operators belong to no household.',
       async () => {
-        const created = await this.prisma.operator.create({
-          data: {
-            email: OperatorService.normalise(input.email),
-            fullName: input.fullName,
-            role: input.role,
-            passwordHash: await this.passwords.hash(input.password),
-          },
-        });
+        const passwordHash = await this.passwords.hash(input.password);
 
-        await this.audit.record({
-          actorType: 'OPERATOR',
-          operatorId: actor.operatorId,
-          operatorEmail: actor.email,
-          operatorRole: actor.role,
-          action: 'operator.created',
-          entityType: 'Operator',
-          entityId: created.id,
-          reason,
-          metadata: { email: created.email, role: created.role },
-        });
+        return this.prisma.$transaction(async (tx) => {
+          const created = await tx.operator.create({
+            data: {
+              email: OperatorService.normalise(input.email),
+              fullName: input.fullName,
+              role: input.role,
+              passwordHash,
+            },
+          });
 
-        return { id: created.id, email: created.email };
+          // Same transaction: an operator account that exists with no record of
+          // who created it is precisely the row a compliance review cannot use.
+          await this.audit.record(
+            {
+              actorType: 'OPERATOR',
+              operatorId: actor.operatorId,
+              operatorEmail: actor.email,
+              operatorRole: actor.role,
+              action: 'operator.created',
+              entityType: 'Operator',
+              entityId: created.id,
+              reason,
+              metadata: { email: created.email, role: created.role },
+            },
+            tx,
+          );
+
+          return { id: created.id, email: created.email };
+        });
       },
     );
   }
 
   async signOut(token: string, session: OperatorSession): Promise<void> {
-    await this.sessions.close(token);
+    // The operator id is passed so the hash also leaves the reverse index —
+    // otherwise `revokeAll` keeps counting sessions that no longer exist.
+    await this.sessions.close(token, session.operatorId);
     await runAsSystemAsync(
       'ADMIN_CONSOLE',
       'Operator sign-out records a platform-staff event that belongs to no household.',
@@ -256,39 +348,115 @@ export class OperatorService {
         const previous = await this.prisma.operator.findUnique({ where: { id: targetId } });
         if (!previous) throw OperatorService.refusal();
 
-        await this.prisma.operator.update({
-          where: { id: targetId },
-          data: {
-            ...(changes.role ? { role: changes.role } : {}),
-            ...(changes.status ? { status: changes.status } : {}),
-            // A tombstone, set once. Revocation is a fact an audit trail keeps.
-            ...(changes.status === 'REVOKED' && !previous.revokedAt ? { revokedAt: new Date() } : {}),
-          },
-        });
+        /**
+         * TWO REFUSALS THAT EXIST TO KEEP THE CONSOLE REACHABLE.
+         *
+         * NOBODY CHANGES THEMSELVES. Not because self-demotion is dangerous in
+         * itself, but because it is the one mistake that cannot be undone from
+         * inside the product: an operator who suspends their own account is an
+         * operator who now needs a database session to get back in. It also
+         * removes the shape of every «I revoked myself to test it» incident.
+         *
+         * AND THE LAST SUPER_ADMIN STAYS. `operators.manage` is held by
+         * SUPER_ADMIN alone, so demoting or suspending the last one leaves a
+         * deployment where no route can create or restore an operator — and the
+         * bootstrap has closed permanently. The only remaining path would be
+         * emptying the table by hand. Checked here for a clear message and
+         * checked AGAIN inside the transaction, where it is actually enforced.
+         */
+        if (targetId === actor.operatorId) {
+          throw new ConflictException({
+            code: 'OPERATOR_CANNOT_MODIFY_SELF',
+            message: 'An operator cannot change their own role or status. Ask another SUPER_ADMIN.',
+            messageAr: 'لا يمكن للمشغّل تغيير دوره أو حالته بنفسه. اطلب ذلك من مشغّل أعلى.',
+          });
+        }
 
-        // BEFORE the response, not after: the window in which a suspended
-        // operator still holds a working session must not exist.
+        /**
+         * SESSIONS DIE FIRST, AND THE ORDER IS THE WHOLE POINT.
+         *
+         * Redis cannot join a Postgres transaction, so one of the two steps has
+         * to be able to fail after the other succeeded, and the choice is which
+         * failure we would rather have:
+         *
+         *   update-then-revoke — the revoke fails and a REVOKED operator keeps a
+         *   working console for up to eight hours. This is the failure the whole
+         *   session store was built to make impossible.
+         *
+         *   revoke-then-update — the update fails and an operator who is still
+         *   ACTIVE was signed out. They sign in again. Nothing is lost.
+         *
+         * The second is a nuisance; the first is the defect. So: revoke, commit,
+         * then revoke ONCE MORE — because between the two the person could have
+         * signed in again with credentials that were, at that instant, still
+         * valid. The second sweep costs one Redis round trip and closes it.
+         */
         const sessionsKilled = await this.sessions.revokeAll(targetId);
 
-        await this.audit.record({
-          actorType: 'OPERATOR',
-          operatorId: actor.operatorId,
-          operatorEmail: actor.email,
-          operatorRole: actor.role,
-          action: changes.status === 'REVOKED' ? 'operator.revoked' : 'operator.updated',
-          entityType: 'Operator',
-          entityId: targetId,
-          reason,
-          metadata: {
-            // What it WAS, so the change is reversible by reading rather than
-            // by remembering — the same rule the plan catalogue follows.
-            previous: { role: previous.role, status: previous.status },
-            next: { role: changes.role ?? previous.role, status: changes.status ?? previous.status },
-            sessionsKilled,
-          },
+        await this.prisma.$transaction(async (tx) => {
+          // THE LAST SUPER_ADMIN, enforced where it counts. If this change would
+          // stop the target from being an active SUPER_ADMIN, some OTHER active
+          // SUPER_ADMIN must remain — otherwise `operators.manage` has no holder
+          // and the console can never gain one again.
+          const losesSuperAdmin =
+            previous.role === 'SUPER_ADMIN' &&
+            previous.status === 'ACTIVE' &&
+            ((changes.role !== undefined && changes.role !== 'SUPER_ADMIN') ||
+              (changes.status !== undefined && changes.status !== 'ACTIVE'));
+
+          if (losesSuperAdmin) {
+            const remaining = await tx.operator.count({
+              where: { role: 'SUPER_ADMIN', status: 'ACTIVE', id: { not: targetId } },
+            });
+            if (remaining === 0) {
+              throw new ConflictException({
+                code: 'OPERATOR_LAST_SUPER_ADMIN',
+                message: 'This is the only active SUPER_ADMIN. Promote another one first.',
+                messageAr: 'هذا هو المشغّل الأعلى الوحيد النشط. عيّن غيره أولًا.',
+              });
+            }
+          }
+
+          await tx.operator.update({
+            where: { id: targetId },
+            data: {
+              ...(changes.role ? { role: changes.role } : {}),
+              ...(changes.status ? { status: changes.status } : {}),
+              // A tombstone, set once. Revocation is a fact an audit trail keeps.
+              ...(changes.status === 'REVOKED' && !previous.revokedAt ? { revokedAt: new Date() } : {}),
+            },
+          });
+
+          await this.audit.record(
+            {
+              actorType: 'OPERATOR',
+              operatorId: actor.operatorId,
+              operatorEmail: actor.email,
+              operatorRole: actor.role,
+              action: changes.status === 'REVOKED' ? 'operator.revoked' : 'operator.updated',
+              entityType: 'Operator',
+              entityId: targetId,
+              reason,
+              metadata: {
+                // What it WAS, so the change is reversible by reading rather
+                // than by remembering — the same rule the plan catalogue follows.
+                previous: { role: previous.role, status: previous.status },
+                next: { role: changes.role ?? previous.role, status: changes.status ?? previous.status },
+                sessionsKilled,
+              },
+            },
+            tx,
+          );
         });
 
-        return { id: targetId, sessionsKilled };
+        const raced = await this.sessions.revokeAll(targetId);
+        if (raced > 0) {
+          this.logger.warn(
+            JSON.stringify({ event: 'operator.sessions_revoked_after_commit', operatorId: targetId, count: raced }),
+          );
+        }
+
+        return { id: targetId, sessionsKilled: sessionsKilled + raced };
       },
     );
   }

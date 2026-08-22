@@ -4,6 +4,7 @@ import {
   PERMISSIONS,
   READ_PERMISSIONS,
   ROLE_PERMISSIONS,
+  SELF_PERMISSIONS,
   roleHasPermission,
   type Permission,
 } from '../../src/common/authz/permissions';
@@ -55,8 +56,23 @@ describe('the operator permission matrix', () => {
     }
   });
 
+  /**
+   * `SELF_PERMISSIONS` is excluded from «writes» ON PURPOSE, and the exclusion
+   * is itself asserted below rather than taken on trust. `operators.self` is
+   * neither a read nor a privilege: it is looking at your own badge and handing
+   * it back. Every role holds it, including this one.
+   */
+  it('holds the self permissions in every role, and holds nothing else that is not a read', () => {
+    expect(SELF_PERMISSIONS).toEqual(['operators.self']);
+    for (const role of ALL_ROLES) {
+      for (const permission of SELF_PERMISSIONS) {
+        expect(roleHasPermission(role, permission)).toBe(true);
+      }
+    }
+  });
+
   it('lets READ_ONLY write NOTHING, anywhere', () => {
-    const writes = PERMISSIONS.filter((p) => !READ_PERMISSIONS.includes(p));
+    const writes = PERMISSIONS.filter((p) => !READ_PERMISSIONS.includes(p) && !SELF_PERMISSIONS.includes(p));
     // A named list, so this test says what it is protecting rather than
     // asserting a count that means nothing when it changes.
     expect(writes).toEqual(

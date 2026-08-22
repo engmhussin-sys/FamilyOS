@@ -93,7 +93,7 @@ export class OperatorAuthController {
   @Delete('session')
   @HttpCode(204)
   @PlatformAdminSurface()
-  @RequirePermission('operators.read')
+  @RequirePermission('operators.self')
   @SystemRoute('ADMIN_CONSOLE', 'Operator sign-out ends one platform-staff session; staff belong to no household.')
   @UseGuards(OperatorAuthGuard)
   async signOut(@Req() request: { operator: OperatorSession; headers: Record<string, string | string[]> }) {
@@ -105,7 +105,7 @@ export class OperatorAuthController {
   /** Who am I — the call a console makes on load to decide what to render. */
   @Get('me')
   @PlatformAdminSurface()
-  @RequirePermission('operators.read')
+  @RequirePermission('operators.self')
   @SystemRoute('ADMIN_CONSOLE', 'Returns the calling operator\'s own identity; staff belong to no household.')
   @UseGuards(OperatorAuthGuard)
   me(@Req() request: { operator: OperatorSession }) {

@@ -91,11 +91,38 @@ const OPERATOR_ACTIONS_REQUIRING_REASON = /^operator\.(revoked|updated)$/;
  * than one trail per domain. `AuditLog` is now wired for the categories
  * that had NO existing trail: Login/Logout, Policy Change, Billing.
  */
+/**
+ * The one thing this service needs from a Prisma client, so that a
+ * `$transaction` client can be handed in without this file knowing what a
+ * transaction is. Structural, not a Prisma type import, because the interactive
+ * transaction client is a different type from the extended client and the only
+ * property that matters is the same on both.
+ */
+export interface AuditWriteClient {
+  auditLog: { create(args: { data: Prisma.AuditLogUncheckedCreateInput }): Promise<unknown> };
+}
+
 @Injectable()
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async record(input: IRecordAuditEventInput): Promise<void> {
+  /**
+   * SPRINT F2 (review fix). The audit write may be handed a TRANSACTION CLIENT,
+   * so that the mutation and the record of it commit together or not at all.
+   *
+   * Before this, every operator path did the mutation, awaited it, and then
+   * called this method — two separate transactions. A crash, a connection reset
+   * or a throw in between leaves a household suspended, an alert moved or an
+   * operator revoked WITH NO AUDIT ROW, which is the exact state the directive
+   * forbids: every privileged action must create an immutable audit event.
+   * Passing `tx` closes that gap, and the default keeps every existing call site
+   * working unchanged.
+   *
+   * Deliberately NOT mandatory: `auth.login` and the scheduled sweeps record
+   * facts about work that has already happened elsewhere, and forcing them into
+   * a transaction they do not have would be ceremony rather than a control.
+   */
+  async record(input: IRecordAuditEventInput, client: AuditWriteClient = this.prisma): Promise<void> {
     /**
      * TWO REFUSALS, BOTH ABOUT ROWS THAT WOULD BE UNREADABLE LATER.
      *
@@ -122,7 +149,7 @@ export class AuditService {
       throw new Error(`AUDIT_REASON_REQUIRED: ${input.action} must carry a reason.`);
     }
 
-    await this.prisma.auditLog.create({
+    await client.auditLog.create({
       data: {
         familyId: input.familyId,
         actorType: input.actorType,

@@ -23,6 +23,11 @@ import type { RedisService } from '../../src/common/redis/redis.service';
  */
 function fakeRedis() {
   const store = new Map<string, string>();
+  /** The reverse index is a Redis SET, so the fake models one. It used to be a
+   * JSON string, and that shape is exactly what the read-modify-write race the
+   * service now avoids was made of. */
+  const sets = new Map<string, Set<string>>();
+
   const service = {
     setWithTtl: jest.fn(async (key: string, value: string, _ttlSeconds: number) => {
       store.set(key, value);
@@ -36,15 +41,39 @@ function fakeRedis() {
       store.delete(key);
       return value;
     }),
+    addToSetWithTtl: jest.fn(async (key: string, member: string, _ttlSeconds: number) => {
+      const existing = sets.get(key) ?? new Set<string>();
+      existing.add(member);
+      sets.set(key, existing);
+    }),
+    removeFromSet: jest.fn(async (key: string, member: string) => {
+      sets.get(key)?.delete(member);
+    }),
+    deleteSetAndItsMembers: jest.fn(async (key: string, memberKeyPrefix: string) => {
+      const members = [...(sets.get(key) ?? [])];
+      sets.delete(key);
+      for (const member of members) store.delete(`${memberKeyPrefix}${member}`);
+      return members.length;
+    }),
   };
-  return { store, service: service as unknown as RedisService, spies: service };
+
+  /** Everything Redis holds, as one string — keys, values and set members. The
+   * dump assertions below must see the index too, or «the token is nowhere in
+   * Redis» would be proved against half of Redis. */
+  const dump = () =>
+    [
+      ...[...store.entries()].map(([k, v]) => `${k}|${v}`),
+      ...[...sets.entries()].map(([k, v]) => `${k}|${[...v].join(',')}`),
+    ].join('\n');
+
+  return { store, sets, dump, service: service as unknown as RedisService, spies: service };
 }
 
 const OPERATOR = { operatorId: 'op-1', email: 'safety@abny.app', role: 'SAFETY' as const };
 
 describe('operator sessions', () => {
   it('returns a high-entropy token and NEVER stores it', async () => {
-    const { store, service } = fakeRedis();
+    const { dump, service } = fakeRedis();
     const sessions = new OperatorSessionService(service);
 
     const token = await sessions.open(OPERATOR);
@@ -53,10 +82,9 @@ describe('operator sessions', () => {
     // The whole store, stringified, must not contain the token anywhere — not
     // as a key, not inside a value, not inside the reverse index. A dump of
     // Redis must not let anyone sign in.
-    const dump = [...store.entries()].map(([k, v]) => `${k}|${v}`).join('\n');
-    expect(dump).not.toContain(token);
+    expect(dump()).not.toContain(token);
     // What IS stored is its hash.
-    expect(dump).toContain(createHash('sha256').update(token).digest('hex'));
+    expect(dump()).toContain(createHash('sha256').update(token).digest('hex'));
   });
 
   it('resolves the token it minted, and nothing else', async () => {
@@ -96,10 +124,30 @@ describe('operator sessions', () => {
     const laptop = await sessions.open(OPERATOR);
     const phone = await sessions.open(OPERATOR);
 
-    await sessions.close(laptop);
+    await sessions.close(laptop, OPERATOR.operatorId);
 
     expect(await sessions.resolve(laptop)).toBeNull();
     expect(await sessions.resolve(phone)).not.toBeNull();
+    // And the signed-out session left the reverse index too, so a later
+    // `revokeAll` reports the sessions that actually exist. A count that
+    // includes sessions already gone is a count nobody can act on.
+    expect(await sessions.revokeAll(OPERATOR.operatorId)).toBe(1);
+  });
+
+  it('keeps every concurrent sign-in in the index — none is lost to a race', async () => {
+    const { service } = fakeRedis();
+    const sessions = new OperatorSessionService(service);
+
+    // Ten sign-ins that overlap. Under the old JSON-array index these
+    // interleaved read-modify-writes dropped hashes, and a dropped hash is a
+    // LIVE SESSION `revokeAll` CANNOT SEE — a revocation that reports success
+    // and leaves the person signed in.
+    const tokens = await Promise.all(Array.from({ length: 10 }, () => sessions.open(OPERATOR)));
+
+    expect(await sessions.revokeAll(OPERATOR.operatorId)).toBe(10);
+    for (const token of tokens) {
+      expect(await sessions.resolve(token)).toBeNull();
+    }
   });
 
   it('THE POINT — revoking kills every session this person holds, immediately', async () => {
