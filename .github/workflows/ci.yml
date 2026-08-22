@@ -73,7 +73,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: apps/backend/package-lock.json
       - run: npm ci
@@ -89,6 +89,14 @@ jobs:
       # tenant-scoped table without mentioning family_id, on a client-supplied
       # familyId, and on any model in schema.prisma that has not been
       # classified in tenant-model-registry.ts.
+      # CI RULE 4 — the owner's standing rule, enforced rather than remembered:
+      # this project builds on current releases. The guard fails on any
+      # dependency a MAJOR version behind, and an exemption must name the
+      # upstream blocker that prevents the upgrade. See
+      # scripts/ci/assert-dependencies-current.ts.
+      - name: Dependency currency guard
+        run: npm run ci:deps-current
+
       - name: Tenant-scoping static guard
         run: npm run ci:tenant-guard
       # F3 (R3) — BLOCKING. The ratchet described in
@@ -146,7 +154,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: apps/admin-dashboard/package-lock.json
       - run: npm ci

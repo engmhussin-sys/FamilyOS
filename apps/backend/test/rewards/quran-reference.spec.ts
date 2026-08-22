@@ -134,7 +134,7 @@ describeIfDb('the SEEDED quran_surahs table equals the TypeScript constant', () 
   beforeAll(() => {
     const url = process.env.INTEGRATION_DATABASE_URL as string;
     if (process.env.PRISMA_DRIVER_ADAPTER === 'pg') {
-      const { PrismaClient } = require('@prisma/client/wasm');
+      const { PrismaClient } = require('@prisma/client');
       const { PrismaPg } = require('@prisma/adapter-pg');
       const { Pool } = require('pg');
       const pool = new Pool({ connectionString: url });
@@ -142,7 +142,17 @@ describeIfDb('the SEEDED quran_surahs table equals the TypeScript constant', () 
       prisma.__pool = pool;
     } else {
       const { PrismaClient } = require('@prisma/client');
-      prisma = new PrismaClient({ datasources: { db: { url } } });
+      prisma = new PrismaClient({
+    // PRISMA 7: `datasources` was removed from the constructor — driver
+    // adapters are the only mode, so the adapter IS the connection. This
+    // branch used to exist to AVOID the adapter; it now builds the same
+    // client the branch above does, which is the honest end state: a test
+    // must not reach the database through a different engine than
+    // production does.
+    adapter: new (require('@prisma/adapter-pg').PrismaPg)(
+      new (require('pg').Pool)({ connectionString: url }),
+    ),
+  });
     }
   });
 

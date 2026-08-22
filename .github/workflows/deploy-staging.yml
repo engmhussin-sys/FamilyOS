@@ -453,7 +453,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       # -----------------------------------------------------------------------
       # THE SECOND HALF OF THE INTERLOCK, AND THE REASON IT EXISTS.

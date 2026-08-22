@@ -39,7 +39,7 @@ function ErrorFallback({ error }: { error: Error | null }) {
         {error?.message && (
           <p
             dir="ltr"
-            className="mt-4 break-words rounded-card bg-sand-100 px-3 py-2 text-start font-mono text-xs text-ink-soft"
+            className="mt-4 wrap-break-word rounded-card bg-sand-100 px-3 py-2 text-start font-mono text-xs text-ink-soft"
           >
             {error.message}
           </p>

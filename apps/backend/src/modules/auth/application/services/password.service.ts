@@ -9,7 +9,11 @@ import { randomBytes } from 'crypto';
  */
 @Injectable()
 export class PasswordService {
-  private readonly argon2Options: argon2.Options = {
+  // argon2 0.45 renamed `Options` to `HashOptions` and split `hash` into two
+  // overloads: `raw: true` returns a Buffer, everything else a string. Typing
+  // this as `HashOptions` (which has no `raw`) is what selects the string
+  // overload — the encoded digest this column stores.
+  private readonly argon2Options: argon2.HashOptions = {
     type: argon2.argon2id,
     memoryCost: 19456, // ~19 MB, OWASP-recommended minimum for argon2id
     timeCost: 2,

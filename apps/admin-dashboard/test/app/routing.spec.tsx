@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -91,7 +92,10 @@ describe('unknown routes', () => {
   });
 });
 
-function Explodes(): JSX.Element {
+// React 19 stopped publishing a GLOBAL `JSX` namespace; it lives under the
+// React namespace now, which is the change that stops two UI libraries from
+// fighting over one global.
+function Explodes(): React.JSX.Element {
   throw new Error('deliberate test explosion');
 }
 

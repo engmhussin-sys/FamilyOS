@@ -43,7 +43,7 @@
 # with this same context — that job, not this comment, is the proof.
 # =============================================================================
 
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 # FIXING A REAL, PERSISTENT DEPLOY FAILURE: specifying binaryTargets in
@@ -84,7 +84,7 @@ RUN echo "--- dist/ contents ---" && find dist -maxdepth 2 -type f
 
 # -----------------------------------------------------------------------------
 
-FROM node:20-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

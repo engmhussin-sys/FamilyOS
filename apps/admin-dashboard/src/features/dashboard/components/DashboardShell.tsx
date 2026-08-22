@@ -120,7 +120,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             reachable while a long page scrolls. `flex-wrap` is what keeps it
             honest at 1280px, where the search field would otherwise squeeze
             the operator's name to nothing. */}
-        <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-sand-200 bg-white/95 px-4 py-3 backdrop-blur lg:px-6 xl:px-8 xl:py-4">
+        <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-sand-200 bg-white/95 px-4 py-3 backdrop-blur-sm lg:px-6 xl:px-8 xl:py-4">
           <div className="min-w-0">
             <p className="text-sm text-ink-soft">{t('shell.welcomeBack')}</p>
             <p className="font-medium text-ink">{user?.fullName}</p>

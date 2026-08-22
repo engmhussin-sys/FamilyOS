@@ -77,3 +77,33 @@ Not by deleting it, skipping it, mocking it away, or lowering its expectation to
 ## C-5 · NOTHING IS INVENTED
 
 No fabricated credential, version pin, URL, service name, benchmark or test result. A value that cannot be obtained is marked `HUMAN DECISION / ENVIRONMENT VALUE REQUIRED` and named, so the gap is visible rather than papered over with a plausible-looking guess.
+
+---
+
+## C-6 · THE PROJECT BUILDS ON CURRENT RELEASES, NEVER OLD ONES
+
+> **«استخدام أحدث الإصدارات فى بناء المشروع وعدم استخدام اصدارات قديمة.»**
+
+Every dependency, runtime and toolchain sits on its **latest major**. Staying a major behind is a decision, and a decision needs a reason; "we did not get to it" is not one.
+
+### Enforced, not remembered
+
+`npm run ci:deps-current` (`apps/backend/scripts/ci/assert-dependencies-current.ts`) compares the declared major of every package in every manifest against the registry's `latest` and **fails the build** on a gap. It runs in CI as a blocking step.
+
+Minors and patches are not policed: a caret range already floats to the newest compatible release on every install, so a minor gap is a lockfile detail. A **major** gap is always a choice.
+
+### The exemption list is the rule, not a hole in it
+
+A package may be held back only by an **upstream fact** — a peer range that excludes the version we run, or a tool that has not shipped support. Each exemption must name its blocker *and* the condition that removes it; the guard rejects an entry missing either, and fails the build when a blocker has expired and the exemption was left behind.
+
+Where a tool blocks the toolchain, the tool is replaced rather than the toolchain held back. Already done for this reason:
+
+| Removed | Because | Replaced by |
+|---|---|---|
+| `ts-jest` | `peerDependencies.typescript: ">=4.3 <7"` — no published tag supports TypeScript 7 | `@swc/jest` (types are checked once by `tsc --noEmit`, not re-checked in 240 test files) |
+| `ts-node` | Uses a compiler API TypeScript 7 does not expose | `tsx` |
+| `@nestjs/cli` | *"TypeScript 7.0 ships the `tsc` executable only; the compiler API is expected to return in 7.1"* | `tsc -p tsconfig.build.json` for build, `tsx watch` for dev |
+
+### The one thing "latest" does NOT mean
+
+**The runtime tracks Active LTS, not Current.** Node 26 is Current; the project runs **Node 24**, and `@types/node` is pinned to match it. Typing against a runtime that is not deployed lets a call to a non-existent API typecheck cleanly — which is the exact failure the types exist to prevent. This is the single standing exemption, and it moves the day Node 26 becomes Active LTS.

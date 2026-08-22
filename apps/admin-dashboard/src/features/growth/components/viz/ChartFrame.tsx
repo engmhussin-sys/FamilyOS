@@ -20,7 +20,7 @@ export interface LegendEntry {
   /** Rendered instead of a filled swatch — carries the identity for a
    * reader who cannot use hue at all. */
   glyph?: string;
-  fillStyle?: 'solid' | 'outline' | 'hatched';
+  fillStyle?: 'solid' | 'outline-solid' | 'hatched';
   hint?: string;
 }
 
@@ -145,7 +145,7 @@ function LegendSwatch({ entry, mode }: { entry: LegendEntry; mode: VizMode }) {
     <span className="flex items-center gap-1.5" aria-hidden="true">
       <svg width={14} height={14} viewBox="0 0 14 14" role="presentation">
         {style === 'solid' && <rect x={0} y={3} width={14} height={8} rx={MARK.barRadius} fill={color} />}
-        {style === 'outline' && (
+        {style === 'outline-solid' && (
           <rect
             x={0.75}
             y={3}

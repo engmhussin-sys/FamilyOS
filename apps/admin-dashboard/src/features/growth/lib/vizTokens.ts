@@ -137,7 +137,7 @@ export const RELIEF_REQUIRED_SLOTS = [1] as const;
  * Colour is the LAST of the three. Fill *texture* (solid / empty / hatched)
  * is the primary channel and it is the one that survives everything.
  */
-export type ProvenanceFillStyle = 'solid' | 'outline' | 'hatched';
+export type ProvenanceFillStyle = 'solid' | 'outline-solid' | 'hatched';
 
 export interface ProvenanceTreatment {
   fillStyle: ProvenanceFillStyle;
@@ -165,7 +165,7 @@ export const PROVENANCE: Record<Provenance, ProvenanceTreatment> = {
     glyph: '●',
   },
   TARGET: {
-    fillStyle: 'outline',
+    fillStyle: 'outline-solid',
     color: null,
     strokeDasharray: '6 3',
     labelKey: 'growth.provenance.target',
