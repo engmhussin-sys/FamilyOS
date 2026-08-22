@@ -28,12 +28,12 @@ Every gate below is **executable**: a command you can run, or a named external a
 
 | # | Gate | Command | Status | What it needs |
 |---|---|---|---|---|
-| 12 | **Android build environment** | `powershell scripts/setup-windows-dev.ps1` then `scripts/release-doctor.ps1` | `NOT TESTED` | Flutter 3.24.5 · Dart ≥3.3 <4.0 · JDK 17 · Gradle 8.3 · AGP 8.1.1 · Kotlin 1.9.10 · compileSdk/targetSdk 34 · minSdk 21 · build-tools 34.0.0. All pins verified against the repo (`STATIC VERIFIED`); none executed |
+| 12 | **Android build environment** | `powershell scripts/setup-windows-dev.ps1` then `scripts/release-doctor.ps1` | `NOT TESTED` | Flutter 3.47.0 · Dart ≥3.3 <4.0 · JDK 17 · Gradle 9.7.1 · AGP 9.3.0 · Kotlin 2.4.10 · compileSdk/targetSdk 36 · minSdk 21 · build-tools 36.0.0. Raised 2026-08-22 for the 31 Aug 2026 Play targetSdk-36 deadline. All pins verified against the repo (`STATIC VERIFIED`); **none executed** — the AGP 9 migration is unbuilt |
 | 13 | **APK debug build** | `scripts/mobile-build.ps1` | `NOT TESTED` | Needs only #12. **No Firebase, no keystore** — debug builds do not require them. This is the first artifact to aim for |
 | 14 | **AAB release build** | `scripts/mobile-build.ps1 -Release` | `BLOCKED` | Needs #15 and #16. The script now runs a RELEASE PREFLIGHT **before any stage**, naming the exact file, directory and command that is missing, and refuses to sign a release with debug keys |
 | 15 | **Firebase** | `flutterfire configure` | `HUMAN DECISION` | One project, two Android apps: `com.aifamilycoach.parent_app`, `com.aifamilycoach.child_app`. Place `google-services.json` in `apps/parent-app/android/app/`. **The child app does not need it** — it declares no `firebase_core`/`firebase_messaging`. Nothing was fabricated |
 | 16 | **Release keystore** | `keytool` line in `signing.properties.example` | `HUMAN DECISION` | Two upload keystores, per-app alias, 4096-bit, PKCS12; one `signing.properties` per app. `.gitignore` covers the filename; nothing is committed |
-| 17 | **Package resolution** | `flutter pub get` (both apps) | `BLOCKED` | pub.dev returns 403 in the sandbox. Five evidence-upload packages are declared, imported and pinned inside the Flutter 3.24.5 window: `record 5.1.2`, `image_picker 1.1.2`, `file_picker 8.1.2`, `path_provider 2.1.4`, `http_parser ^4.0.2`. **No `pubspec.lock` was invented** |
+| 17 | **Package resolution** | `flutter pub get` (both apps) | `BLOCKED` | pub.dev returns 403 in the sandbox. Five evidence-upload packages are declared, imported and pinned inside the Flutter 3.24.5 window they were chosen in, and have NOT been re-checked against Flutter 3.47.0: `record 5.1.2`, `image_picker 1.1.2`, `file_picker 8.1.2`, `path_provider 2.1.4`, `http_parser ^4.0.2`. **No `pubspec.lock` was invented** |
 
 ---
 

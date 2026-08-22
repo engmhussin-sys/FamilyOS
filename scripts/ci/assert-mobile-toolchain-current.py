@@ -9,7 +9,11 @@ everything npm can see. It cannot see the mobile toolchain: Flutter's version
 lives in a workflow variable, AGP's and Kotlin's in `settings.gradle`, and
 Gradle's in a wrapper properties file. Four pins, four different files, none of
 them a package.json — so four pins that go stale silently, which is exactly what
-happened here: Flutter has been held at 3.24.5 by a chain nobody re-examined.
+happened here: Flutter sat at 3.24.5 for two years, held by a chain nobody
+re-examined, until a Google Play deadline — targetSdk 36 required for every
+update from 31 August 2026 — forced all four forward in one commit on
+2026-08-22. This guard exists so the next such move is prompted by a check
+rather than by a deadline.
 
 WHAT IT DOES. Reads each pin out of the repository, asks the AUTHORITATIVE
 endpoint for the current release, and fails when a pin is behind.
