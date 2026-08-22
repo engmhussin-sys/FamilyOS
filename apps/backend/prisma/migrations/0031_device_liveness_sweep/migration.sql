@@ -1,0 +1,61 @@
+-- ============================================================================
+-- THE CLOCK THAT MAKES `HEARTBEAT_MISSED` A REAL EVENT.
+--
+-- WHAT WAS BROKEN. `HEARTBEAT_MISSED` has been a member of `PairingEventType`
+-- and a row in the pairing transition table (`HEALTHY -> DEGRADED`) since
+-- pairing was built, and NOTHING IN `src/` HAS EVER PRODUCED IT. Measured
+-- rather than assumed: the only three occurrences of the string in the whole
+-- backend are its enum member, its transition row, and its type. Six sibling
+-- events are in the same condition; this migration closes exactly one of them
+-- and claims nothing about the others.
+--
+-- The consequence was not cosmetic. No device in this product has ever left
+-- `HEALTHY`, so `DEGRADED` was unreachable, and the single most common support
+-- sentence a parental-control product receives — «the app stopped reporting on
+-- my son's phone» — had no state anywhere in the system to point at. The child
+-- app has been sending a heartbeat every thirty seconds the entire time and
+-- `devices.last_seen_at` has been faithfully updated; the column was only ever
+-- READ (by the DAU/WAU/MAU counters and migration 0025's partial index) and
+-- never turned into a decision.
+--
+-- WHY THIS IS A ROW AND NOT A COLUMN. No table is altered here, and that is the
+-- point. Everything the producer needs already exists: `devices.last_seen_at`,
+-- `devices.status`, `devices.owner_type`, and the append-only
+-- `device_pairing_events` timeline that already stores the state machine's
+-- history. What did not exist was A MOMENT AT WHICH TO ASK, and in this product
+-- a recurring moment is a `scheduled_jobs` row.
+--
+-- WHY THE CADENCE IS 3600 AND THE THRESHOLD IS 24 HOURS. A phone is not a
+-- server: it is switched off overnight, Android Doze suspends its background
+-- work for unpredictable windows, and a school day with no signal is ordinary.
+-- Any threshold shorter than a night would mark every device degraded every
+-- morning, which is not a signal. Twenty-four hours spans all of those and
+-- still answers the support question within the day it is asked. Hourly
+-- resolution then surfaces a dead device within 1/24th of the window being
+-- measured, which is as precise as a 24-hour signal can honestly be.
+--
+-- WHY RUNNING IT EVERY HOUR IS CHEAP. `HEARTBEAT_MISSED` is legal ONLY from
+-- `HEALTHY`. The first sweep after a device goes quiet writes one event and
+-- moves it to `DEGRADED`; every sweep after that finds an illegal transition
+-- and writes nothing. The row count is therefore bounded by the number of
+-- OUTAGES, not by hours × devices. And the way back is already built and
+-- already runs — `recordHeartbeat` transitions `DEGRADED -> HEALTHY` on the
+-- next beat — so this sweep has no «recovered» pass of its own and must not
+-- grow one: two writers for one state is how two writers disagree.
+--
+-- PLATFORM, SO `local_hour` IS NULL. «Has this device gone quiet» is a question
+-- about an elapsed interval, not about a household's calendar day. There is no
+-- family-local hour at which it becomes the right question, and giving it one
+-- would mean a device that dies at 02:05 waits until tomorrow to be noticed.
+--
+-- PARENT DEVICES ARE EXCLUDED BY THE PRODUCER'S QUERY, and that exclusion is
+-- load-bearing rather than tidy: only the child app calls
+-- `POST /pairing/device/heartbeat`. A parent device row has `last_seen_at`
+-- touched when a push token is registered and never again, so under any
+-- threshold every parent device is permanently stale. Including them would have
+-- shipped a sweep whose findings are 100% false positives on day one.
+-- ============================================================================
+
+INSERT INTO "scheduled_jobs" ("name", "scope", "cadence_seconds", "local_hour", "enabled")
+VALUES ('device-liveness-sweep', 'PLATFORM', 3600, NULL, true)
+ON CONFLICT ("name") DO NOTHING;

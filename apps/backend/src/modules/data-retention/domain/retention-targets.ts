@@ -114,6 +114,17 @@ export const SECURITY_AUDIT_ACTION_PREFIXES: readonly string[] = [
   // outlive the ordinary 24 months. Platform-operator actions against the
   // scheduler are therefore security-classified.
   'scheduler.',
+  // SPRINT F2: «which member of staff did this, and when» is the question this
+  // whole sprint exists to make answerable. An answer that evaporates at
+  // twenty-four months is not an answer a compliance review can use, and these
+  // rows are the only record that a named human — rather than a nightly sweep —
+  // touched a household.
+  'operator.',
+  // SPRINT F2: who read a child's distress alert, and who decided what to do
+  // about it. This is the most consequential trail in the product — it is the
+  // evidence in any dispute about whether a safety signal was acted on — and it
+  // must outlive the ordinary twenty-four months by a wide margin.
+  'safety.',
 ];
 
 /**

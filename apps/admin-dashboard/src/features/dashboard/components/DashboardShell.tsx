@@ -30,7 +30,26 @@ const GROWTH_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
  * «Growth & commerce» is how an operator fails to find it during an incident.
  */
 const OPERATIONS_ROUTES: ReadonlyArray<{ to: string; labelKey: string }> = [
+  // FIRST, because it is the only screen in this dashboard that lists
+  // households as rows. Every other operator view answers a question about the
+  // platform in aggregate; an owner starts from «who is this», and a register
+  // filed below the decision log is a register nobody opens.
+  { to: '/platform/accounts', labelKey: 'accounts.nav' },
+  // Health second: it is the screen an operator opens during an incident, and
+  // an incident is when hunting through a rail costs the most.
+  { to: '/platform/health', labelKey: 'health.nav' },
+  { to: '/platform/plans', labelKey: 'catalogue.nav' },
+  { to: '/platform/support', labelKey: 'support.nav' },
   { to: '/notifications/decisions', labelKey: 'notifications.decisions.nav' },
+  // The runtime block, filed after the register and the catalogue because an
+  // operator reaches for them in an incident rather than in a day's work —
+  // and within it, ordered by how loudly a failure here is felt: a scheduled
+  // job that never ran, then an event that never got delivered, then a
+  // notification that never arrived, then what the model cost.
+  { to: '/platform/jobs', labelKey: 'jobs.nav' },
+  { to: '/platform/outbox', labelKey: 'outbox.nav' },
+  { to: '/platform/deliveries', labelKey: 'deliveries.nav' },
+  { to: '/platform/ai-usage', labelKey: 'aiUsage.nav' },
 ];
 
 export function DashboardShell({ children }: { children: ReactNode }) {
@@ -101,7 +120,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             reachable while a long page scrolls. `flex-wrap` is what keeps it
             honest at 1280px, where the search field would otherwise squeeze
             the operator's name to nothing. */}
-        <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-sand-200 bg-white/95 px-4 py-3 backdrop-blur lg:px-6 xl:px-8 xl:py-4">
+        <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-sand-200 bg-white/95 px-4 py-3 backdrop-blur-sm lg:px-6 xl:px-8 xl:py-4">
           <div className="min-w-0">
             <p className="text-sm text-ink-soft">{t('shell.welcomeBack')}</p>
             <p className="font-medium text-ink">{user?.fullName}</p>

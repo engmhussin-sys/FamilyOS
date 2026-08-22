@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { Prisma } from '@prisma/client';
+import type { OperatorRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 
 export interface IRecordAuditEventInput {
@@ -28,14 +28,50 @@ export interface IRecordAuditEventInput {
    * cross-tenant write and throws.
    */
   familyId?: string;
-  actorType: 'USER' | 'DEVICE' | 'SYSTEM';
+  /**
+   * SPRINT F2. `OPERATOR` joined the union, and it is the value that makes the
+   * question «which of my staff did this» answerable. Until now every operator
+   * action was recorded as `SYSTEM` — the same value a scheduled sweep uses —
+   * so a support agent's suspension and a nightly retention delete were
+   * indistinguishable in the one table a compliance review reads.
+   */
+  actorType: 'USER' | 'DEVICE' | 'SYSTEM' | 'OPERATOR';
   actorUserId?: string;
+  /**
+   * The three operator fields travel TOGETHER or not at all, and the service
+   * refuses a row that carries some of them (see `record`). A row that names an
+   * operator id with no email is a row that stops being readable the moment
+   * that operator is renamed.
+   *
+   * The email and the role are DENORMALISED ON PURPOSE: an operator can be
+   * renamed, re-roled or revoked, and this row must record who they WERE and
+   * what they HELD when they acted. Joining `operators` for that answer would
+   * silently rewrite history on every role change.
+   */
+  operatorId?: string;
+  operatorEmail?: string;
+  operatorRole?: OperatorRole;
+  /**
+   * WHY. Required for every operator MUTATION — enforced here rather than by a
+   * NOT NULL, because this same table stores `auth.login`, which has no reason
+   * and must not be made to invent one.
+   */
+  reason?: string;
+  /** Correlates this row with the request that produced it. */
+  requestId?: string;
   action: string;
   entityType: string;
   entityId: string;
   metadata?: Record<string, unknown>;
   ipAddress?: string;
 }
+
+/**
+ * The operator actions that MUST carry a reason. Reads are absent on purpose:
+ * auditing a read is right, but demanding a justification for opening a list is
+ * how a required field becomes a field everyone types «x» into.
+ */
+const OPERATOR_ACTIONS_REQUIRING_REASON = /^operator\.(revoked|updated)$/;
 
 /**
  * Sprint 9's Audit Completeness finding, made real: `AuditLog` was
@@ -55,16 +91,74 @@ export interface IRecordAuditEventInput {
  * than one trail per domain. `AuditLog` is now wired for the categories
  * that had NO existing trail: Login/Logout, Policy Change, Billing.
  */
+/**
+ * The one thing this service needs from a Prisma client, so that a
+ * `$transaction` client can be handed in without this file knowing what a
+ * transaction is. Structural, not a Prisma type import, because the interactive
+ * transaction client is a different type from the extended client and the only
+ * property that matters is the same on both.
+ */
+export interface AuditWriteClient {
+  auditLog: { create(args: { data: Prisma.AuditLogUncheckedCreateInput }): Promise<unknown> };
+}
+
 @Injectable()
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async record(input: IRecordAuditEventInput): Promise<void> {
-    await this.prisma.auditLog.create({
+  /**
+   * SPRINT F2 (review fix). The audit write may be handed a TRANSACTION CLIENT,
+   * so that the mutation and the record of it commit together or not at all.
+   *
+   * Before this, every operator path did the mutation, awaited it, and then
+   * called this method — two separate transactions. A crash, a connection reset
+   * or a throw in between leaves a household suspended, an alert moved or an
+   * operator revoked WITH NO AUDIT ROW, which is the exact state the directive
+   * forbids: every privileged action must create an immutable audit event.
+   * Passing `tx` closes that gap, and the default keeps every existing call site
+   * working unchanged.
+   *
+   * Deliberately NOT mandatory: `auth.login` and the scheduled sweeps record
+   * facts about work that has already happened elsewhere, and forcing them into
+   * a transaction they do not have would be ceremony rather than a control.
+   */
+  async record(input: IRecordAuditEventInput, client: AuditWriteClient = this.prisma): Promise<void> {
+    /**
+     * TWO REFUSALS, BOTH ABOUT ROWS THAT WOULD BE UNREADABLE LATER.
+     *
+     * A partial operator identity is worse than none: `operator_id` alone is a
+     * uuid that stops resolving the moment that person is removed, and the
+     * denormalised email exists precisely so the row survives them.
+     *
+     * And an operator MUTATION with no reason is the row a compliance review
+     * opens and finds empty. Both throw rather than warn, because an audit
+     * service that quietly writes a defective row is worse than one that
+     * refuses — the defect is only discovered when the row is needed.
+     */
+    const operatorFields = [input.operatorId, input.operatorEmail, input.operatorRole];
+    const present = operatorFields.filter((value) => value !== undefined && value !== null).length;
+    if (present !== 0 && present !== operatorFields.length) {
+      throw new Error(
+        'AUDIT_PARTIAL_OPERATOR_IDENTITY: operatorId, operatorEmail and operatorRole must be written together.',
+      );
+    }
+    if (input.actorType === 'OPERATOR' && present === 0) {
+      throw new Error('AUDIT_OPERATOR_WITHOUT_IDENTITY: actorType OPERATOR requires the operator identity.');
+    }
+    if (OPERATOR_ACTIONS_REQUIRING_REASON.test(input.action) && !input.reason?.trim()) {
+      throw new Error(`AUDIT_REASON_REQUIRED: ${input.action} must carry a reason.`);
+    }
+
+    await client.auditLog.create({
       data: {
         familyId: input.familyId,
         actorType: input.actorType,
         actorUserId: input.actorUserId,
+        operatorId: input.operatorId,
+        operatorEmail: input.operatorEmail,
+        operatorRole: input.operatorRole,
+        reason: input.reason,
+        requestId: input.requestId,
         action: input.action,
         entityType: input.entityType,
         entityId: input.entityId,

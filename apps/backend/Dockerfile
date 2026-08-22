@@ -43,7 +43,7 @@
 # with this same context — that job, not this comment, is the proof.
 # =============================================================================
 
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 # FIXING A REAL, PERSISTENT DEPLOY FAILURE: specifying binaryTargets in
@@ -57,6 +57,12 @@ RUN apk add --no-cache openssl1.1-compat || apk add --no-cache openssl
 # Dependencies first, and only the files that decide them, so a source-only
 # change does not re-run `npm ci`.
 COPY package.json package-lock.json ./
+# PRISMA 7: `datasource.url` left schema.prisma and lives here. Without this
+# file in the image, `prisma migrate deploy` fails with "The datasource.url
+# property is required in your Prisma config file" — and DATABASE_URL is NOT
+# a fallback in 7. That aborts the Railway promotion, which is exactly the
+# failure predeploy.sh exists to prevent.
+COPY prisma.config.ts ./
 COPY prisma ./prisma
 RUN npm ci
 
@@ -73,7 +79,9 @@ RUN npm ci
 # sandbox limitation ships the workaround and loses the real behaviour.
 RUN npx prisma generate
 
-COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+# nest-cli.json is no longer used — the build is `tsc -p tsconfig.build.json`
+# since @nestjs/cli cannot run on TypeScript 7. Kept out of the image.
+COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build
 
@@ -84,7 +92,7 @@ RUN echo "--- dist/ contents ---" && find dist -maxdepth 2 -type f
 
 # -----------------------------------------------------------------------------
 
-FROM node:20-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
@@ -94,6 +102,12 @@ ENV NODE_ENV=production
 RUN apk add --no-cache openssl1.1-compat || apk add --no-cache openssl
 
 COPY package.json package-lock.json ./
+# PRISMA 7: `datasource.url` left schema.prisma and lives here. Without this
+# file in the image, `prisma migrate deploy` fails with "The datasource.url
+# property is required in your Prisma config file" — and DATABASE_URL is NOT
+# a fallback in 7. That aborts the Railway promotion, which is exactly the
+# failure predeploy.sh exists to prevent.
+COPY prisma.config.ts ./
 # The schema and the full migration history ship WITH the image on purpose:
 # the release step that runs `prisma migrate deploy` runs FROM this image, so
 # the migrations applied are always the ones that belong to the code being

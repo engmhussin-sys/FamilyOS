@@ -17,29 +17,44 @@
 // ============================================================================
 
 generator client {
-  provider      = "prisma-client-js"
-  // FIXING A REAL DEPLOY-TIME BUG: node:20-alpine ships OpenSSL 3.x,
-  // but without an explicit binaryTarget Prisma downloaded an engine
-  // built for the older openssl-1.1.x, causing "Error loading shared
-  // library libssl.so.1.1: No such file or directory" at container
-  // startup. linux-musl-openssl-3.0.x is the correct target for this
-  // exact base image; "native" is kept so local/non-Alpine
-  // development environments are unaffected.
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
-  // F2 (R8, tenant isolation): enables `new PrismaClient({ adapter })`.
-  // Production still runs the default library engine — nothing here changes
-  // that. The flag exists so the tenant-isolation proof suites can open a
-  // REAL connection to PostgreSQL in an environment where the Prisma engine
-  // binary cannot be downloaded (binaries.prisma.sh answers 403), by routing
-  // through @prisma/adapter-pg + the WASM query engine instead. Without it
-  // the constructor rejects the `adapter` option outright and the cross-tenant
-  // probe suite could only ever be CODE VERIFIED, never TESTED.
-  previewFeatures = ["driverAdapters"]
+  provider = "prisma-client-js"
+  // PRISMA 7. `binaryTargets` and `previewFeatures = ["driverAdapters"]` are
+  // both gone, and their absence is the upgrade's biggest win rather than a
+  // deletion.
+  //
+  // Prisma 7 makes DRIVER ADAPTERS THE DEFAULT and removes the native QUERY
+  // engine. The comment that used to live here described a real deploy-time
+  // bug — a downloaded engine built for openssl-1.1.x refusing to load inside
+  // node:20-alpine — and a second one described this repository's offline
+  // WASM workaround, needed because `binaries.prisma.sh` answers 403 in our
+  // build environments. AT RUNTIME both problems are now structurally absent:
+  // no query-engine binary to download, no libssl to match. The client talks
+  // to PostgreSQL through `pg`, which is plain JavaScript.
+  //
+  // WHAT IS NOT GONE — corrected here, because an earlier version of this
+  // comment claimed it was: THE SCHEMA ENGINE IS STILL A NATIVE BINARY. The
+  // CLI fetches it on demand for `migrate` and `db push`, and in this
+  // repository's build environments that fetch still answers 403:
+  //
+  //   Failed to fetch sha256 checksum at https://binaries.prisma.sh/
+  //     all_commits/<hash>/debian-openssl-3.0.x/schema-engine.gz.sha256
+  //     — 403 Forbidden
+  //
+  // Reproduced 2026-08-22, with and without
+  // PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 (which skips the checksum and
+  // then fails on the engine itself). So the honest split is: the APPLICATION
+  // needs no binary, MIGRATIONS still do. Where the fetch is blocked, apply
+  // the committed `prisma/migrations/*/migration.sql` files with psql — the
+  // same statements `migrate deploy` would run, which is how this repository's
+  // integration suites get a schema.
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // PRISMA 7 removed `url` from the schema. The connection is supplied by the
+  // ADAPTER — at runtime by `PrismaService`, and for the CLI by
+  // `prisma.config.ts`. One fewer place for a production URL to be written
+  // down, which is the point of the change rather than a side effect of it.
 }
 
 // ============================================================================
@@ -198,6 +213,11 @@ enum ActorType {
   USER
   DEVICE
   SYSTEM
+  // SPRINT F2. A member of THIS PLATFORM'S STAFF acting on a household from the
+  // operator console. Until now every such action was recorded as SYSTEM, which
+  // put a scheduled sweep and a support agent's suspension in the same bucket —
+  // so «who did this» had no answer that a compliance review could accept.
+  OPERATOR
 }
 
 // --- Secure Pairing (Step 2.2.1) — see docs/architecture/pairing-*.md ---
@@ -329,7 +349,6 @@ model User {
   refreshTokens     RefreshToken[]
   ownedDevices      Device[]          @relation("UserOwnedDevices")
   consentsGranted   ParentalConsent[] @relation("ConsentGrantedBy")
-  reviewedAlerts    AiAlert[]         @relation("AlertReviewedBy")
   organizationMemberships OrganizationMember[] @relation("OrganizationMemberships")
   notifications     Notification[]
   auditLogEntries   AuditLog[]        @relation("AuditActorUser")
@@ -393,6 +412,7 @@ model Family {
   locationEvents LocationEvent[]
   aiRiskScores AiRiskScore[]
   aiAlerts AiAlert[]
+  aiAlertNotes AiAlertNote[]
   aiMemoryEntries AiMemoryEntry[]
   notifications Notification[]
   notificationDeliveries NotificationDelivery[]
@@ -1131,13 +1151,25 @@ model AiAlert {
   /// payload returns it, and no producer may put a child's words in it.
   sourceEventId    String        @map("source_event_id") @db.VarChar(200)
   status           AlertStatus   @default(NEW)
-  reviewedByUserId String?       @map("reviewed_by_user_id") @db.Uuid
+  /// SPRINT F2. WHO REVIEWED IT — and it is an OPERATOR, not a parent.
+  ///
+  /// This replaces `reviewedByUserId`, which pointed at `users`, had NO WRITER
+  /// anywhere in `src/` for the entire life of this product, and was therefore
+  /// a reviewer column for a review flow that did not exist. Measured before
+  /// removing it: zero writers, zero readers in `src/`, one test asserting it
+  /// null. Nothing was lost because nothing was ever stored.
+  ///
+  /// Reviewing a child-distress signal is the safety desk's job, and the safety
+  /// desk is staff. Not a foreign key, for the same reason `audit_logs` has
+  /// none: this row must survive the reviewer's departure, and a safety record
+  /// may never be the reason a deletion is refused or, worse, cascades.
+  reviewedByOperatorId String?   @map("reviewed_by_operator_id") @db.Uuid
   reviewedAt       DateTime?     @map("reviewed_at")
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
 
   child          Child @relation(fields: [childId], references: [id], onDelete: Cascade)
-  reviewedByUser User? @relation("AlertReviewedBy", fields: [reviewedByUserId], references: [id])
+  notes          AiAlertNote[]
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
@@ -1145,6 +1177,10 @@ model AiAlert {
   @@index([childId, status])
   @@index([severity])
   @@index([familyId])
+  /// The queue's own order: everything unreviewed, worst and oldest first.
+  /// Cross-tenant by construction — the safety desk works one queue, not one
+  /// household — which is why it is not prefixed by `family_id`.
+  @@index([status, severity, createdAt])
   @@map("ai_alerts")
 }
 
@@ -1154,6 +1190,78 @@ model AiAlert {
 
 /// Append-only. Never updated or soft-deleted — this is the compliance
 /// trail (GDPR "right to access", security incident investigation).
+/// ===========================================================================
+/// A MEMBER OF THIS PLATFORM'S STAFF, AS A ROW.
+/// ===========================================================================
+///
+/// WHAT IT REPLACES. One shared `INTERNAL_ADMIN_API_KEY`, held in every
+/// operator's browser memory, which was simultaneously the authentication, the
+/// authorization and the identity of all forty-five operator routes. Three
+/// consequences, none of them acceptable past a team of one:
+///
+///   NOBODY COULD BE NAMED. Every audit row said SYSTEM. «Which of my staff
+///   suspended this account» had no answer anywhere in the database.
+///   NOBODY COULD BE REMOVED. Revoking one person's access meant rotating the
+///   key and re-issuing it to everyone else.
+///   EVERYBODY COULD DO EVERYTHING. `@PlatformAdminSurface()` is one role, so
+///   a support agent reading a ticket held the same key that edits prices.
+///
+/// THE SHARED KEY IS NOT DELETED — it becomes the OUTER gate, the thing that
+/// says «this request reached the console at all». This table is the inner one,
+/// and it is the one that has a name.
+///
+/// NOT A `User`. An operator is staff, not a member of a household: they have
+/// no family, no children, no subscription, and they must never be resolvable
+/// by the family-facing login. Putting them in `users` would mean one row that
+/// two entirely different authentication paths both accept, which is the shape
+/// of every privilege-escalation bug ever written.
+model Operator {
+  id           String         @id @default(uuid()) @db.Uuid
+  /// Lowercased at the service boundary so a login cannot be case-shadowed.
+  email        String         @unique
+  fullName     String         @map("full_name")
+  role         OperatorRole
+  /// Argon2id, the same PasswordService the family surface uses. Never a
+  /// shared secret and never reversible.
+  passwordHash String         @map("password_hash")
+  status       OperatorStatus @default(ACTIVE)
+  lastLoginAt  DateTime?      @map("last_login_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  /// Set once and never cleared. Revocation is a fact about a person's access
+  /// that an audit trail must keep, so this is a tombstone rather than a
+  /// delete: the audit rows they wrote still name an operator that exists.
+  revokedAt    DateTime?      @map("revoked_at")
+
+  @@index([status])
+  @@map("operators")
+}
+
+/// FOUR ROLES, NOT SEVEN, and the shortfall is deliberate. A role with no
+/// holder is a permission matrix nobody exercises and no test defends; the
+/// three that were proposed and left out (OPERATIONS, BILLING, ANALYST) can be
+/// added the day a real person needs one, and `permissions.ts` is written so
+/// that adding one is a single map entry.
+enum OperatorRole {
+  /// Everything, including managing other operators.
+  SUPER_ADMIN
+  /// Reads households, works the support queue, reads safety METADATA.
+  SUPPORT
+  /// The child-safety desk: the only role that may read a safety alert's
+  /// CONTENT, and the only one that may review, escalate or resolve one.
+  SAFETY
+  /// Reads. Writes nothing, anywhere. For analysts and for auditors.
+  READ_ONLY
+}
+
+enum OperatorStatus {
+  ACTIVE
+  /// Temporarily barred; sessions are killed immediately and login refuses.
+  SUSPENDED
+  /// Permanently barred. `revokedAt` carries the instant.
+  REVOKED
+}
+
 model AuditLog {
   familyId  String? @map("family_id") @db.Uuid
   id         String    @id @default(uuid()) @db.Uuid
@@ -1166,6 +1274,29 @@ model AuditLog {
   ipAddress  String?   @map("ip_address")
   createdAt  DateTime  @default(now()) @map("created_at")
 
+  /// SPRINT F2 — WHICH MEMBER OF STAFF. Null for every non-operator actor, and
+  /// that is the honest value: a login by a parent has no operator.
+  operatorId    String?       @map("operator_id") @db.Uuid
+  /// DENORMALISED ON PURPOSE, both of them. An operator can be renamed, have
+  /// their role changed, or be revoked entirely; an audit row must say who they
+  /// WERE AND WHAT THEY HELD AT THE INSTANT THEY ACTED. Joining to `operators`
+  /// for the answer would silently rewrite history every time a role changed.
+  operatorEmail String?       @map("operator_email")
+  operatorRole  OperatorRole? @map("operator_role")
+  /// WHY. Mandatory for every operator mutation, enforced in the service rather
+  /// than by a NOT NULL, because the same table also stores `auth.login`, which
+  /// has no reason and should not be forced to invent one.
+  reason        String?
+  /// Correlates this row with the request that produced it, and with anything
+  /// else that request wrote.
+  requestId     String?       @map("request_id")
+
+  /// NOT ADDED, DELIBERATELY: `before`, `after`, `userAgent`, `result`. Each was
+  /// specified and each would have had NO WRITER in this slice, and a nullable
+  /// column whose only writer is «nothing yet» is precisely what this
+  /// repository's dormancy ledger exists to refuse. They land with the
+  /// mutations that actually record them.
+
   actorUser User? @relation("AuditActorUser", fields: [actorUserId], references: [id])
 
   family Family? @relation(fields: [familyId], references: [id], onDelete: SetNull)
@@ -1174,7 +1305,47 @@ model AuditLog {
   @@index([actorUserId])
   @@index([familyId])
   @@index([familyId, createdAt])
+  /// «Everything this member of staff has ever done», which is the query a
+  /// compliance review opens with. A JSON scan could not answer it.
+  @@index([operatorId, createdAt])
   @@map("audit_logs")
+}
+
+/// AN OPERATOR'S NOTE ON A SAFETY ALERT.
+///
+/// WHY IT EXISTS: an escalation with no words is unactionable. «Escalated» tells
+/// the next person that somebody was worried and nothing about why, and the
+/// person who escalated it has usually gone home.
+///
+/// WHY IT IS ITS OWN TABLE AND NOT A COLUMN: notes accumulate, they are written
+/// by different people at different times, and each one must carry its own
+/// author and instant. A single `notes` column would be a field that the second
+/// writer overwrites the first in.
+///
+/// IT IS APPEND-ONLY BY CONSTRUCTION — no update, no delete, anywhere in `src/`.
+/// The directive is explicit that an operator may not delete safety history, and
+/// a note explaining why an alert was dismissed is exactly the history somebody
+/// would later want gone.
+model AiAlertNote {
+  familyId   String   @map("family_id") @db.Uuid
+  id         String   @id @default(uuid()) @db.Uuid
+  alertId    String   @map("alert_id") @db.Uuid
+  /// Denormalised, like every operator reference in this schema: the note must
+  /// still name its author after that author is revoked.
+  operatorId    String @map("operator_id") @db.Uuid
+  operatorEmail String @map("operator_email")
+  /// The status this note was written ALONGSIDE, so the trail reads as a story
+  /// rather than as a pile of comments.
+  transitionTo AlertStatus? @map("transition_to")
+  body       String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  alert  AiAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  family Family  @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, createdAt])
+  @@index([familyId])
+  @@map("ai_alert_notes")
 }
 
 model AiMemoryEntry {

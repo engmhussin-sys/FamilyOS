@@ -139,27 +139,34 @@ android {
     namespace "com.aifamilycoach.parent_app"
     // ---------------------------------------------------------------
     // PA-M-016 — SDK LEVELS ARE PINNED TO LITERALS, NOT TO THE FLUTTER
-    // VERSION.
+    // VERSION. Still true; the literals moved.
     //
-    // These were `flutter.compileSdkVersion` / `flutter.targetSdkVersion` /
-    // `flutter.minSdkVersion`, which resolve from whatever Flutter SDK
-    // happens to be installed. That makes the Android API levels a function
-    // of a DATE rather than of this commit: Flutter 3.24.x resolves
-    // compileSdk to 34, Flutter 3.27+ resolves it to 35, and AGP 8.1.1
-    // (android/settings.gradle) refuses compileSdk > 34 outright with
-    // "compileSdk 35 requires Android Gradle Plugin 8.6.0 or higher".
+    // WHY THEY MOVED, 2026-08-22: GOOGLE PLAY REQUIRES targetSdk 36 FROM
+    // 31 AUGUST 2026. From that date every new app AND every update must
+    // target Android 16 (API 36) or higher; an extension can be requested
+    // to 1 November 2026. Source, read on 2026-08-22:
+    // support.google.com/googleplay/android-developer/answer/11926878
     //
-    // The literals below are exactly what Flutter 3.24.5 — the version
-    // .github/workflows/ci.yml and build-apk.yml pin — resolves to today,
-    // so this is a no-op for the pinned toolchain and a hard stop for any
-    // unpinned one. If a future Flutter bump is wanted, these three numbers
-    // and the AGP version move together, in one reviewed commit.
+    // At targetSdk 34 this app could not be updated on Play after that
+    // date. That is a release-blocking business fact with a date on it,
+    // not a currency preference, and it is what pulled the whole toolchain
+    // chain forward in one commit:
+    //
+    //   compileSdk/targetSdk 36
+    //     <- AGP 9.3.0        (supports up to API 37; AGP 8.1.1 refused >34)
+    //       <- Gradle 9.7.1   (AGP 9.3.0's stated minimum is Gradle 9.5.0)
+    //         <- Kotlin 2.4.10
+    //           <- Flutter 3.47.0 (its templates target AGP 9+)
     //
     // ndkVersion is deliberately LEFT on flutter.ndkVersion: its correct
     // literal cannot be verified without a Flutter SDK, and a wrong NDK pin
     // fails as an opaque download error rather than a legible one.
+    //
+    // NOT TESTED. No Flutter SDK, no Android SDK and no network to their
+    // CDNs exist in the environment that wrote this, so nothing below has
+    // been built. `.github/workflows/build-apk.yml` is what proves it.
     // ---------------------------------------------------------------
-    compileSdk 34
+    compileSdk 36
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -173,11 +180,16 @@ android {
 
     defaultConfig {
         applicationId "com.aifamilycoach.parent_app"
-        // minSdk 21 is Flutter 3.24.5's own floor and satisfies the floor of
+        // minSdk 21 was Flutter 3.24.5's own floor and satisfies the floor of
         // com.google.firebase:firebase-bom:33.1.2 (pinned in `dependencies`
         // below), which firebase_core 3.x / firebase_messaging 15.x use.
+        //
+        // LEFT AT 21 ACROSS THE FLUTTER 3.47.0 BUMP, deliberately: 3.47's own
+        // floor could not be verified without a Flutter SDK, and a guessed
+        // minSdk is worse than a stale one — if 3.47 requires higher, the first
+        // build says so with the exact number. Re-check it there, not here.
         minSdk 21
-        targetSdk 34
+        targetSdk 36
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true

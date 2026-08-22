@@ -29,6 +29,7 @@ import { RetentionSweepJob } from '../../src/modules/scheduler/application/jobs/
 import { GrowthDailyAggregationJob } from '../../src/modules/scheduler/application/jobs/growth-daily-aggregation.job';
 import { GrowthAlertScanJob } from '../../src/modules/scheduler/application/jobs/growth-alert-scan.job';
 import { GoalNudgeSweepJob } from '../../src/modules/scheduler/application/jobs/goal-nudge-sweep.job';
+import { DeviceLivenessSweepJob } from '../../src/modules/scheduler/application/jobs/device-liveness-sweep.job';
 import { JobRegistry } from '../../src/modules/scheduler/application/job-registry.service';
 
 /**
@@ -90,6 +91,7 @@ function registry(): JobRegistry {
     new GrowthDailyAggregationJob(stub(), stub()),
     new GrowthAlertScanJob(stub()),
     new GoalNudgeSweepJob(stub()),
+    new DeviceLivenessSweepJob(stub()),
   );
 }
 
@@ -103,6 +105,10 @@ describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => 
     expect(inCode).toEqual(inMigration);
     expect(inCode).toEqual([
       'data-retention-sweep',
+      // SPRINT F2. The clock behind `HEARTBEAT_MISSED`, which had no producer
+      // for the whole life of this product — so no device could ever leave
+      // HEALTHY and `DEGRADED` was unreachable. Migration 0031.
+      'device-liveness-sweep',
       'expired-token-sweep',
       'family-daily-rollover',
       // SPRINT F1: the child's goal watch, seeded by migration 0024. PLATFORM
@@ -170,6 +176,7 @@ describe('PHASE C P4 / PHASE D — job registry ↔ the migration seeds', () => 
           new GrowthDailyAggregationJob(stub(), stub()),
           new GrowthAlertScanJob(stub()),
           new GoalNudgeSweepJob(stub()),
+          new DeviceLivenessSweepJob(stub()),
         ),
     ).toThrow(/Duplicate scheduled job name/);
   });

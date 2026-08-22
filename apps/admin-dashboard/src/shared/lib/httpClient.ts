@@ -26,7 +26,11 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  // PUT joined the union for the plan catalogue, whose backend route replaces
+  // a whole record rather than appending an action. The verb is mirrored from
+  // the controller rather than smuggled through POST, so the two halves
+  // describe the same operation.
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   /** Skip attaching the access token — only for register/login/refresh themselves. */
   skipAuth?: boolean;

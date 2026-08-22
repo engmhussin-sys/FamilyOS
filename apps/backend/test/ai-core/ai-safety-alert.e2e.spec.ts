@@ -141,7 +141,12 @@ describeGolden('the AI safety alert reaches a parent (real PostgreSQL, real Redi
     expect(alert.category).toBe('HEALTH');
     expect(alert.status).toBe('NEW');
     expect(alert.reviewedAt).toBeNull();
-    expect(alert.reviewedByUserId).toBeNull();
+    // F2: `reviewedByUserId` was DROPPED by migration 0033 and replaced with
+    // `reviewedByOperatorId`. It pointed at `users` — a household member — for a
+    // review only platform staff can perform, and it had no writer at all. The
+    // assertion is kept, aimed at the column that exists, because "nobody has
+    // reviewed this yet" is the state the CRITICAL growth alarm counts.
+    expect(alert.reviewedByOperatorId).toBeNull();
     // The producer names itself, so an operator reading the row knows which
     // subsystem raised it without grepping.
     expect(alert.sourceModule).toBe('ai-core.distress-escalation');

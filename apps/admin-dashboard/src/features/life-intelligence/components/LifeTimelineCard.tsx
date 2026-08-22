@@ -65,7 +65,7 @@ function ChildTimelinePanel({ childId, childName }: { childId: string; childName
           {events.map((event) => (
             <li key={event.id} className="relative">
               <span
-                className={`absolute -right-[21px] top-1 h-2.5 w-2.5 rounded-full ${CATEGORY_DOT_COLOR[event.category]}`}
+                className={`absolute right-[-21px] top-1 h-2.5 w-2.5 rounded-full ${CATEGORY_DOT_COLOR[event.category]}`}
                 aria-hidden
               />
               <p className="text-sm font-medium text-ink">{event.title}</p>

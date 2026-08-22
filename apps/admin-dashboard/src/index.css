@@ -1,8 +1,62 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap')
+layer(base);
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #1b2422;
+  --color-ink-soft: #3a453f;
+
+  --color-guardian-500: #3d6d61;
+  --color-guardian-700: #234a42;
+  --color-guardian-900: #16302c;
+  --color-guardian-950: #0f1e1b;
+
+  --color-sage-100: #e4ebe1;
+  --color-sage-400: #8fab89;
+  --color-sage-500: #6f8f6a;
+  --color-sage-600: #5b7955;
+
+  --color-amber-100: #f7ecd2;
+  --color-amber-500: #d9a441;
+  --color-amber-600: #b98527;
+  --color-amber-700: #8a570a;
+
+  --color-brick-100: #f3deda;
+  --color-brick-500: #b54b3f;
+  --color-brick-600: #8f3b31;
+
+  --color-sand-50: #f3f4ef;
+  --color-sand-100: #eaebe2;
+  --color-sand-200: #dcded2;
+
+  --font-display: 'Fraunces', Georgia, serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --radius-card: 14px;
+
+  --shadow-quiet:
+    0 1px 2px rgba(22, 48, 44, 0.06), 0 4px 12px rgba(22, 48, 44, 0.05);
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 @layer base {
   html {
@@ -15,7 +69,7 @@
 
   /* Visible keyboard focus everywhere — never suppressed. */
   :focus-visible {
-    @apply outline-none ring-2 ring-sage-500 ring-offset-2 ring-offset-sand-50 rounded-sm;
+    @apply outline-hidden ring-2 ring-sage-500 ring-offset-2 ring-offset-sand-50 rounded-xs;
   }
 
   @media (prefers-reduced-motion: reduce) {

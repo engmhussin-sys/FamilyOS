@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
 import { createTenantExtension } from '../tenancy/tenant.extension';
@@ -28,8 +29,27 @@ import { createTenantExtension } from '../tenancy/tenant.extension';
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
 
+  /**
+   * PRISMA 7: the connection arrives through an ADAPTER, not through
+   * `datasource.url` in the schema. That is the version's central change and it
+   * removes the native query engine altogether — this deployment has been
+   * paying for that binary twice, once in a real production failure (an engine
+   * built for openssl-1.1.x refusing to load inside node:20-alpine) and once in
+   * a checked-in workaround because `binaries.prisma.sh` answers 403 in our
+   * build environments. Neither cost exists any more: `pg` is JavaScript.
+   *
+   * The URL is read HERE rather than in the schema so the application's
+   * credentials and the MIGRATION's credentials can differ — a deploy step may
+   * create tables; the running service should not be able to.
+   */
   constructor() {
-    super();
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      // Fail with the sentence that names the fix, at construction, rather than
+      // on the first query in some unrelated request.
+      throw new Error('DATABASE_URL is not set. PrismaService cannot open a connection without it.');
+    }
+    super({ adapter: new PrismaPg({ connectionString }) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return this.$extends(createTenantExtension()) as any;
   }

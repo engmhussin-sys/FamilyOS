@@ -112,7 +112,12 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
     // question bank's is nullable by design (SHARED_NULL). It still gets RLS —
     // with the OR-NULL policy shape `reward_rules` uses — and the policy count
     // below is where that shows up.
-    expect(rows[0].n).toBe(54);
+    // F2: 54 -> 55. Migration 0033 creates `ai_alert_notes` and replays the same
+    // block over it. It is the table the safety desk writes into, so it gets the
+    // strongest tenancy layer available rather than a dispensation for being the
+    // newest — and 0033 additionally REVOKES UPDATE and DELETE on it, because an
+    // operator may not rewrite or delete safety history.
+    expect(rows[0].n).toBe(55);
 
     const families = await admin.query(
       `SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'families'`,
@@ -128,7 +133,8 @@ describeIfDb('R8 layer 3 — PostgreSQL RLS (real PostgreSQL, non-superuser role
     // F4: 48 -> 53, the five tables migration 0006 creates.
     // B5: 53 -> 56, the three tables migration 0008 creates — two with the
     // strict policy and `quiz_questions` with the OR-NULL shape.
-    expect(policies.rows[0].n).toBe(56);
+    // F2: 56 -> 57, the `ai_alert_notes` table migration 0033 creates.
+    expect(policies.rows[0].n).toBe(57);
   });
 
   it('with NO tenant setting, the restricted role sees NOTHING — fail-closed, not fail-open', async () => {

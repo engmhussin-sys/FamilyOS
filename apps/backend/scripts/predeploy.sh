@@ -192,9 +192,18 @@ say "so this is a migrated database whose ledger was lost, not a db-push schema.
 # --- 3b. do the tables and columns match this build's schema? --------------
 DRIFT="$(mktemp)"
 # shellcheck disable=SC2086
+# PRISMA 7 REMOVED BOTH FLAGS THIS USED TO PASS. Verified against the installed
+# CLI, which says so itself: "`--from-url` was removed. Please use
+# `--[from/to]-config-datasource` in combination with a Prisma config file".
+# `--to-schema-datamodel` is gone the same way; `--to-schema` replaces it.
+#
+# The live database's URL now comes from `prisma.config.ts`, which is why that
+# file had to be added to the Docker image in the same change — without it this
+# command cannot find a connection at all, and `DATABASE_URL` is NOT a fallback
+# in Prisma 7.
 $PRISMA migrate diff \
-  --from-url "$DATABASE_URL" \
-  --to-schema-datamodel "$SCHEMA_PATH" \
+  --from-config-datasource \
+  --to-schema "$SCHEMA_PATH" \
   --script --exit-code > "$DRIFT" 2>&1
 DIFF_EXIT=$?
 

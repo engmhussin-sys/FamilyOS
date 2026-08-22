@@ -811,12 +811,6 @@ export const DORMANT_SCHEMA_DECLARATIONS: readonly DormantSchemaDeclaration[] = 
       'Inserted by prisma/migrations/0006_smart_reward_engine and 0007_reward_rule_management; the two live readers (prisma-rewards.repository.ts:452, prisma-reward-program.repository.ts:244) treat the category list as a closed domain vocabulary.',
   },
   {
-    model: 'PlanDefinition',
-    reason: 'WRITTEN_BY_MIGRATION_ONLY',
-    justification:
-      'Plans are upserted by prisma/seed.ts and prisma/seed-demo.ts, never by a request; prisma-billing.repository.ts:23 reads them, and a plan the application could mint at runtime would be a pricing change nobody reviewed.',
-  },
-  {
     model: 'SubscriptionPrice',
     reason: 'WRITTEN_BY_MIGRATION_ONLY',
     justification:
@@ -981,7 +975,11 @@ describe('ARCHITECTURE GUARD — no undeclared dormant table', () => {
       // named model per evidence kind, so an unused kind is an untested one.
       expect(kindsFor('BadgeDefinition')).toEqual(['MIGRATION_INSERT']);
       expect(kindsFor('SubscriptionPrice')).toContain('SEED_SQL_INSERT');
-      expect(kindsFor('PlanDefinition')).toContain('SEED_TS_WRITE');
+      // Was `PlanDefinition` until it gained a real runtime writer and its
+      // declaration was deleted; `SubscriptionPrice` carries the same evidence
+      // kind and is still dormant, so the rule keeps an example of a seed
+      // upsert rather than losing coverage of that kind.
+      expect(kindsFor('SubscriptionPrice')).toContain('SEED_TS_WRITE');
       // …and the negative: a deferred feature has no seed writer anywhere, or
       // D7b below would be reporting it.
       expect(seedWritersOf('AiRiskScore')).toEqual([]);

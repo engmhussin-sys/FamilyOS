@@ -105,7 +105,7 @@ export function ForecastPage() {
     {
       label: t('growth.provenance.target'),
       color: CHROME.inkSecondary[mode],
-      fillStyle: 'outline',
+      fillStyle: 'outline-solid',
       glyph: PROVENANCE.TARGET.glyph,
       hint: t('growth.provenance.targetHint'),
     },

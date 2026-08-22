@@ -60,6 +60,80 @@ export class RedisService implements OnModuleDestroy {
     return result as string | null;
   }
 
+  /**
+   * SPRINT F2. A plain delete, which this class's own header has claimed to
+   * offer since it was written («set-with-ttl, get, delete») and did not: the
+   * only removal available was `getAndDelete`, whose atomic read-and-consume is
+   * right for a one-time pairing code and wrong for signing an operator out —
+   * there, the read is pointless and the delete must happen whether or not a
+   * value was there.
+   */
+  async delete(key: string): Promise<void> {
+    await this.client.del(key);
+  }
+
+  /**
+   * ===========================================================================
+   * A SET THAT KEEPS ITS TTL — and a drain that leaves nothing behind.
+   * ===========================================================================
+   *
+   * Built for the operator-session reverse index, which was a JSON array under
+   * one key: read it, add a hash, write it back. That is read-modify-write, and
+   * two sign-ins by the same person landing together lose one of the two hashes
+   * — leaving a LIVE SESSION THAT `revokeAll` CANNOT SEE. A revocation control
+   * that silently misses a session is worse than none, because it reports
+   * success.
+   *
+   * `SADD` is atomic, so the concurrent sign-in cannot lose anything. `EXPIRE`
+   * rides along in the same script so the index can never outlive its sessions
+   * and become a set of dangling hashes.
+   *
+   * NOTE FOR A FUTURE REDIS CLUSTER: `deleteSetAndItsMembers` touches keys it
+   * did not declare in KEYS, which a cluster forbids. It is correct here because
+   * this deployment is a single Redis, and the alternative — drain, then delete
+   * in a loop — reopens a window in which a hash has left the index and its
+   * session key still resolves. For a control whose entire job is «this person
+   * is out, now», that window is the thing being removed.
+   */
+  private static readonly SET_ADD_WITH_TTL_SCRIPT = `
+    redis.call('SADD', KEYS[1], ARGV[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+    return 1
+  `;
+
+  async addToSetWithTtl(key: string, member: string, ttlSeconds: number): Promise<void> {
+    await this.client.eval(RedisService.SET_ADD_WITH_TTL_SCRIPT, 1, key, member, String(ttlSeconds));
+  }
+
+  private static readonly DELETE_SET_AND_MEMBERS_SCRIPT = `
+    local members = redis.call('SMEMBERS', KEYS[1])
+    redis.call('DEL', KEYS[1])
+    for i = 1, #members do
+      redis.call('DEL', ARGV[1] .. members[i])
+    end
+    return #members
+  `;
+
+  /**
+   * Deletes the set at `key` AND the key `prefix .. member` for every member,
+   * in one atomic server-side step. Returns how many members there were.
+   */
+  async deleteSetAndItsMembers(key: string, memberKeyPrefix: string): Promise<number> {
+    const result = await this.client.eval(
+      RedisService.DELETE_SET_AND_MEMBERS_SCRIPT,
+      1,
+      key,
+      memberKeyPrefix,
+    );
+    return Number(result ?? 0);
+  }
+
+  /** Removes ONE member from a set. Sign-out, when the person still holds
+   * other sessions that must stay alive. */
+  async removeFromSet(key: string, member: string): Promise<void> {
+    await this.client.srem(key, member);
+  }
+
   /** SA-004. The one deliberate exception to this class's "don't expose
    * the raw client" rule: `RedisThrottlerStorage` implements Nest's
    * `ThrottlerStorage` interface with a Lua script, which needs the

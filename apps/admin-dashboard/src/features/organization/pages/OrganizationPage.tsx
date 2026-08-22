@@ -93,7 +93,7 @@ function MembersPanel({ organizationId }: { organizationId: string }) {
             <div className="rounded-card border border-sand-200 bg-sand-50 p-3">
               <p className="text-xs text-ink-soft">{t('organization.inviteLinkExplanation')}</p>
               <div className="mt-2 flex items-center gap-2">
-                <code className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded bg-white px-2 py-1 text-xs">{inviteLink}</code>
+                <code className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm bg-white px-2 py-1 text-xs">{inviteLink}</code>
                 <Button
                   variant="secondary"
                   onClick={() => {

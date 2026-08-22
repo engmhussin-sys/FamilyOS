@@ -7,6 +7,7 @@ import { BillingModule } from '../billing/billing.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PairingController } from './presentation/controllers/pairing.controller';
 import { RegistrationTokenGuard } from './presentation/guards/registration-token.guard';
+import { DeviceLivenessService } from './application/services/device-liveness.service';
 import { PairingStateMachineService } from './application/services/pairing-state-machine.service';
 import { InvitationService } from './application/services/invitation.service';
 import { RegistrationTokenService } from './application/services/registration-token.service';
@@ -50,6 +51,10 @@ import { RUNTIME_ALERT_REPOSITORY } from './application/ports/runtime-alert.repo
   controllers: [PairingController],
   providers: [
     PairingStateMachineService,
+    // SPRINT F2: the producer `HEARTBEAT_MISSED` never had. Lives here rather
+    // than in the scheduler because the pairing state machine owns the
+    // transition; the scheduler only supplies the clock.
+    DeviceLivenessService,
     InvitationService,
     RegistrationTokenService,
     TrustEvaluationService,
@@ -68,6 +73,7 @@ import { RUNTIME_ALERT_REPOSITORY } from './application/ports/runtime-alert.repo
   ],
   exports: [
     PairingStateMachineService,
+    DeviceLivenessService,
     InvitationService,
     RegistrationTokenService,
     TrustEvaluationService,

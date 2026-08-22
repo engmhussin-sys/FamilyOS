@@ -47,28 +47,37 @@ export function createTestPrisma(overrideUrl?: string): TestPrismaHandle {
   const url = overrideUrl ?? process.env.INTEGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!url) throw new Error('INTEGRATION_DATABASE_URL or DATABASE_URL is required for this suite.');
 
-  if (process.env.PRISMA_DRIVER_ADAPTER === 'pg') {
-    const { PrismaClient } = require('@prisma/client/wasm');
-    const { PrismaPg } = require('@prisma/adapter-pg');
-    const { Pool } = require('pg');
-    const pool = new Pool({ connectionString: url });
-    const raw = new PrismaClient({ adapter: new PrismaPg(pool) });
-    return {
-      raw,
-      scoped: raw.$extends(createTenantExtension()),
-      disconnect: async () => {
-        await raw.$disconnect();
-        await pool.end();
-      },
-    };
-  }
-
+  /**
+   * ONE BRANCH, NOT TWO.
+   *
+   * PRISMA 7 removed `datasources` from the constructor: a driver adapter is
+   * the only way to open a connection, so the `PRISMA_DRIVER_ADAPTER=pg` mode
+   * and the "normal" mode had already converged into the same three lines. What
+   * had NOT converged was the teardown, and that is the part that mattered:
+   *
+   *   `$disconnect()` DOES NOT END A POOL THE CALLER SUPPLIED. Prisma closes
+   *   what it opened; a `pg.Pool` handed to `PrismaPg` is the caller's to close.
+   *   The second branch created a pool inline, never kept a reference to it, and
+   *   therefore could not close it — which is why Jest printed «did not exit one
+   *   second after the test run» and why every suite using this helper left
+   *   idle Postgres connections behind for the rest of the run.
+   *
+   * The pool is now named, kept, and ended. One code path, one teardown.
+   */
   const { PrismaClient } = require('@prisma/client');
-  const raw = new PrismaClient({ datasources: { db: { url } } });
+  const { PrismaPg } = require('@prisma/adapter-pg');
+  const { Pool } = require('pg');
+
+  const pool = new Pool({ connectionString: url });
+  const raw = new PrismaClient({ adapter: new PrismaPg(pool) });
+
   return {
     raw,
     scoped: raw.$extends(createTenantExtension()),
-    disconnect: () => raw.$disconnect(),
+    disconnect: async () => {
+      await raw.$disconnect();
+      await pool.end();
+    },
   };
 }
 

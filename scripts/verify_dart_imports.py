@@ -338,8 +338,13 @@ def check_delimiters(path: str, src: str) -> list:
 #   image_picker   — camera photo + gallery image for COMPLETION_ARTIFACT
 #                    (`image/jpeg` / `image/png`). Pinned 1.1.2.
 #   file_picker    — the `application/pdf` route, which neither of the above
-#                    can reach. Pinned 8.1.2, the last release on
-#                    compileSdk 34 (AGP 8.1.1 refuses compileSdk 35).
+#                    can reach. Pinned 8.1.2 because it was the last release
+#                    on compileSdk 34, which the toolchain then required.
+#                    THAT REASON EXPIRED on 2026-08-22: the apps now build at
+#                    compileSdk 36 on AGP 9.3.0, so this pin is holding an old
+#                    package for a constraint that no longer exists. Re-resolve
+#                    it on a machine that can reach pub.dev — not here, where
+#                    pub.dev answers 403 and any new version would be a guess.
 #   path_provider  — `record` needs an explicit output path and Android has
 #                    no `/tmp`; this is the app's own cache dir. Pinned 2.1.4.
 #   http_parser    — `MediaType` for the multipart part's Content-Type.

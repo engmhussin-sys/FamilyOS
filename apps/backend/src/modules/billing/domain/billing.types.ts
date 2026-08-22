@@ -73,10 +73,22 @@ export interface IInvoiceRecord {
  * is allowed to check against, so a typo in a DB row's features array
  * fails safe (unrecognized key = not entitled) rather than silently
  * granting access to a misspelled feature name. */
-export type EntitlementKey =
-  | 'ai_diagnostics'
-  | 'family_insights'
-  | 'multiple_children'
-  | 'unlimited_devices_per_child'
-  | 'behavioral_trend_analysis'
-  | 'priority_support';
+/**
+ * THE CLOSED VOCABULARY, AS DATA FIRST AND A TYPE SECOND.
+ *
+ * It used to be a bare union, which meant the six keys existed only at compile
+ * time — nothing could iterate them, validate against them, or offer them in a
+ * console. `EntitlementKey` is now DERIVED from this array, so the type and the
+ * runtime list cannot disagree: adding a seventh feature to the array adds it
+ * to the type, and there is no second place to remember.
+ */
+export const ENTITLEMENT_KEYS = [
+  'ai_diagnostics',
+  'family_insights',
+  'multiple_children',
+  'unlimited_devices_per_child',
+  'behavioral_trend_analysis',
+  'priority_support',
+] as const;
+
+export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number];

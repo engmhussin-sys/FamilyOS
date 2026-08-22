@@ -66,7 +66,7 @@ export function LoadingBlock({ label }: { label?: string }) {
  * kills the pulse globally (see `index.css`).
  */
 function Bar({ className = '' }: { className?: string }) {
-  return <span aria-hidden="true" className={`block rounded bg-sand-200/70 ${className}`} />;
+  return <span aria-hidden="true" className={`block rounded-sm bg-sand-200/70 ${className}`} />;
 }
 
 export function SkeletonGroup({ label, children }: { label?: string; children: ReactNode }) {

@@ -80,7 +80,7 @@ export function RetentionGrid({ rows, columnLabels, mode, formatValue, ariaLabel
               return (
                 <td
                   key={cell.label}
-                  className="rounded px-2 py-2 text-center [font-variant-numeric:tabular-nums]"
+                  className="rounded-sm px-2 py-2 text-center [font-variant-numeric:tabular-nums]"
                   style={{
                     backgroundColor: background,
                     color: onFill,

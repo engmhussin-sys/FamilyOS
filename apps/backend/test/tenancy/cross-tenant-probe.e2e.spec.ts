@@ -191,7 +191,7 @@ function offlinePrismaService(): any {
   const url = process.env.INTEGRATION_DATABASE_URL as string;
   if (process.env.PRISMA_DRIVER_ADAPTER === 'pg') {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { PrismaClient } = require('@prisma/client/wasm');
+    const { PrismaClient } = require('@prisma/client');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PrismaPg } = require('@prisma/adapter-pg');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -208,10 +208,20 @@ function offlinePrismaService(): any {
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { PrismaClient } = require('@prisma/client');
-  const base = new PrismaClient({ datasources: { db: { url } } });
+  // PRISMA 7 removed `datasources`, so a driver adapter is the only way to
+  // open a connection. The pool is NAMED and kept: `$disconnect()` closes what
+  // Prisma opened and never a pool the caller supplied, so an anonymous pool
+  // here is a Postgres connection this suite leaks for the rest of the run.
+  const fallbackPool = new (require('pg').Pool)({ connectionString: url });
+  const base = new PrismaClient({
+    adapter: new (require('@prisma/adapter-pg').PrismaPg)(fallbackPool),
+  });
   const extended = base.$extends(createTenantExtension());
   extended.onModuleInit = async () => base.$connect();
-  extended.onModuleDestroy = async () => base.$disconnect();
+  extended.onModuleDestroy = async () => {
+    await base.$disconnect();
+    await fallbackPool.end();
+  };
   return extended;
 }
 
@@ -777,7 +787,21 @@ describeIfDb('R8 — generated cross-tenant probe suite against the real applica
   ] as const;
 
   const classifiedNames = new Set(CLASSIFIED_ROUTES.map((e) => e.what));
-  const isPlatform = (r: Route): boolean => r.guardNames.includes('InternalAdminGuard');
+  /**
+   * THE OPERATOR SURFACE, BY EITHER OF ITS TWO GATES.
+   *
+   * `InternalAdminGuard` is the shared-key gate that has guarded the platform
+   * surface since it existed. `OperatorAuthGuard` is Sprint F2's replacement for
+   * it on the newest routes, and it DELEGATES to `InternalAdminGuard` before
+   * checking a session and a permission — so it is the same gate plus two more.
+   *
+   * Naming only the first one here is what let four new `system/*` routes fall
+   * out of the platform sweep and into `uncovered`, which is where RULE X1 found
+   * them. Both names, because the sweep's question — «is a family token refused
+   * here» — is asked of the SURFACE, not of a particular guard class.
+   */
+  const PLATFORM_GUARDS = ['InternalAdminGuard', 'OperatorAuthGuard'];
+  const isPlatform = (r: Route): boolean => r.guardNames.some((g) => PLATFORM_GUARDS.includes(g));
   const isDeviceSurface = (r: Route): boolean => r.guardNames.includes('DeviceJwtAuthGuard');
   /** A route is TARGETABLE when at least one of its params names a family-B row. */
   const isTargetable = (r: Route): boolean =>

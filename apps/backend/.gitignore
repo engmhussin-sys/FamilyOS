@@ -1,0 +1,5 @@
+
+# Emitted if prisma.config.ts is ever compiled in place. Prisma prefers the
+# .js over the .ts, so a stale one silently overrides the real config.
+prisma.config.js
+prisma.config.js.map

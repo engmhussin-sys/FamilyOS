@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "//": "F3: `scripts` added, and it is not cosmetic — `nest build` was ALREADY failing on this branch before this sprint. scripts/ci/assert-tenant-scoping.ts (F2) sits outside rootDir './src', so the default '**/*' include pulled it into the build program and TypeScript answered TS6059. The CI Build step has been red since F2. The CI guards are executables run by ts-node and are never imported by the application, so excluding them from the APPLICATION build is exactly right.",
-  "exclude": ["node_modules", "test", "dist", "prisma", "scripts", "**/*spec.ts"],
+  "exclude": ["node_modules", "test", "dist", "prisma", "scripts", "prisma.config.ts", "**/*spec.ts"],
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist"

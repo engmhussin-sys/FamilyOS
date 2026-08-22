@@ -741,17 +741,51 @@ if ($distCached) {
 # "compileSdk 35 requires Android Gradle Plugin 8.6.0 or higher". Nothing here
 # is invented; the numbers on both sides are parsed out of the tree.
 $compileSdkNum = 0
+# THE CHAIN, CHECKED IN BOTH DIRECTIONS.
+#
+#   compileSdk 35+ needs AGP 8.6.0+   (AGP's own refusal message says so)
+#   compileSdk 36+ needs AGP 9.0.0+   (36 is above AGP 8.x's ceiling)
+#   AGP 9.x        needs Gradle 9.5.0+ (developer.android.com/build/releases/
+#                                       gradle-plugin, read 2026-08-22)
+#
+# The Gradle half was missing until the 2026-08-22 toolchain bump, and its
+# absence is how a repository can pin an AGP its own Gradle wrapper cannot
+# load — a failure that surfaces as an opaque plugin-resolution error rather
+# than as the sentence above.
 $agpOk = $true
-if ([int]::TryParse($pins.CompileSdk, [ref]$compileSdkNum) -and $compileSdkNum -ge 35) {
-    try { $agpOk = ([version]$pins.Agp -ge [version]'8.6.0') } catch { $agpOk = $false }
+$agpFloor = $null
+if ([int]::TryParse($pins.CompileSdk, [ref]$compileSdkNum)) {
+    if ($compileSdkNum -ge 36) { $agpFloor = '9.0.0' }
+    elseif ($compileSdkNum -ge 35) { $agpFloor = '8.6.0' }
+}
+if ($agpFloor) {
+    try { $agpOk = ([version]$pins.Agp -ge [version]$agpFloor) } catch { $agpOk = $false }
 }
 if ($agpOk) {
     Add-Row PASS 'compileSdk vs AGP' "compileSdk $($pins.CompileSdk) is inside AGP $($pins.Agp)'s ceiling" ''
 } else {
     Add-FailRow gradle-agp-sdk 'compileSdk vs AGP' "compileSdk $($pins.CompileSdk) with AGP $($pins.Agp)" `
-        ("AGP $($pins.Agp) refuses compileSdk $($pins.CompileSdk) outright. Either drop compileSdk back to 34 in " +
-         "apps\*\android\app\build.gradle or raise the AGP version in apps\*\android\settings.gradle to 8.6.0 or higher " +
-         "(which also moves the Gradle pin). apps\*\android\app\build.gradle records the rule.")
+        ("AGP $($pins.Agp) refuses compileSdk $($pins.CompileSdk) outright — that level needs AGP $agpFloor or higher. " +
+         "Either lower compileSdk in apps\*\android\app\build.gradle or raise the AGP version in " +
+         "apps\*\android\settings.gradle (which also moves the Gradle wrapper pin). " +
+         "apps\*\android\app\build.gradle records the rule and its sources.")
+}
+
+# AGP 9 cannot load on a Gradle below 9.5.0. Checked separately from the SDK
+# rule above because it is a different requirement with a different fix.
+$gradleOk = $true
+try {
+    if ([version]$pins.Agp -ge [version]'9.0.0') {
+        $gradleOk = ([version]$pins.Gradle -ge [version]'9.5.0')
+    }
+} catch { $gradleOk = $false }
+if ($gradleOk) {
+    Add-Row PASS 'AGP vs Gradle wrapper' "AGP $($pins.Agp) runs on Gradle $($pins.Gradle)" ''
+} else {
+    Add-FailRow gradle-agp-sdk 'AGP vs Gradle wrapper' "AGP $($pins.Agp) with Gradle $($pins.Gradle)" `
+        ("AGP 9.x states Gradle 9.5.0 as its minimum. Raise distributionUrl in " +
+         "apps\*\android\gradle\wrapper\gradle-wrapper.properties, or lower the AGP pin in " +
+         "apps\*\android\settings.gradle. Source: developer.android.com/build/releases/gradle-plugin")
 }
 
 $minN = 0; $tgtN = 0; $cmpN = 0

@@ -29,6 +29,29 @@ export class PrismaBillingRepository implements IBillingRepository {
     return row ? { ...row, features: row.features as string[] } : null;
   }
 
+  async findAllPlans(): Promise<IPlanDefinition[]> {
+    const rows = await this.prisma.planDefinition.findMany({ orderBy: { priceCents: 'asc' } });
+    return rows.map((row: { features: unknown }) => ({ ...(row as object), features: row.features as string[] }) as IPlanDefinition);
+  }
+
+  async upsertPlan(input: {
+    tier: SubscriptionPlanTier;
+    name: string;
+    priceCents: number;
+    currency: string;
+    billingIntervalMonths: number;
+    features: string[];
+    isActive: boolean;
+  }): Promise<IPlanDefinition> {
+    const { tier, ...rest } = input;
+    const row = await this.prisma.planDefinition.upsert({
+      where: { tier },
+      create: { tier, ...rest },
+      update: rest,
+    });
+    return { ...row, features: row.features as string[] };
+  }
+
   async findSubscriptionByFamily(familyId: string): Promise<ISubscriptionRecord | null> {
     return this.prisma.subscription.findUnique({ where: { familyId } });
   }

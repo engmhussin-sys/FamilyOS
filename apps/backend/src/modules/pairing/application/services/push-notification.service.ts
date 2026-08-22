@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import * as admin from 'firebase-admin';
+import { getMessaging } from 'firebase-admin/messaging';
 
 /**
  * PHASE D (`PD-N-002`) — WHAT A PUSH ATTEMPT ACTUALLY RESULTED IN.
@@ -96,7 +97,10 @@ export class PushNotificationService implements OnModuleInit {
 
     try {
       const serviceAccount = JSON.parse(serviceAccountJson) as admin.ServiceAccount;
-      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      // firebase-admin 14 flattened the namespace: `cert` is a root export and
+      // messaging moved to its own entry point. There is no `admin.credential`
+      // and no `admin.messaging()` any more.
+      admin.initializeApp({ credential: admin.cert(serviceAccount) });
       this.isConfigured = true;
     } catch (error) {
       // A malformed credential is a real misconfiguration worth a
@@ -131,7 +135,7 @@ export class PushNotificationService implements OnModuleInit {
     }
 
     try {
-      await admin.messaging().send({
+      await getMessaging().send({
         token: pushToken,
         notification: { title, body },
         data,

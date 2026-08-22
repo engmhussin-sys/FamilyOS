@@ -6,6 +6,7 @@ import { AnalyticsModule } from '../analytics/analytics.module';
 import { EventsModule } from '../events/events.module';
 import { LifeIntelligenceModule } from '../life-intelligence/life-intelligence.module';
 import { BillingNotificationsModule } from '../billing/billing-notifications.module';
+import { PairingModule } from '../pairing/pairing.module';
 import { JobObservability } from './application/job-observability.service';
 import { JobRegistry } from './application/job-registry.service';
 import { JobRunner } from './application/job-runner.service';
@@ -18,6 +19,7 @@ import { RetentionSweepJob } from './application/jobs/retention-sweep.job';
 import { GrowthDailyAggregationJob } from './application/jobs/growth-daily-aggregation.job';
 import { GrowthAlertScanJob } from './application/jobs/growth-alert-scan.job';
 import { GoalNudgeSweepJob } from './application/jobs/goal-nudge-sweep.job';
+import { DeviceLivenessSweepJob } from './application/jobs/device-liveness-sweep.job';
 import { SchedulerOperationsController } from './presentation/controllers/scheduler-operations.controller';
 
 /**
@@ -51,7 +53,17 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
  * and this deployment already has a PostgreSQL holding both.
  */
 @Module({
-  imports: [TimeModule, DataRetentionModule, LifeIntelligenceModule, EventsModule, AnalyticsModule, BillingNotificationsModule],
+  imports: [
+    TimeModule,
+    DataRetentionModule,
+    LifeIntelligenceModule,
+    EventsModule,
+    AnalyticsModule,
+    BillingNotificationsModule,
+    // SPRINT F2. PairingModule owns the device state machine; this module
+    // gives it a clock, exactly as it does for retention and the outbox.
+    PairingModule,
+  ],
   controllers: [SchedulerOperationsController],
   providers: [
     RetentionSweepJob,
@@ -62,6 +74,7 @@ import { SchedulerOperationsController } from './presentation/controllers/schedu
     GrowthDailyAggregationJob,
     GrowthAlertScanJob,
     GoalNudgeSweepJob,
+    DeviceLivenessSweepJob,
     JobRegistry,
     JobRunner,
     JobObservability,

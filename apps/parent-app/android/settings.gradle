@@ -18,8 +18,31 @@ pluginManagement {
 
 plugins {
     id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-    id "com.android.application" version "8.1.1" apply false
-    id "org.jetbrains.kotlin.android" version "1.9.10" apply false
+    // ---------------------------------------------------------------
+    // THE CHAIN, RESOLVED 2026-08-22 FROM ITS AUTHORITATIVE SOURCES.
+    // Not one of these numbers was written from memory (C-5):
+    //
+    //   AGP 9.3.0     developer.android.com/build/releases/gradle-plugin
+    //                 (July 2026; minimum Gradle 9.5.0, minimum JDK 17,
+    //                 supports up to API level 37)
+    //   Kotlin 2.4.10 kotlinlang.org/docs/releases (14 July 2026)
+    //   Gradle 9.7.1  docs.gradle.org/current/release-notes.html
+    //   Flutter 3.47.0 docs.flutter.dev/release/release-notes
+    //
+    // `org.jetbrains.kotlin.android` IS STILL DECLARED, and that is a
+    // decision rather than an oversight. AGP 9 ships BUILT-IN KOTLIN and
+    // treats this plugin as conflicting with it — but Flutter documents an
+    // explicit interim state for exactly this migration: keep the plugin,
+    // keep `kotlinOptions`, and set `android.builtInKotlin=false` plus
+    // `android.newDsl=false` in gradle.properties. That is the state this
+    // commit lands in, because it is the SMALLEST change that clears the
+    // 31 August 2026 Play targetSdk-36 deadline, and the DSL migration is a
+    // separate change that deserves its own build.
+    //   docs.flutter.dev/release/breaking-changes/
+    //     migrate-to-built-in-kotlin/for-app-developers
+    // ---------------------------------------------------------------
+    id "com.android.application" version "9.3.0" apply false
+    id "org.jetbrains.kotlin.android" version "2.4.10" apply false
     // RECOVERY NOTE (Sprint 17.3): required because pubspec.yaml
     // declares firebase_core + firebase_messaging as real dependencies.
     id "com.google.gms.google-services" version "4.4.2" apply false

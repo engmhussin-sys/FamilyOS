@@ -9,6 +9,7 @@ import { RetentionSweepJob } from './jobs/retention-sweep.job';
 import { GrowthDailyAggregationJob } from './jobs/growth-daily-aggregation.job';
 import { GrowthAlertScanJob } from './jobs/growth-alert-scan.job';
 import { GoalNudgeSweepJob } from './jobs/goal-nudge-sweep.job';
+import { DeviceLivenessSweepJob } from './jobs/device-liveness-sweep.job';
 
 /**
  * PHASE C P4 — THE ONE LIST OF JOBS THAT EXIST.
@@ -37,6 +38,7 @@ export class JobRegistry {
     growthDailyAggregation: GrowthDailyAggregationJob,
     growthAlertScan: GrowthAlertScanJob,
     goalNudgeSweep: GoalNudgeSweepJob,
+    deviceLivenessSweep: DeviceLivenessSweepJob,
   ) {
     const definitions: JobDefinition[] = [
       retentionSweep.definition(),
@@ -51,6 +53,10 @@ export class JobRegistry {
       // SPRINT F1. The child's goal watch, seeded as a row by migration 0024,
       // so the set assertion in `job-registry.spec.ts` still holds.
       goalNudgeSweep.definition(),
+      // SPRINT F2. The producer `HEARTBEAT_MISSED` never had, seeded as a row
+      // by migration 0031, so the set assertion in `job-registry.spec.ts`
+      // still holds.
+      deviceLivenessSweep.definition(),
     ];
 
     const map = new Map<string, JobDefinition>();

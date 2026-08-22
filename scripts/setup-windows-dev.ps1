@@ -461,7 +461,8 @@ if ($SkipInstall) {
     # ---- 4e. platform + build-tools + platform-tools ------------------------
     Write-Head "Android platform $($pins.CompileSdk), build-tools $($pins.BuildTools), platform-tools"
     Write-Info "platform-$($pins.CompileSdk) is required because app/build.gradle declares compileSdk $($pins.CompileSdk),"
-    Write-Info "and AGP $($pins.Agp) refuses a compileSdk above 34 outright."
+    Write-Info "and the AGP version pinned in android/settings.gradle ($($pins.Agp)) must support it —"
+    Write-Info "AGP refuses a compileSdk above its own ceiling outright, with that exact message."
     $packages = @(
         "platforms;android-$($pins.CompileSdk)",
         "build-tools;$($pins.BuildTools)",

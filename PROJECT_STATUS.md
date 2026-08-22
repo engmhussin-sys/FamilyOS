@@ -302,7 +302,7 @@ Child Device → POST /api/v1/events/batch (device JWT, tenant من التوكن
 |---|---|---|
 | `npx jest --runInBand --forceExit` | **1,176 passed / 1,176 · 90 suites passed / 90 · 0 failed · 0 skipped · exit 0** | **`TESTED`** — نُفِّذ **مرتين** مقابل PostgreSQL 16 و Redis حيّين |
 | `npx tsc -p tsconfig.build.json --noEmit` | **exit 0 · صفر diagnostic** | **`TESTED`** |
-| `npx nest build` | exit 0 | **`TESTED`** |
+| `npm run build` (`tsc -p tsconfig.build.json`) | exit 0 | **`TESTED`** — was `npx nest build`, which stopped existing when @nestjs/cli was removed for TypeScript 7 |
 | `npm run ci:tenant-guard` | 324 ملفًا · 63 model مصنَّفة · **0 violations** | **`TESTED`** |
 | `npm run ci:event-emission` | 322 ملفًا · 9 domain-state models · 6 كتّاب · 6 allowlisted · **0 violations** | **`TESTED`** |
 | `npx vitest run` (admin-dashboard) | **28 passed / 28 · 4 ملفات** | **`TESTED`** |

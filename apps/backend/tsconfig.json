@@ -1,16 +1,26 @@
 {
   "compilerOptions": {
     "module": "commonjs",
+    // TypeScript 7 no longer pulls every `@types/*` package into the global
+    // scope implicitly. Jest's `describe`/`it`/`expect` are globals, so they
+    // have to be named; everything else in `@types` is reached through an
+    // ordinary import and needs no entry here.
+    "types": ["node", "jest"],
     "declaration": false,
     "removeComments": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
-    "target": "ES2021",
+    "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",
-    "baseUrl": "./",
     "incremental": true,
+    // The build info lives INSIDE outDir, so `rm -rf dist` clears it too.
+    // With it beside the tsconfig, deleting dist left a cache claiming every
+    // file was already emitted, and `tsc` exited 0 having written NOTHING —
+    // a green build with no artefact. That cost three builds before it was
+    // noticed, which is exactly how long a silent success takes to find.
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
     "skipLibCheck": true,
     "strict": true,
     "strictNullChecks": true,

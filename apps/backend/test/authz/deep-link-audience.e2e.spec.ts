@@ -321,7 +321,7 @@ function offlinePrismaService(): any {
   const url = process.env.INTEGRATION_DATABASE_URL as string;
   if (process.env.PRISMA_DRIVER_ADAPTER === 'pg') {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { PrismaClient } = require('@prisma/client/wasm');
+    const { PrismaClient } = require('@prisma/client');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PrismaPg } = require('@prisma/adapter-pg');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -338,10 +338,20 @@ function offlinePrismaService(): any {
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { PrismaClient } = require('@prisma/client');
-  const base = new PrismaClient({ datasources: { db: { url } } });
+  // PRISMA 7 removed `datasources`, so a driver adapter is the only way to
+  // open a connection. The pool is NAMED and kept: `$disconnect()` closes what
+  // Prisma opened and never a pool the caller supplied, so an anonymous pool
+  // here is a Postgres connection this suite leaks for the rest of the run.
+  const fallbackPool = new (require('pg').Pool)({ connectionString: url });
+  const base = new PrismaClient({
+    adapter: new (require('@prisma/adapter-pg').PrismaPg)(fallbackPool),
+  });
   const extended = base.$extends(createTenantExtension());
   extended.onModuleInit = async () => base.$connect();
-  extended.onModuleDestroy = async () => base.$disconnect();
+  extended.onModuleDestroy = async () => {
+    await base.$disconnect();
+    await fallbackPool.end();
+  };
   return extended;
 }
 

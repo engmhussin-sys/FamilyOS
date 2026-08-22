@@ -7,7 +7,10 @@ export function SearchBar() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isOpen, setIsOpen] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  // React 19 requires an explicit initial value: `useRef<T>()` no longer
+  // infers `T | undefined` for you. `undefined` is the honest starting state —
+  // there is no timer until the first keystroke.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     clearTimeout(debounceRef.current);

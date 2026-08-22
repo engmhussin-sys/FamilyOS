@@ -28,7 +28,7 @@ unit tests
       ↓
 integration tests    (where applicable — real DB/services, not mocks)
       ↓
-build                (vite build  /  nest build  /  flutter build)
+build                (vite build  /  npm run build  /  flutter build)
       ↓
 manual smoke test    (only for user-facing flows a machine can't judge)
 ```

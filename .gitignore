@@ -72,6 +72,9 @@ apps/backend/.evidence-store/
 # Phase C — the Flutter static-preflight scripts are plain Python; their
 # bytecode cache is a build artifact of running them, not source.
 scripts/__pycache__/
+# `scripts/ci/` grew its own Python when the mobile-toolchain guard was added,
+# and the pattern above does not match a nested directory.
+scripts/ci/__pycache__/
 
 # Redis snapshot artefact - never a source file
 dump.rdb
@@ -82,3 +85,7 @@ dump.rdb
 # of not committing a password is not. The script says so in its own output,
 # and this line is what makes saying so true.
 TEST-ACCOUNTS.txt
+
+# Delivery bundles are transport, never source. One was committed by accident
+# on 2026-08-22 (a 6.6 MB blob) simply because nothing here refused it.
+*.bundle

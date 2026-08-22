@@ -73,7 +73,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: apps/backend/package-lock.json
       - run: npm ci
@@ -89,6 +89,37 @@ jobs:
       # tenant-scoped table without mentioning family_id, on a client-supplied
       # familyId, and on any model in schema.prisma that has not been
       # classified in tenant-model-registry.ts.
+      # CI RULE 4 — the owner's standing rule, enforced rather than remembered:
+      # this project builds on current releases. The guard fails on any
+      # dependency a MAJOR version behind, and an exemption must name the
+      # upstream blocker that prevents the upgrade. See
+      # scripts/ci/assert-dependencies-current.ts.
+      - name: Dependency currency guard
+        run: npm run ci:deps-current
+
+      # CI RULE 4, mobile half. The npm guard above cannot see Flutter, AGP,
+      # Gradle or Kotlin — four pins in four files that are not package.json,
+      # which is precisely how they went stale. This asks the authoritative
+      # source for each and fails when one is behind. It is run from the
+      # backend job because that job already has a checkout and a Python; it
+      # needs neither Node nor a Flutter SDK.
+      - name: Mobile toolchain currency guard
+        working-directory: .
+        run: |
+          python3 scripts/ci/test_mobile_toolchain_guard.py
+          python3 scripts/ci/assert-mobile-toolchain-current.py
+
+      # CI RULE 5 — BLOCKING, and added after the container was found unable to
+      # START. `@prisma/adapter-pg` (imported by PrismaService), `prisma` and
+      # `dotenv` (both imported by prisma.config.ts) were all in
+      # devDependencies, and the runtime image installs with
+      # `npm ci --omit=dev`. The suite could never see it: tests run with the
+      # full dev install, so the failure exists only in the image. This reads
+      # every import in src/ (plus the files the runtime stage copies) and
+      # fails when one names a package that is not a runtime dependency.
+      - name: Runtime dependency completeness guard
+        run: npm run ci:runtime-deps
+
       - name: Tenant-scoping static guard
         run: npm run ci:tenant-guard
       # F3 (R3) — BLOCKING. The ratchet described in
@@ -133,8 +164,13 @@ jobs:
       # suite owns the clock and the throttler counters in Redis.
       - name: Event pipeline proofs (ingest -> bus -> reward -> notification)
         run: npx jest test/events --forceExit --runInBand
+      # `npx nest build` until 2026-08-22, which had been BROKEN since
+      # @nestjs/cli was removed — no published tag of it supports TypeScript 7
+      # (CONVENTIONS.md C-6). It failed with "could not determine executable to
+      # run", so this gate proved nothing. `npm run build` is the real build:
+      # `tsc -p tsconfig.build.json`, the same command the Dockerfile uses.
       - name: Build
-        run: npx nest build
+        run: npm run build
 
   admin-dashboard:
     name: Admin Dashboard (React)
@@ -146,7 +182,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: apps/admin-dashboard/package-lock.json
       - run: npm ci

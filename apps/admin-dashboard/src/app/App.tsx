@@ -17,6 +17,14 @@ import { AcquisitionPage } from '../features/growth/pages/AcquisitionPage';
 import { ReferralPage } from '../features/growth/pages/ReferralPage';
 import { ProductAiPage } from '../features/growth/pages/ProductAiPage';
 import { NotificationDecisionsPage } from '../features/notifications/pages/NotificationDecisionsPage';
+import { AccountsPage } from '../features/platform/pages/AccountsPage';
+import { PlatformHealthPage } from '../features/platform/pages/PlatformHealthPage';
+import { PlanCataloguePage } from '../features/platform/pages/PlanCataloguePage';
+import { SupportQueuePage } from '../features/platform/pages/SupportQueuePage';
+import { JobsPage } from '../features/platform/pages/JobsPage';
+import { OutboxPage } from '../features/platform/pages/OutboxPage';
+import { DeliveriesPage } from '../features/platform/pages/DeliveriesPage';
+import { AiUsagePage } from '../features/platform/pages/AiUsagePage';
 import { ProtectedRoute } from './ProtectedRoute';
 import { NotFoundPage } from './NotFoundPage';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
@@ -131,6 +139,48 @@ export function App() {
                 `InternalAdminGuard`-only and has no family-scoped variant —
                 «which audience is the suppression in» is not a question a
                 tenant may ask. */}
+            {/*
+              THE PLATFORM OWNER'S REGISTER. Behind both gates like every other
+              operator screen: the parent session, then the operator key. It is
+              the only view in this dashboard that lists households as rows.
+            */}
+            <Route
+              path="/platform/accounts"
+              element={<PlatformAdminScreen><AccountsPage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/health"
+              element={<PlatformAdminScreen><PlatformHealthPage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/plans"
+              element={<PlatformAdminScreen><PlanCataloguePage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/support"
+              element={<PlatformAdminScreen><SupportQueuePage /></PlatformAdminScreen>}
+            />
+            {/* THE FOUR SURFACES THAT WERE ALREADY BUILT AND HAD NO CALLER.
+                Every endpoint behind these four routes has been guarded by
+                `InternalAdminGuard` and audited since before this file changed;
+                what was missing was nothing but a page. They are gated exactly
+                like their neighbours — parent session, then operator key. */}
+            <Route
+              path="/platform/jobs"
+              element={<PlatformAdminScreen><JobsPage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/outbox"
+              element={<PlatformAdminScreen><OutboxPage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/deliveries"
+              element={<PlatformAdminScreen><DeliveriesPage /></PlatformAdminScreen>}
+            />
+            <Route
+              path="/platform/ai-usage"
+              element={<PlatformAdminScreen><AiUsagePage /></PlatformAdminScreen>}
+            />
             <Route
               path="/notifications/decisions"
               element={
